@@ -1,16 +1,29 @@
 package main
 
 import (
+	"log"
+	"os"
+
+	"github.com/QuentinRegnier/nubo-backend/internal/api"
+	"github.com/QuentinRegnier/nubo-backend/internal/cache"
+	"github.com/QuentinRegnier/nubo-backend/internal/websocket"
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
+	// Initialiser Redis
+	cache.InitRedis()
+
+	// Initialiser le Hub et lancer sa boucle
+	websocket.InitHub()
+
 	r := gin.Default()
+	api.SetupRoutes(r)
 
-	r.GET("/ping", func(c *gin.Context) {
-		c.JSON(200, gin.H{"message": "pong"})
-	})
-
-	r.Run(":8080")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8081"
+	}
+	log.Printf("Server listening on %s", port)
+	r.Run(":" + port)
 }
-
