@@ -49,7 +49,7 @@ nubo-backend/
 
 ---
 
-## 🔨 ÉTAPES DE DÉVELOPPEMENT
+## I. 🔨 ÉTAPES DE DÉVELOPPEMENT GO/DOCKER
 
 ### 1. Initialiser ton projet Go
 
@@ -197,7 +197,7 @@ Puis va sur [http://localhost:8080/ping](http://localhost:8080/ping) → tu dois
 
 ---
 
-## 🌐 Création du repo GitHub
+## II. 🌐 Création du repo GitHub
 
 - Créer un repo vide (sur github.com) :
 - Nom : nubo-backend
@@ -214,7 +214,7 @@ git push -u origin main
 
 ---
 
-## 🛠️ Plan d’action clair (prochaine phase)
+## III. 🛠️ Plan d’action clair (prochaine phase go)
 
 ✅ Étape 1 — Ajouter les routes REST : Login, Signup, Post
 ✅ Étape 2 — Ajouter le WebSocket en Go
@@ -225,15 +225,15 @@ git push -u origin main
 
 ---
 
-## 🎯 Objectif
-### Créer des routes :
+### 🎯 Objectif
+**Créer des routes :**
 
 - `POST /signup` → créer un utilisateur
 - `POST /login` → connecter (renvoyer JWT, à faire en Étape 4)
 - `GET /posts` → récupérer les posts
 - `POST /posts` → créer un post
 
-## 📁 Organisation recommandée
+### 📁 Organisation recommandée
 Fichier : `internal/api/routes.go`
 ```go
 package api
@@ -299,7 +299,7 @@ curl -X POST http://localhost:8080/signup
 
 ---
 
-## 🚀 Étape WebSocket : créer un serveur WebSocket basique en Go avec Gin + Gorilla WebSocket
+## IV. 🚀 Étape WebSocket : créer un serveur WebSocket basique en Go avec Gin + Gorilla WebSocket
 ### 1. Créer un handler WebSocket
 
 Fichier : `internal/websocket/handler.go`
@@ -401,7 +401,7 @@ Tape un message, tu dois recevoir un `Echo: ton_message`.
 
 Garder en mémoire tous les clients connectés, pouvoir diffuser un message à tous en même temps (broadcast).
 
-### Code à ajouter `internal/websocket/hub.go`
+### 6. Code à ajouter `internal/websocket/hub.go`
 ```go
 package websocket
 
@@ -495,7 +495,7 @@ func (c *Client) WritePump() {
 }
 ```
 
-### Modifier le handler WebSocket `internal/websocket/handler.go`
+### 7. Modifier le handler WebSocket `internal/websocket/handler.go`
 ```go
 package websocket
 
@@ -556,24 +556,24 @@ func main() {
 }
 ```
 
-### Test :
+### 8. Test :
 - Lance l’API
 - Connecte plusieurs clients au /ws
 - Envoie un message d’un client → Tous les clients reçoivent le message
 
 ---
 
-## 6. Intégration Redis Pub/Sub
+## V. Intégration Redis Pub/Sub
 
 Pourquoi ?
 
 Pour permettre à plusieurs instances de ton backend (scalées horizontalement) de communiquer, diffuser les messages WS entre elles.
 
-### Ajouter Redis Pub/Sub dans le hub
+### 1. Ajouter Redis Pub/Sub dans le hub
 
 Installer Redis client déjà fait avec `go-redis/redis/v8`
 
-### Ajouter un fichier `internal/cache/redis.go`
+### 2. Ajouter un fichier `internal/cache/redis.go`
 ```go
 package cache
 
@@ -596,7 +596,7 @@ func InitRedis() {
 }
 ```
 
-### Modifie `cmd/main.go` pour initialiser Redis
+### 3. Modifie `cmd/main.go` pour initialiser Redis
 ```go
 package main
 
@@ -628,7 +628,7 @@ func main() {
 }
 ```
 
-### Modifier le hub pour utiliser Redis Pub/Sub
+### 4. Modifier le hub pour utiliser Redis Pub/Sub
 
 Dans `internal/websocket/hub.go` :
 
@@ -691,13 +691,13 @@ case message := <-h.broadcast:
 
 ---
 
-## 7. Connecter le WebSocket à la base (exemple notifications)
+## VI. Connecter le WebSocket à la base (exemple notifications)
 
-### Exemple rapide
+### 1. Exemple rapide
 
 Dans Client.ReadPump(), à chaque message reçu, tu peux enregistrer ou traiter en DB.
 
-### Exemple dans `internal/websocket/hub.go` ReadPump :
+### 2. Exemple dans `internal/websocket/hub.go` ReadPump :
 ```go
 func (c *Client) ReadPump(hub *Hub) {
 	defer func() {
@@ -721,9 +721,9 @@ func (c *Client) ReadPump(hub *Hub) {
 
 ---
 
-## 8. Protéger le WS avec JWT
+## VII. Protéger le WS avec JWT
 
-### Ajouter middleware d’authentification JWT
+### 1. Ajouter middleware d’authentification JWT
 Télécharger avant :
 ```bash
 go get github.com/golang-jwt/jwt/v5
@@ -775,7 +775,7 @@ func JWTMiddleware() gin.HandlerFunc {
 }
 ```
 
-### Protéger la route WebSocket
+### 2. Protéger la route WebSocket
 
 Dans `internal/api/routes.go` :
 ```go
@@ -793,7 +793,7 @@ func WSHandler(c *gin.Context) {
 
 ---
 
-## ✅ PRÉREQUIS AVANT DE TESTER
+### 3. ✅ PRÉREQUIS AVANT DE TESTER
 
 - Redis tourne bien (docker-compose up)
 - Ton backend Go est lancé (go run cmd/main.go)
@@ -801,9 +801,9 @@ Tu as un JWT valide (car le WS est protégé maintenant) — on en génère un d
 
 ---
 
-## 🧪 1. Générer un JWT de test
+### 4. 🧪 Générer un JWT de test
 
-### Ajoute un petit endpoint temporaire dans internal/api/routes.go juste pour tester :
+**Ajoute un petit endpoint temporaire dans internal/api/routes.go juste pour tester :**
 ```go
 import "github.com/golang-jwt/jwt/v5"
 
@@ -831,15 +831,15 @@ Tu obtiens une réponse comme :
 
 ---
 
-## 🧪 2. Se connecter avec websocat + JWT
+### 5. 🧪 Se connecter avec websocat + JWT
 
-### Copie le token et lance cette commande dans le terminal :
+**Copie le token et lance cette commande dans le terminal :**
 ```bash
 websocat ws://localhost:8081/ws -H 'Authorization: Bearer Remplace TON_JWT_ICI'
 ```
 Remplace TON_JWT_ICI par le vrai token.
 
-### ✅ Tu dois voir dans les logs :
+**✅ Tu dois voir dans les logs :**
 ```bash
 Utilisateur connecté (userID): user123
 Client registered
@@ -847,12 +847,12 @@ Client registered
 
 ---
 
-## 🧪 3. Tester le broadcast
+### 6. 🧪 Tester le broadcast
 
 - Ouvre deux terminaux avec cette même commande websocat (et le même token).
 - Tape un message dans l’un. Tu dois le recevoir dans les deux.
 
-### 💬 Exemple :
+**💬 Exemple :**
 ```bash
 > Salut à tous !
 ```
@@ -861,9 +861,9 @@ Client registered
 
 ---
 
-## 🧪 4. Tester le Redis Pub/Sub (scalabilité)
+### 7. 🧪 Tester le Redis Pub/Sub (scalabilité)
 
-### Étapes :
+**Étapes :**
 - Lance une deuxième instance de ton backend (dans un autre terminal) :
 ```bash
 go run cmd/main.go
@@ -875,7 +875,7 @@ Instance 2 : change à la volée : `r.Run(":8081")`, connecte à `ws://localhost
 
 ---
 
-## 🧪 5. Vérifie le JWT en cas d'erreur
+### 8. 🧪 Vérifie le JWT en cas d'erreur
 
 Si tu connectes sans Authorization, tu dois recevoir :
 ```bash
@@ -885,4 +885,763 @@ Ou :
 ```bash
 {"error":"Token invalide"}
 ```
+## VIII. PostgreSQL & MongoDB
+### 1. Mise en place de PostgreSQL avec pgAdmin
+**Créer la structure Docker pour PostgreSQL + pgAdmin**
+Dans `docker-compose.yml`, ajoute la section PostgreSQL + pgAdmin :
+```yaml
+version: '3.8'
 
+services:
+  postgres:
+    image: postgres:16
+    container_name: nubo_postgres
+    environment:
+      POSTGRES_USER: nubo_user
+      POSTGRES_PASSWORD: nubo_password
+      POSTGRES_DB: nubo_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres-data:/var/lib/postgresql/data
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: nubo_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@nubo.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8082:80"
+```
+**Démarre les services :**
+`docker-compose -f docker-compose.yml up -d`
+**Résultat attendu :**
+PostgreSQL accessible sur `localhost:5432`
+pgAdmin accessible sur http://localhost:8082
+Tu peux connecter pgAdmin à PostgreSQL avec nubo_user / nubo_password
+**Créer les dossiers pour les scripts SQL**
+Arborescence suggérée :
+```bash
+Nubo/
+├─ docker/
+│  └─ docker-compose.yml
+├─ sql/
+│  ├─ init/       # Scripts de création de tables de base
+│  ├─ functions/  # Procédures stockées, triggers
+│  └─ views/      # Vues SQL
+```
+Place tes fichiers `.sql` dans ces dossiers selon leur rôle.
+
+---
+
+### 2. Mise en place de MongoDB avec mongo-express
+**Ajouter MongoDB à Docker**
+Toujours dans `docker-compose.yml`, ajoute :
+```yaml
+  mongo:
+    image: mongo:7
+    container_name: nubo_mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./mongo-data:/data/db
+
+  mongo-express:
+    image: mongo-express:1.0.0
+    container_name: nubo_mongo_express
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: root
+      ME_CONFIG_MONGODB_ADMINPASSWORD: example
+      ME_CONFIG_MONGODB_SERVER: mongo
+    ports:
+      - "8083:8081"
+```
+**Démarre le service :**
+`docker-compose -f docker-compose.yml up -d`
+MongoDB accessible sur `localhost:27017`
+mongo-express accessible sur http://localhost:8083
+**Arborescence pour les scripts Mongo**
+```bash
+Nubo/
+├─ mongo/
+│  ├─ init/          # Création des collections, index, sharding
+│  ├─ scripts/       # Inserts, indexes, TTL commands
+│  └─ workers/       # Workers pour traitement asynchrone
+```
+
+---
+
+## IX. Écriture dans les bases
+### 1. Règle d’or (rappel rapide)
+- **PostgreSQL** = système de vérité, intégrité, contraintes, requêtes relationnelles (users, follow, paramètres, archival à vie).
+- **MongoDB** = charge volatile/haut-volume, accès par documents, données massives / flexibles / dernière période (cache, messages récents, logs).
+- Redis = stockage en mémoire pour sessions / liste d’utilisateurs en ligne / counters / pubsub (déjà en place).
+
+### 2. Arborescence globale (haute niveau)
+```bash
+PostgreSQL
+├─ users
+│  ├─ user_settings
+│  ├─ sessions (refresh tokens / audit)
+├─ follows
+├─ blocks
+├─ posts
+│  ├─ comments
+│  ├─ likes
+├─ media (metadata minimal + pointer vers stockage objet)
+├─ conversations_meta
+│  ├─ conversation_members
+│  ├─ message_index (résumé/offset pour messages dans Mongo)
+├─ reports
+├─ admin_actions
+└─ audit_logs
+
+MongoDB
+├─ messages                      (messages complets / growth)
+├─ posts_documents               (post + media metadata volumineux / versions)
+├─ comments_documents            (ou embedded in posts if small)
+├─ notifications                 (push & in-app notifications)
+├─ feed_cache                    (pré-calculé, TTL)
+├─ user_activity_logs            (clicks, views, events)
+├─ media_metadata                (vision/thumbnail/ai-tags)
+└─ search_index / embeddings     (opti. pour recommandations)
+```
+
+### 3. PostgreSQL : Tables clefs (schéma résumé)
+
+> Utiliser UUID (uuid_generate_v4()) pour tous les id en production. Datetime en timestamptz.
+
+**PostgreSQL :**
+
+**users**
+- `id uuid PRIMARY KEY`
+- `username text UNIQUE NOT NULL`
+- `email text UNIQUE NOT NULL`
+- `password_hash text NOT NULL`
+- `salt text NULL` (si tu utilises scrypt/bcrypt, pas nécessaire)
+- `display_name text`
+- `bio text`
+- `birthdate date`
+- `phone text UNIQUE NULL`
+- `profile_picture_id uuid NULL` (référence dans media)
+- `state smallint NOT NULL DEFAULT 1` (1=active, 0=deleted, 2=banned)
+- `created_at timestamptz DEFAULT now()`
+- `updated_at timestamptz`
+**Index** : `ON users (username)`, `ON users (email)`.
+```sql
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique de l'utilisateur
+    username TEXT UNIQUE NOT NULL, -- nom d'utilisateur unique
+    email TEXT UNIQUE NOT NULL, -- email unique
+    email_verified BOOLEAN DEFAULT FALSE, -- email vérifié
+    phone TEXT UNIQUE, -- numéro de téléphone unique
+    phone_verified BOOLEAN DEFAULT FALSE, -- numéro de téléphone vérifié
+    password_hash TEXT NOT NULL, -- mot de passe haché
+    first_name TEXT NOT NULL, -- prénom
+    last_name TEXT NOT NULL, -- nom de famille
+    birthdate DATE, -- date de naissance
+    sex SMALLINT, -- sexe
+    bio TEXT, -- biographie
+    profile_picture_id UUID, -- id de l'image de profil
+    grade SMALLINT NOT NULL DEFAULT 1, -- grade de l'utilisateur
+    location TEXT, -- localisation de l'utilisateur
+    school TEXT, -- école
+    works TEXT, -- emplois
+    badges TEXT[], -- badges
+    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
+    updated_at TIMESTAMPTZ DEFAULT now() -- date de mise à jour
+);
+
+CREATE INDEX idx_users_username ON users(username);
+CREATE INDEX idx_users_email ON users(email);
+```
+
+---
+
+**user_settings**
+- `id uuid PRIMARY KEY`
+- `user_id uuid REFERENCES users(id) UNIQUE ON DELETE CASCADE`
+- `privacy jsonb` (ex: {"posts":"public","messages":"friends"})
+- `notifications jsonb` (per-type on/off)
+- `language text`
+- `theme text`
+**Index** : `ON user_settings (user_id)`.
+```sql
+CREATE TABLE IF NOT EXISTS user_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique des paramètres utilisateur
+    user_id UUID UNIQUE REFERENCES users(id) ON DELETE CASCADE, -- id unique de l'utilisateur
+    privacy JSONB, -- paramètres de confidentialité
+    notifications JSONB, -- paramètres de notification
+    language TEXT, -- langue
+    theme SMALLINT NOT NULL DEFAULT 0 -- thème clair/sombre
+);
+
+CREATE INDEX idx_user_settings_user_id ON user_settings(user_id);
+```
+---
+
+**sessions (refresh tokens / audit)**
+- `id uuid PRIMARY KEY`
+- `user_id uuid REFERENCES users(id)`
+- `refresh_token text`
+- `device_info jsonb`
+- `ip inet`
+- `created_at timestamptz`
+- `expires_at timestamptz`
+- `revoked boolean DEFAULT false`
+**Index** : `ON sessions (user_id, revoked)`.
+```sql
+CREATE TABLE IF NOT EXISTS sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique de la session
+    user_id UUID REFERENCES users(id), -- id de l'utilisateur
+    refresh_token TEXT, -- token de rafraîchissement
+    device_info JSONB, -- informations sur l'/les appareil(s)
+    ip INET[], -- adresse IP
+    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
+    expires_at TIMESTAMPTZ, -- date d'expiration
+    revoked BOOLEAN DEFAULT FALSE -- session révoquée
+);
+
+CREATE INDEX idx_sessions_user_id_revoked ON sessions(user_id, revoked);
+```
+---
+
+**follows**
+- `id uuid PRIMARY KEY`
+- `follower_id uuid REFERENCES users(id)`
+- `followed_id uuid REFERENCES users(id)`
+- `state smallint DEFAULT 1 (1=ok, 0=pending, 2=blocked)`
+- `created_at timestamptz`
+**Unique constraint** : `(follower_id, followed_id)`.
+**Index** : `ON follows (followed_id)` pour feed queries.
+```sql
+CREATE TABLE IF NOT EXISTS follows (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique du suivi
+    followed_id UUID REFERENCES users(id), -- id de l'utilisateur suivi
+    state SMALLINT DEFAULT 1, -- état du suivi (2 = amis, 1 = suivi, 0 = inactif, -1 = bloqué)
+    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
+    UNIQUE(follower_id, followed_id)
+);
+
+CREATE INDEX idx_follows_followed_id ON follows(followed_id);
+```
+---
+
+**posts**
+- `id uuid PRIMARY KEY`
+- `user_id uuid REFERENCES users(id) NOT NULL`
+- `content text` (short textual content)
+- `media_ids uuid[]` (pointeurs vers table media ou Mongo)
+- `meta jsonb` (mentions, hashtags, extra props)
+- `visibility smallint` (0=private,1=friends,2=public)
+- `created_at timestamptz`
+- `updated_at timestamptz`
+**Index** : `ON posts (user_id, created_at DESC)` ; `GIN index ON posts (meta jsonb)` pour recherches.
+```sql
+CREATE TABLE IF NOT EXISTS posts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique du post
+    user_id UUID REFERENCES users(id) NOT NULL, -- id de l'utilisateur
+    content TEXT, -- contenu du post
+    media_ids UUID[], -- ids des médias associés
+    meta JSONB, -- métadonnées
+    visibility SMALLINT DEFAULT 0, -- visibilité (1 = amis, 0 = public)
+    location TEXT, -- localisation
+    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
+    updated_at TIMESTAMPTZ DEFAULT now() -- date de mise à jour
+);
+
+CREATE INDEX idx_posts_user_created ON posts(user_id, created_at DESC);
+CREATE INDEX idx_posts_meta ON posts USING GIN(meta);
+```
+---
+
+**comments**
+- `id uuid PRIMARY KEY`
+- `post_id uuid REFERENCES posts(id) ON DELETE CASCADE`
+- `user_id uuid REFERENCES users(id)`
+- `content text`
+- `created_at timestamptz`
+**Index:** `ON comments (post_id, created_at DESC)`.
+```sql
+CREATE TABLE IF NOT EXISTS comments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique du commentaire
+    post_id UUID REFERENCES posts(id) ON DELETE CASCADE, -- id du post
+    user_id UUID REFERENCES users(id), -- id de l'utilisateur
+    content TEXT, -- contenu du commentaire
+    created_at TIMESTAMPTZ DEFAULT now() -- date de création
+);
+
+CREATE INDEX idx_comments_post_created ON comments(post_id, created_at DESC);
+```
+---
+
+**likes**
+- `id uuid PRIMARY KEY`
+- `target_type text (post/comment)`
+- `target_id uuid`
+- `user_id uuid REFERENCES users(id)`
+- `created_at timestamptz`
+**Unique** `(target_type, target_id, user_id)`.
+**Index** : `ON likes (target_type, target_id)`.
+```sql
+CREATE TABLE IF NOT EXISTS likes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique du like
+    target_type SMALLINT NOT NULL, -- type de la cible (0 = post, 1 = message, 2 = commentaire)
+    target_id UUID NOT NULL, -- id de la cible
+    user_id UUID REFERENCES users(id), -- id de l'utilisateur
+    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
+    UNIQUE(target_type, target_id, user_id)
+);
+
+CREATE INDEX idx_likes_target ON likes(target_type, target_id);
+```
+---
+
+**conversations_meta**
+- `id uuid PRIMARY KEY`
+- `type smallint` (1=direct,2=group)
+- `title text NULL`
+- `last_message_text text NULL`
+- `last_message_time timestamptz NULL`
+- `created_at timestamptz`
+**Index** : `ON conversations_meta (last_message_time DESC)`.
+```sql
+CREATE TABLE IF NOT EXISTS conversations_meta (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique de la conversation
+    type SMALLINT, -- type de la conversation (0 = message privée, 1 = groupe, 2 = communauté, 3 = annonce)
+    title TEXT, -- titre de la conversation
+    last_message_id UUID UNIQUE, -- id du dernier message
+    state SMALLINT DEFAULT 0, -- état de la conversation (0 = active, 1 = archivée, 2 = supprimée)
+    created_at TIMESTAMPTZ DEFAULT now() -- date de création
+);
+
+CREATE INDEX idx_conversations_last_message ON conversations_meta(last_message_id);
+```
+---
+
+**conversation_members**
+- `id uuid PRIMARY KEY`
+- `conversation_id uuid REFERENCES conversations_meta(id)`
+- `user_id uuid REFERENCES users(id)`
+- `role smallint` (admin/member)
+- `joined_at timestamptz`
+- `unread_count int DEFAULT 0`
+
+**Unique** `(conversation_id, user_id)`.
+```sql
+CREATE TABLE IF NOT EXISTS conversation_members (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique du membre
+    conversation_id UUID REFERENCES conversations_meta(id), -- id de la conversation
+    user_id UUID REFERENCES users(id), -- id de l'utilisateur
+    role SMALLINT DEFAULT 0, -- rôle du membre (0 = membre, 1 = admin, 2 = créateur)
+    joined_at TIMESTAMPTZ DEFAULT now(), -- date d'adhésion
+    unread_count INT DEFAULT 0, -- nombre de messages non lus
+    UNIQUE(conversation_id, user_id)
+);
+```
+---
+
+**message_index (résumé pour accès rapide)**
+- `id uuid PRIMARY KEY` (same as Mongo message id or index)
+- `conversation_id uuid REFERENCES conversations_meta(id)`
+- `message_id text` (id in Mongo or pointer)
+- `sender_id uuid`
+- `created_at timestamptz`
+- `snippet text` (first X chars)
+**Index**: `ON message_index (conversation_id, created_at DESC)`.
+**Pattern** : on écrit le message complet dans MongoDB (champ texte, medias), et on écrit une ligne d’index/minimale en Postgres (message_index) pour permettre recherche pagination rapide, jointures, quotas, unread counters, etc.
+```sql
+CREATE TABLE IF NOT EXISTS message_index (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique du message
+    conversation_id UUID REFERENCES conversations_meta(id), -- id de la conversation
+    sender_id UUID NOT NULL, -- id de l'expéditeur
+    message_type SMALLINT NOT NULL DEFAULT 0, -- 0=text, 1=image, 2=publication, 3=vocal, 4=vidéo
+    content TEXT, -- contenu du message
+    attachments JSONB, -- pointeurs vers fichiers S3 / metadata
+    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
+);
+
+
+CREATE INDEX idx_message_index_conv_created ON message_index(conversation_id, created_at DESC);
+```
+---
+
+**media (minimum metadata)**
+- `id uuid PRIMARY KEY`
+- `owner_id uuid`
+- `storage_path text` (S3 path)
+- `mime text`
+- `size bigint`
+- `width int, height int`
+- `created_at timestamptz`
+- `processing_state smallint` (0=pending,1=done)
+**Index** : `ON media (owner_id)`.
+```sql
+CREATE TABLE IF NOT EXISTS media (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique du média
+    owner_id UUID REFERENCES users(id), -- id du propriétaire
+    storage_path TEXT, -- chemin de stockage
+    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
+);
+
+CREATE INDEX idx_media_owner ON media(owner_id);
+CREATE INDEX idx_media_created ON media(created_at);
+```
+---
+
+**reports**
+```sql
+CREATE TABLE IF NOT EXISTS reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique du rapport
+    actor_id UUID REFERENCES users(id), -- id de l'utilisateur ayant signalé
+    target_type SMALLINT NOT NULL, -- type de la cible (user/post/comment/etc)
+    target_id UUID NOT NULL, -- id de la cible
+    reason TEXT, -- raison du signalement
+    state SMALLINT DEFAULT 0, -- état du rapport (0=pending, 1=reviewed, 2=resolved)
+    created_at TIMESTAMPTZ DEFAULT now() -- date de création
+);
+
+CREATE INDEX idx_reports_actor ON reports(actor_id);
+CREATE INDEX idx_reports_created ON reports(created_at);
+```
+
+### 4. PosgreSQL : Schéma
+```bash
+📂 database/
+ ├── 📂 schemas/
+ │    ├── auth/          → utilisateurs, sessions, relations
+ │    ├── content/       → posts, comments, likes, media
+ │    ├── messaging/     → conversations, messages
+ │    ├── moderation/    → reports
+ │    ├── logic/         → fonctions + procédures
+ │    ├── views/         → vues matérialisées ou non
+```
+
+---
+
+### 5. MongoDB
+> Principe : stocker documents volumineux, formats libres, TTL sur ce qui est éphémère.
+**MongoExpress**
+- Créer une nouvelle base `nubo_recent`
+**Terminal**
+1. Mets ton Homebrew à jour :
+```bash
+brew update
+```
+2. Installe mongosh :
+```bash
+brew install mongosh
+```
+3. Vérifie que ça marche :
+```bash
+mongosh --version
+```
+**Se connecter à ton serveur Mongo**
+Une fois installé, tu pourras te connecter à ton serveur MongoDB (celui où Mongo Express est branché).
+En général, si c’est en local :
+```bash
+mongosh "mongodb://root:example@localhost:27017"
+```
+Tu choisis la base (si ce n’est pas encore fait) :
+```javascript
+use nubo_recent
+```
+Ensuite tu colles ton script complet :
+(voir collection)
+---
+
+**messages (collection)**
+```javascript
+// ---------------------- USERS ----------------------
+db.createCollection("users_recent");
+db.users_recent.createIndex({ username: 1 }, { unique: true });
+db.users_recent.createIndex({ email: 1 }, { unique: true });
+
+// Exemple d’insertion complète pour users_recent
+db.users_recent.insertOne({
+    _id: UUID(),
+    username: "",
+    email: "",
+    email_verified: false,
+    phone: null,
+    phone_verified: false,
+    password_hash: "",
+    first_name: "",
+    last_name: "",
+    birthdate: null,
+    sex: null,
+    bio: "",
+    profile_picture_id: null,
+    grade: 1,
+    location: "",
+    school: "",
+    work: "",
+    badges: [],
+    created_at: new Date(),
+    updated_at: new Date(),
+    connected: false
+});
+
+// ---------------------- USER SETTINGS ----------------------
+db.createCollection("user_settings_recent");
+db.user_settings_recent.createIndex({ user_id: 1 }, { unique: true });
+
+db.user_settings_recent.insertOne({
+    _id: UUID(),
+    user_id: UUID(),
+    privacy: {},
+    notifications: {},
+    language: "",
+    theme: 0,
+    created_at: new Date(),
+    updated_at: new Date()
+});
+
+// ---------------------- SESSIONS ----------------------
+db.createCollection("sessions_recent");
+db.sessions_recent.createIndex({ user_id: 1, revoked: 1 });
+
+db.sessions_recent.insertOne({
+    _id: UUID(),
+    user_id: UUID(),
+    refresh_token: "",
+    device_info: {},
+    ip: [],
+    created_at: new Date(),
+    expires_at: null,
+    revoked: false
+});
+
+// ---------------------- RELATIONS ----------------------
+db.createCollection("relations_recent");
+db.relations_recent.createIndex({ primary_id: 1 });
+db.relations_recent.createIndex({ secondary_id: 1 });
+db.relations_recent.createIndex({ secondary_id: 1, primary_id: 1 }, { unique: true });
+
+db.relations_recent.insertOne({
+    _id: UUID(),
+    primary_id: UUID(),
+    secondary_id: UUID(),
+    state: 1,
+    created_at: new Date()
+});
+
+// ---------------------- POSTS ----------------------
+db.createCollection("posts_recent");
+db.posts_recent.createIndex({ user_id: 1, created_at: -1 });
+
+db.posts_recent.insertOne({
+    _id: UUID(),
+    user_id: UUID(),
+    content: "",
+    media_ids: [],
+    visibility: 0,
+    location: "",
+    created_at: new Date(),
+    updated_at: new Date()
+});
+
+// ---------------------- COMMENTS ----------------------
+db.createCollection("comments_recent");
+db.comments_recent.createIndex({ post_id: 1, created_at: -1 });
+
+db.comments_recent.insertOne({
+    _id: UUID(),
+    post_id: UUID(),
+    user_id: UUID(),
+    content: "",
+    created_at: new Date()
+});
+
+// ---------------------- LIKES ----------------------
+db.createCollection("likes_recent");
+db.likes_recent.createIndex({ target_type: 1, target_id: 1 });
+db.likes_recent.createIndex({ target_type: 1, target_id: 1, user_id: 1 }, { unique: true });
+
+db.likes_recent.insertOne({
+    _id: UUID(),
+    target_type: 0,
+    target_id: UUID(),
+    user_id: UUID(),
+    created_at: new Date()
+});
+
+// ---------------------- MEDIA ----------------------
+db.createCollection("media_recent");
+db.media_recent.createIndex({ owner_id: 1 });
+db.media_recent.createIndex({ created_at: 1 });
+
+db.media_recent.insertOne({
+    _id: UUID(),
+    owner_id: UUID(),
+    storage_path: "",
+    created_at: new Date()
+});
+
+// ---------------------- CONVERSATIONS META ----------------------
+db.createCollection("conversations_recent");
+db.conversations_recent.createIndex({ last_message_id: 1 });
+
+db.conversations_recent.insertOne({
+    _id: UUID(),
+    type: 0,
+    title: "",
+    last_message_id: null,
+    state: 0,
+    created_at: new Date()
+});
+
+// ---------------------- CONVERSATION MEMBERS ----------------------
+db.createCollection("conversation_members_recent");
+db.conversation_members_recent.createIndex({ conversation_id: 1, user_id: 1 }, { unique: true });
+
+db.conversation_members_recent.insertOne({
+    _id: UUID(),
+    conversation_id: UUID(),
+    user_id: UUID(),
+    role: 0,
+    joined_at: new Date(),
+    unread_count: 0
+});
+
+// ---------------------- MESSAGES ----------------------
+db.createCollection("messages_recent");
+db.messages_recent.createIndex({ conversation_id: 1, created_at: -1 });
+
+db.messages_recent.insertOne({
+    _id: UUID(),
+    conversation_id: UUID(),
+    sender_id: UUID(),
+    message_type: 0,
+    state: 0,
+    content: "",
+    attachments: {},
+    created_at: new Date()
+});
+
+// ---------------------- FEED CACHE ----------------------
+db.createCollection("feed_cache");
+db.feed_cache.createIndex({ user_id: 1, created_at: -1 });
+
+db.feed_cache.insertOne({
+    _id: UUID(),
+    user_id: UUID(),
+    items: [],
+    created_at: new Date()
+});
+```
+
+---
+
+## X. Stratégie de requêtes des données :
+
+### 1. Stratégie MongoDB réajustée
+1. Répliquer uniquement les données “interactives” du dernier mois :
+- Interactions = lecture, écriture, modification, likes, commentaires, etc.
+- MongoDB ne reçoit que ce sous-ensemble des tables concernées (`users`, `sessions`, `posts`, `comments`, `likes`, `media`, `messages`, `conversations_meta`, `conversation_members`, `relations`).
+- On ne fait pas de réplication totale. C’est donc bien un filtrage côté Go, pas PostgreSQL.
+2. Feed pré-calculé
+- Continu pour les utilisateurs connectés.
+- Occasionnel pour les utilisateurs non connectés, selon la charge serveur.
+3. Décision de répliquer / stocker les données :
+- Exclusivement côté Go, qui connaît la logique métier et peut filtrer les données “récentes ou actives”.
+- PostgreSQL n’est utilisé que comme source de vérité pour les données anciennes ou massives.
+4. Lecture multi-couche :
+```text
+Go cherche un message/post :
+-> Redis (cache ultra rapide)
+-> Mongo (données récentes ou lourdes)
+-> PostgreSQL (historique ou requêtes complexes)
+```
+- On peut sauter des étapes si on sait déjà que la donnée est ancienne ou que le filtre limite à moins d’un mois.
+5. Écriture / suppression :
+- Écriture triple : Redis + Mongo + PostgreSQL.
+- Suppression / update : idem, pour garder la cohérence.
+
+---
+
+### 2. Optimisation de la fil d’attente et des écritures massives
+**PostgreSQL**
+- Batch insertions : plutôt que d’écrire 50 000 lignes une par une, grouper les inserts dans une seule requête `INSERT ... VALUES (...), (...), (...)`.
+- Transactions groupées : encapsuler plusieurs opérations dans une seule transaction réduit les commits, ce qui accélère les écritures et limite la fragmentation.
+- COPY : pour des gros volumes, `COPY FROM` est beaucoup plus rapide qu’un `INSERT` classique.
+- Prepared statements : si on fait beaucoup d’inserts similaires, préparer la requête et l’exécuter en boucle réduit l’overhead.
+- Indexes : désactiver temporairement certains indexes pendant un bulk insert massif puis les reconstruire peut être plus rapide.
+**MongoDB**
+- insertMany : Mongo gère très bien les insertions en masse via `insertMany`.
+- Ordered=false : permet de continuer l’insertion même si certains documents échouent, utile pour les très gros batchs.
+- Bulk API : `bulkWrite` permet de combiner insert, update, delete dans une seule opération, très efficace pour la réplication / traitement de flux.
+- Sharding : si le dataset devient massif, sharder sur une clé qui répartit uniformément la charge d’écriture (ex : `conversation_id` pour messages).
+- Write concern : ajuster le write concern (`w=1` pour rapide, `w=majority` pour sûr) selon le besoin.
+**Général**
+- Parallelisation côté Go :
+	- Regrouper les écritures par type et table.
+	- Faire plusieurs goroutines pour envoyer les batchs en parallèle.
+	- Redis est naturellement rapide pour des mises à jour concurrentes.
+
+---
+
+### 3. Schéma conceptuel clair du flux multi-couche
+```pgsql
+                        ┌───────────────────────┐
+                        │       Utilisateur      │
+                        │   (Mobile / Web)      │
+                        └───────────┬───────────┘
+                                    │
+                                    ▼
+                           ┌─────────────────┐
+                           │       Go        │
+                           │  Orchestrateur  │
+                           │   logique métier│
+                           └───────┬─────────┘
+                                   │
+      ┌────────────────────────────┼────────────────────────────┐
+      │                            │                            │
+      ▼                            ▼                            ▼
+┌───────────────┐           ┌─────────────────┐         ┌─────────────────┐
+│     Redis     │           │     MongoDB     │         │  PostgreSQL     │
+│  Cache rapide │           │ Données récentes│         │ Source de vérité│
+│  - unread     │           │ < 1 mois /      │         │ historique      │
+│    counters   │           │ interactions    │         │ - toutes tables │
+│  - sessions   │           │ - messages      │         │ - contraintes   │
+│  - pub/sub    │           │ - posts volum.  │         │   d’intégrité   │
+│  - feed cache │           │ - conversations │         │ - requêtes      │
+└───────────────┘           │   récentes      │         │   complexes     │
+                            │ - medias récents│         └─────────────────┘
+                            └───────┬─────────┘
+                                    │
+                       ┌────────────┴──────────────┐
+                       │   Batch / Bulk insertions │
+                       │   insertMany / COPY       │
+                       │   Parallelisation Go      │
+                       └───────────────────────────┘
+```
+
+---
+
+**Explications du flux**
+1. Utilisateur interagit → envoie une requête à Go.
+2. Go décide :
+	- Lire → Redis → MongoDB → PostgreSQL si nécessaire.
+	- Écrire → Redis + MongoDB + PostgreSQL.
+	- Supprimer → Redis + MongoDB + PostgreSQL.
+3. MongoDB contient uniquement les données récentes ou utilisées activement (moins d’un mois, interactions récentes).
+4. Redis sert pour :
+	- compteur de messages non lus,
+	- sessions actives,
+	- pub/sub temps réel,
+	- feed cache temporaire.
+5. PostgreSQL reste la source de vérité complète, historique, contraintes d’intégrité, et requêtes complexes (rapports, exports, analytics).
+
+---
+
+**Optimisation / charge serveur**
+- Go peut batcher les insertions :
+	- Messages, posts, commentaires → insertMany pour Mongo, COPY ou multi-row insert pour PostgreSQL.
+- Feed pré-calculé :
+	- Pour les utilisateurs connectés → continu.
+	- Pour les non-connectés → seulement quand charge CPU/RAM le permet (heures creuses).
+- Lecture / filtre :
+	- Pré-filtrer par moins d’un mois → MongoDB.
+	- Si besoin historique → PostgreSQL.

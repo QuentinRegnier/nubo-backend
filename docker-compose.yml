@@ -21,24 +21,50 @@ services:
       - redis_data:/data
 
   postgres:
-    image: postgres:15
+    image: postgres:16
     container_name: nubo_postgres
     environment:
-      POSTGRES_USER: nubo
-      POSTGRES_PASSWORD: nubo
-      POSTGRES_DB: nubo
+      POSTGRES_USER: nubo_user
+      POSTGRES_PASSWORD: nubo_password
+      POSTGRES_DB: nubo_db
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-data:/var/lib/postgresql/data
 
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: nubo_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@nubo.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8082:80"
+  
   mongo:
     image: mongo:7
     container_name: nubo_mongo
     ports:
       - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
     volumes:
-      - mongo_data:/data/db
+      - ./mongo-data:/data/db
+
+  mongo-express:
+    image: mongo-express:latest
+    container_name: nubo_mongo_express
+    environment:
+      ME_CONFIG_BASICAUTH_USERNAME: root
+      ME_CONFIG_BASICAUTH_PASSWORD: example
+      ME_CONFIG_MONGODB_ADMINUSERNAME: root
+      ME_CONFIG_MONGODB_ADMINPASSWORD: example
+      ME_CONFIG_MONGODB_SERVER: mongo
+    ports:
+      - "8083:8081"
+    depends_on:
+      - mongo
 
 volumes:
   redis_data:
