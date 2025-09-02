@@ -1645,3 +1645,542 @@ Go cherche un message/post :
 - Lecture / filtre :
 	- Pré-filtrer par moins d’un mois → MongoDB.
 	- Si besoin historique → PostgreSQL.
+
+## XI. Travail sur Go
+### 1. Initialisation de Redis et Mongo :
+__**Objectif :**__
+- Forcer à la supprésion toutes les lignes ayant été utilisé il y a plus d'un mois dans les collections de MongoDB dans la base `nubo_recent`
+- Nettoyer totalement Redis
+
+**Création de `init.go` et insertion de la directive dans `main.go`**
+```go
+package initdata
+
+import (
+    "context"
+    "log"
+    "time"
+
+    "github.com/QuentinRegnier/nubo-backend/internal/cache"
+    "github.com/QuentinRegnier/nubo-backend/internal/db"
+    "go.mongodb.org/mongo-driver/bson"
+)
+
+func CleanMongo() {
+    ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+    defer cancel()
+
+    dbRecent := db.MongoClient.Database("nubo_recent")
+
+    // Récupère toutes les collections de la DB
+    collections, err := dbRecent.ListCollectionNames(ctx, bson.D{})
+    if err != nil {
+        log.Printf("❌ Erreur récupération collections Mongo: %v", err)
+        return
+    }
+
+    // Date limite : 30 jours
+    threshold := time.Now().AddDate(0, 0, -30)
+
+    for _, collName := range collections {
+        coll := dbRecent.Collection(collName)
+
+        // Supprime les documents dont last_use < threshold
+        filter := bson.M{
+            "last_use": bson.M{
+                "$lt": threshold,
+            },
+        }
+
+        res, err := coll.DeleteMany(ctx, filter)
+        if err != nil {
+            log.Printf("❌ Erreur suppression dans %s: %v", collName, err)
+            continue
+        }
+
+        log.Printf("🧹 Nettoyage Mongo [%s] → %d documents supprimés", collName, res.DeletedCount)
+    }
+}
+
+func CleanRedis() {
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+
+    err := cache.Rdb.FlushDB(ctx).Err()
+    if err != nil {
+        log.Printf("❌ Erreur flush Redis: %v", err)
+        return
+    }
+    log.Println("🧹 Redis vidé avec succès ✅")
+}
+
+func InitData() {
+    log.Println("=== Initialisation: Nettoyage Mongo + Redis ===")
+    CleanMongo()
+    CleanRedis()
+    log.Println("=== Initialisation terminée ✅ ===")
+}
+```
+```go
+// Nettoyage au démarrage
+    initdata.InitData()
+```
+
+---
+
+### 2. Sécurisation par JWT 
+- mise en place d'une expiration dans le token
+- mise en place de la connexion du JWT_SCRET dans celui dans `.env`
+```go 
+package api
+
+import (
+	"fmt"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
+)
+
+func JWTMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tokenString := c.GetHeader("Authorization")
+		if tokenString == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header manquant"})
+			return
+		}
+
+		// Retirer "Bearer " si présent
+		if len(tokenString) > 7 && tokenString[:7] == "Bearer " {
+			tokenString = tokenString[7:]
+		}
+
+		keyFunc := func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("algorithme JWT invalide")
+			}
+			return []byte(os.Getenv("JWT_SECRET")), nil
+		}
+
+		token, err := jwt.Parse(tokenString, keyFunc)
+		if err != nil || !token.Valid {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token invalide"})
+			return
+		}
+
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok || !token.Valid {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Claims invalides"})
+			return
+		}
+
+		// Vérification expiration
+		if exp, ok := claims["exp"].(float64); ok {
+			if time.Now().After(time.Unix(int64(exp), 0)) {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token expiré"})
+				return
+			}
+		}
+
+		// Mettre l’ID utilisateur dans le contexte
+		c.Set("userID", claims["sub"])
+
+		c.Next()
+	}
+}
+```
+
+---
+
+### 3. Dynamisation de la gestion de la RAM pour REDIS et création de type de noeud
+- type **flux** : permet d'envoyer des données à d'autre WS, durée de vie des données 1s
+- type **cache** : permet de stocker des données pour soulager MongoDB et PostgreSQL ainsi que pour augmenter la vitesse, durée de vie des données infini ou presque
+- gestion intélligente de la RAM avec une marge laissé vide à ne pas dépasser sinon le programme purge les données les moins utilisé de REDIS, ce sont bien les données qui sont purger et pas les noeuds entier
+```go
+// internal/cache/strategy_redis.go
+package cache
+
+import (
+	"context"
+	"log"
+	"runtime"
+	"sync"
+	"time"
+
+	"github.com/go-redis/redis/v8"
+)
+
+// ---------------- Types ----------------
+
+// Type d’un noeud Redis
+type NodeType int
+
+const (
+	NodeFlux NodeType = iota
+	NodeCache
+)
+
+// Un élément dans la LRU globale
+type CacheElement struct {
+	NodeName  string // nom du noeud (ex: "messages")
+	ElementID string // ex: "392"
+	prev      *CacheElement
+	next      *CacheElement
+}
+
+// LRU globale pour les éléments de type cache
+type LRUCache struct {
+	elements map[string]*CacheElement // clé = nodeName:elementID
+	head     *CacheElement
+	tail     *CacheElement
+	mu       sync.Mutex
+	rdb      *redis.Client
+}
+
+// ---------------- Initialisation ----------------
+
+// NewLRUCache initialise un cache LRU global
+func NewLRUCache(rdb *redis.Client) *LRUCache {
+	return &LRUCache{
+		elements: make(map[string]*CacheElement),
+		rdb:      rdb,
+	}
+}
+
+// ---------------- Gestion usage ----------------
+
+// MarkUsed marque un élément comme utilisé (move to tail)
+func (lru *LRUCache) MarkUsed(nodeName, elementID string) {
+	lru.mu.Lock()
+	defer lru.mu.Unlock()
+
+	key := nodeName + ":" + elementID
+	elem, exists := lru.elements[key]
+	if exists {
+		lru.moveToTail(elem)
+		return
+	}
+
+	elem = &CacheElement{NodeName: nodeName, ElementID: elementID}
+	lru.elements[key] = elem
+	lru.append(elem)
+}
+
+func (lru *LRUCache) moveToTail(elem *CacheElement) {
+	if elem == lru.tail {
+		return
+	}
+	lru.remove(elem)
+	lru.append(elem)
+}
+
+func (lru *LRUCache) append(elem *CacheElement) {
+	if lru.tail != nil {
+		lru.tail.next = elem
+		elem.prev = lru.tail
+		elem.next = nil
+		lru.tail = elem
+	} else {
+		lru.head = elem
+		lru.tail = elem
+	}
+}
+
+func (lru *LRUCache) remove(elem *CacheElement) {
+	if elem.prev != nil {
+		elem.prev.next = elem.next
+	} else {
+		lru.head = elem.next
+	}
+	if elem.next != nil {
+		elem.next.prev = elem.prev
+	} else {
+		lru.tail = elem.prev
+	}
+	elem.prev = nil
+	elem.next = nil
+}
+
+func (lru *LRUCache) purgeOldest() {
+	if lru.head == nil {
+		return
+	}
+	old := lru.head
+	log.Printf("Purging Redis cache element (LRU): node=%s, id=%s\n", old.NodeName, old.ElementID)
+	lru.remove(old)
+	delete(lru.elements, old.NodeName+":"+old.ElementID)
+
+	// suppression dans Redis
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	key := "cache:" + old.NodeName
+	if err := lru.rdb.HDel(ctx, key, old.ElementID).Err(); err != nil {
+		log.Printf("Erreur suppression Redis: %v\n", err)
+	}
+}
+
+// ---------------- Mémoire ----------------
+
+// StartMemoryWatcher surveille la RAM
+func (lru *LRUCache) StartMemoryWatcher(maxRAM uint64, marge uint64, interval time.Duration) {
+	go func() {
+		for {
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+			used := m.Alloc
+			if maxRAM == 0 {
+				maxRAM = getTotalRAM()
+			}
+			if used > maxRAM-marge {
+				log.Printf("RAM utilisée=%d, dépassement seuil=%d, purge LRU...\n", used, maxRAM-marge)
+				lru.mu.Lock()
+				lru.purgeOldest()
+				lru.mu.Unlock()
+			}
+			time.Sleep(interval)
+		}
+	}()
+}
+
+func getTotalRAM() uint64 {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return m.Sys
+}
+
+// ---------------- Flux ----------------
+
+// DefaultFluxTTL est le temps de vie par défaut d'un message de flux
+const DefaultFluxTTL = 1 * time.Second
+
+// PushFluxWithTTL publie un message sur un flux et crée un TTL individuel
+func PushFluxWithTTL(rdb *redis.Client, nodeName string, messageID string, message []byte, ttl time.Duration) error {
+	ctx := context.Background()
+
+	// Stocke le message temporairement avec TTL individuel
+	key := "fluxmsg:" + messageID
+	if err := rdb.Set(ctx, key, message, ttl).Err(); err != nil {
+		return err
+	}
+
+	// Publie sur le canal pour diffusion immédiate
+	channel := "flux:" + nodeName
+	if err := rdb.Publish(ctx, channel, messageID).Err(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// SubscribeFlux s'abonne à un flux et renvoie les messages via un channel Go
+func SubscribeFlux(rdb *redis.Client, nodeName string) (<-chan []byte, context.CancelFunc) {
+	channel := "flux:" + nodeName
+	ctx, cancel := context.WithCancel(context.Background())
+
+	pubsub := rdb.Subscribe(ctx, channel)
+	ch := make(chan []byte, 100) // buffer côté Go
+
+	go func() {
+		defer pubsub.Close()
+		for msg := range pubsub.Channel() {
+			messageID := msg.Payload
+			// Récupère le message stocké temporairement
+			data, err := rdb.Get(ctx, "fluxmsg:"+messageID).Bytes()
+			if err == redis.Nil {
+				continue // TTL déjà expiré
+			} else if err != nil {
+				log.Println("Erreur récupération flux message:", err)
+				continue
+			}
+			ch <- data
+		}
+		close(ch)
+	}()
+
+	return ch, cancel
+}
+
+// ---------------- Cache ----------------
+
+// SetCache ajoute un élément au cache
+func (lru *LRUCache) SetCache(ctx context.Context, nodeName, elementID string, value []byte) error {
+	key := "cache:" + nodeName
+	if err := lru.rdb.HSet(ctx, key, elementID, value).Err(); err != nil {
+		return err
+	}
+	lru.MarkUsed(nodeName, elementID)
+	return nil
+}
+
+// GetCache lit un élément du cache
+func (lru *LRUCache) GetCache(ctx context.Context, nodeName, elementID string) ([]byte, error) {
+	key := "cache:" + nodeName
+	val, err := lru.rdb.HGet(ctx, key, elementID).Bytes()
+	if err == redis.Nil {
+		return nil, nil
+	}
+	if err == nil {
+		lru.MarkUsed(nodeName, elementID)
+	}
+	return val, err
+}
+
+// ---------------- Global ----------------
+
+// GlobalStrategy est l’instance globale de stratégie LRU utilisée par toute l’app
+var GlobalStrategy *LRUCache
+```
+et dapatation du nouveau système dans le `hub.go` :
+```go 
+package websocket
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"log"
+	"sync"
+
+	"github.com/QuentinRegnier/nubo-backend/internal/cache"
+	"github.com/gorilla/websocket"
+)
+
+// generateMessageID crée un ID unique pour chaque message
+func generateMessageID() string {
+	b := make([]byte, 8) // 8 octets → 16 caractères hex
+	if _, err := rand.Read(b); err != nil {
+		return "msg-fallback" // fallback si erreur improbable
+	}
+	return hex.EncodeToString(b)
+}
+
+// ---------------- Clients ----------------
+
+type Client struct {
+	conn *websocket.Conn
+	send chan []byte
+}
+
+// ---------------- Hub ----------------
+
+type Hub struct {
+	clients    map[*Client]bool
+	register   chan *Client
+	unregister chan *Client
+	broadcast  chan []byte
+	mu         sync.Mutex
+
+	channel string
+}
+
+// NewHub crée un nouveau Hub et lance l'écoute du flux Redis
+func NewHub() *Hub {
+	h := &Hub{
+		clients:    make(map[*Client]bool),
+		register:   make(chan *Client),
+		unregister: make(chan *Client),
+		broadcast:  make(chan []byte),
+		channel:    "nubo-websocket",
+	}
+
+	// Utilise la fonction SubscribeFlux pour recevoir les messages
+	go h.listenFlux()
+	return h
+}
+
+// listenFlux s'abonne au flux Redis et distribue les messages aux clients
+func (h *Hub) listenFlux() {
+	ch, cancel := cache.SubscribeFlux(cache.Rdb, h.channel)
+	defer cancel()
+
+	for msg := range ch {
+		h.mu.Lock()
+		for client := range h.clients {
+			select {
+			case client.send <- msg:
+			default:
+				close(client.send)
+				delete(h.clients, client)
+			}
+		}
+		h.mu.Unlock()
+	}
+}
+
+// Run démarre la boucle principale du hub pour gérer l'inscription/désinscription et la diffusion
+func (h *Hub) Run() {
+	for {
+		select {
+		case client := <-h.register:
+			h.mu.Lock()
+			h.clients[client] = true
+			h.mu.Unlock()
+			log.Println("Client registered")
+
+		case client := <-h.unregister:
+			h.mu.Lock()
+			if _, ok := h.clients[client]; ok {
+				delete(h.clients, client)
+				close(client.send)
+				log.Println("Client unregistered")
+			}
+			h.mu.Unlock()
+
+		case message := <-h.broadcast:
+			// Publie le message sur le flux Redis avec TTL individuel (ex: 1s)
+			messageID := generateMessageID() // fonction pour créer un ID unique
+			err := cache.PushFluxWithTTL(cache.Rdb, h.channel, messageID, message, cache.DefaultFluxTTL)
+			if err != nil {
+				log.Println("Erreur PushFluxWithTTL:", err)
+			}
+		}
+	}
+}
+
+// ---------------- Clients WS ----------------
+
+// ReadPump lit les messages d’un client et les envoie au hub
+func (c *Client) ReadPump(hub *Hub) {
+	defer func() {
+		hub.unregister <- c
+		c.conn.Close()
+	}()
+
+	for {
+		_, msg, err := c.conn.ReadMessage()
+		if err != nil {
+			log.Println("Read error:", err)
+			break
+		}
+
+		// TODO: sauvegarder msg en base (Postgres/Mongo)
+
+		// Envoie le message aux autres clients via le hub
+		hub.broadcast <- msg
+	}
+}
+
+// WritePump envoie les messages du hub au client
+func (c *Client) WritePump() {
+	for msg := range c.send {
+		err := c.conn.WriteMessage(websocket.TextMessage, msg)
+		if err != nil {
+			log.Println("Write error:", err)
+			break
+		}
+	}
+	c.conn.Close()
+}
+```
+ajout également de la déclaration de l'observation de la RAM dans `main.go` :
+```go
+// ⚡ Initialiser la stratégie Redis
+<cache.GlobalStrategy = cache.NewLRUCache(cache.Rdb)
+
+// ⚡ Démarrer le watcher mémoire
+// maxRAM = 0 => autodétection
+// marge = 200 Mo de marge de sécurité
+// interval = toutes les 2 secondes
+cache.GlobalStrategy.StartMemoryWatcher(0, 200*1024*1024, 2*time.Second)
+```

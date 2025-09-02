@@ -1,9 +1,22 @@
 services:
-  api:
+  api1:
     build: .
-    container_name: nubo_api
+    container_name: nubo_api1
     ports:
       - "8080:8080"
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - postgres
+      - mongo
+    restart: always
+
+  api2:
+    build: .
+    container_name: nubo_api2
+    ports:
+      - "8081:8080" # même port interne, mais exposé sur un port différent
     env_file:
       - .env
     depends_on:
@@ -30,7 +43,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./postgres-data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
 
   pgadmin:
     image: dpage/pgadmin4

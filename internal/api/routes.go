@@ -2,6 +2,8 @@ package api
 
 import (
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -19,9 +21,14 @@ func SetupRoutes(r *gin.Engine) {
 	// WebSocket
 	r.GET("/token", func(c *gin.Context) {
 		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-			"sub": "user123", // ID utilisateur
+			"sub": "user123",
+			"exp": time.Now().Add(time.Hour * 24).Unix(), // expire dans 24h
 		})
-		tokenString, _ := token.SignedString([]byte("ta-cle-secrete"))
+		secret := os.Getenv("JWT_SECRET")
+		if secret == "" {
+			panic("JWT_SECRET manquant dans .env")
+		}
+		tokenString, _ := token.SignedString([]byte(secret))
 		c.JSON(200, gin.H{"token": tokenString})
 	})
 	r.GET("/ws", JWTMiddleware(), websocket.WSHandler)
