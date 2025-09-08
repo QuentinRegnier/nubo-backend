@@ -26,6 +26,9 @@ func main() {
 	// Initialiser Redis
 	cache.InitRedis()
 
+	// Initialiser la structure Redis (caches)
+	cache.InitCacheDatabase()
+
 	// ⚡ Initialiser la stratégie Redis
 	cache.GlobalStrategy = cache.NewLRUCache(cache.Rdb)
 

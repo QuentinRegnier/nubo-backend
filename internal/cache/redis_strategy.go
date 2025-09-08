@@ -111,12 +111,15 @@ func (lru *LRUCache) purgeOldest() {
 	lru.remove(old)
 	delete(lru.elements, old.NodeName+":"+old.ElementID)
 
-	// suppression dans Redis
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	key := "cache:" + old.NodeName
-	if err := lru.rdb.HDel(ctx, key, old.ElementID).Err(); err != nil {
-		log.Printf("Erreur suppression Redis: %v\n", err)
+	// suppression via Collection.Delete
+	collection := &Collection{
+		Name:  old.NodeName,
+		Redis: lru.rdb,
+		LRU:   lru,
+	}
+	filter := map[string]interface{}{"id": old.ElementID}
+	if err := collection.Delete(filter); err != nil {
+		log.Printf("Erreur suppression via Collection.Delete: %v\n", err)
 	}
 }
 
@@ -199,31 +202,6 @@ func SubscribeFlux(rdb *redis.Client, nodeName string) (<-chan []byte, context.C
 	}()
 
 	return ch, cancel
-}
-
-// ---------------- Cache ----------------
-
-// SetCache ajoute un élément au cache
-func (lru *LRUCache) SetCache(ctx context.Context, nodeName, elementID string, value []byte) error {
-	key := "cache:" + nodeName
-	if err := lru.rdb.HSet(ctx, key, elementID, value).Err(); err != nil {
-		return err
-	}
-	lru.MarkUsed(nodeName, elementID)
-	return nil
-}
-
-// GetCache lit un élément du cache
-func (lru *LRUCache) GetCache(ctx context.Context, nodeName, elementID string) ([]byte, error) {
-	key := "cache:" + nodeName
-	val, err := lru.rdb.HGet(ctx, key, elementID).Bytes()
-	if err == redis.Nil {
-		return nil, nil
-	}
-	if err == nil {
-		lru.MarkUsed(nodeName, elementID)
-	}
-	return val, err
 }
 
 // ---------------- Global ----------------

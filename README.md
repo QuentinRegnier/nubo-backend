@@ -1585,7 +1585,7 @@ Go cherche un message/post :
 ### 3. Schéma conceptuel clair du flux multi-couche
 ```pgsql
                         ┌───────────────────────┐
-                        │       Utilisateur      │
+                        │       Utilisateur     │
                         │   (Mobile / Web)      │
                         └───────────┬───────────┘
                                     │
@@ -2183,4 +2183,717 @@ ajout également de la déclaration de l'observation de la RAM dans `main.go` :
 // marge = 200 Mo de marge de sécurité
 // interval = toutes les 2 secondes
 cache.GlobalStrategy.StartMemoryWatcher(0, 200*1024*1024, 2*time.Second)
+```
+
+---
+
+### 4. Dupliquer le WS pour faire des test de REDIS plus simplement :
+```yaml
+api1:
+  build: .
+  container_name: nubo_api1
+  ports:
+    - "8080:8080"
+  env_file:
+    - .env
+  depends_on:
+    - redis
+    - postgres
+    - mongo
+  restart: always
+
+api2:
+  build: .
+  container_name: nubo_api2
+  ports:
+    - "8081:8080" # même port interne, mais exposé sur un port différent
+  env_file:
+    - .env
+  depends_on:
+    - redis
+    - postgres
+    - mongo
+  restart: always
+```
+
+---
+
+### 5.  Gérer et nouvelle architechture des caches + créations des collections
+1. `redis_collections.go` :
+Création d'un shéma pour cahcun des base sql :
+```go
+// MessagesCache
+var MessagesSchema = map[string]reflect.Kind{
+	"id":              reflect.String,
+	"conversation_id": reflect.String,
+	"sender_id":       reflect.String,
+	"message_type":    reflect.Int,
+	"state":           reflect.Int,
+	"content":         reflect.String,
+	"attachments":     reflect.Map, // JSONB
+	"created_at":      reflect.String,
+}
+```
+2. `redis_caches.go` :
+- Création d'un système de collections qui servira à partir des shemas à valider la structure des données envoyer à la fonction Set mais aussi intéragir avec la collections dans le canal cache de REDIS de cette collections.
+```go
+// ---------------- Collection et schéma ----------------
+
+type Collection struct {
+	Name       string                  // ex: "messages"
+	Schema     map[string]reflect.Kind // ex: {"id": reflect.Int, "content": reflect.String}
+	Redis      *redis.Client
+	LRU        *LRUCache     // pour mettre à jour la LRU si cache
+	Expiration time.Duration // TTL par défaut pour chaque élément, facultatif
+}
+
+// NewCollection crée une collection avec un schéma et LRU optionnel
+func NewCollection(name string, schema map[string]reflect.Kind, rdb *redis.Client, lru *LRUCache) *Collection {
+	_, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Initialiser les indexs pour chaque champ du schéma
+	for field := range schema {
+		if field == "id" {
+			continue
+		}
+		// on ne crée pas les valeurs ici (elles seront ajoutées au fur et à mesure)
+		// mais on garde la structure logique
+		log.Printf("Index initialisé pour collection=%s, champ=%s", name, field)
+	}
+
+	return &Collection{
+		Name:   name,
+		Schema: schema,
+		Redis:  rdb,
+		LRU:    lru,
+	}
+}
+
+// ---------------- Validation ----------------
+
+func (c *Collection) validate(obj map[string]any) error {
+	for field, kind := range c.Schema {
+		val, ok := obj[field]
+		if !ok {
+			return fmt.Errorf("champ manquant: %s", field)
+		}
+		if reflect.TypeOf(val).Kind() != kind {
+			return fmt.Errorf("champ %s doit être de type %s", field, kind.String())
+		}
+	}
+	return nil
+}
+```
+- Cette fonction `NewCollection` introduit surtout une nouvelle façon de penser et d'organiser les données dans le cache :
+Ancienne structure cache "messages":
+```markdown
+┌─────────────────────────────┐
+│         Redis Cache         │
+│        messages (hash)      │
+│                             │
+│  id → {full message object} │
+│  392 → {id:392, content...} │
+│  77  → {id:77, content...}  │
+└──────────────┬──────────────┘
+               │
+               ▼
+         Collection LRU
+         ┌───────────┐
+         │ id usage  │
+         │ 392, 77   │
+         └───────────┘
+Notes:
+- Recherche par id uniquement.
+- Pour trouver par conversation_id ou sender_id, il faut parcourir tous les objets.
+- Peu d’index → lente recherche sur critères.
+
+-----------------------------------------------------
+
+Nouvelle structure cache "messages":
+┌─────────────────────────────────────────┐                       ┌──────────────────────────┐
+│               Redis Cache         	  │                       │  Index Redis par champ   │
+│             messages (hash)             │                       │                          │
+│                                         │                       │ state:3 → {392}          │
+│  392 → {id:392, conversation_id:49, ...}│           +           │ conv_id:49 → {392, 77}   │
+│  77  → {id:77, conversation_id:49, ...} │                       │ conv_id:50 → {283}       │
+│  283 → {id:283, conversation_id:50, ...}│                       │ sender_id:462 → {392}    │
+└─────────────────────┬───────────────────┘                       └──────────────────────────┘      
+                      │
+                      ▼
+               Collection LRU
+              ┌───────────────────┐
+              │ id usage per node │
+              │ 392 → tail        │
+              │ 77  → middle      │
+              │ 283 → head        │
+              └───────────────────┘
+Notes:
+- Recherche rapide par n’importe quel champ indexé.
+- Les objets restent dans le hash principal, seul l’index est consulté.
+- LRU gère la mémoire en supprimant uniquement les éléments les moins utilisés.
+- Plus scalable pour filtres complexes comme conversation_id, state, sender_id, etc.
+```
+- Création de la méthode `Set` qui permet d'ajouter un élément dans un collection à condition qu'il respecte la structure de la collection à laquelle il compte appartenir. De plus on ajoute cette élément avec son Id dans la liste LRU d'usage des données de façon à avoir un système de suppréssion d'élément dans redis cohérent et continue tous au long de nos interraction avec redis.
+```go
+// ---------------- Set ----------------
+
+// Set ajoute un élément dans la collection
+func (c *Collection) Set(obj map[string]any) error {
+	if err := c.validate(obj); err != nil {
+		log.Println("Validation échouée:", err)
+		return err
+	}
+
+	id := fmt.Sprintf("%v", obj["id"])
+	objKey := "cache:" + c.Name + ":" + id
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Sauvegarde complète dans Redis Hash
+	if err := c.Redis.HMSet(ctx, objKey, obj).Err(); err != nil {
+		return err
+	}
+
+	// Mettre à jour les indexs
+	for field := range c.Schema {
+		if field == "id" {
+			continue
+		}
+		if val, ok := obj[field]; ok {
+			valStr := fmt.Sprintf("%v", val)
+			idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr)
+			if err := c.Redis.SAdd(ctx, idxKey, id).Err(); err != nil {
+				log.Printf("Erreur mise à jour index %s: %v", idxKey, err)
+			}
+		}
+	}
+
+	// Mise à jour LRU
+	if c.LRU != nil {
+		c.LRU.MarkUsed(c.Name, id)
+	}
+
+	return nil
+}
+```
+Et elle s'utilise ainsi :
+```go
+// Ajouter un message
+messages := NewCollection("messages", schemaMessages, rdb, lru)
+
+messages.Set(map[string]interface{}{
+	"id": 382, "conversation_id": 49, "sender_id": 462,
+	"message_type": 0, "state": 3, "content": "my message",
+	"attachements": nil, "create_at": "12:34-10-03-2007",
+})
+```
+- Création de la méthode `Get` qui consite en la recherche d'un élément dans la collection redis, tous l'ambition de cette fonction c'est qu'elle peut accepter un codage de filtre grace à la fonction `matchFilter` qui nous permet de décrypter le codage qui se base sur un MongoDB-like afin de simplifier l'encodage. La fonction bénéficie aussi de la nouvelle structure du cache redis avec l'ajout d'index lui permettant de chercher baucoup plus vite les précieux id.
+```go
+// ---------------- Get ----------------
+
+// Get retourne tous les éléments correspondant au filtre (MongoDB-like)
+func (c *Collection) Get(filter map[string]any) ([]map[string]any, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	var candidateIDs []string
+
+	// 🔹 Étape 1 : Réduire l’espace de recherche avec les index Redis
+	indexKeys := []string{}
+	for field, condition := range filter {
+		subCond, ok := condition.(map[string]any)
+		if !ok {
+			// équivalent $eq direct
+			valStr := fmt.Sprintf("%v", condition)
+			idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr)
+			indexKeys = append(indexKeys, idxKey)
+			continue
+		}
+
+		for op, val := range subCond {
+			switch op {
+			case "$eq":
+				valStr := fmt.Sprintf("%v", val)
+				idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr)
+				indexKeys = append(indexKeys, idxKey)
+
+			case "$in":
+				arr, ok := val.([]any)
+				if ok {
+					orKeys := []string{}
+					for _, a := range arr {
+						valStr := fmt.Sprintf("%v", a)
+						idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr)
+						orKeys = append(orKeys, idxKey)
+					}
+					// on mettra ça en union après
+					if len(orKeys) > 0 {
+						members, err := c.Redis.SUnion(ctx, orKeys...).Result()
+						if err == nil {
+							candidateIDs = append(candidateIDs, members...)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Si on a plusieurs indexKeys (issus de $eq), on fait une intersection
+	if len(indexKeys) == 1 {
+		ids, err := c.Redis.SMembers(ctx, indexKeys[0]).Result()
+		if err == nil {
+			candidateIDs = append(candidateIDs, ids...)
+		}
+	} else if len(indexKeys) > 1 {
+		ids, err := c.Redis.SInter(ctx, indexKeys...).Result()
+		if err == nil {
+			candidateIDs = append(candidateIDs, ids...)
+		}
+	}
+
+	// Si aucun index n’a filtré → on doit scanner tout
+	if len(candidateIDs) == 0 {
+		pattern := fmt.Sprintf("cache:%s:*", c.Name)
+		keys, scanErr := c.Redis.Keys(ctx, pattern).Result()
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		for _, k := range keys {
+			parts := strings.Split(k, ":")
+			candidateIDs = append(candidateIDs, parts[len(parts)-1])
+		}
+	}
+
+	// 🔹 Étape 2 : Charger les objets et appliquer matchFilter
+	results := []map[string]any{}
+	for _, id := range candidateIDs {
+		objKey := "cache:" + c.Name + ":" + id
+		data, err := c.Redis.HGetAll(ctx, objKey).Result()
+		if err != nil || len(data) == 0 {
+			continue
+		}
+
+		obj := make(map[string]any)
+		for k, v := range data {
+			obj[k] = v
+		}
+
+		// Vérification complète via matchFilter
+		match, err := matchFilter(obj, filter)
+		if err != nil {
+			continue
+		}
+		if match {
+			results = append(results, obj)
+			if c.LRU != nil {
+				c.LRU.MarkUsed(c.Name, id)
+			}
+		}
+	}
+
+	return results, nil
+}
+```
+Et elle s'utilise ainsi :
+```go
+// Rechercher tous les éléments ayant conversation_id == 49
+messages := NewCollection("messages", schemaMessages, rdb, lru)
+
+// Rechercher
+results, _ := messages.Get(map[string]interface{}{
+	"conversation_id": map[string]interface{}{"$eq": 49},
+})
+```
+- La fonction `matchFilter` a pour objectif de traduire une instruction de filtre json en un véritable filtre utilisable dans la fonction `Get` et `Delete`.
+Exemple :
+```json
+{
+  "$and": [
+    { "status": { "$eq": "active" } },               // égal à "active"
+    { "age": { "$gt": 18 } },                        // supérieur à 18
+    { "score": { "$gte": 50 } },                     // supérieur ou égal à 50
+    { "level": { "$lt": 10 } },                      // inférieur à 10
+    { "rank": { "$lte": 5 } },                       // inférieur ou égal à 5
+    { "category": { "$ne": "banned" } },            // différent de "banned"
+    { "tags": { "$in": ["go", "json"] } },          // contient au moins "go" ou "json"
+    { "priority": { "$nin": [0, 1] } },             // ne contient pas 0 ou 1
+    { 
+      "$or": [                                       // au moins une condition vraie
+        { "vip": true },
+        { "score": { "$gt": 90 } }
+      ]
+    },
+    {
+      "$not": { "region": { "$eq": "EU" } }         // region ≠ EU
+    },
+    {
+      "$nor": [                                      // aucune de ces conditions
+        { "blocked": true },
+        { "deleted": true }
+      ]
+    }
+  ]
+}
+```
+```go
+// matchFilter applique le filtre type MongoDB sur un objet
+func matchFilter(obj map[string]any, filter map[string]any) (bool, error) {
+	for k, v := range filter {
+		if strings.HasPrefix(k, "$") {
+			switch k {
+			case "$and":
+				arr, ok := v.([]any)
+				if !ok {
+					return false, fmt.Errorf("$and doit être un tableau")
+				}
+				for _, cond := range arr {
+					subFilter, ok := cond.(map[string]any)
+					if !ok {
+						return false, fmt.Errorf("condition $and invalide")
+					}
+					match, err := matchFilter(obj, subFilter)
+					if err != nil || !match {
+						return false, err
+					}
+				}
+				return true, nil
+			case "$or":
+				arr, ok := v.([]any)
+				if !ok {
+					return false, fmt.Errorf("$or doit être un tableau")
+				}
+				for _, cond := range arr {
+					subFilter, ok := cond.(map[string]any)
+					if !ok {
+						return false, fmt.Errorf("condition $or invalide")
+					}
+					match, err := matchFilter(obj, subFilter)
+					if err == nil && match {
+						return true, nil
+					}
+				}
+				return false, nil
+			case "$not":
+				subFilter, ok := v.(map[string]any)
+				if !ok {
+					return false, fmt.Errorf("$not doit être un objet")
+				}
+				match, err := matchFilter(obj, subFilter)
+				return !match, err
+			case "$nor":
+				arr, ok := v.([]any)
+				if !ok {
+					return false, fmt.Errorf("$nor doit être un tableau")
+				}
+				for _, cond := range arr {
+					subFilter, ok := cond.(map[string]any)
+					if !ok {
+						return false, fmt.Errorf("condition $nor invalide")
+					}
+					match, err := matchFilter(obj, subFilter)
+					if err == nil && match {
+						return false, nil
+					}
+				}
+				return true, nil
+			}
+		} else {
+			// opérateurs de comparaison
+			subCond, ok := v.(map[string]any)
+			if !ok {
+				// équivalent $eq par défaut
+				if obj[k] != v {
+					return false, nil
+				}
+				continue
+			}
+			for op, val := range subCond {
+				switch op {
+				case "$eq":
+					if obj[k] != val {
+						return false, nil
+					}
+				case "$ne":
+					if obj[k] == val {
+						return false, nil
+					}
+				case "$gt":
+					if !compareNumbers(obj[k], val, ">") {
+						return false, nil
+					}
+				case "$gte":
+					if !compareNumbers(obj[k], val, ">=") {
+						return false, nil
+					}
+				case "$lt":
+					if !compareNumbers(obj[k], val, "<") {
+						return false, nil
+					}
+				case "$lte":
+					if !compareNumbers(obj[k], val, "<=") {
+						return false, nil
+					}
+				case "$in":
+					arr, ok := val.([]any)
+					if !ok {
+						return false, nil
+					}
+					found := false
+					for _, a := range arr {
+						if a == obj[k] {
+							found = true
+							break
+						}
+					}
+					if !found {
+						return false, nil
+					}
+				case "$nin":
+					arr, ok := val.([]any)
+					if !ok {
+						return false, nil
+					}
+					for _, a := range arr {
+						if a == obj[k] {
+							return false, nil
+						}
+					}
+				}
+			}
+		}
+	}
+	return true, nil
+}
+```
+- Création de la méthode `Delete` permettant de supprimer un élément d'une collections redis, pour cela elle utilise la même technologie de filtrage que dans `Get`. La fonction a un défis qui est de supprimer également toutes les occurences de l'id dans l'index.
+```go
+// Delete supprime les éléments correspondant au filtre et nettoie les index vides
+func (c *Collection) Delete(filter map[string]any) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Récupérer les objets via Get (filtrage complet)
+	objs, err := c.Get(filter)
+	if err != nil {
+		return err
+	}
+
+	pipe := c.Redis.TxPipeline()
+	// Stocker les paires idxKey -> id pour vérifier après
+	type idxCheck struct {
+		idxKey string
+	}
+	var checks []idxCheck
+
+	for _, obj := range objs {
+		id := fmt.Sprintf("%v", obj["id"])
+		objKey := "cache:" + c.Name + ":" + id
+
+		// Supprimer le hash principal
+		pipe.Del(ctx, objKey)
+
+		// Supprimer l’ID de tous les indexs
+		for field := range c.Schema {
+			if field == "id" {
+				continue
+			}
+			if val, ok := obj[field]; ok {
+				valStr := fmt.Sprintf("%v", val)
+				idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr)
+				pipe.SRem(ctx, idxKey, id)
+				checks = append(checks, idxCheck{idxKey: idxKey})
+			}
+		}
+
+		// Nettoyer la LRU
+		if c.LRU != nil {
+			c.LRU.mu.Lock()
+			delete(c.LRU.elements, c.Name+":"+id)
+			c.LRU.mu.Unlock()
+		}
+	}
+
+	// Exécuter le pipeline
+	if _, err := pipe.Exec(ctx); err != nil {
+		log.Printf("Erreur exécution pipeline delete: %v", err)
+		return err
+	}
+
+	// Vérifier et supprimer les index vides
+	for _, chk := range checks {
+		count, err := c.Redis.SCard(ctx, chk.idxKey).Result()
+		if err != nil {
+			log.Printf("Erreur lecture index %s: %v", chk.idxKey, err)
+			continue
+		}
+		if count == 0 {
+			if err := c.Redis.Del(ctx, chk.idxKey).Err(); err != nil {
+				log.Printf("Erreur suppression index vide %s: %v", chk.idxKey, err)
+			} else {
+				log.Printf("Index vide supprimé: %s", chk.idxKey)
+			}
+		}
+	}
+
+	return nil
+}
+```
+Et elle s'utilise ainsi :
+```go
+// Supprimer tous les éléments ayant conversation_id == 49
+messages := NewCollection("messages", schemaMessages, rdb, lru)
+
+// Supprimer
+messages.Delete(map[string]interface{}{
+	"conversation_id": map[string]interface{}{"$eq": 49},
+})
+```
+- Création de la méthode `Modify` dans le même style que `Delete` ou `Get` avec des filtres mais on ajoute également un catégorie update qui permet de préciser ce que l'on veut changer. Il ya aussi un gros enjeux sur les indexs avec cette fonctions car elle doit tous les actualisers. Comme elle doit actualiser aussi la liste LRU comme d'habitude.
+```go
+// Modify met à jour les éléments correspondant au filtre avec les nouvelles valeurs fournies dans update
+func (c *Collection) Modify(filter map[string]interface{}, update map[string]interface{}) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Récupérer les objets correspondant au filtre
+	objs, err := c.Get(filter)
+	if err != nil {
+		return err
+	}
+
+	pipe := c.Redis.TxPipeline()
+
+	for _, obj := range objs {
+		id := fmt.Sprintf("%v", obj["id"])
+		objKey := "cache:" + c.Name + ":" + id
+
+		// Mettre à jour l'objet avec les nouvelles valeurs
+		for field, val := range update {
+			obj[field] = val
+		}
+
+		// Sérialiser et stocker dans Redis
+		data, _ := json.Marshal(obj)
+		pipe.Set(ctx, objKey, data, 0)
+
+		// Mettre à jour la LRU si nécessaire
+		if c.LRU != nil {
+			c.LRU.MarkUsed(c.Name, id)
+		}
+
+		// Mettre à jour les index
+		for field := range c.Schema {
+			if field == "id" {
+				continue
+			}
+			// Supprimer l'ancien index si la valeur a changé
+			if oldVal, ok := obj[field]; ok {
+				oldValStr := fmt.Sprintf("%v", oldVal)
+				idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, oldValStr)
+				pipe.SAdd(ctx, idxKey, id) // ajouter au nouvel index (SRem est déjà géré dans Delete si on le souhaite)
+			}
+		}
+	}
+
+	_, err = pipe.Exec(ctx)
+	if err != nil {
+		log.Printf("Erreur execution pipeline Modify: %v", err)
+		return err
+	}
+
+	return nil
+}
+```
+Et elle s'utilise ainsi :
+```go
+// Modifier tous les messages de conversation 49 pour changer le state à 5
+messages := NewCollection("messages", schemaMessages, rdb, lru)
+
+filter := map[string]interface{}{
+	"conversation_id": map[string]interface{}{"$eq": 49},
+}
+
+update := map[string]interface{}{
+	"state": 5,
+}
+
+if err := cacheName.Modify(filter, update); err != nil {
+	log.Println("Erreur modification:", err)
+}
+```
+- Création de la fonction `InitCacheDatabase` qui consiste à lancer la création des collections en cache redis. Cette fonction est utilisé dès le main. Les variables globale dont ensuite alimenté pour etre le stockage des paramètres de leur collection qui est associé.
+```go
+// ---------------- Initialisation ----------------
+// declarations globales
+var (
+	Users               *Collection
+	UserSettings        *Collection
+	Sessions            *Collection
+	Relations           *Collection
+	Posts               *Collection
+	Comments            *Collection
+	Likes               *Collection
+	Media               *Collection
+	ConversationsMeta   *Collection
+	ConversationMembers *Collection
+	Messages            *Collection
+)
+
+// InitCacheDatabase initialise la structure logique de Redis pour les caches
+func InitCacheDatabase() {
+	// Initialiser les collections
+
+	schemaUsers := UsersSchema
+	schemaUserSettings := UserSettingsSchema
+	schemaSessions := SessionsSchema
+	schemaRelations := RelationsSchema
+	schemaPosts := PostsSchema
+	schemaComments := CommentsSchema
+	schemaLikes := LikesSchema
+	schemaMedia := MediaSchema
+	schemaConversationsMeta := ConversationsMetaSchema
+	schemaConversationMembers := ConversationMembersSchema
+	schemaMessages := MessagesSchema
+
+	// variables globales
+	Users = NewCollection("users", schemaUsers, Rdb, GlobalStrategy)
+	UserSettings = NewCollection("user_settings", schemaUserSettings, Rdb, GlobalStrategy)
+	Sessions = NewCollection("sessions", schemaSessions, Rdb, GlobalStrategy)
+	Relations = NewCollection("relations", schemaRelations, Rdb, GlobalStrategy)
+	Posts = NewCollection("posts", schemaPosts, Rdb, GlobalStrategy)
+	Comments = NewCollection("comments", schemaComments, Rdb, GlobalStrategy)
+	Likes = NewCollection("likes", schemaLikes, Rdb, GlobalStrategy)
+	Media = NewCollection("media", schemaMedia, Rdb, GlobalStrategy)
+	ConversationsMeta = NewCollection("conversations_meta", schemaConversationsMeta, Rdb, GlobalStrategy)
+	ConversationMembers = NewCollection("conversation_members", schemaConversationMembers, Rdb, GlobalStrategy)
+	Messages = NewCollection("messages", schemaMessages, Rdb, GlobalStrategy)
+
+	log.Println("Structure Redis (caches) initialisée")
+}}
+```
+3. `redis_stategy.go` :
+Il y a eu également une modification de la fonction `purgeOldest` afin de conformer à la nouvelle forme de cache redis :
+```go
+func (lru *LRUCache) purgeOldest() {
+	if lru.head == nil {
+		return
+	}
+	old := lru.head
+	log.Printf("Purging Redis cache element (LRU): node=%s, id=%s\n", old.NodeName, old.ElementID)
+	lru.remove(old)
+	delete(lru.elements, old.NodeName+":"+old.ElementID)
+
+	// suppression via Collection.Delete
+	collection := &Collection{
+		Name:  old.NodeName,
+		Redis: lru.rdb,
+		LRU:   lru,
+	}
+	filter := map[string]interface{}{"id": old.ElementID}
+	if err := collection.Delete(filter); err != nil {
+		log.Printf("Erreur suppression via Collection.Delete: %v\n", err)
+	}
+}
 ```
