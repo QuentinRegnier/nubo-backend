@@ -2339,7 +2339,7 @@ Notes:
 // ---------------- Set ----------------
 
 // Set ajoute un élément dans la collection
-func (c *Collection) Set(obj map[string]any) error {
+func (c *Collection) Set(ctx context.Context, obj map[string]any) error {
 	if err := c.validate(obj); err != nil {
 		log.Println("Validation échouée:", err)
 		return err
@@ -2347,9 +2347,6 @@ func (c *Collection) Set(obj map[string]any) error {
 
 	id := fmt.Sprintf("%v", obj["id"])
 	objKey := "cache:" + c.Name + ":" + id
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
 
 	// Sauvegarde complète dans Redis Hash
 	if err := c.Redis.HMSet(ctx, objKey, obj).Err(); err != nil {
@@ -2380,6 +2377,9 @@ func (c *Collection) Set(obj map[string]any) error {
 ```
 Et elle s'utilise ainsi :
 ```go
+ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+defer cancel()
+
 // Ajouter un message
 messages := NewCollection("messages", schemaMessages, rdb, lru)
 
@@ -2394,81 +2394,16 @@ messages.Set(map[string]interface{}{
 // ---------------- Get ----------------
 
 // Get retourne tous les éléments correspondant au filtre (MongoDB-like)
-func (c *Collection) Get(filter map[string]any) ([]map[string]any, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	var candidateIDs []string
-
-	// 🔹 Étape 1 : Réduire l’espace de recherche avec les index Redis
-	indexKeys := []string{}
-	for field, condition := range filter {
-		subCond, ok := condition.(map[string]any)
-		if !ok {
-			// équivalent $eq direct
-			valStr := fmt.Sprintf("%v", condition)
-			idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr)
-			indexKeys = append(indexKeys, idxKey)
-			continue
-		}
-
-		for op, val := range subCond {
-			switch op {
-			case "$eq":
-				valStr := fmt.Sprintf("%v", val)
-				idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr)
-				indexKeys = append(indexKeys, idxKey)
-
-			case "$in":
-				arr, ok := val.([]any)
-				if ok {
-					orKeys := []string{}
-					for _, a := range arr {
-						valStr := fmt.Sprintf("%v", a)
-						idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr)
-						orKeys = append(orKeys, idxKey)
-					}
-					// on mettra ça en union après
-					if len(orKeys) > 0 {
-						members, err := c.Redis.SUnion(ctx, orKeys...).Result()
-						if err == nil {
-							candidateIDs = append(candidateIDs, members...)
-						}
-					}
-				}
-			}
-		}
+func (c *Collection) Get(ctx context.Context, filter map[string]any) ([]map[string]any, error) {
+	// 1. Récupérer l’ensemble des IDs possibles via evalTree
+	candidateSet, _, err := evalTree(ctx, c.Redis, c.Name, filter, "")
+	if err != nil {
+		return nil, err
 	}
 
-	// Si on a plusieurs indexKeys (issus de $eq), on fait une intersection
-	if len(indexKeys) == 1 {
-		ids, err := c.Redis.SMembers(ctx, indexKeys[0]).Result()
-		if err == nil {
-			candidateIDs = append(candidateIDs, ids...)
-		}
-	} else if len(indexKeys) > 1 {
-		ids, err := c.Redis.SInter(ctx, indexKeys...).Result()
-		if err == nil {
-			candidateIDs = append(candidateIDs, ids...)
-		}
-	}
-
-	// Si aucun index n’a filtré → on doit scanner tout
-	if len(candidateIDs) == 0 {
-		pattern := fmt.Sprintf("cache:%s:*", c.Name)
-		keys, scanErr := c.Redis.Keys(ctx, pattern).Result()
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		for _, k := range keys {
-			parts := strings.Split(k, ":")
-			candidateIDs = append(candidateIDs, parts[len(parts)-1])
-		}
-	}
-
-	// 🔹 Étape 2 : Charger les objets et appliquer matchFilter
+	// 2. Charger les objets correspondants
 	results := []map[string]any{}
-	for _, id := range candidateIDs {
+	for id := range candidateSet {
 		objKey := "cache:" + c.Name + ":" + id
 		data, err := c.Redis.HGetAll(ctx, objKey).Result()
 		if err != nil || len(data) == 0 {
@@ -2480,16 +2415,10 @@ func (c *Collection) Get(filter map[string]any) ([]map[string]any, error) {
 			obj[k] = v
 		}
 
-		// Vérification complète via matchFilter
-		match, err := matchFilter(obj, filter)
-		if err != nil {
-			continue
-		}
-		if match {
-			results = append(results, obj)
-			if c.LRU != nil {
-				c.LRU.MarkUsed(c.Name, id)
-			}
+		results = append(results, obj)
+
+		if c.LRU != nil {
+			c.LRU.MarkUsed(c.Name, id)
 		}
 	}
 
@@ -2498,6 +2427,9 @@ func (c *Collection) Get(filter map[string]any) ([]map[string]any, error) {
 ```
 Et elle s'utilise ainsi :
 ```go
+ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+defer cancel()
+
 // Rechercher tous les éléments ayant conversation_id == 49
 messages := NewCollection("messages", schemaMessages, rdb, lru)
 
@@ -2506,7 +2438,7 @@ results, _ := messages.Get(map[string]interface{}{
 	"conversation_id": map[string]interface{}{"$eq": 49},
 })
 ```
-- La fonction `matchFilter` a pour objectif de traduire une instruction de filtre json en un véritable filtre utilisable dans la fonction `Get` et `Delete`.
+- La fonction `fetchIDsForCondition` a pour objectif de traduire une instruction de filtre json en un véritable filtre utilisable dans la fonction `Get` et `Delete` et `Update`.
 Exemple :
 ```json
 {
@@ -2537,145 +2469,420 @@ Exemple :
   ]
 }
 ```
+⛔️ Pour le moment n'est pas pris en charge :
+- `$nor`
+- `$ne`
+- `$nin`
+- `$not`
 ```go
-// matchFilter applique le filtre type MongoDB sur un objet
-func matchFilter(obj map[string]any, filter map[string]any) (bool, error) {
-	for k, v := range filter {
-		if strings.HasPrefix(k, "$") {
-			switch k {
-			case "$and":
-				arr, ok := v.([]any)
-				if !ok {
-					return false, fmt.Errorf("$and doit être un tableau")
-				}
-				for _, cond := range arr {
-					subFilter, ok := cond.(map[string]any)
-					if !ok {
-						return false, fmt.Errorf("condition $and invalide")
-					}
-					match, err := matchFilter(obj, subFilter)
-					if err != nil || !match {
-						return false, err
-					}
-				}
-				return true, nil
-			case "$or":
-				arr, ok := v.([]any)
-				if !ok {
-					return false, fmt.Errorf("$or doit être un tableau")
-				}
-				for _, cond := range arr {
-					subFilter, ok := cond.(map[string]any)
-					if !ok {
-						return false, fmt.Errorf("condition $or invalide")
-					}
-					match, err := matchFilter(obj, subFilter)
-					if err == nil && match {
-						return true, nil
-					}
-				}
-				return false, nil
-			case "$not":
-				subFilter, ok := v.(map[string]any)
-				if !ok {
-					return false, fmt.Errorf("$not doit être un objet")
-				}
-				match, err := matchFilter(obj, subFilter)
-				return !match, err
-			case "$nor":
-				arr, ok := v.([]any)
-				if !ok {
-					return false, fmt.Errorf("$nor doit être un tableau")
-				}
-				for _, cond := range arr {
-					subFilter, ok := cond.(map[string]any)
-					if !ok {
-						return false, fmt.Errorf("condition $nor invalide")
-					}
-					match, err := matchFilter(obj, subFilter)
-					if err == nil && match {
-						return false, nil
-					}
-				}
-				return true, nil
+// fetchIDsForCondition : récupère les IDs directement depuis Redis pour une condition simple.
+func fetchIDsForCondition(ctx context.Context, redis *redis.Client, collName, field, op string, val any) ([]string, error) {
+	key := fmt.Sprintf("index:%s:%s", collName, field)
+
+	switch op {
+	case "$eq":
+		if field == "id" {
+			idStr := fmt.Sprintf("%v", val)
+			objKey := fmt.Sprintf("cache:%s:%s", collName, idStr)
+			exists, err := redis.Exists(ctx, objKey).Result()
+			if err != nil {
+				return nil, err
 			}
-		} else {
-			// opérateurs de comparaison
-			subCond, ok := v.(map[string]any)
-			if !ok {
-				// équivalent $eq par défaut
-				if obj[k] != v {
-					return false, nil
-				}
-				continue
+			if exists == 1 {
+				return []string{idStr}, nil
 			}
-			for op, val := range subCond {
-				switch op {
-				case "$eq":
-					if obj[k] != val {
-						return false, nil
-					}
-				case "$ne":
-					if obj[k] == val {
-						return false, nil
-					}
-				case "$gt":
-					if !compareNumbers(obj[k], val, ">") {
-						return false, nil
-					}
-				case "$gte":
-					if !compareNumbers(obj[k], val, ">=") {
-						return false, nil
-					}
-				case "$lt":
-					if !compareNumbers(obj[k], val, "<") {
-						return false, nil
-					}
-				case "$lte":
-					if !compareNumbers(obj[k], val, "<=") {
-						return false, nil
-					}
-				case "$in":
-					arr, ok := val.([]any)
-					if !ok {
-						return false, nil
-					}
-					found := false
-					for _, a := range arr {
-						if a == obj[k] {
-							found = true
-							break
-						}
-					}
-					if !found {
-						return false, nil
-					}
-				case "$nin":
-					arr, ok := val.([]any)
-					if !ok {
-						return false, nil
-					}
-					for _, a := range arr {
-						if a == obj[k] {
-							return false, nil
-						}
-					}
+			return []string{}, nil
+		}
+		member := fmt.Sprintf("%v", val)
+		ids, err := redis.SMembers(ctx, key+":"+member).Result()
+		if err != nil {
+			return nil, err
+		}
+		return ids, nil
+
+	case "$in":
+		if field == "id" {
+			vals, _ := val.([]any)
+			var existing []string
+			for _, v := range vals {
+				idStr := fmt.Sprintf("%v", v)
+				objKey := fmt.Sprintf("cache:%s:%s", collName, idStr)
+				exists, err := redis.Exists(ctx, objKey).Result()
+				if err != nil {
+					return nil, err
 				}
+				if exists == 1 {
+					existing = append(existing, idStr)
+				}
+			}
+			return existing, nil
+		}
+		vals, _ := val.([]any)
+		var all []string
+		for _, v := range vals {
+			member := fmt.Sprintf("%v", v)
+			ids, err := redis.SMembers(ctx, key+":"+member).Result()
+			if err != nil {
+				return nil, err
+			}
+			all = append(all, ids...)
+		}
+		return all, nil
+
+	case "$gt", "$gte", "$lt", "$lte":
+		if field == "id" {
+			switch op {
+			case "$gt":
+				f, err := toInt64(val)
+				if err != nil {
+					return []string{}, nil
+				}
+				start := int64(f)
+				var ids []string
+				for i := start + 1; ; i++ {
+					objKey := fmt.Sprintf("cache:%s:%d", collName, i)
+					exists, err := redis.Exists(ctx, objKey).Result()
+					if err != nil {
+						return nil, err
+					}
+					if exists == 0 {
+						break
+					}
+					ids = append(ids, strconv.FormatInt(i, 10))
+				}
+				return ids, nil
+			case "$gte":
+				f, err := toInt64(val)
+				if err != nil {
+					return []string{}, nil
+				}
+				start := int64(f)
+				var ids []string
+				for i := start; ; i++ {
+					objKey := fmt.Sprintf("cache:%s:%d", collName, i)
+					exists, err := redis.Exists(ctx, objKey).Result()
+					if err != nil {
+						return nil, err
+					}
+					if exists == 0 {
+						break
+					}
+					ids = append(ids, strconv.FormatInt(i, 10))
+				}
+				return ids, nil
+			case "$lt":
+				f, err := toInt64(val)
+				if err != nil {
+					return []string{}, nil
+				}
+				end := int64(f)
+				var ids []string
+				for i := int64(0); i < end; i++ {
+					objKey := fmt.Sprintf("cache:%s:%d", collName, i)
+					exists, err := redis.Exists(ctx, objKey).Result()
+					if err != nil {
+						return nil, err
+					}
+					if exists == 0 {
+						break
+					}
+					ids = append(ids, strconv.FormatInt(i, 10))
+				}
+				return ids, nil
+			case "$lte":
+				f, err := toInt64(val)
+				if err != nil {
+					return []string{}, nil
+				}
+				end := int64(f)
+				var ids []string
+				for i := int64(0); i <= end; i++ {
+					objKey := fmt.Sprintf("cache:%s:%d", collName, i)
+					exists, err := redis.Exists(ctx, objKey).Result()
+					if err != nil {
+						return nil, err
+					}
+					if exists == 0 {
+						break
+					}
+					ids = append(ids, strconv.FormatInt(i, 10))
+				}
+				return ids, nil
+
+			default:
+				return []string{}, nil
 			}
 		}
+		if field == "created_at" || field == "updated_at" || field == "joined_at" || field == "expires_at" {
+			switch op {
+			case "$gt":
+				tRef, err := parseToTime(val)
+				if err != nil {
+					return []string{}, nil
+				}
+				ids := []string{}
+				start := tRef.Add(24 * time.Hour)
+				for t := start; t.Before(time.Now().UTC()); t = t.Add(24 * time.Hour) {
+					member := fmt.Sprintf("%v", t)
+					memberIDs, err := redis.SMembers(ctx, key+":"+member).Result()
+					if err != nil {
+						return nil, err
+					}
+					ids = append(ids, memberIDs...)
+				}
+				return ids, nil
+			case "$gte":
+				tRef, err := parseToTime(val)
+				if err != nil {
+					return []string{}, nil
+				}
+				ids := []string{}
+				start := tRef
+				for t := start; t.Before(time.Now().UTC()); t = t.Add(24 * time.Hour) {
+					member := fmt.Sprintf("%v", t)
+					memberIDs, err := redis.SMembers(ctx, key+":"+member).Result()
+					if err != nil {
+						return nil, err
+					}
+					ids = append(ids, memberIDs...)
+				}
+				return ids, nil
+			case "$lt":
+				tRef, err := parseToTime(val)
+				if err != nil {
+					return []string{}, nil
+				}
+				ids := []string{}
+				start := time.Date(2025, time.September, 14, 0, 0, 0, 0, time.UTC)
+				for t := start; t.Before(tRef); t = t.Add(24 * time.Hour) {
+					member := fmt.Sprintf("%v", t)
+					memberIDs, err := redis.SMembers(ctx, key+":"+member).Result()
+					if err != nil {
+						return nil, err
+					}
+					ids = append(ids, memberIDs...)
+				}
+				return ids, nil
+			case "$lte":
+				tRef, err := parseToTime(val)
+				if err != nil {
+					return []string{}, nil
+				}
+				ids := []string{}
+				start := time.Date(2025, time.September, 14, 0, 0, 0, 0, time.UTC)
+				for t := start; !t.After(tRef); t = t.Add(24 * time.Hour) {
+					member := fmt.Sprintf("%v", t)
+					memberIDs, err := redis.SMembers(ctx, key+":"+member).Result()
+					if err != nil {
+						return nil, err
+					}
+					ids = append(ids, memberIDs...)
+				}
+				return ids, nil
+			case "$in":
+
+			default:
+				return []string{}, nil
+			}
+		}
+		// Pas de condition sur les dates
+		return []string{}, nil
+
+	default:
+		// Pas d'index → laisse le filtrage final (matchFilter) s'en occuper
+		return []string{}, nil
 	}
-	return true, nil
+}
+
+// deleteIDsFromCondition : supprime les IDs correspondant à une condition simple. exemple : deleteIDsFromCondition("id", {"$lte": 2}, {1,2,3,4,5}) = {3,4,5} pas de redis donc il faut gérer $eq, $in, $gt, $lt, $gte, $lte on envoie un pointeur vers le slice d'ids pour le modifier en place en supprimant avec des for
+func deleteIDsFromCondition(cond map[string]any, ids *[]string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Println("Panic dans deleteIDsFromCondition:", r)
+		}
+	}()
+
+	for op, val := range cond {
+		switch op {
+		case "$eq":
+			valStr := fmt.Sprintf("%v", val)
+			newIDs := []string{}
+			for _, id := range *ids {
+				if id != valStr {
+					newIDs = append(newIDs, id)
+				}
+			}
+			*ids = newIDs
+
+		case "$in":
+			vals, _ := val.([]any)
+			valSet := make(map[string]struct{})
+			for _, v := range vals {
+				valSet[fmt.Sprintf("%v", v)] = struct{}{}
+			}
+			newIDs := []string{}
+			for _, id := range *ids {
+				if _, found := valSet[id]; !found {
+					newIDs = append(newIDs, id)
+				}
+			}
+			*ids = newIDs
+
+		case "$gt", "$gte", "$lt", "$lte":
+			valInt, err := toInt64(val)
+			if err != nil {
+				log.Println("Erreur conversion valeur numérique dans deleteIDsFromCondition:", err)
+				continue
+			}
+			newIDs := []string{}
+			for _, id := range *ids {
+				idInt, err := strconv.ParseInt(id, 10, 64)
+				if err != nil {
+					continue
+				}
+
+				switch op {
+				case "$gt":
+					if idInt > valInt {
+						newIDs = append(newIDs, id)
+					}
+				case "$gte":
+					if idInt >= valInt {
+						newIDs = append(newIDs, id)
+					}
+				case "$lt":
+					if idInt < valInt {
+						newIDs = append(newIDs, id)
+					}
+				case "$lte":
+					if idInt <= valInt {
+						newIDs = append(newIDs, id)
+					}
+				}
+			}
+			*ids = newIDs
+
+		default:
+			log.Println("Opérateur non supporté dans deleteIDsFromCondition:", op)
+		}
+	}
+}
+
+// toInt64 convertit une valeur en int64 si possible
+func toInt64(val any) (int64, error) {
+	switch v := val.(type) {
+	case int:
+		return int64(v), nil
+	case int8:
+		return int64(v), nil
+	case int16:
+		return int64(v), nil
+	case int32:
+		return int64(v), nil
+	case int64:
+		return v, nil
+	case uint:
+		return int64(v), nil
+	case uint8:
+		return int64(v), nil
+	case uint16:
+		return int64(v), nil
+	case uint32:
+		return int64(v), nil
+	case uint64:
+		return int64(v), nil
+	case float32:
+		return int64(v), nil
+	case float64:
+		return int64(v), nil
+	case string:
+		parsed, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("erreur conversion string en int64: %v", err)
+		}
+		return parsed, nil
+	default:
+		return 0, fmt.Errorf("type non convertible en int64: %T", val)
+	}
+}
+
+func parseToTime(val any) (time.Time, error) {
+	switch v := val.(type) {
+	case time.Time:
+		return v.UTC(), nil
+	case *time.Time:
+		if v == nil {
+			return time.Time{}, fmt.Errorf("nil *time.Time")
+		}
+		return v.UTC(), nil
+	case int, int8, int16, int32, int64:
+		n, _ := toInt64(v)
+		// Heuristic: treat >= 1e12 as milliseconds
+		if n > 1e12 {
+			sec := n / 1000
+			ms := n % 1000
+			return time.Unix(sec, ms*1e6).UTC(), nil
+		}
+		return time.Unix(n, 0).UTC(), nil
+	case uint, uint8, uint16, uint32, uint64:
+		n, _ := toInt64(v)
+		if n > 1e12 {
+			sec := n / 1000
+			ms := n % 1000
+			return time.Unix(sec, ms*1e6).UTC(), nil
+		}
+		return time.Unix(n, 0).UTC(), nil
+	case float32:
+		sec := int64(v)
+		nsec := int64((v - float32(sec)) * 1e9)
+		return time.Unix(sec, nsec).UTC(), nil
+	case float64:
+		sec := int64(v)
+		nsec := int64((v - float64(sec)) * 1e9)
+		return time.Unix(sec, nsec).UTC(), nil
+	case string:
+		s := v
+		if s == "" {
+			return time.Time{}, fmt.Errorf("empty time string")
+		}
+		// Try numeric first
+		if num, err := strconv.ParseInt(s, 10, 64); err == nil {
+			if num > 1e12 {
+				sec := num / 1000
+				ms := num % 1000
+				return time.Unix(sec, ms*1e6).UTC(), nil
+			}
+			return time.Unix(num, 0).UTC(), nil
+		}
+		layouts := []string{
+			time.RFC3339Nano,
+			time.RFC3339,
+			"2006-01-02 15:04:05.999999999",
+			"2006-01-02 15:04:05",
+			"2006-01-02",
+			time.RFC1123Z,
+			time.RFC1123,
+			time.RFC850,
+			time.ANSIC,
+		}
+		for _, layout := range layouts {
+			if t, err := time.Parse(layout, s); err == nil {
+				return t.UTC(), nil
+			}
+		}
+		return time.Time{}, fmt.Errorf("unsupported time format: %s", s)
+	default:
+		return time.Time{}, fmt.Errorf("unsupported time type: %T", val)
+	}
 }
 ```
 - Création de la méthode `Delete` permettant de supprimer un élément d'une collections redis, pour cela elle utilise la même technologie de filtrage que dans `Get`. La fonction a un défis qui est de supprimer également toutes les occurences de l'id dans l'index.
 ```go
 // Delete supprime les éléments correspondant au filtre et nettoie les index vides
-func (c *Collection) Delete(filter map[string]any) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+func (c *Collection) Delete(ctx context.Context, filter map[string]any) error {
 
 	// Récupérer les objets via Get (filtrage complet)
-	objs, err := c.Get(filter)
+	objs, err := c.Get(ctx, filter)
 	if err != nil {
 		return err
 	}
@@ -2742,6 +2949,9 @@ func (c *Collection) Delete(filter map[string]any) error {
 ```
 Et elle s'utilise ainsi :
 ```go
+ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+defer cancel()
+
 // Supprimer tous les éléments ayant conversation_id == 49
 messages := NewCollection("messages", schemaMessages, rdb, lru)
 
@@ -2750,15 +2960,15 @@ messages.Delete(map[string]interface{}{
 	"conversation_id": map[string]interface{}{"$eq": 49},
 })
 ```
-- Création de la méthode `Modify` dans le même style que `Delete` ou `Get` avec des filtres mais on ajoute également un catégorie update qui permet de préciser ce que l'on veut changer. Il ya aussi un gros enjeux sur les indexs avec cette fonctions car elle doit tous les actualisers. Comme elle doit actualiser aussi la liste LRU comme d'habitude.
+- Création de la méthode `Update` dans le même style que `Delete` ou `Get` avec des filtres mais on ajoute également un catégorie update qui permet de préciser ce que l'on veut changer. Il ya aussi un gros enjeux sur les indexs avec cette fonctions car elle doit tous les actualisers. Comme elle doit actualiser aussi la liste LRU comme d'habitude.
 ```go
-// Modify met à jour les éléments correspondant au filtre avec les nouvelles valeurs fournies dans update
-func (c *Collection) Modify(filter map[string]interface{}, update map[string]interface{}) error {
+// Update met à jour les éléments correspondant au filtre avec les nouvelles valeurs fournies dans update
+func (c *Collection) Update(ctx context.Context, filter map[string]interface{}, update map[string]interface{}) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	// Récupérer les objets correspondant au filtre
-	objs, err := c.Get(filter)
+	objs, err := c.Get(ctx, filter)
 	if err != nil {
 		return err
 	}
@@ -2808,6 +3018,9 @@ func (c *Collection) Modify(filter map[string]interface{}, update map[string]int
 ```
 Et elle s'utilise ainsi :
 ```go
+ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+defer cancel()
+
 // Modifier tous les messages de conversation 49 pour changer le state à 5
 messages := NewCollection("messages", schemaMessages, rdb, lru)
 
@@ -2819,7 +3032,7 @@ update := map[string]interface{}{
 	"state": 5,
 }
 
-if err := cacheName.Modify(filter, update); err != nil {
+if err := cacheName.Update(filter, update); err != nil {
 	log.Println("Erreur modification:", err)
 }
 ```
@@ -2895,5 +3108,173 @@ func (lru *LRUCache) purgeOldest() {
 	if err := collection.Delete(filter); err != nil {
 		log.Printf("Erreur suppression via Collection.Delete: %v\n", err)
 	}
+}
+```
+
+---
+
+### 6. Gérer mongoDB
+1. Normalisation des collections en les mettants dans le package `tools`
+2. `mongo_manage.go` :
+- Création de collections similaire à Redis mais pour Mongo
+```go
+// ---------------- Initialisation ----------------
+// declarations globales
+var (
+	Users               *MongoCollection
+	UserSettings        *MongoCollection
+	Sessions            *MongoCollection
+	Relations           *MongoCollection
+	Posts               *MongoCollection
+	Comments            *MongoCollection
+	Likes               *MongoCollection
+	Media               *MongoCollection
+	ConversationsMeta   *MongoCollection
+	ConversationMembers *MongoCollection
+	Messages            *MongoCollection
+)
+
+// InitCacheDatabase initialise la structure logique de Redis pour les caches
+func InitCacheDatabase() {
+	// Initialiser les collections
+
+	schemaUsers := tools.UsersSchema
+	schemaUserSettings := tools.UserSettingsSchema
+	schemaSessions := tools.SessionsSchema
+	schemaRelations := tools.RelationsSchema
+	schemaPosts := tools.PostsSchema
+	schemaComments := tools.CommentsSchema
+	schemaLikes := tools.LikesSchema
+	schemaMedia := tools.MediaSchema
+	schemaConversationsMeta := tools.ConversationsMetaSchema
+	schemaConversationMembers := tools.ConversationMembersSchema
+	schemaMessages := tools.MessagesSchema
+
+	// variables globales
+	Users = NewMongoCollection("nubo_db", "users", schemaUsers)
+	UserSettings = NewMongoCollection("nubo_db", "user_settings", schemaUserSettings)
+	Sessions = NewMongoCollection("nubo_db", "sessions", schemaSessions)
+	Relations = NewMongoCollection("nubo_db", "relations", schemaRelations)
+	Posts = NewMongoCollection("nubo_db", "posts", schemaPosts)
+	Comments = NewMongoCollection("nubo_db", "comments", schemaComments)
+	Likes = NewMongoCollection("nubo_db", "likes", schemaLikes)
+	Media = NewMongoCollection("nubo_db", "media", schemaMedia)
+	ConversationsMeta = NewMongoCollection("nubo_db", "conversations_meta", schemaConversationsMeta)
+	ConversationMembers = NewMongoCollection("nubo_db", "conversation_members", schemaConversationMembers)
+	Messages = NewMongoCollection("nubo_db", "messages", schemaMessages)
+
+	log.Println("Structure MongoDB initialisée")
+}
+
+// ---------------- Collection et schéma ----------------
+
+type MongoCollection struct {
+	Name   string
+	Schema map[string]reflect.Kind
+	DB     *mongo.Database
+}
+
+// NewMongoCollection crée une collection Mongo avec un schéma
+func NewMongoCollection(dbName, name string, schema map[string]reflect.Kind) *MongoCollection {
+	return &MongoCollection{
+		Name:   name,
+		Schema: schema,
+		DB:     MongoClient.Database(dbName),
+	}
+}
+```
+dont l'initialisation est faite dans le `main.go`. Ce code va permettre de vérifier la structure des requête faite avec les fonctions qui vont suivre avec la fonction de validation suivante :
+```go
+// validate vérifie qu'un objet correspond au schéma de la collection
+func (c *MongoCollection) validate(obj map[string]any) error {
+	for field, kind := range c.Schema {
+		val, ok := obj[field]
+		if !ok {
+			return fmt.Errorf("champ manquant: %s", field)
+		}
+		if reflect.TypeOf(val).Kind() != kind {
+			return fmt.Errorf("type invalide pour %s: attendu %s, reçu %s",
+				field, kind, reflect.TypeOf(val).Kind())
+		}
+	}
+	return nil
+}
+```
+- Création d'une fonction `Set` dont le fonctionne est similaire à Redis :
+```go
+// Set insère ou met à jour un objet dans la collection
+func (c *MongoCollection) Set(obj map[string]any) error {
+	if err := c.validate(obj); err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	collection := c.DB.Collection(c.Name)
+
+	// upsert (si id existe déjà, on remplace)
+	filter := bson.M{"id": obj["id"]}
+	update := bson.M{"$set": obj}
+	opts := options.Update().SetUpsert(true)
+
+	_, err := collection.UpdateOne(ctx, filter, update, opts)
+	return err
+}
+```
+- Création d'une fonction `Get` dont le fonctionnement diffère quelque peut de Redis étant donné que le fait qu'on ai choisi d'utiliser la structure de filtre de mongo nous n'avons donc pas besoin de fonction de transfert
+```go
+// Get récupère les objets correspondant au filtre avec une projection optionnelle
+func (c *MongoCollection) Get(filter map[string]any, projection map[string]any) ([]map[string]any, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	collection := c.DB.Collection(c.Name)
+
+	opts := options.Find()
+	if projection != nil {
+		opts.SetProjection(projection)
+	}
+
+	cur, err := collection.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var results []map[string]any
+	if err := cur.All(ctx, &results); err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+```
+- Création d'une fonction `Delete` dont le fonctionnement diffère quelque peut de Redis. En effet avec Redis on passait par la fonction `Get` dans `Delete` afin de récupérer les ids pour pouvoir les supprimer dans la liste des utilisations. Étant donné que nous n'avons pas de liste d'utilisation avec Mongo il est inutile de faire 2 requête au lieu d'une.
+```go
+// Delete supprime les objets correspondant au filtre
+func (c *MongoCollection) Delete(filter map[string]any) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	collection := c.DB.Collection(c.Name)
+	_, err := collection.DeleteMany(ctx, filter)
+	return err
+}
+```
+- Création d'une fonction `Update` dont le fonctionnement diffère quelque peut de Redis (expliqué plus haut).
+```go
+// Update met à jour les éléments correspondant au filtre avec les nouvelles valeurs fournies dans update
+func (c *MongoCollection) Update(filter map[string]any, update map[string]any) error {
+	if err := c.validate(update); err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	collection := c.DB.Collection(c.Name)
+	_, err := collection.UpdateMany(ctx, filter, bson.M{"$set": update})
+	return err
 }
 ```

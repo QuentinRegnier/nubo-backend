@@ -118,7 +118,9 @@ func (lru *LRUCache) purgeOldest() {
 		LRU:   lru,
 	}
 	filter := map[string]interface{}{"id": old.ElementID}
-	if err := collection.Delete(filter); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := collection.Delete(ctx, filter); err != nil {
 		log.Printf("Erreur suppression via Collection.Delete: %v\n", err)
 	}
 }
