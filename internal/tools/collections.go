@@ -26,6 +26,10 @@ var UsersSchema = map[string]reflect.Kind{
 	"school":             reflect.String,
 	"work":               reflect.String,
 	"badges":             reflect.Slice, // Text[]
+	"desactivated":       reflect.Bool,
+	"banned":             reflect.Bool,
+	"ban_reason":         reflect.String,
+	"ban_expires_at":     reflect.String, // Timestamp au format string
 	"created_at":         reflect.String,
 	"updated_at":         reflect.String,
 }
@@ -45,11 +49,11 @@ var SessionsSchema = map[string]reflect.Kind{
 	"id":            reflect.String,
 	"user_id":       reflect.String,
 	"refresh_token": reflect.String,
-	"device_info":   reflect.Map,   // JSONB
-	"ip":            reflect.Slice, // INET[]
+	"device_info":   reflect.Map,    // JSONB
+	"device_token":  reflect.String, // FCM token
+	"ip_history":    reflect.Slice,  // INET[]
 	"created_at":    reflect.String,
 	"expires_at":    reflect.String,
-	"revoked":       reflect.Bool,
 }
 
 // RelationsCache
@@ -79,6 +83,7 @@ var CommentsSchema = map[string]reflect.Kind{
 	"post_id":    reflect.String,
 	"user_id":    reflect.String,
 	"content":    reflect.String,
+	"visibility": reflect.Bool,
 	"created_at": reflect.String,
 }
 
@@ -96,6 +101,7 @@ var MediaSchema = map[string]reflect.Kind{
 	"id":           reflect.String,
 	"owner_id":     reflect.String,
 	"storage_path": reflect.String,
+	"visibility":   reflect.Bool,
 	"created_at":   reflect.String,
 }
 
