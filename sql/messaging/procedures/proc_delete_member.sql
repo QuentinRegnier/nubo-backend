@@ -1,6 +1,6 @@
 CREATE OR REPLACE PROCEDURE proc_delete_member(
-    p_conversation_id UUID,
-    p_user_id UUID
+    p_conversation_id BIGINT,
+    p_user_id BIGINT
 )
 LANGUAGE plpgsql
 AS $$

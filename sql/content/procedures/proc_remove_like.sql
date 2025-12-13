@@ -1,7 +1,7 @@
 CREATE OR REPLACE PROCEDURE proc_remove_like(
     p_target_type SMALLINT,
-    p_target_id UUID,
-    p_user_id UUID
+    p_target_id BIGINT,
+    p_user_id BIGINT
 )
 LANGUAGE plpgsql
 AS $$

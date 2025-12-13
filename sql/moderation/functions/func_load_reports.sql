@@ -4,10 +4,10 @@ CREATE OR REPLACE FUNCTION moderation.func_load_reports_by_state(
 )
 -- 1. Définit la structure de retour (correspond à la table 'reports')
 RETURNS TABLE (
-    id UUID,
-    actor_id UUID,
+    id BIGINT,
+    actor_id BIGINT,
     target_type SMALLINT,
-    target_id UUID,
+    target_id BIGINT,
     reason TEXT,
     rationale TEXT DEFAULT NULL,
     state SMALLINT,

@@ -1,12 +1,12 @@
 CREATE OR REPLACE FUNCTION views.func_load_post_engagement_view(
-    p_post_id UUID DEFAULT NULL,
-    p_user_id UUID DEFAULT NULL
+    p_post_id BIGINT DEFAULT NULL,
+    p_user_id BIGINT DEFAULT NULL
 )
 RETURNS TABLE (
-    post_id UUID,
-    user_id UUID,
+    post_id BIGINT,
+    user_id BIGINT,
     content TEXT,
-    media_ids UUID[],
+    media_ids BIGINT[],
     visibility SMALLINT,
     location TEXT,
     created_at TIMESTAMPTZ,

@@ -1,6 +1,6 @@
 CREATE OR REPLACE PROCEDURE proc_update_relation(
-    p_primary_id UUID,
-    p_secondary_id UUID,
+    p_primary_id BIGINT,
+    p_secondary_id BIGINT,
     p_state SMALLINT DEFAULT NULL
 )
 LANGUAGE plpgsql

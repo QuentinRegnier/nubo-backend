@@ -1,24 +1,21 @@
 CREATE OR REPLACE PROCEDURE proc_update_user_settings(
-    p_user_id UUID,
-    p_bio TEXT DEFAULT NULL,
-    p_profile_picture_id UUID DEFAULT NULL,
-    p_location TEXT DEFAULT NULL,
-    p_school TEXT DEFAULT NULL,
-    p_work TEXT DEFAULT NULL,
-    p_badges TEXT[] DEFAULT NULL
+    p_id BIGINT,
+    p_user_id BIGINT,
+    p_privacy JSONB DEFAULT NULL,
+    p_notifications JSONB DEFAULT NULL,
+    p_language TEXT DEFAULT NULL,
+    p_theme TEXT DEFAULT NULL
 )
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    UPDATE users
+    UPDATE user_settings
     SET 
-        bio                = COALESCE(p_bio, bio),
-        profile_picture_id = COALESCE(p_profile_picture_id, profile_picture_id),
-        location           = COALESCE(p_location, location),
-        school             = COALESCE(p_school, school),
-        work               = COALESCE(p_work, work),
-        badges             = COALESCE(p_badges, badges),
-        updated_at         = now()
-    WHERE id = p_user_id;
+        privacy           = COALESCE(p_privacy, privacy),
+        notifications     = COALESCE(p_notifications, notifications),
+        language          = COALESCE(p_language, language),
+        theme             = COALESCE(p_theme, theme)
+    WHERE (id = p_id OR p_id IS NULL)
+      AND (user_id = p_user_id OR p_user_id IS NULL);
 END;
 $$;

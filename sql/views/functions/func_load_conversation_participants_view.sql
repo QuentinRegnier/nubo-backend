@@ -1,10 +1,10 @@
 CREATE OR REPLACE FUNCTION views.func_load_conversation_participants_view(
-    p_conversation_id UUID DEFAULT NULL,
-    p_user_id UUID DEFAULT NULL
+    p_conversation_id BIGINT DEFAULT NULL,
+    p_user_id BIGINT DEFAULT NULL
 )
 RETURNS TABLE (
-    conversation_id UUID,
-    user_id UUID,
+    conversation_id BIGINT,
+    user_id BIGINT,
     username TEXT,
     first_name TEXT,
     last_name TEXT,

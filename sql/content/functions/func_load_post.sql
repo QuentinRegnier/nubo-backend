@@ -1,14 +1,14 @@
 CREATE OR REPLACE FUNCTION content.func_load_posts(
-    p_user_id UUID DEFAULT NULL,            -- filtrer sur un utilisateur spécifique (NULL = tous)
-    p_post_ids UUID[] DEFAULT NULL,         -- liste d'IDs de posts à charger (NULL = aucun filtre)
+    p_user_id BIGINT DEFAULT NULL,            -- filtrer sur un utilisateur spécifique (NULL = tous)
+    p_post_ids BIGINT[] DEFAULT NULL,         -- liste d'IDs de posts à charger (NULL = aucun filtre)
     p_visibility SMALLINT[] DEFAULT ARRAY[0,1], -- visibilités autorisées (0=public,1=amis)
     p_order_mode SMALLINT DEFAULT 0         -- 0=plus récents, 1=plus anciens
 )
 RETURNS TABLE(
-    id UUID,
-    user_id UUID,
+    id BIGINT,
+    user_id BIGINT,
     content TEXT,
-    media_ids UUID[],
+    media_ids BIGINT[],
     visibility SMALLINT,
     location TEXT,
     created_at TIMESTAMPTZ,

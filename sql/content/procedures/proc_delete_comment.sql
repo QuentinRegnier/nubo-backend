@@ -1,7 +1,7 @@
 CREATE OR REPLACE PROCEDURE proc_delete_comment(
-    p_id UUID DEFAULT NULL,
-    p_post_id UUID DEFAULT NULL,
-    p_user_id UUID DEFAULT NULL
+    p_id BIGINT DEFAULT NULL,
+    p_post_id BIGINT DEFAULT NULL,
+    p_user_id BIGINT DEFAULT NULL
 )
 LANGUAGE plpgsql
 AS $$

@@ -1,5 +1,5 @@
 CREATE OR REPLACE FUNCTION messaging.func_load_messages(
-    p_conversation_id UUID
+    p_conversation_id BIGINT
 ) RETURNS SETOF messaging.messages
 LANGUAGE sql
 AS $$

@@ -1,16 +1,16 @@
 CREATE OR REPLACE FUNCTION messaging.func_create_message(
-    p_conversation_id UUID,
-    p_sender_id UUID,
+    p_conversation_id BIGINT,
+    p_sender_id BIGINT,
     p_content TEXT,
     p_attachments JSONB,
     p_message_type SMALLINT DEFAULT 0,
     p_visibility BOOLEAN DEFAULT TRUE
-) RETURNS UUID
+) RETURNS BIGINT
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_message_id UUID;
-    v_user_id UUID;
+    v_message_id BIGINT;
+    v_user_id BIGINT;
 BEGIN
     -- 1️⃣ Insertion du message
     INSERT INTO messaging.messages(conversation_id, sender_id, message_type, visibility, content, attachments)

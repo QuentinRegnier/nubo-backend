@@ -1,13 +1,13 @@
 CREATE OR REPLACE FUNCTION auth.func_load_relations(
-    p_id UUID DEFAULT NULL,
-    p_primary_id UUID DEFAULT NULL,
-    p_secondary_id UUID DEFAULT NULL,
+    p_id BIGINT DEFAULT NULL,
+    p_primary_id BIGINT DEFAULT NULL,
+    p_secondary_id BIGINT DEFAULT NULL,
     p_state SMALLINT DEFAULT NULL
 )
 RETURNS TABLE (
-    id UUID,
-    primary_id UUID,
-    secondary_id UUID,
+    id BIGINT,
+    primary_id BIGINT,
+    secondary_id BIGINT,
     state SMALLINT,
     created_at TIMESTAMPTZ
 ) AS $$

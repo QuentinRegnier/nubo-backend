@@ -1,6 +1,6 @@
 CREATE OR REPLACE PROCEDURE proc_delete_messages(
-    p_message_ids UUID[],
-    p_user_id UUID
+    p_message_ids BIGINT[],
+    p_user_id BIGINT
 )
 LANGUAGE plpgsql
 AS $$

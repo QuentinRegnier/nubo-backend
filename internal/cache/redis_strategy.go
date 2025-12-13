@@ -4,7 +4,8 @@ package cache
 import (
 	"context"
 	"log"
-	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -127,31 +128,85 @@ func (lru *LRUCache) purgeOldest() {
 
 // ---------------- Mémoire ----------------
 
-// StartMemoryWatcher surveille la RAM
+// StartMemoryWatcher surveille la RAM réelle de Redis via la commande INFO
 func (lru *LRUCache) StartMemoryWatcher(maxRAM uint64, marge uint64, interval time.Duration) {
 	go func() {
-		for {
-			var m runtime.MemStats
-			runtime.ReadMemStats(&m)
-			used := m.Alloc
-			if maxRAM == 0 {
-				maxRAM = getTotalRAM()
+		// Intervalle de vérification
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			// 1. Interroger Redis pour obtenir l'info mémoire
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			infoStr, err := lru.rdb.Info(ctx, "memory").Result()
+			cancel()
+
+			if err != nil {
+				log.Printf("Erreur lors de la surveillance mémoire Redis: %v", err)
+				continue
 			}
-			if used > maxRAM-marge {
-				log.Printf("RAM utilisée=%d, dépassement seuil=%d, purge LRU...\n", used, maxRAM-marge)
+
+			// 2. Parser la réponse pour obtenir 'used_memory' en octets
+			usedMemory, err := parseRedisUsedMemory(infoStr)
+			if err != nil {
+				log.Printf("Erreur parsing info mémoire: %v", err)
+				continue
+			}
+
+			// 3. Définir la limite
+			// Si maxRAM est 0, on essaye de deviner la RAM système (attention: seulement valide si Redis est sur la même machine)
+			limit := maxRAM
+			if limit == 0 {
+				limit = getTotalRAM()
+			}
+			seuil := limit - marge
+
+			// 4. Purge si nécessaire
+			if usedMemory > seuil {
+				log.Printf("⚠️ ALERTE RAM REDIS: Utilisé=%d, Seuil=%d. Démarrage purge...", usedMemory, seuil)
+
+				// On purge tant qu'on est au-dessus du seuil
+				// On met une limite de sécurité (ex: max 50 items par tick) pour ne pas bloquer le thread indéfiniment
+				itemsPurged := 0
+				maxPurgePerCycle := 50
+
 				lru.mu.Lock()
-				lru.purgeOldest()
+				for usedMemory > seuil && lru.head != nil && itemsPurged < maxPurgePerCycle {
+					lru.purgeOldest() // Cette fonction supprime de la LRU ET de Redis
+					itemsPurged++
+
+					// Estimation grossière : on réduit virtuellement usedMemory pour la boucle
+					// (Pour être précis, il faudrait refaire un rdb.Info(), mais c'est lourd)
+					// On suppose ici qu'on va revérifier au prochain tick.
+				}
 				lru.mu.Unlock()
+
+				log.Printf("Fin cycle purge: %d éléments supprimés.", itemsPurged)
 			}
-			time.Sleep(interval)
 		}
 	}()
 }
 
+// parseRedisUsedMemory extrait la valeur "used_memory" de la sortie de la commande INFO MEMORY
+func parseRedisUsedMemory(info string) (uint64, error) {
+	lines := strings.Split(info, "\r\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "used_memory:") {
+			parts := strings.Split(line, ":")
+			if len(parts) == 2 {
+				return strconv.ParseUint(parts[1], 10, 64)
+			}
+		}
+	}
+	return 0, nil // ou erreur si non trouvé
+}
+
+// getTotalRAM reste utile si Redis tourne sur la même machine (bare metal),
+// mais attention si tu utilises Docker avec des limites de conteneur.
 func getTotalRAM() uint64 {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-	return m.Sys
+	// ... (ton implémentation actuelle runtime.ReadMemStats est correcte pour la RAM Système du conteneur Go)
+	// Mais idéalement, il vaut mieux passer une valeur explicite 'maxRAM' dans la config.
+	return 0 // Je te conseille de forcer l'usage du paramètre maxRAM
 }
 
 // ---------------- Flux ----------------

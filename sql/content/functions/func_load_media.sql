@@ -1,11 +1,11 @@
 CREATE OR REPLACE FUNCTION content.func_load_media(
-    p_owner_id UUID DEFAULT NULL,           -- filtrer sur un utilisateur spécifique (NULL = tous)
-    p_media_ids UUID[] DEFAULT NULL,        -- liste d'IDs de médias à charger (NULL = aucun filtre)
+    p_owner_id BIGINT DEFAULT NULL,           -- filtrer sur un utilisateur spécifique (NULL = tous)
+    p_media_ids BIGINT[] DEFAULT NULL,        -- liste d'IDs de médias à charger (NULL = aucun filtre)
     p_order_mode SMALLINT DEFAULT 0         -- 0=plus récents, 1=plus anciens
 )
 RETURNS TABLE(
-    id UUID,
-    owner_id UUID,
+    id BIGINT,
+    owner_id BIGINT,
     storage_path TEXT,
     visibility BOOLEAN,
     created_at TIMESTAMPTZ

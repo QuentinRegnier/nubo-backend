@@ -1,14 +1,14 @@
 CREATE OR REPLACE FUNCTION content.func_load_comments(
-    p_post_id UUID DEFAULT NULL,          -- filtrer sur un post spécifique (NULL = tous les posts)
-    p_user_id UUID DEFAULT NULL,          -- filtrer sur un utilisateur spécifique (NULL = tous)
+    p_post_id BIGINT DEFAULT NULL,          -- filtrer sur un post spécifique (NULL = tous les posts)
+    p_user_id BIGINT DEFAULT NULL,          -- filtrer sur un utilisateur spécifique (NULL = tous)
     p_limit INT DEFAULT 100,              -- limite de résultats
     p_order_mode SMALLINT DEFAULT 0       -- 0=plus récents, 1=plus likés, 2=plus anciens
 )
 RETURNS TABLE(
-    id UUID,
+    id BIGINT,
     content TEXT,
-    user_id UUID,
-    post_id UUID,
+    user_id BIGINT,
+    post_id BIGINT,
     created_at TIMESTAMPTZ,
     like_count INT
 )

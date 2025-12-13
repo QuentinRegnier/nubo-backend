@@ -1,6 +1,6 @@
 CREATE OR REPLACE PROCEDURE proc_update_member(
-    p_conversation_id UUID,
-    p_user_id UUID,
+    p_conversation_id BIGINT,
+    p_user_id BIGINT,
     p_role SMALLINT DEFAULT NULL,
     p_unread_count INT DEFAULT NULL
 )

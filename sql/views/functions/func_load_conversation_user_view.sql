@@ -1,9 +1,9 @@
 CREATE OR REPLACE FUNCTION views.func_load_conversation_user_view(
-    p_user_id UUID DEFAULT NULL
+    p_user_id BIGINT DEFAULT NULL
 )
 RETURNS TABLE (
-    user_id UUID,
-    conversation_ids UUID[]
+    user_id BIGINT,
+    conversation_ids BIGINT[]
 )
 LANGUAGE plpgsql
 AS $$

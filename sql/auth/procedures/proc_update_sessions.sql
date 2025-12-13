@@ -1,5 +1,5 @@
 CREATE OR REPLACE PROCEDURE proc_update_sessions(
-    p_id UUID,
+    p_id BIGINT,
     p_refresh_token TEXT DEFAULT NULL,
     p_device_info JSONB DEFAULT NULL,
     p_ip_history INET[] DEFAULT NULL,

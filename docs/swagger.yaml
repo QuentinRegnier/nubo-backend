@@ -1,0 +1,189 @@
+basePath: /api/v1
+definitions:
+  github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse:
+    properties:
+      error:
+        example: Invalid JSON format
+        type: string
+    type: object
+  github_com_QuentinRegnier_nubo-backend_internal_tools.LoginResponse:
+    properties:
+      badges:
+        items:
+          type: string
+        type: array
+      ban_expires_at:
+        type: string
+      ban_reason:
+        type: string
+      banned:
+        example: false
+        type: boolean
+      bio:
+        example: Bio...
+        type: string
+      birthdate:
+        type: string
+      created_at:
+        type: string
+      desactivated:
+        example: false
+        type: boolean
+      email:
+        example: john@nubo.com
+        type: string
+      email_verified:
+        example: true
+        type: boolean
+      expires_at:
+        type: string
+      first_name:
+        example: John
+        type: string
+      grade:
+        example: 0
+        type: integer
+      last_name:
+        example: Doe
+        type: string
+      location:
+        example: Paris
+        type: string
+      message:
+        example: Login successful
+        type: string
+      phone:
+        example: "+33612345678"
+        type: string
+      phone_verified:
+        example: true
+        type: boolean
+      school:
+        example: "42"
+        type: string
+      sex:
+        example: 1
+        type: integer
+      token:
+        example: eyJhbGci...
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        example: 42
+        type: integer
+      username:
+        example: johndoe
+        type: string
+      work:
+        example: Dev
+        type: string
+    type: object
+  github_com_QuentinRegnier_nubo-backend_internal_tools.SignUpResponse:
+    properties:
+      avatar_id:
+        example: profile_johndoe_uuid
+        type: string
+      expires_at:
+        type: string
+      message:
+        example: User created successfully
+        type: string
+      token:
+        example: eyJhbGciOiJIUzI1Ni...
+        type: string
+      user_id:
+        example: 42
+        type: integer
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: Documentation de l'API.
+  title: Mon API Propre
+  version: "1.0"
+paths:
+  /login:
+    post:
+      consumes:
+      - multipart/form-data
+      description: "Authentifie un utilisateur via email/password et renvoie son profil
+        complet + token.\n\n**Règles & Erreurs :**\n\n\U0001F534 **400 Bad Request
+        :**\n* `The 'data' field containing the JSON is required` : Champ 'data' manquant.\n*
+        `Invalid JSON format in 'data'` : Le JSON envoyé est mal formé.\n\n⚫ **500
+        Internal Server Error :**\n* `database error` : Identifiants incorrects ou
+        problème BDD (Note: Idéalement, renvoyer 401 pour mauvais mdp)."
+      parameters:
+      - description: Données JSON (tools.LoginInput)
+        in: formData
+        name: data
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.LoginResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse'
+      summary: Connecter un utilisateur
+      tags:
+      - users
+  /signup:
+    post:
+      consumes:
+      - multipart/form-data
+      description: "Inscription complète avec upload d'avatar et données JSON.\n\n**Règles
+        de validation & Erreurs :**\n\n\U0001F534 **400 Bad Request (Erreurs client)
+        :**\n* `The 'data' field containing the JSON is required` : Tu as oublié d'envoyer
+        le champ texte 'data'.\n* `Invalid JSON format in 'data': ...` : Ton JSON
+        est mal écrit (virgule manquante, accolade, etc).\n* `Invalid date format.
+        Expected format: ddmmaaaa` : La date de naissance n'est pas bonne.\n* `Gender
+        must be 0, 1, 2, or null` : Tu as envoyé un entier invalide pour le sexe.\n*
+        `Impossible to read image file` : Le fichier image est corrompu ou illisible.\n\n\U0001F7E0
+        **409 Conflict (Doublons) :**\n* `This username is already taken` : Le pseudo
+        est déjà en base.\n\n⚫ **500 Internal Server Error (Problèmes serveur) :**\n*
+        `Internal error (image upload)` : MinIO est down ou mal configuré.\n* `Internal
+        error (token generation)` : Problème avec la signature JWT.\n* `database error`
+        : Postgres ou Mongo ne répondent pas."
+      parameters:
+      - description: Photo de profil (Image)
+        in: formData
+        name: profile_picture
+        type: file
+      - description: Données JSON (tools.SignUpInput)
+        in: formData
+        name: data
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.SignUpResponse'
+        "400":
+          description: Données invalides (Voir liste ci-dessus)
+          schema:
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse'
+        "409":
+          description: Conflit (Pseudo pris)
+          schema:
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse'
+        "500":
+          description: Erreur Serveur
+          schema:
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse'
+      summary: Créer un compte utilisateur
+      tags:
+      - users
+swagger: "2.0"

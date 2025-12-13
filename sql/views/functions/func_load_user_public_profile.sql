@@ -1,15 +1,15 @@
 CREATE OR REPLACE FUNCTION views.func_load_user_public_profile(
-    p_user_id UUID DEFAULT NULL
+    p_user_id BIGINT DEFAULT NULL
 )
 RETURNS TABLE (
-    user_id UUID,
+    user_id BIGINT,
     username TEXT,
     first_name TEXT,
     last_name TEXT,
     birthdate DATE,
     sex SMALLINT,
     bio TEXT,
-    profile_picture_id UUID,
+    profile_picture_id BIGINT,
     grade SMALLINT,
     location TEXT,
     school TEXT,

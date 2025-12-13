@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/tools"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -33,30 +32,30 @@ var (
 func InitCacheDatabase() {
 	// Initialiser les collections
 
-	schemaUsers := tools.UsersSchema
-	schemaUserSettings := tools.UserSettingsSchema
-	schemaSessions := tools.SessionsSchema
-	schemaRelations := tools.RelationsSchema
-	schemaPosts := tools.PostsSchema
-	schemaComments := tools.CommentsSchema
-	schemaLikes := tools.LikesSchema
-	schemaMedia := tools.MediaSchema
-	schemaConversationsMeta := tools.ConversationsMetaSchema
-	schemaConversationMembers := tools.ConversationMembersSchema
-	schemaMessages := tools.MessagesSchema
+	schemaUsers := UsersSchema
+	schemaUserSettings := UserSettingsSchema
+	schemaSessions := SessionsSchema
+	schemaRelations := RelationsSchema
+	schemaPosts := PostsSchema
+	schemaComments := CommentsSchema
+	schemaLikes := LikesSchema
+	schemaMedia := MediaSchema
+	schemaConversations := ConversationsSchema
+	schemaMembers := MembersSchema
+	schemaMessages := MessagesSchema
 
 	// variables globales
-	Users = NewMongoCollection("nubo_db", "users", schemaUsers)
-	UserSettings = NewMongoCollection("nubo_db", "user_settings", schemaUserSettings)
-	Sessions = NewMongoCollection("nubo_db", "sessions", schemaSessions)
-	Relations = NewMongoCollection("nubo_db", "relations", schemaRelations)
-	Posts = NewMongoCollection("nubo_db", "posts", schemaPosts)
-	Comments = NewMongoCollection("nubo_db", "comments", schemaComments)
-	Likes = NewMongoCollection("nubo_db", "likes", schemaLikes)
-	Media = NewMongoCollection("nubo_db", "media", schemaMedia)
-	ConversationsMeta = NewMongoCollection("nubo_db", "conversations_meta", schemaConversationsMeta)
-	ConversationMembers = NewMongoCollection("nubo_db", "conversation_members", schemaConversationMembers)
-	Messages = NewMongoCollection("nubo_db", "messages", schemaMessages)
+	Users = NewMongoCollection("nubo_mongo", "auth.users", schemaUsers)
+	UserSettings = NewMongoCollection("nubo_mongo", "auth.user_settings", schemaUserSettings)
+	Sessions = NewMongoCollection("nubo_mongo", "auth.sessions", schemaSessions)
+	Relations = NewMongoCollection("nubo_mongo", "auth.relations", schemaRelations)
+	Posts = NewMongoCollection("nubo_mongo", "content.posts", schemaPosts)
+	Comments = NewMongoCollection("nubo_mongo", "content.comments", schemaComments)
+	Likes = NewMongoCollection("nubo_mongo", "content.likes", schemaLikes)
+	Media = NewMongoCollection("nubo_mongo", "content.media", schemaMedia)
+	ConversationsMeta = NewMongoCollection("nubo_mongo", "messaging.conversations", schemaConversations)
+	ConversationMembers = NewMongoCollection("nubo_mongo", "messaging.conversation_members", schemaMembers)
+	Messages = NewMongoCollection("nubo_mongo", "messaging.messages", schemaMessages)
 
 	log.Println("Structure MongoDB initialisée")
 }
@@ -78,16 +77,28 @@ func NewMongoCollection(dbName, name string, schema map[string]reflect.Kind) *Mo
 	}
 }
 
-// validate vérifie qu'un objet correspond au schéma de la collection
-func (c *MongoCollection) validate(obj map[string]any) error {
-	for field, kind := range c.Schema {
-		val, ok := obj[field]
-		if !ok {
-			return fmt.Errorf("champ manquant: %s", field)
+// validate vérifie les types.
+// partial = true : permet de ne vérifier QUE les champs présents (pour Update)
+func (c *MongoCollection) validate(obj map[string]any, partial bool) error {
+	// 1. Si validation complète exigée, on vérifie qu'il ne manque rien
+	if !partial {
+		for field := range c.Schema {
+			if _, ok := obj[field]; !ok {
+				return fmt.Errorf("champ manquant: %s", field)
+			}
 		}
-		if reflect.TypeOf(val).Kind() != kind {
+	}
+
+	// 2. Vérification des types pour les champs qui sont présents
+	for field, val := range obj {
+		expectedKind, known := c.Schema[field]
+		if !known {
+			continue // Champ hors schéma, on ignore
+		}
+
+		if reflect.TypeOf(val).Kind() != expectedKind {
 			return fmt.Errorf("type invalide pour %s: attendu %s, reçu %s",
-				field, kind, reflect.TypeOf(val).Kind())
+				field, expectedKind, reflect.TypeOf(val).Kind())
 		}
 	}
 	return nil
@@ -95,7 +106,8 @@ func (c *MongoCollection) validate(obj map[string]any) error {
 
 // Set insère ou met à jour un objet dans la collection
 func (c *MongoCollection) Set(obj map[string]any) error {
-	if err := c.validate(obj); err != nil {
+	// false = on veut valider que TOUS les champs sont là
+	if err := c.validate(obj, false); err != nil {
 		return err
 	}
 
@@ -151,7 +163,8 @@ func (c *MongoCollection) Delete(filter map[string]any) error {
 
 // Update met à jour les éléments correspondant au filtre avec les nouvelles valeurs fournies dans update
 func (c *MongoCollection) Update(filter map[string]any, update map[string]any) error {
-	if err := c.validate(update); err != nil {
+	// true = on valide seulement les champs qu'on veut mettre à jour
+	if err := c.validate(update, true); err != nil {
 		return err
 	}
 

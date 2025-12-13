@@ -1,15 +1,15 @@
 CREATE OR REPLACE FUNCTION views.func_load_conversation_summary(
-    p_conversation_id UUID DEFAULT NULL,
-    p_user_id UUID DEFAULT NULL
+    p_conversation_id BIGINT DEFAULT NULL,
+    p_user_id BIGINT DEFAULT NULL
 )
 RETURNS TABLE (
-    conversation_id UUID,
-    user_id UUID,
+    conversation_id BIGINT,
+    user_id BIGINT,
     role SMALLINT,
     joined_at TIMESTAMPTZ,
     unread_count INT,
-    last_message_id UUID,
-    last_sender_id UUID,
+    last_message_id BIGINT,
+    last_sender_id BIGINT,
     last_message_type SMALLINT,
     last_message_state SMALLINT,
     last_message_content TEXT,

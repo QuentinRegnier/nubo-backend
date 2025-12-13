@@ -1,6 +1,6 @@
 CREATE OR REPLACE PROCEDURE proc_update_post(
-    p_post_id UUID,
-    p_user_id UUID,
+    p_post_id BIGINT,
+    p_user_id BIGINT,
     p_content TEXT
 )
 LANGUAGE plpgsql

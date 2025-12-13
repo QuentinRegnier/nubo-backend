@@ -3,10 +3,10 @@ CREATE OR REPLACE FUNCTION messaging.func_create_conversation(
     p_title TEXT DEFAULT NULL,
     p_laws SMALLINT[] DEFAULT '{}',
     p_members JSONB -- tableau JSON du type [{ "user_id": "...", "role": 2}, ...]
-) RETURNS UUID AS $$
+) RETURNS BIGINT AS $$
 DECLARE
-    v_conversation_id UUID;
-    v_user_ids UUID[];
+    v_conversation_id BIGINT;
+    v_user_ids BIGINT[];
     v_roles SMALLINT[];
 BEGIN
     -- 1️⃣ Création de la conversation
@@ -16,7 +16,7 @@ BEGIN
 
     -- 2️⃣ Extraction des données membres depuis le JSON fourni
     SELECT
-        array_agg((m->>'user_id')::UUID),
+        array_agg((m->>'user_id')::BIGINT),
         array_agg(COALESCE((m->>'role')::SMALLINT, 0))
     INTO v_user_ids, v_roles
     FROM jsonb_array_elements(p_members) AS m;

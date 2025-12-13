@@ -1,6 +1,6 @@
 CREATE OR REPLACE PROCEDURE proc_delete_relation(
-    p_user_id UUID,
-    p_target_id UUID
+    p_user_id BIGINT,
+    p_target_id BIGINT
 )
 LANGUAGE plpgsql
 AS $$

@@ -1,0 +1,249 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Documentation de l'API.",
+        "title": "Mon API Propre",
+        "contact": {},
+        "version": "1.0"
+    },
+    "host": "localhost:8080",
+    "basePath": "/api/v1",
+    "paths": {
+        "/login": {
+            "post": {
+                "description": "Authentifie un utilisateur via email/password et renvoie son profil complet + token.\n\n**Règles \u0026 Erreurs :**\n\n🔴 **400 Bad Request :**\n* `The 'data' field containing the JSON is required` : Champ 'data' manquant.\n* `Invalid JSON format in 'data'` : Le JSON envoyé est mal formé.\n\n⚫ **500 Internal Server Error :**\n* `database error` : Identifiants incorrects ou problème BDD (Note: Idéalement, renvoyer 401 pour mauvais mdp).",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Connecter un utilisateur",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Données JSON (tools.LoginInput)",
+                        "name": "data",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.LoginResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/signup": {
+            "post": {
+                "description": "Inscription complète avec upload d'avatar et données JSON.\n\n**Règles de validation \u0026 Erreurs :**\n\n🔴 **400 Bad Request (Erreurs client) :**\n* `The 'data' field containing the JSON is required` : Tu as oublié d'envoyer le champ texte 'data'.\n* `Invalid JSON format in 'data': ...` : Ton JSON est mal écrit (virgule manquante, accolade, etc).\n* `Invalid date format. Expected format: ddmmaaaa` : La date de naissance n'est pas bonne.\n* `Gender must be 0, 1, 2, or null` : Tu as envoyé un entier invalide pour le sexe.\n* `Impossible to read image file` : Le fichier image est corrompu ou illisible.\n\n🟠 **409 Conflict (Doublons) :**\n* `This username is already taken` : Le pseudo est déjà en base.\n\n⚫ **500 Internal Server Error (Problèmes serveur) :**\n* `Internal error (image upload)` : MinIO est down ou mal configuré.\n* `Internal error (token generation)` : Problème avec la signature JWT.\n* `database error` : Postgres ou Mongo ne répondent pas.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Créer un compte utilisateur",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "Photo de profil (Image)",
+                        "name": "profile_picture",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Données JSON (tools.SignUpInput)",
+                        "name": "data",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.SignUpResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Données invalides (Voir liste ci-dessus)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflit (Pseudo pris)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Erreur Serveur",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string",
+                    "example": "Invalid JSON format"
+                }
+            }
+        },
+        "github_com_QuentinRegnier_nubo-backend_internal_tools.LoginResponse": {
+            "type": "object",
+            "properties": {
+                "badges": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "ban_expires_at": {
+                    "type": "string"
+                },
+                "ban_reason": {
+                    "type": "string"
+                },
+                "banned": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "bio": {
+                    "type": "string",
+                    "example": "Bio..."
+                },
+                "birthdate": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "desactivated": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "email": {
+                    "type": "string",
+                    "example": "john@nubo.com"
+                },
+                "email_verified": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "first_name": {
+                    "type": "string",
+                    "example": "John"
+                },
+                "grade": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "last_name": {
+                    "type": "string",
+                    "example": "Doe"
+                },
+                "location": {
+                    "type": "string",
+                    "example": "Paris"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "Login successful"
+                },
+                "phone": {
+                    "type": "string",
+                    "example": "+33612345678"
+                },
+                "phone_verified": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "school": {
+                    "type": "string",
+                    "example": "42"
+                },
+                "sex": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "token": {
+                    "type": "string",
+                    "example": "eyJhbGci..."
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "integer",
+                    "example": 42
+                },
+                "username": {
+                    "type": "string",
+                    "example": "johndoe"
+                },
+                "work": {
+                    "type": "string",
+                    "example": "Dev"
+                }
+            }
+        },
+        "github_com_QuentinRegnier_nubo-backend_internal_tools.SignUpResponse": {
+            "type": "object",
+            "properties": {
+                "avatar_id": {
+                    "type": "string",
+                    "example": "profile_johndoe_uuid"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "User created successfully"
+                },
+                "token": {
+                    "type": "string",
+                    "example": "eyJhbGciOiJIUzI1Ni..."
+                },
+                "user_id": {
+                    "type": "integer",
+                    "example": 42
+                }
+            }
+        }
+    }
+}

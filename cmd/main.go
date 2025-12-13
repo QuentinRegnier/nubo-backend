@@ -7,12 +7,18 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/api"
 	"github.com/QuentinRegnier/nubo-backend/internal/cache"
+	"github.com/QuentinRegnier/nubo-backend/internal/data"
 	"github.com/QuentinRegnier/nubo-backend/internal/db"
-	"github.com/QuentinRegnier/nubo-backend/internal/initdata"
+	"github.com/QuentinRegnier/nubo-backend/internal/media"
 	"github.com/QuentinRegnier/nubo-backend/internal/websocket"
 	"github.com/gin-gonic/gin"
 )
 
+// @title           Mon API Propre
+// @version         1.0
+// @description     Documentation de l'API.
+// @host            localhost:8080
+// @BasePath        /api/v1
 func main() {
 	// Initialiser PostgreSQL
 	db.InitPostgres()
@@ -20,14 +26,11 @@ func main() {
 	// Initialiser MongoDB
 	db.InitMongo()
 
-	// Nettoyage au démarrage
-	initdata.InitData()
-
 	// Initialiser Redis
 	cache.InitRedis()
 
-	// Initialiser la structure Redis (caches)
-	cache.InitCacheDatabase()
+	// Nettoyage au démarrage
+	data.InitData()
 
 	// ⚡ Initialiser la stratégie Redis
 	cache.GlobalStrategy = cache.NewLRUCache(cache.Rdb)
@@ -41,8 +44,26 @@ func main() {
 	// Initialiser le Hub et lancer sa boucle
 	websocket.InitHub()
 
+	// Initiatiser MinIO
+	media.InitMinio()
+
+	// Iniitaliser la structure MongoDB
+	db.InitCacheDatabase()
+
+	// Initialiser la structure Redis (caches)
+	cache.InitCacheDatabase()
+
 	r := gin.Default()
 	api.SetupRoutes(r)
+
+	r.GET("/swagger.json", func(c *gin.Context) {
+		c.File("./docs/swagger.json")
+	})
+
+	// Servir l'interface HTML (Scalar)
+	r.GET("/docs", func(c *gin.Context) {
+		c.File("./docs.html")
+	})
 
 	port := os.Getenv("PORT")
 	if port == "" {

@@ -1,8 +1,8 @@
 CREATE TABLE IF NOT EXISTS reports (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique du rapport
-    actor_id UUID REFERENCES auth.users(id), -- id de l'utilisateur ayant signalé
+    id BIGSERIAL PRIMARY KEY, -- id unique du rapport
+    actor_id BIGINT REFERENCES auth.users(id), -- id de l'utilisateur ayant signalé
     target_type SMALLINT NOT NULL, -- type de la cible (user/post/comment/etc)
-    target_id UUID NOT NULL, -- id de la cible
+    target_id BIGINT NOT NULL, -- id de la cible
     reason TEXT, -- raison du signalement
     rationale TEXT DEFAULT NULL, -- explication des mesures prises
     state SMALLINT DEFAULT 0, -- état du rapport (0=pending, 1=reviewed, 2=resolved)

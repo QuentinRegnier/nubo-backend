@@ -1,15 +1,15 @@
 CREATE OR REPLACE FUNCTION content.func_load_likes(
     p_target_type SMALLINT DEFAULT NULL,  -- 0=post, 1=message, 2=commentaire, NULL = tous
-    p_target_id UUID DEFAULT NULL,        -- id de la cible (si ciblé)
-    p_user_id UUID DEFAULT NULL,          -- id utilisateur (si on veut les likes d'un user)
+    p_target_id BIGINT DEFAULT NULL,        -- id de la cible (si ciblé)
+    p_user_id BIGINT DEFAULT NULL,          -- id utilisateur (si on veut les likes d'un user)
     p_limit INT DEFAULT 100,              -- limite de résultats
     p_order_mode SMALLINT DEFAULT 0       -- 0=plus récents, 1=plus anciens
 )
 RETURNS TABLE(
-    id UUID,
+    id BIGINT,
     target_type SMALLINT,
-    target_id UUID,
-    user_id UUID,
+    target_id BIGINT,
+    user_id BIGINT,
     created_at TIMESTAMPTZ
 )
 LANGUAGE plpgsql

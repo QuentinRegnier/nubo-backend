@@ -1,5 +1,5 @@
 CREATE OR REPLACE PROCEDURE moderation.proc_update_report(
-    p_report_id UUID,
+    p_report_id BIGINT,
     p_new_state SMALLINT,
     p_new_rationale TEXT
 )

@@ -1,12 +1,12 @@
 CREATE OR REPLACE FUNCTION views.func_load_user_relations_view(
-    p_follower_id UUID DEFAULT NULL,
-    p_followed_id UUID DEFAULT NULL
+    p_follower_id BIGINT DEFAULT NULL,
+    p_followed_id BIGINT DEFAULT NULL
 )
 RETURNS TABLE (
-    relation_id UUID,
-    follower_id UUID,
+    relation_id BIGINT,
+    follower_id BIGINT,
     follower_username TEXT,
-    followed_id UUID,
+    followed_id BIGINT,
     followed_username TEXT,
     state SMALLINT,
     created_at TIMESTAMPTZ

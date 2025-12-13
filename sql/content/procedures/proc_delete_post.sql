@@ -1,6 +1,6 @@
 CREATE OR REPLACE PROCEDURE proc_delete_post(
-    p_id UUID DEFAULT NULL,
-    p_user_id UUID DEFAULT NULL
+    p_id BIGINT DEFAULT NULL,
+    p_user_id BIGINT DEFAULT NULL
 )
 LANGUAGE plpgsql
 AS $$

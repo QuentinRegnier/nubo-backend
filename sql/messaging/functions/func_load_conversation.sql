@@ -1,16 +1,16 @@
 CREATE OR REPLACE FUNCTION messaging.func_load_conversation(
-    p_user_id UUID
+    p_user_id BIGINT
 )
 -- 1. Définition de la structure de sortie ("liste de structure")
 RETURNS TABLE (
-    conversation_id UUID,
+    conversation_id BIGINT,
     title TEXT,
     type SMALLINT,
     laws SMALLINT[],
     state SMALLINT,
     created_at TIMESTAMPTZ,
-    last_message_id UUID,
-    last_read_by_all_message_id UUID,
+    last_message_id BIGINT,
+    last_read_by_all_message_id BIGINT,
     joined_at TIMESTAMPTZ,
     role SMALLINT,
     unread_count INT

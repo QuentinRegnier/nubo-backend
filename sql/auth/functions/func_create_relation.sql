@@ -1,10 +1,10 @@
 CREATE OR REPLACE FUNCTION auth.func_create_relation(
-    p_primary_id UUID,
-    p_secondary_id UUID,
+    p_primary_id BIGINT,
+    p_secondary_id BIGINT,
     p_state SMALLINT DEFAULT 1
-) RETURNS UUID AS $$
+) RETURNS BIGINT AS $$
 DECLARE
-    v_relation_id UUID;
+    v_relation_id BIGINT;
 BEGIN
     INSERT INTO auth.relations(primary_id, secondary_id, state)
     VALUES (p_primary_id, p_secondary_id, p_state)

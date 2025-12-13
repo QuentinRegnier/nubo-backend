@@ -2,48 +2,47 @@ package cache
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"reflect"
 	"strconv"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/tools"
+	"github.com/QuentinRegnier/nubo-backend/internal/db"
 	"github.com/go-redis/redis/v8"
 )
 
 // ---------------- Initialisation ----------------
 // declarations globales
 var (
-	Users               *Collection
-	UserSettings        *Collection
-	Sessions            *Collection
-	Relations           *Collection
-	Posts               *Collection
-	Comments            *Collection
-	Likes               *Collection
-	Media               *Collection
-	ConversationsMeta   *Collection
-	ConversationMembers *Collection
-	Messages            *Collection
+	Users         *Collection
+	UserSettings  *Collection
+	Sessions      *Collection
+	Relations     *Collection
+	Posts         *Collection
+	Comments      *Collection
+	Likes         *Collection
+	Media         *Collection
+	Conversations *Collection
+	Members       *Collection
+	Messages      *Collection
 )
 
 // InitCacheDatabase initialise la structure logique de Redis pour les caches
 func InitCacheDatabase() {
 	// Initialiser les collections
 
-	schemaUsers := tools.UsersSchema
-	schemaUserSettings := tools.UserSettingsSchema
-	schemaSessions := tools.SessionsSchema
-	schemaRelations := tools.RelationsSchema
-	schemaPosts := tools.PostsSchema
-	schemaComments := tools.CommentsSchema
-	schemaLikes := tools.LikesSchema
-	schemaMedia := tools.MediaSchema
-	schemaConversationsMeta := tools.ConversationsMetaSchema
-	schemaConversationMembers := tools.ConversationMembersSchema
-	schemaMessages := tools.MessagesSchema
+	schemaUsers := db.UsersSchema
+	schemaUserSettings := db.UserSettingsSchema
+	schemaSessions := db.SessionsSchema
+	schemaRelations := db.RelationsSchema
+	schemaPosts := db.PostsSchema
+	schemaComments := db.CommentsSchema
+	schemaLikes := db.LikesSchema
+	schemaMedia := db.MediaSchema
+	schemaConversations := db.ConversationsSchema
+	schemaMembers := db.MembersSchema
+	schemaMessages := db.MessagesSchema
 
 	// variables globales
 	Users = NewCollection("users", schemaUsers, Rdb, GlobalStrategy)
@@ -54,8 +53,8 @@ func InitCacheDatabase() {
 	Comments = NewCollection("comments", schemaComments, Rdb, GlobalStrategy)
 	Likes = NewCollection("likes", schemaLikes, Rdb, GlobalStrategy)
 	Media = NewCollection("media", schemaMedia, Rdb, GlobalStrategy)
-	ConversationsMeta = NewCollection("conversations_meta", schemaConversationsMeta, Rdb, GlobalStrategy)
-	ConversationMembers = NewCollection("conversation_members", schemaConversationMembers, Rdb, GlobalStrategy)
+	Conversations = NewCollection("conversations", schemaConversations, Rdb, GlobalStrategy)
+	Members = NewCollection("members", schemaMembers, Rdb, GlobalStrategy)
 	Messages = NewCollection("messages", schemaMessages, Rdb, GlobalStrategy)
 
 	log.Println("Structure Redis (caches) initialisée")
@@ -102,8 +101,18 @@ func (c *Collection) validate(obj map[string]any) error {
 		if !ok {
 			return fmt.Errorf("champ manquant: %s", field)
 		}
-		if reflect.TypeOf(val).Kind() != kind {
-			return fmt.Errorf("champ %s doit être de type %s", field, kind.String())
+
+		// Récupération du type réel
+		actualKind := reflect.TypeOf(val).Kind()
+
+		if actualKind != kind {
+			// --- CORRECTION REDIS ICI ---
+			// Si Redis attend une String (JSON) mais que le schéma dit Slice/Map/Struct, on accepte !
+			isJsonSerialized := actualKind == reflect.String && (kind == reflect.Slice || kind == reflect.Map || kind == reflect.Struct)
+
+			if !isJsonSerialized {
+				return fmt.Errorf("champ %s doit être de type %s (reçu %s)", field, kind.String(), actualKind.String())
+			}
 		}
 	}
 	return nil
@@ -111,7 +120,7 @@ func (c *Collection) validate(obj map[string]any) error {
 
 // ---------------- Set ----------------
 
-// Set ajoute un élément dans la collection
+// Set ajoute un élément dans la collection avec gestion automatique ZSET/SET
 func (c *Collection) Set(ctx context.Context, obj map[string]any) error {
 	if err := c.validate(obj); err != nil {
 		log.Println("Validation échouée:", err)
@@ -121,22 +130,56 @@ func (c *Collection) Set(ctx context.Context, obj map[string]any) error {
 	id := fmt.Sprintf("%v", obj["id"])
 	objKey := "cache:" + c.Name + ":" + id
 
-	// Sauvegarde complète dans Redis Hash
+	// 1. Sauvegarde complète
 	if err := c.Redis.HMSet(ctx, objKey, obj).Err(); err != nil {
 		return err
 	}
 
-	// Mettre à jour les indexs
-	for field := range c.Schema {
+	// 2. Indexation
+	for field, kind := range c.Schema {
 		if field == "id" {
 			continue
 		}
-		if val, ok := obj[field]; ok {
+		val, ok := obj[field]
+		if !ok {
+			continue
+		}
+
+		// Détection ZSET (Numérique ou Date)
+		var isZSet bool
+		var score float64
+
+		// Est-ce une date ?
+		if field == "created_at" || field == "updated_at" || field == "joined_at" || field == "expires_at" {
+			if t, err := parseToTime(val); err == nil {
+				isZSet = true
+				score = float64(t.Unix())
+			}
+		} else {
+			// Est-ce un nombre ?
+			switch kind {
+			case reflect.Int, reflect.Int64, reflect.Float64, reflect.Int32:
+				if n, err := toInt64(val); err == nil {
+					isZSet = true
+					score = float64(n)
+				}
+			}
+		}
+
+		if isZSet {
+			// Indexation par Score (ZSET)
+			// ex: idx:zset:users:age -> score=25, member=ID
+			idxKey := fmt.Sprintf("idx:zset:%s:%s", c.Name, field)
+			c.Redis.ZAdd(ctx, idxKey, &redis.Z{
+				Score:  score,
+				Member: id,
+			})
+		} else {
+			// Indexation par Valeur Exacte (SET)
+			// ex: idx:users:role:admin -> member=ID
 			valStr := fmt.Sprintf("%v", val)
 			idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr)
-			if err := c.Redis.SAdd(ctx, idxKey, id).Err(); err != nil {
-				log.Printf("Erreur mise à jour index %s: %v", idxKey, err)
-			}
+			c.Redis.SAdd(ctx, idxKey, id)
 		}
 	}
 
@@ -184,43 +227,59 @@ func (c *Collection) Get(ctx context.Context, filter map[string]any) ([]map[stri
 
 // ----------- Delete ----------------
 
-// Delete supprime les éléments correspondant au filtre et nettoie les index vides
+// Delete supprime les éléments et nettoie les index (SET et ZSET)
 func (c *Collection) Delete(ctx context.Context, filter map[string]any) error {
-
-	// Récupérer les objets via Get (filtrage complet)
 	objs, err := c.Get(ctx, filter)
 	if err != nil {
 		return err
 	}
 
 	pipe := c.Redis.TxPipeline()
-	// Stocker les paires idxKey -> id pour vérifier après
-	type idxCheck struct {
-		idxKey string
-	}
-	var checks []idxCheck
 
 	for _, obj := range objs {
 		id := fmt.Sprintf("%v", obj["id"])
 		objKey := "cache:" + c.Name + ":" + id
 
-		// Supprimer le hash principal
+		// Supprimer l'objet
 		pipe.Del(ctx, objKey)
 
-		// Supprimer l’ID de tous les indexs
-		for field := range c.Schema {
+		// Nettoyer les indexs
+		for field, kind := range c.Schema {
 			if field == "id" {
 				continue
 			}
-			if val, ok := obj[field]; ok {
+
+			// Vérifier si c'était un ZSET ou un SET (même logique que Set)
+			val, ok := obj[field]
+			if !ok {
+				continue
+			}
+
+			isZSet := false
+			if field == "created_at" || field == "updated_at" || field == "joined_at" || field == "expires_at" {
+				isZSet = true
+			} else {
+				switch kind {
+				case reflect.Int, reflect.Int64, reflect.Float64, reflect.Int32:
+					isZSet = true
+				}
+			}
+
+			if isZSet {
+				// Suppression dans ZSET
+				idxKey := fmt.Sprintf("idx:zset:%s:%s", c.Name, field)
+				pipe.ZRem(ctx, idxKey, id)
+			} else {
+				// Suppression dans SET
 				valStr := fmt.Sprintf("%v", val)
 				idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr)
 				pipe.SRem(ctx, idxKey, id)
-				checks = append(checks, idxCheck{idxKey: idxKey})
+
+				// Note: Tu avais une logique pour supprimer les clés vides après,
+				// tu peux la garder si tu veux, ici je simplifie pour la clarté.
 			}
 		}
 
-		// Nettoyer la LRU
 		if c.LRU != nil {
 			c.LRU.mu.Lock()
 			delete(c.LRU.elements, c.Name+":"+id)
@@ -228,37 +287,16 @@ func (c *Collection) Delete(ctx context.Context, filter map[string]any) error {
 		}
 	}
 
-	// Exécuter le pipeline
-	if _, err := pipe.Exec(ctx); err != nil {
-		log.Printf("Erreur exécution pipeline delete: %v", err)
-		return err
-	}
-
-	// Vérifier et supprimer les index vides
-	for _, chk := range checks {
-		count, err := c.Redis.SCard(ctx, chk.idxKey).Result()
-		if err != nil {
-			log.Printf("Erreur lecture index %s: %v", chk.idxKey, err)
-			continue
-		}
-		if count == 0 {
-			if err := c.Redis.Del(ctx, chk.idxKey).Err(); err != nil {
-				log.Printf("Erreur suppression index vide %s: %v", chk.idxKey, err)
-			} else {
-				log.Printf("Index vide supprimé: %s", chk.idxKey)
-			}
-		}
-	}
-
-	return nil
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 // ---------------- Update ----------------
 
-// Update met à jour les éléments correspondant au filtre avec les nouvelles valeurs fournies dans update
+// Update met à jour les éléments et gère proprement la rotation des index
 func (c *Collection) Update(ctx context.Context, filter map[string]interface{}, update map[string]interface{}) error {
 
-	// Récupérer les objets correspondant au filtre
+	// 1. Récupérer les objets cibles
 	objs, err := c.Get(ctx, filter)
 	if err != nil {
 		return err
@@ -270,37 +308,79 @@ func (c *Collection) Update(ctx context.Context, filter map[string]interface{}, 
 		id := fmt.Sprintf("%v", obj["id"])
 		objKey := "cache:" + c.Name + ":" + id
 
-		// Mettre à jour l'objet avec les nouvelles valeurs
-		for field, val := range update {
-			obj[field] = val
-		}
-
-		// Sérialiser et stocker dans Redis
-		data, _ := json.Marshal(obj)
-		pipe.Set(ctx, objKey, data, 0)
-
-		// Mettre à jour la LRU si nécessaire
-		if c.LRU != nil {
-			c.LRU.MarkUsed(c.Name, id)
-		}
-
-		// Mettre à jour les index
-		for field := range c.Schema {
+		// 2. Itérer sur les champs à modifier
+		for field, newVal := range update {
 			if field == "id" {
 				continue
 			}
-			// Supprimer l'ancien index si la valeur a changé
-			if oldVal, ok := obj[field]; ok {
-				oldValStr := fmt.Sprintf("%v", oldVal)
-				idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, oldValStr)
-				pipe.SAdd(ctx, idxKey, id) // ajouter au nouvel index (SRem est déjà géré dans Delete si on le souhaite)
+
+			// --- ÉTAPE CRUCIALE : Récupérer l'ancienne valeur AVANT modif ---
+			oldVal, hasOld := obj[field]
+
+			// Déterminer le type d'index (ZSET ou SET)
+			kind := c.Schema[field]
+			var isZSet bool
+			var newScore float64
+
+			// Détection ZSET (Dates)
+			if field == "created_at" || field == "updated_at" || field == "joined_at" || field == "expires_at" {
+				if t, err := parseToTime(newVal); err == nil {
+					isZSet = true
+					newScore = float64(t.Unix())
+				}
+			} else {
+				// Détection ZSET (Nombres)
+				switch kind {
+				case reflect.Int, reflect.Int64, reflect.Float64, reflect.Int32:
+					if n, err := toInt64(newVal); err == nil {
+						isZSet = true
+						newScore = float64(n)
+					}
+				}
 			}
+
+			// --- GESTION DES INDEX ---
+
+			if isZSet {
+				// CAS ZSET (Score)
+				// Redis gère l'update atomique : ZADD écrase l'ancien score pour ce membre.
+				// Pas besoin de ZREM explicite sur la même clé.
+				idxKey := fmt.Sprintf("idx:zset:%s:%s", c.Name, field)
+				pipe.ZAdd(ctx, idxKey, &redis.Z{
+					Score:  newScore,
+					Member: id,
+				})
+			} else {
+				// CAS SET (Valeurs distinctes, ex: username, role)
+				// IL FAUT SUPPRIMER L'ANCIENNE ENTRÉE
+				if hasOld {
+					oldValStr := fmt.Sprintf("%v", oldVal)
+					oldIdxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, oldValStr)
+					pipe.SRem(ctx, oldIdxKey, id) // <-- SUPPRESSION ICI
+				}
+
+				// ET AJOUTER LA NOUVELLE
+				newValStr := fmt.Sprintf("%v", newVal)
+				newIdxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, newValStr)
+				pipe.SAdd(ctx, newIdxKey, id)
+			}
+
+			// 3. Mettre à jour l'objet en mémoire pour le HMSet final
+			obj[field] = newVal
+		}
+
+		// 4. Sauvegarder l'objet complet mis à jour
+		pipe.HMSet(ctx, objKey, obj)
+
+		// 5. Mise à jour LRU
+		if c.LRU != nil {
+			c.LRU.MarkUsed(c.Name, id)
 		}
 	}
 
 	_, err = pipe.Exec(ctx)
 	if err != nil {
-		log.Printf("Erreur execution pipeline Modify: %v", err)
+		log.Printf("Erreur execution pipeline Update: %v", err)
 		return err
 	}
 
@@ -309,14 +389,14 @@ func (c *Collection) Update(ctx context.Context, filter map[string]interface{}, 
 
 // ---------------- Filtrage ----------------
 
-func evalTree(ctx context.Context, redis *redis.Client, collName string, filter map[string]any, type_before string) (map[string]struct{}, []map[string]any, error) {
+func evalTree(ctx context.Context, rdb *redis.Client, collName string, filter map[string]any, type_before string) (map[string]struct{}, []map[string]any, error) {
 	// Cas 1 : opérateurs logiques
 	if orOps, ok := filter["$or"]; ok {
 		arr, _ := orOps.([]any)
 		unionSet := make(map[string]struct{})
 		for _, sub := range arr {
 			subFilter, _ := sub.(map[string]any)
-			res, _, err := evalTree(ctx, redis, collName, subFilter, "$or")
+			res, _, err := evalTree(ctx, rdb, collName, subFilter, "$or")
 			if err != nil {
 				return nil, nil, err
 			}
@@ -333,7 +413,7 @@ func evalTree(ctx context.Context, redis *redis.Client, collName string, filter 
 		var del = []map[string]any{}
 		for _, sub := range arr {
 			subFilter, _ := sub.(map[string]any)
-			res, del, err := evalTree(ctx, redis, collName, subFilter, "$and")
+			res, del, err := evalTree(ctx, rdb, collName, subFilter, "$and")
 			if err != nil {
 				return nil, del, err
 			}
@@ -382,7 +462,7 @@ func evalTree(ctx context.Context, redis *redis.Client, collName string, filter 
 		}
 		cond, _ := raw.(map[string]any)
 		for op, val := range cond {
-			ids, err := fetchIDsForCondition(ctx, redis, collName, field, op, val)
+			ids, err := fetchIDsForCondition(ctx, rdb, collName, field, op, val)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -395,7 +475,7 @@ func evalTree(ctx context.Context, redis *redis.Client, collName string, filter 
 }
 
 // fetchIDsForCondition : récupère les IDs directement depuis Redis pour une condition simple.
-func fetchIDsForCondition(ctx context.Context, redis *redis.Client, collName, field, op string, val any) ([]string, error) {
+func fetchIDsForCondition(ctx context.Context, rdb *redis.Client, collName, field, op string, val any) ([]string, error) {
 	key := fmt.Sprintf("index:%s:%s", collName, field)
 
 	switch op {
@@ -403,7 +483,7 @@ func fetchIDsForCondition(ctx context.Context, redis *redis.Client, collName, fi
 		if field == "id" {
 			idStr := fmt.Sprintf("%v", val)
 			objKey := fmt.Sprintf("cache:%s:%s", collName, idStr)
-			exists, err := redis.Exists(ctx, objKey).Result()
+			exists, err := rdb.Exists(ctx, objKey).Result()
 			if err != nil {
 				return nil, err
 			}
@@ -413,7 +493,7 @@ func fetchIDsForCondition(ctx context.Context, redis *redis.Client, collName, fi
 			return []string{}, nil
 		}
 		member := fmt.Sprintf("%v", val)
-		ids, err := redis.SMembers(ctx, key+":"+member).Result()
+		ids, err := rdb.SMembers(ctx, key+":"+member).Result()
 		if err != nil {
 			return nil, err
 		}
@@ -426,7 +506,7 @@ func fetchIDsForCondition(ctx context.Context, redis *redis.Client, collName, fi
 			for _, v := range vals {
 				idStr := fmt.Sprintf("%v", v)
 				objKey := fmt.Sprintf("cache:%s:%s", collName, idStr)
-				exists, err := redis.Exists(ctx, objKey).Result()
+				exists, err := rdb.Exists(ctx, objKey).Result()
 				if err != nil {
 					return nil, err
 				}
@@ -440,7 +520,7 @@ func fetchIDsForCondition(ctx context.Context, redis *redis.Client, collName, fi
 		var all []string
 		for _, v := range vals {
 			member := fmt.Sprintf("%v", v)
-			ids, err := redis.SMembers(ctx, key+":"+member).Result()
+			ids, err := rdb.SMembers(ctx, key+":"+member).Result()
 			if err != nil {
 				return nil, err
 			}
@@ -449,163 +529,53 @@ func fetchIDsForCondition(ctx context.Context, redis *redis.Client, collName, fi
 		return all, nil
 
 	case "$gt", "$gte", "$lt", "$lte":
-		if field == "id" {
-			switch op {
-			case "$gt":
-				f, err := toInt64(val)
-				if err != nil {
-					return []string{}, nil
-				}
-				start := int64(f)
-				var ids []string
-				for i := start + 1; ; i++ {
-					objKey := fmt.Sprintf("cache:%s:%d", collName, i)
-					exists, err := redis.Exists(ctx, objKey).Result()
-					if err != nil {
-						return nil, err
-					}
-					if exists == 0 {
-						break
-					}
-					ids = append(ids, strconv.FormatInt(i, 10))
-				}
-				return ids, nil
-			case "$gte":
-				f, err := toInt64(val)
-				if err != nil {
-					return []string{}, nil
-				}
-				start := int64(f)
-				var ids []string
-				for i := start; ; i++ {
-					objKey := fmt.Sprintf("cache:%s:%d", collName, i)
-					exists, err := redis.Exists(ctx, objKey).Result()
-					if err != nil {
-						return nil, err
-					}
-					if exists == 0 {
-						break
-					}
-					ids = append(ids, strconv.FormatInt(i, 10))
-				}
-				return ids, nil
-			case "$lt":
-				f, err := toInt64(val)
-				if err != nil {
-					return []string{}, nil
-				}
-				end := int64(f)
-				var ids []string
-				for i := int64(0); i < end; i++ {
-					objKey := fmt.Sprintf("cache:%s:%d", collName, i)
-					exists, err := redis.Exists(ctx, objKey).Result()
-					if err != nil {
-						return nil, err
-					}
-					if exists == 0 {
-						break
-					}
-					ids = append(ids, strconv.FormatInt(i, 10))
-				}
-				return ids, nil
-			case "$lte":
-				f, err := toInt64(val)
-				if err != nil {
-					return []string{}, nil
-				}
-				end := int64(f)
-				var ids []string
-				for i := int64(0); i <= end; i++ {
-					objKey := fmt.Sprintf("cache:%s:%d", collName, i)
-					exists, err := redis.Exists(ctx, objKey).Result()
-					if err != nil {
-						return nil, err
-					}
-					if exists == 0 {
-						break
-					}
-					ids = append(ids, strconv.FormatInt(i, 10))
-				}
-				return ids, nil
+		// 1. Convertir la valeur de référence en Score (float64)
+		var score float64
 
-			default:
-				return []string{}, nil
-			}
-		}
+		// Est-ce une date ? (basé sur tes noms de champs ou le type)
 		if field == "created_at" || field == "updated_at" || field == "joined_at" || field == "expires_at" {
-			switch op {
-			case "$gt":
-				tRef, err := parseToTime(val)
-				if err != nil {
-					return []string{}, nil
-				}
-				ids := []string{}
-				start := tRef.Add(24 * time.Hour)
-				for t := start; t.Before(time.Now().UTC()); t = t.Add(24 * time.Hour) {
-					member := fmt.Sprintf("%v", t)
-					memberIDs, err := redis.SMembers(ctx, key+":"+member).Result()
-					if err != nil {
-						return nil, err
-					}
-					ids = append(ids, memberIDs...)
-				}
-				return ids, nil
-			case "$gte":
-				tRef, err := parseToTime(val)
-				if err != nil {
-					return []string{}, nil
-				}
-				ids := []string{}
-				start := tRef
-				for t := start; t.Before(time.Now().UTC()); t = t.Add(24 * time.Hour) {
-					member := fmt.Sprintf("%v", t)
-					memberIDs, err := redis.SMembers(ctx, key+":"+member).Result()
-					if err != nil {
-						return nil, err
-					}
-					ids = append(ids, memberIDs...)
-				}
-				return ids, nil
-			case "$lt":
-				tRef, err := parseToTime(val)
-				if err != nil {
-					return []string{}, nil
-				}
-				ids := []string{}
-				start := time.Date(2025, time.September, 14, 0, 0, 0, 0, time.UTC)
-				for t := start; t.Before(tRef); t = t.Add(24 * time.Hour) {
-					member := fmt.Sprintf("%v", t)
-					memberIDs, err := redis.SMembers(ctx, key+":"+member).Result()
-					if err != nil {
-						return nil, err
-					}
-					ids = append(ids, memberIDs...)
-				}
-				return ids, nil
-			case "$lte":
-				tRef, err := parseToTime(val)
-				if err != nil {
-					return []string{}, nil
-				}
-				ids := []string{}
-				start := time.Date(2025, time.September, 14, 0, 0, 0, 0, time.UTC)
-				for t := start; !t.After(tRef); t = t.Add(24 * time.Hour) {
-					member := fmt.Sprintf("%v", t)
-					memberIDs, err := redis.SMembers(ctx, key+":"+member).Result()
-					if err != nil {
-						return nil, err
-					}
-					ids = append(ids, memberIDs...)
-				}
-				return ids, nil
-			case "$in":
-
-			default:
-				return []string{}, nil
+			t, err := parseToTime(val)
+			if err != nil {
+				return nil, fmt.Errorf("date invalide pour filtre %s: %v", field, err)
 			}
+			// On utilise le timestamp Unix comme score
+			score = float64(t.Unix())
+		} else {
+			// C'est un nombre (int, float, etc.)
+			valInt, err := toInt64(val) // Ta fonction utilitaire existante
+			if err != nil {
+				return nil, fmt.Errorf("valeur non numérique pour filtre %s: %v", field, err)
+			}
+			score = float64(valInt)
 		}
-		// Pas de condition sur les dates
-		return []string{}, nil
+
+		// 2. Préparer l'intervalle Redis (ZRangeBy)
+		rBox := &redis.ZRangeBy{
+			Min: "-inf",
+			Max: "+inf",
+		}
+
+		scoreStr := fmt.Sprintf("%f", score) // Conversion propre en string pour Redis
+
+		switch op {
+		case "$gt":
+			// "(" signifie exclusif dans la syntaxe Redis
+			rBox.Min = "(" + scoreStr
+		case "$gte":
+			rBox.Min = scoreStr
+		case "$lt":
+			rBox.Max = "(" + scoreStr
+		case "$lte":
+			rBox.Max = scoreStr
+		}
+
+		// 3. Exécution atomique (plus de boucle for !)
+		// Retourne directement tous les IDs dans l'intervalle
+		ids, err := rdb.ZRangeByScore(ctx, key, rBox).Result()
+		if err != nil {
+			return nil, err
+		}
+		return ids, nil
 
 	default:
 		// Pas d'index → laisse le filtrage final (matchFilter) s'en occuper

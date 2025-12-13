@@ -1,11 +1,11 @@
 CREATE OR REPLACE FUNCTION content.func_create_media(
-    p_owner_id UUID,
+    p_owner_id BIGINT,
     p_storage_path TEXT
-) RETURNS UUID
+) RETURNS BIGINT
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_media_id UUID;
+    v_media_id BIGINT;
 BEGIN
     INSERT INTO content.media(owner_id, storage_path)
     VALUES (p_owner_id, p_storage_path)

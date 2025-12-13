@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nubo API Documentation</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Mermaid JS for Diagrams -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <!-- Icons (Phosphor) -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        nubo: {
+                            50: '#f0f9ff',
+                            100: '#e0f2fe',
+                            500: '#0ea5e9',
+                            600: '#0284c7',
+                            900: '#0c4a6e',
+                        },
+                        method: {
+                            post: '#10b981', // Emerald 500
+                            get: '#3b82f6',  // Blue 500
+                            put: '#f59e0b',  // Amber 500
+                            delete: '#ef4444' // Red 500
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8; 
+        }
+        
+        .code-block {
+            position: relative;
+        }
+        .copy-btn {
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .code-block:hover .copy-btn {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-slate-800 font-sans antialiased">
+
+    <div class="flex h-screen overflow-hidden">
+
+        <!-- SIDEBAR -->
+        <aside class="w-64 bg-white border-r border-gray-200 flex-shrink-0 flex flex-col hidden md:flex">
+            <div class="p-6 border-b border-gray-100 flex items-center gap-2">
+                <div class="w-8 h-8 bg-nubo-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">N</div>
+                <span class="font-bold text-xl tracking-tight text-slate-900">Nubo API</span>
+            </div>
+            
+            <div class="p-4">
+                <div class="relative">
+                    <i class="ph ph-magnifying-glass absolute left-3 top-2.5 text-gray-400"></i>
+                    <input type="text" placeholder="Rechercher..." class="w-full bg-gray-50 border border-gray-200 rounded-md py-2 pl-9 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-nubo-500 focus:border-transparent transition-all">
+                </div>
+            </div>
+
+            <nav class="flex-1 overflow-y-auto px-4 pb-4 space-y-6">
+                <div>
+                    <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Introduction</h3>
+                    <a href="#" class="block px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md transition-colors">Vue d'ensemble</a>
+                    <a href="#" class="block px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md transition-colors">Authentification</a>
+                </div>
+
+                <div>
+                    <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Utilisateurs</h3>
+                    <a href="#register" class="flex items-center justify-between px-3 py-2 text-sm font-medium text-nubo-600 bg-nubo-50 rounded-md transition-colors">
+                        <span>Création de compte</span>
+                        <span class="text-[10px] font-bold text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded">POST</span>
+                    </a>
+                    <a href="#" class="block px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md transition-colors">Profil</a>
+                    <a href="#" class="block px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md transition-colors">Mise à jour</a>
+                </div>
+            </nav>
+        </aside>
+
+        <!-- MAIN CONTENT -->
+        <main class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+            
+            <!-- Documentation Column (Middle) -->
+            <div class="flex-1 overflow-y-auto p-8 lg:p-12 scroll-smooth" id="content-area">
+                
+                <!-- Mobile Header -->
+                <div class="md:hidden flex items-center justify-between mb-8">
+                    <div class="flex items-center gap-2">
+                        <div class="w-8 h-8 bg-nubo-600 rounded-lg flex items-center justify-center text-white font-bold">N</div>
+                        <span class="font-bold text-lg">Nubo API</span>
+                    </div>
+                    <button class="text-gray-500 hover:text-gray-700">
+                        <i class="ph ph-list text-2xl"></i>
+                    </button>
+                </div>
+
+                <!-- Endpoint Header -->
+                <section id="register" class="mb-12">
+                    <div class="flex items-center gap-3 mb-4">
+                        <span class="px-3 py-1 text-sm font-bold text-white bg-method-post rounded-full shadow-sm shadow-emerald-200">POST</span>
+                        <h1 class="text-3xl font-bold text-slate-900">Register User</h1>
+                    </div>
+                    
+                    <div class="flex items-center gap-2 text-sm text-gray-500 font-mono bg-gray-100 px-3 py-2 rounded-md w-fit mb-6 border border-gray-200">
+                        <span class="text-emerald-600 font-bold">POST</span>
+                        <span>https://api.nubo.com/register</span>
+                    </div>
+
+                    <p class="text-gray-600 leading-relaxed mb-6">
+                        Permet de créer un nouvel utilisateur dans le système Nubo. Cette route gère l'inscription complète, incluant l'upload d'une photo de profil (optionnelle), la validation des données, et la génération des tokens d'accès initiaux.
+                    </p>
+
+                    <div class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-8 rounded-r-md">
+                        <div class="flex">
+                            <div class="flex-shrink-0">
+                                <i class="ph ph-info text-blue-500 text-xl"></i>
+                            </div>
+                            <div class="ml-3">
+                                <p class="text-sm text-blue-700">
+                                    Cette route attend un payload de type <code class="bg-blue-100 px-1 py-0.5 rounded text-blue-800 font-mono text-xs">multipart/form-data</code> car elle gère à la fois des métadonnées JSON et un fichier binaire.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- LOGIC FLOW (Mermaid) -->
+                    <h2 class="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+                        <i class="ph ph-git-merge text-nubo-600"></i> Logique de Traitement
+                    </h2>
+                    <div class="bg-white border border-gray-200 rounded-xl p-4 mb-10 shadow-sm overflow-hidden">
+                        <div class="mermaid text-center">
+                            graph TD
+                                Start([Client Request]) --> CheckData{Champ 'data' ?}
+                                CheckData -- Non --> Err400[400: Data requis]
+                                CheckData -- Oui --> ParseJSON[Parsing JSON]
+                                
+                                ParseJSON -- Erreur --> ErrJSON[400: JSON invalide]
+                                ParseJSON -- OK --> ValMetier{Validations Métier}
+                                
+                                ValMetier -- "Gender invalid (0-2)" --> ErrLogic[400: Gender Error]
+                                ValMetier -- "Date invalid (ddmmyyyy)" --> ErrDate[400: Date Error]
+                                ValMetier -- "Username pris" --> ErrUnique[409: Conflict]
+                                
+                                ValMetier -- OK --> CheckFile{Fichier Image ?}
+                                
+                                CheckFile -- Oui --> UploadMinio[Upload vers MinIO]
+                                UploadMinio -- Erreur --> Err500[500: Server Error]
+                                UploadMinio -- OK --> GenToken[Génération Tokens]
+                                CheckFile -- Non --> GenToken
+                                
+                                GenToken --> DB[Insertion Base de Données]
+                                DB -- Erreur --> Err500
+                                DB -- OK --> Success([200: OK + Tokens])
+                                
+                                style Start fill:#f0f9ff,stroke:#0ea5e9
+                                style Success fill:#d1fae5,stroke:#10b981,stroke-width:2px
+                                style Err400 fill:#fee2e2,stroke:#ef4444
+                                style ErrJSON fill:#fee2e2,stroke:#ef4444
+                                style ErrLogic fill:#fee2e2,stroke:#ef4444
+                                style ErrDate fill:#fee2e2,stroke:#ef4444
+                                style ErrUnique fill:#ffedd5,stroke:#f97316
+                                style Err500 fill:#fee2e2,stroke:#ef4444
+                        </div>
+                    </div>
+
+                    <!-- REQUEST PARAMETERS -->
+                    <h2 class="text-xl font-bold text-slate-800 mb-4">Paramètres de la requête</h2>
+                    <div class="overflow-hidden border border-gray-200 rounded-lg shadow-sm mb-10">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Champ</th>
+                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Requis</th>
+                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                <!-- Data Field -->
+                                <tr class="bg-nubo-50/30">
+                                    <td class="px-6 py-4 whitespace-nowrap font-mono text-sm font-medium text-slate-900">data</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">JSON String</td>
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">Oui</span>
+                                    </td>
+                                    <td class="px-6 py-4 text-sm text-gray-600">
+                                        Contient l'objet JSON sérialisé avec toutes les infos utilisateur.
+                                    </td>
+                                </tr>
+                                <!-- Sub fields of data (visual indentation) -->
+                                <tr>
+                                    <td class="px-6 py-2 pl-12 font-mono text-xs text-slate-600">↳ username</td>
+                                    <td class="px-6 py-2 text-xs text-gray-500">String</td>
+                                    <td class="px-6 py-2 text-xs text-red-600 font-medium">Oui</td>
+                                    <td class="px-6 py-2 text-xs text-gray-500">Identifiant unique.</td>
+                                </tr>
+                                <tr>
+                                    <td class="px-6 py-2 pl-12 font-mono text-xs text-slate-600">↳ email</td>
+                                    <td class="px-6 py-2 text-xs text-gray-500">String</td>
+                                    <td class="px-6 py-2 text-xs text-red-600 font-medium">Oui</td>
+                                    <td class="px-6 py-2 text-xs text-gray-500">Email valide.</td>
+                                </tr>
+                                <tr>
+                                    <td class="px-6 py-2 pl-12 font-mono text-xs text-slate-600">↳ password_hash</td>
+                                    <td class="px-6 py-2 text-xs text-gray-500">String</td>
+                                    <td class="px-6 py-2 text-xs text-red-600 font-medium">Oui</td>
+                                    <td class="px-6 py-2 text-xs text-gray-500">Mot de passe hashé (client-side) ou brut selon config.</td>
+                                </tr>
+                                <tr>
+                                    <td class="px-6 py-2 pl-12 font-mono text-xs text-slate-600">↳ birthdate</td>
+                                    <td class="px-6 py-2 text-xs text-gray-500">String</td>
+                                    <td class="px-6 py-2 text-xs text-red-600 font-medium">Oui</td>
+                                    <td class="px-6 py-2 text-xs text-gray-500">Format strict: <code class="bg-gray-100 px-1 rounded">ddmmaaaa</code>.</td>
+                                </tr>
+                                <tr>
+                                    <td class="px-6 py-2 pl-12 font-mono text-xs text-slate-600">↳ gender</td>
+                                    <td class="px-6 py-2 text-xs text-gray-500">Int</td>
+                                    <td class="px-6 py-2 text-xs text-gray-400">Non</td>
+                                    <td class="px-6 py-2 text-xs text-gray-500">0, 1 ou 2. (Null autorisé).</td>
+                                </tr>
+                                <tr>
+                                    <td class="px-6 py-2 pl-12 font-mono text-xs text-slate-600">↳ phone</td>
+                                    <td class="px-6 py-2 text-xs text-gray-500">Object</td>
+                                    <td class="px-6 py-2 text-xs text-red-600 font-medium">Oui</td>
+                                    <td class="px-6 py-2 text-xs text-gray-500"><code>{ "number": "...", "country": "FR" }</code></td>
+                                </tr>
+                                <!-- Profile Picture -->
+                                <tr class="bg-nubo-50/30 border-t border-gray-100">
+                                    <td class="px-6 py-4 whitespace-nowrap font-mono text-sm font-medium text-slate-900">profile_picture</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Binary (File)</td>
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">Optionnel</span>
+                                    </td>
+                                    <td class="px-6 py-4 text-sm text-gray-600">
+                                        Fichier image (JPG/PNG). Sera uploadé sur MinIO.
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- ERROR HANDLING -->
+                    <h2 class="text-xl font-bold text-slate-800 mb-4">Codes d'erreur</h2>
+                    <div class="grid gap-4 mb-10">
+                        <!-- 400 Bad Request -->
+                        <div class="border border-red-200 bg-red-50 rounded-lg p-4">
+                            <div class="flex items-baseline gap-3 mb-2">
+                                <span class="font-bold text-red-700">400 Bad Request</span>
+                                <span class="text-xs text-red-500 uppercase tracking-wide">Validation</span>
+                            </div>
+                            <ul class="list-disc list-inside text-sm text-red-800 space-y-1 ml-1">
+                                <li><code>Le champ 'data' contenant le JSON est requis</code></li>
+                                <li><code>Format JSON invalide dans 'data': ...</code></li>
+                                <li><code>Gender doit être 0, 1, 2 ou null</code></li>
+                                <li><code>Format date invalide. Attendu: ddmmaaaa</code></li>
+                                <li><code>Impossible de lire le fichier image</code></li>
+                            </ul>
+                        </div>
+                        
+                        <!-- 409 Conflict -->
+                        <div class="border border-orange-200 bg-orange-50 rounded-lg p-4">
+                            <div class="flex items-baseline gap-3 mb-2">
+                                <span class="font-bold text-orange-700">409 Conflict</span>
+                                <span class="text-xs text-orange-500 uppercase tracking-wide">Doublon</span>
+                            </div>
+                            <p class="text-sm text-orange-800">
+                                <code>Ce nom d'utilisateur est déjà pris</code>
+                            </p>
+                        </div>
+
+                        <!-- 500 Server Error -->
+                        <div class="border border-gray-200 bg-gray-50 rounded-lg p-4">
+                            <div class="flex items-baseline gap-3 mb-2">
+                                <span class="font-bold text-gray-700">500 Internal Server Error</span>
+                                <span class="text-xs text-gray-500 uppercase tracking-wide">Système</span>
+                            </div>
+                            <p class="text-sm text-gray-700">
+                                Erreur liée à l'upload de l'image (MinIO), à la génération de token ou à l'insertion en base de données.
+                            </p>
+                        </div>
+                    </div>
+
+                </section>
+            </div>
+
+            <!-- CODE EXAMPLES COLUMN (Right) -->
+            <div class="w-full lg:w-[450px] bg-slate-900 text-slate-300 flex-shrink-0 flex flex-col border-l border-slate-800">
+                <div class="p-4 border-b border-slate-800">
+                    <h3 class="text-sm font-semibold text-slate-400 uppercase tracking-wider">Exemples</h3>
+                </div>
+                
+                <div class="flex-1 overflow-y-auto p-6 space-y-8">
+                    
+                    <!-- REQUEST -->
+                    <div>
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs font-bold text-emerald-400 uppercase">Requête (cURL)</span>
+                            <button onclick="copyCode('curl-code')" class="text-xs text-slate-400 hover:text-white transition-colors flex items-center gap-1 cursor-pointer">
+                                <i class="ph ph-copy"></i> Copier
+                            </button>
+                        </div>
+                        <div class="code-block bg-slate-950 rounded-lg p-4 shadow-inner border border-slate-800 overflow-x-auto text-xs font-mono leading-relaxed group">
+<pre id="curl-code"><code class="language-bash"><span class="text-purple-400">curl</span> --location --request <span class="text-emerald-400">POST</span> \
+  '<span class="text-blue-300">https://api.nubo.com/register</span>' \
+  --header 'Content-Type: multipart/form-data' \
+  --form 'data="{
+    \"username\": \"jean_dupont\",
+    \"email\": \"jean@nubo.com\",
+    \"password_hash\": \"hash_secret_123\",
+    \"birthdate\": \"01012000\",
+    \"phone\": {\"number\": \"0612345678\", \"country\": \"FR\"},
+    \"bio\": \"Hello world\",
+    \"gender\": 1
+}"' \
+  --form 'profile_picture=@"/path/to/avatar.jpg"'</code></pre>
+                        </div>
+                    </div>
+
+                    <!-- RESPONSE -->
+                    <div>
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs font-bold text-blue-400 uppercase">Réponse (200 OK)</span>
+                            <button onclick="copyCode('json-response')" class="text-xs text-slate-400 hover:text-white transition-colors flex items-center gap-1 cursor-pointer">
+                                <i class="ph ph-copy"></i> Copier
+                            </button>
+                        </div>
+                        <div class="code-block bg-slate-950 rounded-lg p-4 shadow-inner border border-slate-800 overflow-x-auto text-xs font-mono leading-relaxed">
+<pre id="json-response"><code class="language-json">{
+  <span class="text-sky-300">"token"</span>: <span class="text-amber-300">"eyJhbGciOiJIUzI1NiIs..."</span>,
+  <span class="text-sky-300">"device_token"</span>: <span class="text-amber-300">"dev_87328732..."</span>,
+  <span class="text-sky-300">"message"</span>: <span class="text-emerald-300">"Utilisateur créé avec succès"</span>,
+  <span class="text-sky-300">"avatar_id"</span>: <span class="text-amber-300">"profile_jean_dupont_uuid..."</span>,
+  <span class="text-sky-300">"id"</span>: <span class="text-purple-300">1024</span>
+}</code></pre>
+                        </div>
+                    </div>
+
+                    <!-- ERROR RESPONSE -->
+                    <div>
+                        <span class="text-xs font-bold text-red-400 uppercase mb-3 block">Exemple d'Erreur (400)</span>
+                        <div class="code-block bg-slate-950 rounded-lg p-4 shadow-inner border border-red-900/30 overflow-x-auto text-xs font-mono leading-relaxed">
+<pre><code class="language-json">{
+  <span class="text-sky-300">"error"</span>: <span class="text-red-300">"Format date invalide. Attendu: ddmmaaaa"</span>
+}</code></pre>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <script>
+        // Initialize Mermaid
+        mermaid.initialize({ 
+            startOnLoad: true, 
+            theme: 'default',
+            securityLevel: 'loose',
+            themeVariables: {
+                fontFamily: 'Inter',
+                fontSize: '14px'
+            }
+        });
+
+        // Copy to clipboard function
+        function copyCode(elementId) {
+            const el = document.getElementById(elementId);
+            const text = el.innerText;
+            
+            navigator.clipboard.writeText(text).then(() => {
+                // Visual feedback could be added here (e.g., change icon to checkmark)
+                const btn = el.parentElement.previousElementSibling.querySelector('button');
+                const originalHtml = btn.innerHTML;
+                btn.innerHTML = '<i class="ph ph-check text-emerald-400"></i> Copié !';
+                setTimeout(() => {
+                    btn.innerHTML = originalHtml;
+                }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy: ', err);
+            });
+        }
+    </script>
+</body>
+</html>

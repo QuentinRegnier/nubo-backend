@@ -1,7 +1,7 @@
 CREATE OR REPLACE PROCEDURE proc_update_conversation(
-    p_conversation_id UUID,
+    p_conversation_id BIGINT,
     p_title TEXT DEFAULT NULL,
-    p_last_message_id UUID DEFAULT NULL,
+    p_last_message_id BIGINT DEFAULT NULL,
     p_state SMALLINT DEFAULT NULL,
     p_laws SMALLINT[] DEFAULT NULL
 )

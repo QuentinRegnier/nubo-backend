@@ -2,7 +2,9 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
+	"os"
 
 	_ "github.com/lib/pq"
 )
@@ -10,7 +12,24 @@ import (
 var PostgresDB *sql.DB
 
 func InitPostgres() {
-	connStr := "postgres://nubo_user:nubo_password@localhost:5432/nubo_db?sslmode=disable"
+	host := os.Getenv("POSTGRES_HOST")
+	user := os.Getenv("POSTGRES_USER")
+	password := os.Getenv("POSTGRES_PASSWORD")
+	dbname := os.Getenv("POSTGRES_DB")
+	port := os.Getenv("POSTGRES_PORT")
+
+	if host == "" {
+		host = "postgres"
+	}
+	if port == "" {
+		port = "5432"
+	}
+
+	connStr := fmt.Sprintf(
+		"postgres://%s:%s@%s:%s/%s?sslmode=disable",
+		user, password, host, port, dbname,
+	)
+
 	var err error
 	PostgresDB, err = sql.Open("postgres", connStr)
 	if err != nil {

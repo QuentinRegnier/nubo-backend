@@ -1,5 +1,5 @@
 CREATE OR REPLACE PROCEDURE proc_delete_user(
-    p_id UUID DEFAULT NULL,
+    p_id BIGINT DEFAULT NULL,
     p_username TEXT DEFAULT NULL,
     p_email TEXT DEFAULT NULL,
     p_phone TEXT DEFAULT NULL,

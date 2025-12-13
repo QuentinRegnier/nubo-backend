@@ -1,7 +1,7 @@
 CREATE OR REPLACE PROCEDURE proc_create_report(
-    p_actor_id UUID,
+    p_actor_id BIGINT,
     p_target_type SMALLINT,
-    p_target_id UUID,
+    p_target_id BIGINT,
     p_reason TEXT,
     p_state SMALLINT
 )

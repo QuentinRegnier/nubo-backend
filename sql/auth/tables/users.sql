@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique de l'utilisateur
+    id BIGSERIAL PRIMARY KEY, -- id unique de l'utilisateur
     username TEXT UNIQUE NOT NULL, -- nom d'utilisateur unique
     email TEXT UNIQUE NOT NULL, -- email unique
     email_verified BOOLEAN DEFAULT FALSE, -- email vérifié
@@ -11,8 +11,8 @@ CREATE TABLE IF NOT EXISTS users (
     birthdate DATE, -- date de naissance
     sex SMALLINT, -- sexe
     bio TEXT, -- biographie
-    profile_picture_id UUID, -- id de l'image de profil
-    grade SMALLINT NOT NULL DEFAULT 1, -- grade de l'utilisateur
+    profile_picture_id BIGINT, -- id de l'image de profil
+    grade SMALLINT NOT NULL DEFAULT 0, -- grade de l'utilisateur
     location TEXT, -- localisation de l'utilisateur
     school TEXT, -- école
     work TEXT, -- emplois

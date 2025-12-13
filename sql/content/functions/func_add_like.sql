@@ -1,10 +1,10 @@
 CREATE OR REPLACE FUNCTION content.func_add_like(
     p_target_type SMALLINT,
-    p_target_id UUID,
-    p_user_id UUID
-) RETURNS UUID AS $$
+    p_target_id BIGINT,
+    p_user_id BIGINT
+) RETURNS BIGINT AS $$
 DECLARE
-    v_like_id UUID;
+    v_like_id BIGINT;
 BEGIN
     INSERT INTO content.likes(target_type, target_id, user_id)
     VALUES (p_target_type, p_target_id, p_user_id)

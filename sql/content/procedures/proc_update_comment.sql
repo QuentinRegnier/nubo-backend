@@ -1,6 +1,6 @@
 CREATE OR REPLACE PROCEDURE proc_update_comment(
-    p_comment_id UUID,
-    p_user_id UUID,
+    p_comment_id BIGINT,
+    p_user_id BIGINT,
     p_content TEXT
 )
 LANGUAGE plpgsql

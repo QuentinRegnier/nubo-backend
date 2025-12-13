@@ -1,12 +1,12 @@
 CREATE OR REPLACE FUNCTION auth.func_create_user_settings(
-    p_user_id UUID,
+    p_user_id BIGINT,
     p_privacy JSONB,
     p_notifications JSONB,
     p_language TEXT,
     p_theme SMALLINT DEFAULT 0
-) RETURNS UUID AS $$
+) RETURNS BIGINT AS $$
 DECLARE
-    v_settings_id UUID;
+    v_settings_id BIGINT;
 BEGIN
     INSERT INTO auth.user_settings (
         user_id, privacy, notifications, language, theme

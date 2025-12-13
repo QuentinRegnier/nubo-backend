@@ -1,10 +1,10 @@
 CREATE OR REPLACE FUNCTION auth.func_load_user_settings(
-    p_id UUID DEFAULT NULL,
-    p_user_id UUID DEFAULT NULL
+    p_id BIGINT DEFAULT NULL,
+    p_user_id BIGINT DEFAULT NULL
 )
 RETURNS TABLE (
-    id UUID,
-    user_id UUID,
+    id BIGINT,
+    user_id BIGINT,
     privacy JSONB,
     notifications JSONB,
     language TEXT,

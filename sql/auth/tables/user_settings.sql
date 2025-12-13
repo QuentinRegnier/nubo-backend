@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS user_settings (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique des paramètres utilisateur
-    user_id UUID UNIQUE REFERENCES users(id) ON DELETE CASCADE, -- id unique de l'utilisateur
+    id BIGSERIAL PRIMARY KEY, -- id unique des paramètres utilisateur
+    user_id BIGINT UNIQUE REFERENCES users(id) ON DELETE CASCADE, -- id unique de l'utilisateur
     privacy JSONB, -- paramètres de confidentialité
     notifications JSONB, -- paramètres de notification
     language TEXT, -- langue

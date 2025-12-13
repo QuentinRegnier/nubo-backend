@@ -1,11 +1,11 @@
 CREATE OR REPLACE FUNCTION auth.func_load_user(
-    p_id UUID DEFAULT NULL,
+    p_id BIGINT DEFAULT NULL,
     p_username TEXT DEFAULT NULL,
     p_email TEXT DEFAULT NULL,
     p_phone TEXT DEFAULT NULL
 )
 RETURNS TABLE (
-    id UUID,
+    id BIGINT,
     username TEXT,
     email TEXT,
     email_verified BOOLEAN,
@@ -16,7 +16,7 @@ RETURNS TABLE (
     birthdate DATE,
     sex SMALLINT,
     bio TEXT,
-    profile_picture_id UUID,
+    profile_picture_id BIGINT,
     grade SMALLINT,
     location TEXT,
     school TEXT,

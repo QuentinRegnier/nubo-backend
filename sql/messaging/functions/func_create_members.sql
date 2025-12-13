@@ -1,9 +1,9 @@
-CREATE OR REPLACE FUNCTION messaging.func_create_members_bulk(
-    p_conversation_id UUID,
-    p_user_ids UUID[],
+CREATE OR REPLACE FUNCTION messaging.func_create_members(
+    p_conversation_id BIGINT,
+    p_user_ids BIGINT[],
     p_roles SMALLINT[] DEFAULT '{}'
 )
-RETURNS UUID[]  -- on retourne la liste des IDs créés ou mis à jour
+RETURNS BIGINT[]  -- on retourne la liste des IDs créés ou mis à jour
 LANGUAGE sql
 AS $$
 WITH input_data AS (
