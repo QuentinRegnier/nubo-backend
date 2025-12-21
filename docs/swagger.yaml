@@ -1,12 +1,12 @@
 basePath: /api/v1
 definitions:
-  github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse:
+  tools.ErrorResponse:
     properties:
       error:
         example: Invalid JSON format
         type: string
     type: object
-  github_com_QuentinRegnier_nubo-backend_internal_tools.LoginResponse:
+  tools.LoginResponse:
     properties:
       badges:
         items:
@@ -79,16 +79,15 @@ definitions:
         example: Dev
         type: string
     type: object
-  github_com_QuentinRegnier_nubo-backend_internal_tools.SignUpResponse:
+  tools.SignUpResponse:
     properties:
-      avatar_id:
-        example: profile_johndoe_uuid
-        type: string
       expires_at:
         type: string
       message:
         example: User created successfully
         type: string
+      profile_picture_id:
+        type: integer
       token:
         example: eyJhbGciOiJIUzI1Ni...
         type: string
@@ -125,15 +124,15 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.LoginResponse'
+            $ref: '#/definitions/tools.LoginResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse'
+            $ref: '#/definitions/tools.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse'
+            $ref: '#/definitions/tools.ErrorResponse'
       summary: Connecter un utilisateur
       tags:
       - users
@@ -170,19 +169,19 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.SignUpResponse'
+            $ref: '#/definitions/tools.SignUpResponse'
         "400":
           description: Données invalides (Voir liste ci-dessus)
           schema:
-            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse'
+            $ref: '#/definitions/tools.ErrorResponse'
         "409":
           description: Conflit (Pseudo pris)
           schema:
-            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse'
+            $ref: '#/definitions/tools.ErrorResponse'
         "500":
           description: Erreur Serveur
           schema:
-            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse'
+            $ref: '#/definitions/tools.ErrorResponse'
       summary: Créer un compte utilisateur
       tags:
       - users

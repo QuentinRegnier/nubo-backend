@@ -41,19 +41,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.LoginResponse"
+                            "$ref": "#/definitions/tools.LoginResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse"
+                            "$ref": "#/definitions/tools.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse"
+                            "$ref": "#/definitions/tools.ErrorResponse"
                         }
                     }
                 }
@@ -91,25 +91,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.SignUpResponse"
+                            "$ref": "#/definitions/tools.SignUpResponse"
                         }
                     },
                     "400": {
                         "description": "Données invalides (Voir liste ci-dessus)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse"
+                            "$ref": "#/definitions/tools.ErrorResponse"
                         }
                     },
                     "409": {
                         "description": "Conflit (Pseudo pris)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse"
+                            "$ref": "#/definitions/tools.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Erreur Serveur",
                         "schema": {
-                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse"
+                            "$ref": "#/definitions/tools.ErrorResponse"
                         }
                     }
                 }
@@ -117,7 +117,7 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "github_com_QuentinRegnier_nubo-backend_internal_tools.ErrorResponse": {
+        "tools.ErrorResponse": {
             "type": "object",
             "properties": {
                 "error": {
@@ -126,7 +126,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_QuentinRegnier_nubo-backend_internal_tools.LoginResponse": {
+        "tools.LoginResponse": {
             "type": "object",
             "properties": {
                 "badges": {
@@ -227,19 +227,18 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_QuentinRegnier_nubo-backend_internal_tools.SignUpResponse": {
+        "tools.SignUpResponse": {
             "type": "object",
             "properties": {
-                "avatar_id": {
-                    "type": "string",
-                    "example": "profile_johndoe_uuid"
-                },
                 "expires_at": {
                     "type": "string"
                 },
                 "message": {
                     "type": "string",
                     "example": "User created successfully"
+                },
+                "profile_picture_id": {
+                    "type": "integer"
                 },
                 "token": {
                     "type": "string",

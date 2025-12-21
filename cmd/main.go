@@ -6,11 +6,15 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/api"
-	"github.com/QuentinRegnier/nubo-backend/internal/cache"
-	"github.com/QuentinRegnier/nubo-backend/internal/data"
-	"github.com/QuentinRegnier/nubo-backend/internal/db"
-	"github.com/QuentinRegnier/nubo-backend/internal/media"
-	"github.com/QuentinRegnier/nubo-backend/internal/websocket"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/websocket"
+	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
+	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
+	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/mongo"
+	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	mongogo "github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
+	redisgo "github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -21,37 +25,40 @@ import (
 // @BasePath        /api/v1
 func main() {
 	// Initialiser PostgreSQL
-	db.InitPostgres()
+	postgres.InitPostgres()
 
 	// Initialiser MongoDB
-	db.InitMongo()
+	mongo.InitMongo()
 
 	// Initialiser Redis
-	cache.InitRedis()
+	redis.InitRedis()
 
 	// Nettoyage au démarrage
-	data.InitData()
+	service.InitData()
 
 	// ⚡ Initialiser la stratégie Redis
-	cache.GlobalStrategy = cache.NewLRUCache(cache.Rdb)
+	redisgo.GlobalStrategy = redisgo.NewLRUCache(redis.Rdb)
 
 	// ⚡ Démarrer le watcher mémoire
 	// maxRAM = 0 => autodétection
 	// marge = 200 Mo de marge de sécurité
 	// interval = toutes les 2 secondes
-	cache.GlobalStrategy.StartMemoryWatcher(0, 200*1024*1024, 2*time.Second)
+	redisgo.GlobalStrategy.StartMemoryWatcher(0, 200*1024*1024, 2*time.Second)
 
 	// Initialiser le Hub et lancer sa boucle
 	websocket.InitHub()
 
 	// Initiatiser MinIO
-	media.InitMinio()
+	minio.InitMinio()
 
 	// Iniitaliser la structure MongoDB
-	db.InitCacheDatabase()
+	mongogo.InitCacheDatabase()
 
 	// Initialiser la structure Redis (caches)
-	cache.InitCacheDatabase()
+	redisgo.InitCacheDatabase()
+
+	// Initialiser le Cuckoo Filter
+	cuckoo.InitCuckooFilter()
 
 	r := gin.Default()
 	api.SetupRoutes(r)
@@ -70,6 +77,6 @@ func main() {
 		port = "8080"
 	}
 	log.Printf("Server listening on %s", port)
-	log.Printf("v7 API ready")
+	log.Printf("v8 API ready")
 	r.Run(":" + port)
 }
