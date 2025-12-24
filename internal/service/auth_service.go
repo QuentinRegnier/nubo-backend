@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"log"
 	"strings"
 
@@ -15,20 +16,12 @@ import (
 
 // addImage gère l'upload (S3/Disque)
 func AddImage(rawBinaryData string, name string) int {
-
-	// 1. Transformation en Reader (Zero-Allocation)
-	// strings.NewReader est beaucoup plus rapide que bytes.NewReader([]byte(s))
-	// car il ne copie pas les données en mémoire.
 	reader := strings.NewReader(rawBinaryData)
-
-	// 2. Appel du service
 	mediaID, err := UploadMedia(reader, name, "system")
-
 	if err != nil {
 		log.Printf("Erreur upload image '%s' : %v", name, err)
 		return 0
 	}
-
 	return mediaID
 }
 
@@ -41,25 +34,14 @@ func CreateUser(
 	if err != nil {
 		return 0, err
 	}
+	// (Le reste de CreateUser est inchangé...)
 	if pkg.EstNonVide(req.ProfilePictureID) {
-
-		// A. PostgreSQL : Appel direct de la procédure stockée
 		_, err := postgres.PostgresDB.Exec("CALL content.proc_update_media_owner($1, $2)", req.ProfilePictureID, userID)
 		if err != nil {
 			log.Printf("⚠️ Erreur liaison avatar Postgres (MediaID: %v) : %v", req.ProfilePictureID, err)
 		}
-
-		// B. MongoDB : Utilisation de ta structure normalisée db.Media
-		// On prépare le filtre (quel média modifier ?)
-		filter := map[string]any{
-			"id": req.ProfilePictureID,
-		}
-		// On prépare la mise à jour (quel champ changer ?)
-		update := map[string]any{
-			"owner_id": userID,
-		}
-
-		// On utilise ta méthode Update générique définie dans mongo_manage.go
+		filter := map[string]any{"id": req.ProfilePictureID}
+		update := map[string]any{"owner_id": userID}
 		if err := mongo.Media.Update(filter, update); err != nil {
 			log.Printf("⚠️ Erreur liaison avatar Mongo (MediaID: %v) : %v", req.ProfilePictureID, err)
 		} else {
@@ -67,11 +49,9 @@ func CreateUser(
 		}
 	}
 
-	// Enregistrement dans MongoDB
 	req.ID = userID
 	req.CreatedAt = createdAtUser
 	req.UpdatedAt = updatedAtUser
-
 	sessions.ID = sessionID
 	sessions.UserID = userID
 	sessions.CreatedAt = createdAtSession
@@ -82,7 +62,6 @@ func CreateUser(
 	if err := mongo.MongoCreateSession(sessions); err != nil {
 		log.Printf("Erreur Mongo CreateSession: %v", err)
 	}
-	// Enregistrement dans Redis
 	if err := redis.RedisCreateUser(req); err != nil {
 		log.Printf("Warning: Echec cache Redis User: %v", err)
 	}
@@ -90,19 +69,11 @@ func CreateUser(
 		log.Printf("Warning: Echec cache Redis Session: %v", err)
 	}
 
-	// ---------------------------------------------------------
-	// MISE À JOUR CUCKOO FILTER (Distribué via Redis Flux)
-	// ---------------------------------------------------------
-	// On ajoute les clés dans le filtre local ET on notifie les autres instances
-
-	// 1. Mise à jour Locale (Immédiat)
 	if cuckoo.GlobalCuckoo != nil {
 		cuckoo.GlobalCuckoo.Insert([]byte("username:" + req.Username))
 		cuckoo.GlobalCuckoo.Insert([]byte("email:" + req.Email))
 		cuckoo.GlobalCuckoo.Insert([]byte("phone:" + req.Phone))
 	}
-
-	// 2. Broadcast Flux Redis (Pour les autres serveurs)
 	go func() {
 		cuckoo.BroadcastCuckooUpdate(cuckoo.ActionAdd, "username", req.Username)
 		cuckoo.BroadcastCuckooUpdate(cuckoo.ActionAdd, "email", req.Email)
@@ -115,80 +86,81 @@ func CreateUser(
 func Login(
 	input domain.LoginInput,
 ) (domain.UserRequest, domain.SessionsRequest, error) {
+	fmt.Printf("\n🚀 SERVICE LOGIN APPELÉ pour l'email : [%s]\n", input.Email)
+
 	var user domain.UserRequest
 	var sessions domain.SessionsRequest
 	var err error
 
-	// Enregistrement dans Redis
+	// 1. Redis
 	user, err = redis.RedisLoadUser(-1, "", input.Email, "")
 	if err != nil {
-		log.Printf("Erreur Redis LoadUser: %v", err)
+		fmt.Printf("🔸 Redis: erreur (%v)\n", err)
 	}
-	if pkg.EstNonVide(user) {
-		if user.PasswordHash == input.PasswordHash {
-			sessions, err = redis.RedisLoadSession(user.ID, input.DeviceToken)
-			if err != nil {
-				log.Printf("Erreur Redis LoadSession: %v", err)
-			}
-			if pkg.EstNonVide(sessions) {
-				return user, sessions, nil
-			} else {
-				// create session
-				return user, sessions, nil
-			}
-		} else {
-			return domain.UserRequest{}, domain.SessionsRequest{}, domain.ErrInvalidCredentials
-		}
-	} else {
-		// Enregistrement dans MongoDB
+
+	// CORRECTION ICI : On vérifie l'ID, pas EstNonVide
+	if user.ID == 0 {
+		fmt.Println("🔸 Redis: User non trouvé, passage à Mongo...")
+
+		// 2. Mongo
 		user, err = mongo.MongoLoadUser(-1, "", input.Email, "")
 		if err != nil {
-			log.Printf("Erreur Mongo CreateUser: %v", err)
+			fmt.Printf("🔸 Mongo: erreur (%v)\n", err)
 		}
-		if pkg.EstNonVide(user) {
-			if user.PasswordHash == input.PasswordHash {
-				sessions, err = mongo.MongoLoadSession(user.ID, input.DeviceToken)
-				if err != nil {
-					log.Printf("Erreur Mongo CreateSession: %v", err)
-				}
-				if pkg.EstNonVide(sessions) {
-					return user, sessions, nil
-				} else {
-					// create session
-					return user, sessions, nil
-				}
-			} else {
-				return domain.UserRequest{}, domain.SessionsRequest{}, domain.ErrInvalidCredentials
-			}
-		} else {
-			// Recherche dans PostgreSQL
+
+		// CORRECTION ICI
+		if user.ID == 0 {
+			fmt.Println("🔸 Mongo: User non trouvé, passage à Postgres...")
+
+			// 3. Postgres
 			user, err = postgresgo.FuncLoadUser(-1, "", input.Email, "")
 			if err != nil {
+				fmt.Printf("❌ ERREUR CRITIQUE APPEL POSTGRES : %v\n", err)
 				return domain.UserRequest{}, domain.SessionsRequest{}, err
 			}
-			if pkg.EstNonVide(user) {
-				if user.PasswordHash == input.PasswordHash {
-					sessions, err = mongo.MongoLoadSession(user.ID, input.DeviceToken)
-					if err != nil {
-						log.Printf("Erreur Mongo CreateSession: %v", err)
-					}
-					if pkg.EstNonVide(sessions) {
-						return user, sessions, nil
-					} else {
-						// create session
-						return user, sessions, nil
-					}
-				} else {
-					return domain.UserRequest{}, domain.SessionsRequest{}, domain.ErrInvalidCredentials
-				}
-			} else {
+
+			// CORRECTION ICI
+			if user.ID == 0 {
+				fmt.Printf("❌ ERREUR : Utilisateur introuvable dans AUCUNE base pour l'email '%s'\n", input.Email)
 				return domain.UserRequest{}, domain.SessionsRequest{}, domain.ErrNotFound
 			}
 		}
+	}
+
+	fmt.Println("✅ UTILISATEUR TROUVÉ ! Analyse du mot de passe...")
+	fmt.Printf("👉 INPUT : '%s' (Len: %d)\n", input.PasswordHash, len(input.PasswordHash))
+	fmt.Printf("👉 DB    : '%s' (Len: %d)\n", user.PasswordHash, len(user.PasswordHash))
+
+	// Comparaison Mot de passe
+	// TRIM pour éviter les problèmes d'espaces si la BDD est sale
+	if strings.TrimSpace(user.PasswordHash) == strings.TrimSpace(input.PasswordHash) {
+		fmt.Println("🔓 MOT DE PASSE VALIDE ! Chargement session...")
+
+		sessions, err = redis.RedisLoadSession(user.ID, input.DeviceToken)
+		if sessions.ID != 0 {
+			return user, sessions, nil
+		}
+
+		sessions, err = mongo.MongoLoadSession(user.ID, input.DeviceToken)
+		if sessions.ID != 0 {
+			_ = redis.RedisCreateSession(sessions)
+			return user, sessions, nil
+		}
+
+		sessions, err = postgresgo.FuncLoadSession(user.ID, input.DeviceToken)
+		if err != nil {
+			return domain.UserRequest{}, domain.SessionsRequest{}, err
+		}
+
+		return user, sessions, nil
+
+	} else {
+		fmt.Println("🔒 MOT DE PASSE INCORRECT (Mismatch)")
+		return domain.UserRequest{}, domain.SessionsRequest{}, domain.ErrInvalidCredentials
 	}
 }
 
 // startWebsocket
 func StartWebsocket() {
-	// Logique WS ici
+
 }

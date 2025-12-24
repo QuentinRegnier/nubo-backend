@@ -181,9 +181,10 @@ func SignUpHandler(c *gin.Context) {
 // @Description  ⚫ **500 Internal Server Error :**
 // @Description  * `database error` : Identifiants incorrects ou problème BDD (Note: Idéalement, renvoyer 401 pour mauvais mdp).
 // @Tags         users
-// @Accept       multipart/form-data
+// @Accept       json,multipart/form-data
 // @Produce      json
-// @Param        data formData string true "Données JSON (domain.LoginInput)"
+// @Param        data    formData string            false "Données JSON (si multipart/form-data)"
+// @Param        request body     domain.LoginInput false "Données JSON (si application/json)"
 // @Success      200  {object}  domain.LoginResponse
 // @Failure      400  {object}  domain.ErrorResponse
 // @Failure      500  {object}  domain.ErrorResponse
@@ -194,15 +195,26 @@ func LoginHandler(c *gin.Context) {
 	var sessions domain.SessionsRequest
 	var err error
 
-	// --- A. RÉCUPÉRATION DES DONNÉES MIXTES (Multipart) ---
+	// --- A. RÉCUPÉRATION DES DONNÉES ---
+	// 1. Récupération via form-data (exactement comme SignUp)
 	jsonData := c.PostForm("data")
-	if jsonData == "" {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "The 'data' field containing the JSON is required"})
-		return
-	}
-	if err := json.Unmarshal([]byte(jsonData), &input); err != nil {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Invalid JSON format in 'data': " + err.Error()})
-		return
+
+	// Si on veut être souple et accepter aussi le raw JSON (optionnel mais pratique)
+	if jsonData == "" && c.ContentType() == "application/json" {
+		if err := c.ShouldBindJSON(&input); err != nil {
+			c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Invalid JSON format: " + err.Error()})
+			return
+		}
+	} else {
+		// Logique Form-Data (Votre demande)
+		if jsonData == "" {
+			c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "The 'data' field containing the JSON is required"})
+			return
+		}
+		if err := json.Unmarshal([]byte(jsonData), &input); err != nil {
+			c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Invalid JSON format in 'data': " + err.Error()})
+			return
+		}
 	}
 
 	// --- B. MAPPING VERS STRUCTURE INTERNE ---
@@ -239,6 +251,16 @@ func LoginHandler(c *gin.Context) {
 			Message:       "Login successful",
 		})
 	} else {
-		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "database error"})
+		// 🔍 DIAGNOSTIC PRÉCIS
+		// Si le service renvoie une erreur "Identifiants invalides" ou "Introuvable"
+		if err == domain.ErrInvalidCredentials || err == domain.ErrNotFound {
+			c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Email ou mot de passe incorrect"})
+			return
+		}
+
+		// Sinon, c'est une vraie erreur technique (ex: Redis down)
+		fmt.Printf("🚨 VRAIE ERREUR INTERNE : %v\n", err)
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "database error: " + err.Error()})
+		return
 	}
 }

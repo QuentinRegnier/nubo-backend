@@ -11,6 +11,7 @@ RETURNS TABLE (
     email_verified BOOLEAN,
     phone TEXT,
     phone_verified BOOLEAN,
+    password_hash TEXT,
     first_name TEXT,
     last_name TEXT,
     birthdate DATE,
@@ -38,6 +39,7 @@ BEGIN
         u.email_verified,
         u.phone,
         u.phone_verified,
+        u.password_hash,
         u.first_name,
         u.last_name,
         u.birthdate,
@@ -58,8 +60,9 @@ BEGIN
     FROM auth.users AS u
     WHERE
         (p_id IS NULL OR u.id = p_id)
-        AND (p_username IS NULL OR u.username = p_username)
-        AND (p_email IS NULL OR u.email = p_email)
-        AND (p_phone IS NULL OR u.phone = p_phone);
+        AND (p_username IS NULL OR TRIM(u.username) = TRIM(p_username))
+        -- MODIFICATION ICI : On nettoie les espaces (TRIM) et on ignore la casse (LOWER)
+        AND (p_email IS NULL OR TRIM(LOWER(u.email)) = TRIM(LOWER(p_email)))
+        AND (p_phone IS NULL OR TRIM(u.phone) = TRIM(p_phone));
 END;
 $$ LANGUAGE plpgsql STABLE;

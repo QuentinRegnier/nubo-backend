@@ -72,6 +72,10 @@ func MongoLoadUser(ID int, Username string, Email string, Phone string) (domain.
 		return u, err
 	}
 
+	if len(docs) == 0 {
+		return u, nil // Retourne une structure vide, pas d'erreur.
+	}
+
 	// Conversion Map -> Struct
 	if err := pkg.ToStruct(docs[0], &u); err != nil {
 		return u, err

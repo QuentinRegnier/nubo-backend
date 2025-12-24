@@ -79,10 +79,10 @@ type SignUpResponse struct {
 	ProfilePictureID int       `bson:"profile_picture_id" json:"profile_picture_id"`
 }
 type LoginInput struct {
-	Email        string   `json:"email" binding:"required,email" example:"john@nubo.com"`
-	PasswordHash string   `json:"password_hash" binding:"required" example:"hashed_secret_123"`
-	DeviceToken  string   `json:"device_token" binding:"required" example:"device_token_xyz"`
-	DeviceInfo   []string `json:"device_info" example:"iphone,ios15"`
+	Email        string         `json:"email" binding:"required,email" example:"john@nubo.com"`
+	PasswordHash string         `json:"password_hash" binding:"required" example:"hashed_secret_123"`
+	DeviceToken  string         `json:"device_token" binding:"required" example:"device_token_xyz"`
+	DeviceInfo   map[string]any `json:"device_info" example:"{\"os\":\"ios\",\"model\":\"iphone\"}"`
 }
 type LoginResponse struct {
 	UserID        int       `json:"user_id" example:"42"`
