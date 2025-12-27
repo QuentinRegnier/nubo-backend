@@ -133,7 +133,16 @@ func Login(
 
 	// Comparaison Mot de passe
 	// TRIM pour éviter les problèmes d'espaces si la BDD est sale
-	if strings.TrimSpace(user.PasswordHash) == strings.TrimSpace(input.PasswordHash) {
+	if strings.TrimSpace(user.PasswordHash) != strings.TrimSpace(input.PasswordHash) {
+		fmt.Println("🔒 MOT DE PASSE INCORRECT (Mismatch)")
+		return domain.UserRequest{}, domain.SessionsRequest{}, domain.ErrInvalidCredentials
+	} else if user.Desactivated == true || user.Banned == true {
+		if user.Desactivated == true && user.Banned == false {
+			return domain.UserRequest{}, domain.SessionsRequest{}, domain.ErrDesactivated
+		} else {
+			return domain.UserRequest{}, domain.SessionsRequest{}, domain.ErrBanned
+		}
+	} else {
 		fmt.Println("🔓 MOT DE PASSE VALIDE ! Chargement session...")
 
 		sessions, err = redis.RedisLoadSession(user.ID, input.DeviceToken)
@@ -147,16 +156,42 @@ func Login(
 			return user, sessions, nil
 		}
 
-		sessions, err = postgresgo.FuncLoadSession(user.ID, input.DeviceToken)
+		sessions, err = postgresgo.FuncLoadSession(-1, user.ID, input.DeviceToken, "")
 		if err != nil {
 			return domain.UserRequest{}, domain.SessionsRequest{}, err
 		}
+		if sessions.ID != 0 {
+			_ = redis.RedisCreateSession(sessions)
+			_ = mongo.MongoCreateSession(sessions)
+			return user, sessions, nil
+		}
+		// Creer une session
+		sessions.DeviceInfo = input.DeviceInfo
+		sessions.DeviceToken = input.DeviceToken
+		if len(input.IPAddress) > 0 {
+			sessions.IPHistory = []string{input.IPAddress[0]}
+		} else {
+			return domain.UserRequest{}, domain.SessionsRequest{}, domain.ErrInvalidIPAddress
+		}
+		sessions.RefreshToken, err = pkg.GenerateToken(user.Username)
+		sessionID, createdAtSession, err := postgresgo.FuncCreateSession(user.ID, sessions.RefreshToken, sessions.DeviceInfo, sessions.DeviceToken, sessions.IPHistory, sessions.ExpiresAt)
+		if err != nil {
+			return domain.UserRequest{}, domain.SessionsRequest{}, err
+		}
+		sessions.ID = sessionID
+		sessions.UserID = user.ID
+		sessions.CreatedAt = createdAtSession
+
+		err = mongo.MongoCreateSession(sessions)
+		if err != nil {
+			log.Printf("Erreur Mongo CreateSession lors du login: %v", err)
+		}
+		err = redis.RedisCreateSession(sessions)
+		if err != nil {
+			log.Printf("Warning: Echec cache Redis Session lors du login: %v", err)
+		}
 
 		return user, sessions, nil
-
-	} else {
-		fmt.Println("🔒 MOT DE PASSE INCORRECT (Mismatch)")
-		return domain.UserRequest{}, domain.SessionsRequest{}, domain.ErrInvalidCredentials
 	}
 }
 

@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     id BIGSERIAL PRIMARY KEY,        -- id unique de la session
     user_id BIGINT REFERENCES users(id) NOT NULL,          -- id de l'utilisateur
     refresh_token TEXT NOT NULL,                          -- token de rafraîchissement
-    device_token JSONB,                           -- identifiant unique de l'appareil
+    device_token TEXT NOT NULL,                           -- identifiant unique de l'appareil
     device_info JSONB,                                    -- informations sur l'appareil (OS, modèle, version...)
     ip_history INET[],                                    -- historique des IP utilisées
     created_at TIMESTAMPTZ DEFAULT now(),                -- date de création

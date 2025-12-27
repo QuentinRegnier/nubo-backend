@@ -83,6 +83,7 @@ type LoginInput struct {
 	PasswordHash string         `json:"password_hash" binding:"required" example:"hashed_secret_123"`
 	DeviceToken  string         `json:"device_token" binding:"required" example:"device_token_xyz"`
 	DeviceInfo   map[string]any `json:"device_info" example:"{\"os\":\"ios\",\"model\":\"iphone\"}"`
+	IPAddress    []string       `json:"ip_address" example:"[\"192.168.1.1\"]"`
 }
 type LoginResponse struct {
 	UserID        int       `json:"user_id" example:"42"`

@@ -101,8 +101,8 @@ func SignUpHandler(c *gin.Context) {
 	req.School = input.School
 	req.Work = input.Work
 	req.Badges = []string{}
-	req.Desactivated = false // Par défaut
-	req.Banned = false       // Par défaut
+	req.Desactivated = true // Par défaut
+	req.Banned = false      // Par défaut
 	req.BanReason = ""
 	req.BanExpiresAt = time.Time{}
 	req.CreatedAt = time.Time{}
@@ -143,7 +143,7 @@ func SignUpHandler(c *gin.Context) {
 	sessions.DeviceToken = input.DeviceToken
 	sessions.DeviceInfo = input.DeviceInfo
 	sessions.IPHistory = []string{c.ClientIP()}
-	sessions.CreatedAt = time.Now()
+	sessions.CreatedAt = time.Time{}
 	sessions.ExpiresAt = time.Now().Add(pkg.TIMETOKEN)
 
 	// Persistance en base de données
@@ -178,16 +178,26 @@ func SignUpHandler(c *gin.Context) {
 // @Description  * `The 'data' field containing the JSON is required` : Champ 'data' manquant.
 // @Description  * `Invalid JSON format in 'data'` : Le JSON envoyé est mal formé.
 // @Description
+// @Description  🟠 **401 Unauthorized :**
+// @Description  * `Invalid email or password` : Identifiants incorrects ou utilisateur introuvable.
+// @Description
+// @Description  ⛔ **403 Forbidden :**
+// @Description  * `Account deactivated` : Le compte a été désactivé.
+// @Description  * `Account banned` : Le compte a été banni.
+// @Description
 // @Description  ⚫ **500 Internal Server Error :**
-// @Description  * `database error` : Identifiants incorrects ou problème BDD (Note: Idéalement, renvoyer 401 pour mauvais mdp).
+// @Description  * `database error` : Erreur technique interne.
 // @Tags         users
 // @Accept       json,multipart/form-data
 // @Produce      json
 // @Param        data    formData string            false "Données JSON (si multipart/form-data)"
 // @Param        request body     domain.LoginInput false "Données JSON (si application/json)"
 // @Success      200  {object}  domain.LoginResponse
-// @Failure      400  {object}  domain.ErrorResponse
-// @Failure      500  {object}  domain.ErrorResponse
+// @Failure      400  {object}  domain.ErrorResponse "Invalid request format"
+// @Failure      401  {object}  domain.ErrorResponse "Identifiants invalides"
+// @Failure      403  {object}  domain.ErrorResponse "Compte bloqué/banni"
+// @Failure      500  {object}  domain.ErrorResponse "Erreur serveur"
+// @Failure      400  {object}  domain.ErrorResponse "Adresse IP invalide"
 // @Router       /login [post]
 func LoginHandler(c *gin.Context) {
 	var input domain.LoginInput
@@ -216,6 +226,9 @@ func LoginHandler(c *gin.Context) {
 			return
 		}
 	}
+
+	// Ajout de l'IP du client manuellement
+	input.IPAddress = []string{c.ClientIP()}
 
 	// --- B. MAPPING VERS STRUCTURE INTERNE ---
 	user, sessions, err = service.Login(input)
@@ -254,7 +267,15 @@ func LoginHandler(c *gin.Context) {
 		// 🔍 DIAGNOSTIC PRÉCIS
 		// Si le service renvoie une erreur "Identifiants invalides" ou "Introuvable"
 		if err == domain.ErrInvalidCredentials || err == domain.ErrNotFound {
-			c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Email ou mot de passe incorrect"})
+			c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Invalid email or password"})
+			return
+		}
+		if err == domain.ErrDesactivated {
+			c.JSON(http.StatusForbidden, domain.ErrorResponse{Error: "Account deactivated"})
+			return
+		}
+		if err == domain.ErrBanned {
+			c.JSON(http.StatusForbidden, domain.ErrorResponse{Error: "Account banned"})
 			return
 		}
 

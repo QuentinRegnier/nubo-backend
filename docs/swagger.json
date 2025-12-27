@@ -1,18 +1,18 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "Documentation de l'API.",
+        "description": "Documentation de l'API.\nPour mettre à jour :",
         "title": "Mon API Propre",
         "contact": {},
         "version": "1.0"
     },
-    "host": "localhost:8080",
-    "basePath": "/api/v1",
+    "basePath": "/api/v10",
     "paths": {
         "/login": {
             "post": {
-                "description": "Authentifie un utilisateur via email/password et renvoie son profil complet + token.\n\n**Règles \u0026 Erreurs :**\n\n🔴 **400 Bad Request :**\n* `The 'data' field containing the JSON is required` : Champ 'data' manquant.\n* `Invalid JSON format in 'data'` : Le JSON envoyé est mal formé.\n\n⚫ **500 Internal Server Error :**\n* `database error` : Identifiants incorrects ou problème BDD (Note: Idéalement, renvoyer 401 pour mauvais mdp).",
+                "description": "Authentifie un utilisateur via email/password et renvoie son profil complet + token.\n\n**Règles \u0026 Erreurs :**\n\n🔴 **400 Bad Request :**\n* `The 'data' field containing the JSON is required` : Champ 'data' manquant.\n* `Invalid JSON format in 'data'` : Le JSON envoyé est mal formé.\n\n🟠 **401 Unauthorized :**\n* `Invalid email or password` : Identifiants incorrects ou utilisateur introuvable.\n\n⛔ **403 Forbidden :**\n* `Account deactivated` : Le compte a été désactivé.\n* `Account banned` : Le compte a été banni.\n\n⚫ **500 Internal Server Error :**\n* `database error` : Erreur technique interne.",
                 "consumes": [
+                    "application/json",
                     "multipart/form-data"
                 ],
                 "produces": [
@@ -25,29 +25,48 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Données JSON (tools.LoginInput)",
+                        "description": "Données JSON (si multipart/form-data)",
                         "name": "data",
-                        "in": "formData",
-                        "required": true
+                        "in": "formData"
+                    },
+                    {
+                        "description": "Données JSON (si application/json)",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.LoginInput"
+                        }
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/tools.LoginResponse"
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.LoginResponse"
                         }
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "Invalid request format",
                         "schema": {
-                            "$ref": "#/definitions/tools.ErrorResponse"
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Identifiants invalides",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Compte bloqué/banni",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
                         }
                     },
                     "500": {
-                        "description": "Internal Server Error",
+                        "description": "Erreur serveur",
                         "schema": {
-                            "$ref": "#/definitions/tools.ErrorResponse"
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
                         }
                     }
                 }
@@ -75,7 +94,7 @@
                     },
                     {
                         "type": "string",
-                        "description": "Données JSON (tools.SignUpInput)",
+                        "description": "Données JSON (domain.SignUpInput)",
                         "name": "data",
                         "in": "formData",
                         "required": true
@@ -85,25 +104,25 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/tools.SignUpResponse"
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.SignUpResponse"
                         }
                     },
                     "400": {
                         "description": "Données invalides (Voir liste ci-dessus)",
                         "schema": {
-                            "$ref": "#/definitions/tools.ErrorResponse"
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
                         }
                     },
                     "409": {
                         "description": "Conflit (Pseudo pris)",
                         "schema": {
-                            "$ref": "#/definitions/tools.ErrorResponse"
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Erreur Serveur",
                         "schema": {
-                            "$ref": "#/definitions/tools.ErrorResponse"
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
                         }
                     }
                 }
@@ -111,7 +130,7 @@
         }
     },
     "definitions": {
-        "tools.ErrorResponse": {
+        "github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse": {
             "type": "object",
             "properties": {
                 "error": {
@@ -120,7 +139,10 @@
                 }
             }
         },
-        "tools.LoginResponse": {
+        "github_com_QuentinRegnier_nubo-backend_internal_domain.LoginInput": {
+            "type": "object"
+        },
+        "github_com_QuentinRegnier_nubo-backend_internal_domain.LoginResponse": {
             "type": "object",
             "properties": {
                 "badges": {
@@ -221,7 +243,7 @@
                 }
             }
         },
-        "tools.SignUpResponse": {
+        "github_com_QuentinRegnier_nubo-backend_internal_domain.SignUpResponse": {
             "type": "object",
             "properties": {
                 "expires_at": {

@@ -1,12 +1,14 @@
-basePath: /api/v1
+basePath: /api/v10
 definitions:
-  tools.ErrorResponse:
+  github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse:
     properties:
       error:
         example: Invalid JSON format
         type: string
     type: object
-  tools.LoginResponse:
+  github_com_QuentinRegnier_nubo-backend_internal_domain.LoginInput:
+    type: object
+  github_com_QuentinRegnier_nubo-backend_internal_domain.LoginResponse:
     properties:
       badges:
         items:
@@ -79,7 +81,7 @@ definitions:
         example: Dev
         type: string
     type: object
-  tools.SignUpResponse:
+  github_com_QuentinRegnier_nubo-backend_internal_domain.SignUpResponse:
     properties:
       expires_at:
         type: string
@@ -95,44 +97,60 @@ definitions:
         example: 42
         type: integer
     type: object
-host: localhost:8080
 info:
   contact: {}
-  description: Documentation de l'API.
+  description: |-
+    Documentation de l'API.
+    Pour mettre à jour :
   title: Mon API Propre
   version: "1.0"
 paths:
   /login:
     post:
       consumes:
+      - application/json
       - multipart/form-data
       description: "Authentifie un utilisateur via email/password et renvoie son profil
         complet + token.\n\n**Règles & Erreurs :**\n\n\U0001F534 **400 Bad Request
         :**\n* `The 'data' field containing the JSON is required` : Champ 'data' manquant.\n*
-        `Invalid JSON format in 'data'` : Le JSON envoyé est mal formé.\n\n⚫ **500
-        Internal Server Error :**\n* `database error` : Identifiants incorrects ou
-        problème BDD (Note: Idéalement, renvoyer 401 pour mauvais mdp)."
+        `Invalid JSON format in 'data'` : Le JSON envoyé est mal formé.\n\n\U0001F7E0
+        **401 Unauthorized :**\n* `Invalid email or password` : Identifiants incorrects
+        ou utilisateur introuvable.\n\n⛔ **403 Forbidden :**\n* `Account deactivated`
+        : Le compte a été désactivé.\n* `Account banned` : Le compte a été banni.\n\n⚫
+        **500 Internal Server Error :**\n* `database error` : Erreur technique interne."
       parameters:
-      - description: Données JSON (tools.LoginInput)
+      - description: Données JSON (si multipart/form-data)
         in: formData
         name: data
-        required: true
         type: string
+      - description: Données JSON (si application/json)
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.LoginInput'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/tools.LoginResponse'
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.LoginResponse'
         "400":
-          description: Bad Request
+          description: Invalid request format
           schema:
-            $ref: '#/definitions/tools.ErrorResponse'
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse'
+        "401":
+          description: Identifiants invalides
+          schema:
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse'
+        "403":
+          description: Compte bloqué/banni
+          schema:
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse'
         "500":
-          description: Internal Server Error
+          description: Erreur serveur
           schema:
-            $ref: '#/definitions/tools.ErrorResponse'
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse'
       summary: Connecter un utilisateur
       tags:
       - users
@@ -158,7 +176,7 @@ paths:
         in: formData
         name: profile_picture
         type: file
-      - description: Données JSON (tools.SignUpInput)
+      - description: Données JSON (domain.SignUpInput)
         in: formData
         name: data
         required: true
@@ -169,19 +187,19 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/tools.SignUpResponse'
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.SignUpResponse'
         "400":
           description: Données invalides (Voir liste ci-dessus)
           schema:
-            $ref: '#/definitions/tools.ErrorResponse'
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse'
         "409":
           description: Conflit (Pseudo pris)
           schema:
-            $ref: '#/definitions/tools.ErrorResponse'
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse'
         "500":
           description: Erreur Serveur
           schema:
-            $ref: '#/definitions/tools.ErrorResponse'
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse'
       summary: Créer un compte utilisateur
       tags:
       - users

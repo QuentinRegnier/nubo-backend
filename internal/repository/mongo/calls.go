@@ -105,6 +105,10 @@ func MongoLoadSession(ID int, DeviceToken string) (domain.SessionsRequest, error
 		return s, err
 	}
 
+	if len(docs) == 0 {
+		return s, nil // Retourne une structure vide, pas d'erreur, comme MongoLoadUser
+	}
+
 	// Conversion Map -> Struct
 	if err := pkg.ToStruct(docs[0], &s); err != nil {
 		return s, err

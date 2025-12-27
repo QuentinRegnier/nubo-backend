@@ -21,8 +21,11 @@ import (
 // @title           Mon API Propre
 // @version         1.0
 // @description     Documentation de l'API.
-// @host            localhost:8080
-// @BasePath        /api/v1
+// @description Pour mettre à jour :
+//
+//	go run github.com/swaggo/swag/cmd/swag@latest init -g cmd/main.go -d . --parseDependency --parseInternal
+//
+// @BasePath        /api/v11
 func main() {
 	// Initialiser PostgreSQL
 	postgres.InitPostgres()
@@ -77,6 +80,6 @@ func main() {
 		port = "8080"
 	}
 	log.Printf("Server listening on %s", port)
-	log.Printf("v8 API ready")
+	log.Printf("v11 API ready")
 	r.Run(":" + port)
 }

@@ -246,30 +246,38 @@ func FuncLoadUser(ID int, Username string, Email string, Phone string) (domain.U
 	return res, nil
 }
 
-func FuncLoadSession(ID int, DeviceToken string) (domain.SessionsRequest, error) {
+func FuncLoadSession(ID int, UserId int, DeviceToken string, RefreshToken string) (domain.SessionsRequest, error) {
 
 	const functionID = 3
 
 	// 1. Vérification que les champs sont non nuls
-	if ID == -1 && DeviceToken == "" {
+	if ID == -1 && UserId == -1 && DeviceToken == "" && RefreshToken == "" {
 		return domain.SessionsRequest{}, fmt.Errorf("erreur: champs requis manquants pour FuncLoadSession (ID %d)", functionID)
 	}
 
 	// 2. Préparation des arguments (gestion des types spéciaux)
-	args := make([]any, 2)
-	args[0] = ID          // p_session_id (ex: UUID)
-	args[1] = DeviceToken // p_device_token (ex: "token_string")
+	args := make([]any, 4)
+	args[0] = ID           // p_session_id (ex: UUID)
+	args[1] = UserId       // p_user_id (ex: UUID)
+	args[2] = DeviceToken  // p_device_token (ex: "token_string")
+	args[3] = RefreshToken // p_refresh_token (ex: "refresh_token_string")
 
 	if ID == -1 {
 		args[0] = nil
 	}
-	if DeviceToken == "" {
+	if UserId == -1 {
 		args[1] = nil
+	}
+	if DeviceToken == "" {
+		args[2] = nil
+	}
+	if RefreshToken == "" {
+		args[3] = nil
 	}
 
 	// 3. Définition de la requête SQL (TOUJOURS paramétrée pour éviter l'injection SQL)
 	sqlStatement := `
-		SELECT * FROM auth.func_load_session($1, $2)
+		SELECT * FROM auth.func_load_sessions($1, $2, $3, $4)
 	`
 
 	// 4. Exécution via la connexion partagée du package 'db'
@@ -290,6 +298,14 @@ func FuncLoadSession(ID int, DeviceToken string) (domain.SessionsRequest, error)
 	)
 
 	if err != nil {
+		// --- CORRECTION : Gérer le cas où aucune session n'est trouvée ---
+		if err == sql.ErrNoRows {
+			// Ce n'est pas une erreur technique, juste qu'il n'y a pas de session.
+			// On renvoie une structure vide et "pas d'erreur".
+			return domain.SessionsRequest{}, nil
+		}
+		// ---------------------------------------------------------------
+
 		return domain.SessionsRequest{}, fmt.Errorf("erreur lors de l'exécution de FuncLoadSession (ID %d): %w", functionID, err)
 	}
 
@@ -303,4 +319,52 @@ func FuncLoadSession(ID int, DeviceToken string) (domain.SessionsRequest, error)
 	}
 
 	return res, nil
+}
+func FuncCreateSession(UserID int, RefreshToken string, DeviceInfo any, DeviceToken string, IPHistory []string, ExpiresAt time.Time) (int, time.Time, error) {
+
+	const functionID = 4
+
+	// 2. Préparation des arguments (gestion des types spéciaux)
+	args := make([]any, 6)
+	args[0] = UserID       // p_user_id (ex: UUID)
+	args[1] = RefreshToken // p_refresh_token (ex: "refresh_token_string")
+	if DeviceToken == "" {
+		args[2] = nil
+	} else {
+		args[2] = DeviceToken // p_device_token (ex: "token_string")
+	}
+	if DeviceInfo == nil {
+		args[3] = nil
+	} else {
+		// On transforme l'objet (map) en JSON string
+		bytes, err := json.Marshal(DeviceInfo)
+		if err != nil {
+			fmt.Printf("⚠️ Warning FuncCreateSession: échec marshal DeviceInfo: %v\n", err)
+			args[3] = "{}" // Envoie un JSON vide valide par sécurité
+		} else {
+			args[3] = string(bytes) // p_device_info (ex: JSON string)
+		}
+	}
+	if len(IPHistory) == 0 {
+		args[4] = nil
+	} else {
+		args[4] = pq.Array(IPHistory) // p_ip_history (ex: TEXT[])
+	}
+	args[5] = ExpiresAt // p_expires_at (ex: TIMESTAMP)
+
+	// 3. Définition de la requête SQL (TOUJOURS paramétrée pour éviter l'injection SQL)
+	sqlStatement := `
+		SELECT * FROM auth.func_create_session($1, $2, $3, $4, $5, $6)
+	`
+
+	// 4. Exécution via la connexion partagée du package 'db'
+	var returnedID int
+	var createdAt time.Time
+	err := postgres.PostgresDB.QueryRow(sqlStatement, args...).Scan(&returnedID, &createdAt)
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("erreur lors de l'exécution de FuncCreateSession (ID %d): %w", functionID, err)
+	}
+
+	// 5. Retour du résultat
+	return returnedID, createdAt, nil
 }
