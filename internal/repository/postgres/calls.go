@@ -324,7 +324,7 @@ func FuncCreateSession(UserID int, RefreshToken string, DeviceInfo any, DeviceTo
 
 	const functionID = 4
 
-	// 2. Préparation des arguments (gestion des types spéciaux)
+	// 1. Préparation des arguments (gestion des types spéciaux)
 	args := make([]any, 6)
 	args[0] = UserID       // p_user_id (ex: UUID)
 	args[1] = RefreshToken // p_refresh_token (ex: "refresh_token_string")
@@ -352,12 +352,12 @@ func FuncCreateSession(UserID int, RefreshToken string, DeviceInfo any, DeviceTo
 	}
 	args[5] = ExpiresAt // p_expires_at (ex: TIMESTAMP)
 
-	// 3. Définition de la requête SQL (TOUJOURS paramétrée pour éviter l'injection SQL)
+	// 2. Définition de la requête SQL (TOUJOURS paramétrée pour éviter l'injection SQL)
 	sqlStatement := `
 		SELECT * FROM auth.func_create_session($1, $2, $3, $4, $5, $6)
 	`
 
-	// 4. Exécution via la connexion partagée du package 'db'
+	// 3. Exécution via la connexion partagée du package 'db'
 	var returnedID int
 	var createdAt time.Time
 	err := postgres.PostgresDB.QueryRow(sqlStatement, args...).Scan(&returnedID, &createdAt)
@@ -365,6 +365,45 @@ func FuncCreateSession(UserID int, RefreshToken string, DeviceInfo any, DeviceTo
 		return 0, time.Time{}, fmt.Errorf("erreur lors de l'exécution de FuncCreateSession (ID %d): %w", functionID, err)
 	}
 
-	// 5. Retour du résultat
+	// 4. Retour du résultat
 	return returnedID, createdAt, nil
+}
+
+func ProcUpdateSession(ID int, RefreshToken string, DeviceInfo any, DeviceToken string, IPHistory []string, ExpiresAt time.Time) error {
+
+	const functionID = 5
+
+	// 1. Préparation des arguments (gestion des types spéciaux)
+	args := make([]interface{}, 5)
+	args[0] = ID           // p_id (ex: UUID)
+	args[1] = RefreshToken // p_refresh_token (ex: "refresh_token_string")
+	args[4] = ExpiresAt    // p_expires_at (ex: timestamp ou nil)
+
+	// Gestion spéciale pour p_device_info (JSONB)
+	if DeviceInfo == nil {
+		args[2] = nil
+	} else {
+		args[2] = DeviceInfo
+	}
+	// Gestion spéciale pour p_device_token (TEXT)
+	if DeviceToken == "" {
+		args[3] = nil
+	} else {
+		args[3] = DeviceToken
+	}
+
+	// 2. Définition de la requête SQL
+	sqlStatement := `
+		CALL auth.proc_update_session($1, $2, $3 , $4, $5)
+	`
+
+	// 3. Exécution avec tous les paramètres
+	//    On utilise Exec() et on "déplie" le slice 'params'
+	_, err := postgres.PostgresDB.Exec(sqlStatement, args...)
+	if err != nil {
+		return fmt.Errorf("erreur lors de l'exécution de ProcUpdateSession (ID %d): %w", functionID, err)
+	}
+
+	// 4. Retour du succès
+	return nil
 }

@@ -1,0 +1,44 @@
+root = "."
+testdata_dir = "testdata"
+tmp_dir = "tmp"
+
+[build]
+  # 1. La commande pour compiler ton projet (exactement comme tu le ferais à la main)
+  cmd = "go build -o ./tmp/main cmd/main.go"
+  
+  # 2. L'emplacement du binaire généré à exécuter
+  bin = "./tmp/main"
+  
+  # 3. Si la compilation échoue, on continue d'utiliser l'ancienne version qui marche
+  stop_on_error = true
+  
+  # 4. Le délai (en ms) après une sauvegarde avant de lancer la compile 
+  # (utile si tu fais "Save All" pour ne pas compiler 5 fois de suite)
+  delay = 1000
+
+  # 5. Les fichiers à ignorer (IMPORTANT pour ne pas boucler)
+  exclude_dir = [".idea","certs","docs","mongo","mongo-data","postgres-data-broken","sql"]
+  
+  # 6. Les extensions de fichiers à surveiller
+  include_ext = ["go", "tpl", "tmpl", "html", "env"]
+  
+  # 7. Fichiers spécifiques à exclure
+  exclude_file = []
+  
+  # 8. Arguments à passer à ton binaire (si besoin)
+  args_bin = []
+
+[log]
+  # Affiche l'heure dans les logs (pratique pour savoir si c'est un vieux log ou un nouveau)
+  time = true
+
+[color]
+  # Juste pour faire joli dans le terminal
+  main = "magenta"
+  watcher = "cyan"
+  build = "yellow"
+  runner = "green"
+
+[misc]
+  # Efface l'écran à chaque redémarrage (plus propre)
+  clean_on_exit = true

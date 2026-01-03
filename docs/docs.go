@@ -53,7 +53,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid request format",
+                        "description": "Adresse IP invalide",
                         "schema": {
                             "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
                         }
@@ -280,7 +280,7 @@ const docTemplate = `{
 var SwaggerInfo = &swag.Spec{
 	Version:          "1.0",
 	Host:             "",
-	BasePath:         "/api/v10",
+	BasePath:         "/api/v11",
 	Schemes:          []string{},
 	Title:            "Mon API Propre",
 	Description:      "Documentation de l'API.\nPour mettre à jour :",

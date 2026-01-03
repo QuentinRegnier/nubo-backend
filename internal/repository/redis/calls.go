@@ -194,3 +194,42 @@ func RedisLoadSession(ID int, DeviceToken string) (domain.SessionsRequest, error
 
 	return s, nil
 }
+func RedisUpdateSession(s domain.SessionsRequest) error {
+	// 1. Conversion Struct -> Map
+	doc, err := pkg.ToMap(s)
+	if err != nil {
+		return err
+	}
+
+	// 2. Préparation pour Redis (Slices/Maps -> JSON String)
+	// Utilise ta fonction helper interne 'prepareForRedis'
+	prepareForRedis(doc)
+
+	// 3. On retire l'ID des valeurs à mettre à jour
+	delete(doc, "id")
+
+	// 4. Construction du filtre compatible avec ton moteur 'evalTree' (map[string]map[string]any)
+	filter := make(map[string]any)
+
+	if s.ID != 0 {
+		filter["id"] = map[string]any{"$eq": s.ID}
+	}
+	if s.UserID != 0 {
+		filter["user_id"] = map[string]any{"$eq": s.UserID}
+	}
+	if s.DeviceToken != "" {
+		filter["device_token"] = map[string]any{"$eq": s.DeviceToken}
+	}
+
+	if len(filter) == 0 {
+		return fmt.Errorf("RedisUpdateSession: aucun critère de recherche (id, user_id, device_token) fourni")
+	}
+
+	// 5. Création du contexte
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// 6. Appel à ta fonction standardisée Update
+	// Elle gère automatiquement la mise à jour des données et la réindexation (ZADD/SREM/SADD)
+	return Sessions.Update(ctx, filter, doc)
+}

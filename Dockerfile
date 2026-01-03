@@ -1,54 +1,68 @@
-# ---------------------------------------------------------
-# ÉTAPE 1 : Builder (On compile l'application)
-# ---------------------------------------------------------
-# On utilise ta version (1.24 ou 1.25), mais en version "alpine"
-FROM golang:1.25-alpine AS builder
+# ==========================================
+# 1. BASE (Le socle commun)
+# ==========================================
+# On part de la même image Go que tu as choisie
+FROM golang:1.25-alpine AS base
 
-# Installation des outils C obligatoires pour "chai2010/webp"
-# gcc & musl-dev : Pour compiler le C
-# libwebp-dev    : Contient les headers (.h) nécessaires au build
+# POURQUOI : On installe les outils C ici pour ne le faire qu'une seule fois.
+# C'est l'étape la plus longue (gcc, musl-dev, libwebp-dev).
+# Docker mettra cette étape en cache et ne la refera plus jamais tant que tu ne touches pas à cette ligne.
 RUN apk add --no-cache gcc musl-dev libwebp-dev
 
 WORKDIR /app
 
-# Gestion du cache des modules (pour que le build soit plus rapide les prochaines fois)
+# POURQUOI : On installe "Air" ici.
+# C'est l'outil qui va surveiller tes fichiers et redémarrer l'appli en 1 seconde.
+RUN go install github.com/air-verse/air@latest
+
+# POURQUOI : On télécharge les dépendances Go (go.mod/sum).
+# En le faisant dans "base", le cache est partagé entre le mode Dev et le mode Prod.
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copie du code source
+# ==========================================
+# 2. DEV (L'environnement de développement)
+# ==========================================
+FROM base AS dev
+
+# POURQUOI : On ne fait PAS de "COPY . ." ici.
+# En dev, ton code sera "monté" via le docker-compose (volumes).
+# Ainsi, Air verra tes fichiers locaux changer instantanément.
+
+# Commande de démarrage pour le dev : on lance Air
+CMD ["air", "-c", ".air.toml"]
+
+# ==========================================
+# 3. BUILDER-PROD (La compilation pour la Prod)
+# ==========================================
+# On repart de "base", mais cette fois pour construire le binaire final
+FROM base AS builder-prod
+
+# POURQUOI : Ici, on COPIE le code source dans l'image.
+# C'est nécessaire pour la prod car l'image doit être autonome (sans volume).
 COPY . .
 
-# Compilation
-# CGO_ENABLED=1 est impératif car ta lib d'image utilise du code C
-# -ldflags="-w -s" réduit la taille du binaire (enlève les infos de debug)
+# Ta commande de compilation originale (optimisée et strippée)
 RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o nubo cmd/main.go
 
-# ---------------------------------------------------------
-# ÉTAPE 2 : Runner (L'image finale de production)
-# ---------------------------------------------------------
-FROM alpine:latest
+# ==========================================
+# 4. PROD (L'image finale légère)
+# ==========================================
+# C'est ton étape finale actuelle, inchangée.
+FROM alpine:latest AS prod
 
-# On installe UNIQUEMENT la librairie d'exécution (pas les outils de dev)
-# Sans ça, ton binaire ne pourra pas charger la lib webp au démarrage
+# On réinstalle la lib d'exécution (nécessaire pour l'image finale minimaliste)
 RUN apk add --no-cache libwebp ca-certificates
 
 WORKDIR /app
 
-# 1. On récupère le binaire
-COPY --from=builder /app/nubo .
+# On copie uniquement le binaire compilé depuis l'étape "builder-prod"
+COPY --from=builder-prod /app/nubo .
+COPY --from=builder-prod /app/docs ./docs
+COPY --from=builder-prod /app/docs.html .
 
-# 2. On récupère le dossier docs (généré par swag)
-COPY --from=builder /app/docs ./docs
-
-# 3. On récupère le fichier HTML de Scalar
-COPY --from=builder /app/docs.html .
-
-# Création des dossiers nécessaires (si tu utilises le stockage local temporaire)
 RUN mkdir -p /app/uploads
-
-# Variables d'environnement par défaut (optionnel)
 ENV GIN_MODE=release
-
 EXPOSE 8080
 
 CMD ["./nubo"]

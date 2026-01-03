@@ -6,7 +6,7 @@
         "contact": {},
         "version": "1.0"
     },
-    "basePath": "/api/v10",
+    "basePath": "/api/v11",
     "paths": {
         "/login": {
             "post": {
@@ -46,7 +46,7 @@
                         }
                     },
                     "400": {
-                        "description": "Invalid request format",
+                        "description": "Adresse IP invalide",
                         "schema": {
                             "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
                         }

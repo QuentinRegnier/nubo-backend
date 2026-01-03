@@ -5,6 +5,7 @@ import (
 	"html"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -115,7 +116,7 @@ func ToStruct(m map[string]any, out any) error {
 }
 
 // EstNonVide vérifie si une valeur est "non vide" selon son type
-func EstNonVide(v interface{}) bool {
+func EstNonVide(v any) bool {
 	val := reflect.ValueOf(v)
 
 	switch val.Kind() {
@@ -142,4 +143,9 @@ func EstNonVide(v interface{}) bool {
 		// Pour les types non gérés, on considère que non vide = valeur zéro ?
 		return !val.IsZero()
 	}
+}
+
+// exists vérifie si une valeur existe dans une slice
+func Exists[T comparable](slice []T, value T) bool {
+	return slices.Contains(slice, value)
 }

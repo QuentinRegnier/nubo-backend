@@ -1,4 +1,4 @@
-basePath: /api/v10
+basePath: /api/v11
 definitions:
   github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse:
     properties:
@@ -136,7 +136,7 @@ paths:
           schema:
             $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.LoginResponse'
         "400":
-          description: Invalid request format
+          description: Adresse IP invalide
           schema:
             $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse'
         "401":

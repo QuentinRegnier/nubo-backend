@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Nubo API + Docs</title>
+  <script src="https://unpkg.com/redoc@latest/bundles/redoc.standalone.js"></script>
+  <style>
+    /* --- STRUCTURE GLOBALE --- */
+    * {
+      box-sizing: border-box;
+    }
+
+    /* 2. Suppression du "Focus Ring" bleu moche sur les clics */
+    button:focus {
+      outline: none;
+    }
+
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #0b0c17; /* Fond général */
+      color: #e5e7eb;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden; /* On gère le scroll nous-mêmes */
+    }
+
+    /* --- BARRE DE NAVIGATION SUPÉRIEURE --- */
+    #top-menu {
+      background: #11121c;
+      padding: 0.5rem 1rem;
+      border-bottom: 1px solid #333;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    #top-menu button {
+      background: none;
+      border: none;
+      color: #9ca3af;
+      font-size: 1rem;
+      cursor: pointer;
+      padding: 0.5rem 1rem;
+      border-radius: 0.25rem;
+      transition: all 0.2s;
+      font-weight: 600;
+    }
+    #top-menu button:hover {
+      background: #1f2937;
+      color: #e5e7eb;
+    }
+    #top-menu button.active {
+      background: #1e40af; /* Bleu actif */
+      color: #ffffff;
+    }
+
+    /* --- CONTENEUR PRINCIPAL --- */
+    #main-wrapper {
+      flex-grow: 1;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* --- VUE API (REDOC) --- */
+    #redoc-container {
+      height: 100%;
+      overflow-y: auto; /* Scroll pour l'API */
+    }
+
+    /* --- VUE DOCUMENTATION (Layout 2 colonnes) --- */
+    #docs-container {
+      display: none; /* Masqué par défaut */
+      height: 100%;
+      display: flex; /* Flex pour Sidebar + Contenu */
+    }
+
+    /* 1. Sidebar de gauche (Menu Docs) */
+    #docs-sidebar {
+      width: 280px;
+      background-color: #11121c;
+      border-right: 1px solid #333;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+
+    /* Barre de recherche */
+    .search-box {
+      padding: 1rem;
+      border-bottom: 1px solid #2d2e3b;
+    }
+    .search-box input {
+      width: 100%;
+      background: #1f2937;
+      border: 1px solid #374151;
+      color: #e5e7eb;
+      padding: 8px;
+      border-radius: 4px;
+      box-sizing: border-box; /* Important pour le padding */
+    }
+    .search-box input:focus {
+      outline: none;
+      border-color: #60a5fa;
+    }
+
+    /* Liste des articles */
+    #article-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      overflow-y: auto;
+      flex-grow: 1;
+    }
+    #article-list li {
+      border-bottom: 1px solid #1f202b;
+    }
+    #article-list button {
+      width: 100%;
+      text-align: left;
+      background: none;
+      border: none;
+      color: #9ca3af;
+      padding: 15px 20px;
+      cursor: pointer;
+      font-size: 0.95rem;
+      transition: background 0.2s;
+    }
+    #article-list button:hover {
+      background-color: #1a1c2e;
+      color: #e5e7eb;
+    }
+    #article-list button.active-doc {
+      background-color: #1e2030;
+      color: #60a5fa; /* Texte bleu */
+      border-left: 3px solid #60a5fa;
+    }
+
+    /* 2. Zone de lecture (Article) */
+    #docs-content-area {
+      flex-grow: 1;
+      background-color: #0b0c17;
+      overflow-y: auto; /* Scroll uniquement ici ! */
+      padding: 2rem 4rem; /* Marges confortables */
+      max-width: 1000px; /* Largeur max pour la lecture */
+      margin: 0 auto; /* Centré */
+    }
+
+    /* Loading Spinner simple */
+    .loading {
+      text-align: center;
+      padding: 2rem;
+      color: #60a5fa;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="top-menu">
+    <button id="btn-api" class="active">API Reference</button>
+    <button id="btn-docs">Guides & Documentation</button>
+  </div>
+
+  <div id="main-wrapper">
+    <div id="redoc-container"></div>
+
+    <div id="docs-container" style="display: none;">
+      
+      <div id="docs-sidebar">
+        <div class="search-box">
+          <input type="text" id="doc-search" placeholder="Rechercher un article...">
+        </div>
+        <ul id="article-list">
+          </ul>
+      </div>
+
+      <div id="docs-content-area">
+        <div style="padding-top: 50px; text-align: center; color: #6b7280;">
+          Sélectionnez un article à gauche pour commencer.
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // ----------------------------------------------------
+    // 1. CONFIGURATION DES ARTICLES
+    // ----------------------------------------------------
+    // C'est ici que tu ajoutes tes nouveaux fichiers .md
+    const articles = [
+      { title: "Lancer l'API (Dev/Prod)", file: "03-lancer-api.md" },
+      { title: "WireGuard & Outils Admin", file: "01-wireguard.md" },
+      { title: "Gestion Utilisateurs WireGuard", file: "02-wireguard-users.md" },
+      // Ajoute tes futurs articles ici...
+    ];
+
+    // ----------------------------------------------------
+    // 2. LOGIQUE JAVASCRIPT
+    // ----------------------------------------------------
+    const btnApi = document.getElementById('btn-api');
+    const btnDocs = document.getElementById('btn-docs');
+    const redocContainer = document.getElementById('redoc-container');
+    const docsContainer = document.getElementById('docs-container');
+    const articleListEl = document.getElementById('article-list');
+    const contentArea = document.getElementById('docs-content-area');
+    const searchInput = document.getElementById('doc-search');
+
+    // --- Bascule entre API et DOCS ---
+    btnApi.onclick = () => {
+      redocContainer.style.display = 'block';
+      docsContainer.style.display = 'none';
+      btnApi.classList.add('active');
+      btnDocs.classList.remove('active');
+    };
+
+    btnDocs.onclick = () => {
+      redocContainer.style.display = 'none';
+      docsContainer.style.display = 'flex';
+      btnApi.classList.remove('active');
+      btnDocs.classList.add('active');
+      
+      // Charge le premier article automatiquement si rien n'est chargé
+      if (!document.querySelector('.active-doc')) {
+        loadArticle(articles[0].file, document.querySelector('#article-list button'));
+      }
+    };
+
+    // --- Génération de la liste (Sidebar) ---
+    function renderList(filterText = "") {
+      articleListEl.innerHTML = "";
+      
+      articles.forEach(article => {
+        if (article.title.toLowerCase().includes(filterText.toLowerCase())) {
+          const li = document.createElement('li');
+          const btn = document.createElement('button');
+          btn.textContent = article.title;
+          
+          // Clic sur un article
+          btn.onclick = () => loadArticle(article.file, btn);
+
+          li.appendChild(btn);
+          articleListEl.appendChild(li);
+        }
+      });
+    }
+
+    // 1. On crée une variable globale pour le cache
+    const articleCache = {}; 
+
+    // --- Chargement d'un article (AJAX) ---
+    async function loadArticle(filename, btnElement) {
+      document.querySelectorAll('#article-list button').forEach(b => b.classList.remove('active-doc'));
+      if(btnElement) btnElement.classList.add('active-doc');
+
+      // 2. VÉRIFICATION DU CACHE
+      if (articleCache[filename]) {
+        contentArea.innerHTML = articleCache[filename]; // On sert la version mémoire
+        contentArea.scrollTop = 0;
+        return; // On s'arrête là, pas de requête réseau
+      }
+
+      contentArea.innerHTML = '<div class="loading">Chargement...</div>';
+
+      try {
+        const response = await fetch(`/docs/html/${filename}`);
+        if (!response.ok) throw new Error("Article introuvable");
+        const html = await response.text();
+        
+        // 3. MISE EN CACHE
+        articleCache[filename] = html; // On sauvegarde pour la prochaine fois
+
+        contentArea.innerHTML = html;
+        contentArea.scrollTop = 0;
+      } catch (err) {
+        contentArea.innerHTML = `<h2 style="color:#ef4444">Erreur</h2><p>${err.message}</p>`;
+      }
+    }
+
+    // --- Barre de recherche ---
+    searchInput.addEventListener('input', (e) => {
+      renderList(e.target.value);
+    });
+
+    // --- Init ---
+    renderList(); // Affiche la liste au démarrage
+
+    // --- Init Redoc ---
+    Redoc.init('/docs/swagger.json', {
+      scrollYOffset: 0,
+      nativeScrollbars: true,
+      theme: {
+        colors: {
+            primary: { main: '#60a5fa' },
+            text: { primary: '#e5e7eb', secondary: '#9ca3af' },
+            http: { get: '#60a5fa', post: '#10b981', put: '#f59e0b', delete: '#ef4444' },
+        },
+        typography: {
+            fontFamily: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
+            headings: { fontWeight: '600', color: '#e5e7eb' },
+            code: { backgroundColor: '#1f2937', color: '#e5e7eb' }
+        },
+        sidebar: {
+            backgroundColor: '#11121c',
+            textColor: '#e5e7eb',
+            activeTextColor: '#60a5fa',
+        },
+        rightPanel: { backgroundColor: '#0b0c17' }
+      }
+    }, redocContainer);
+
+  </script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 package mongo
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
@@ -66,6 +67,10 @@ func MongoLoadUser(ID int, Username string, Email string, Phone string) (domain.
 		filter["phone"] = nil
 	}
 
+	if len(filter) == 0 {
+		return u, fmt.Errorf("MongoLoadUser: no research criteria (id, username, email, phone) provided")
+	}
+
 	// Appel à ta fonction utilitaire existante
 	docs, err := Users.Get(filter, nil)
 	if err != nil {
@@ -99,6 +104,10 @@ func MongoLoadSession(ID int, DeviceToken string) (domain.SessionsRequest, error
 		filter["device_token"] = nil
 	}
 
+	if len(filter) == 0 {
+		return s, fmt.Errorf("MongoLoadSession: no research criteria (id, device_token) provided")
+	}
+
 	// Appel à ta fonction utilitaire existante
 	docs, err := Sessions.Get(filter, nil)
 	if err != nil {
@@ -115,4 +124,37 @@ func MongoLoadSession(ID int, DeviceToken string) (domain.SessionsRequest, error
 	}
 
 	return s, nil
+}
+func MongoUpdateSession(s domain.SessionsRequest) error {
+	// 1. Conversion de la structure en Map pour l'update
+	doc, err := pkg.ToMap(s)
+	if err != nil {
+		return err
+	}
+
+	// 2. On retire l'ID des champs à mettre à jour (clé primaire immuable)
+	delete(doc, "id")
+
+	// 3. Construction du filtre de recherche dynamique
+	filter := make(map[string]any)
+
+	// On ajoute les critères de recherche s'ils sont présents (non zéro/vide)
+	if s.ID != 0 {
+		filter["id"] = s.ID
+	}
+	if s.UserID != 0 {
+		filter["user_id"] = s.UserID
+	}
+	if s.DeviceToken != "" {
+		filter["device_token"] = s.DeviceToken
+	}
+
+	// Sécurité : on empêche une mise à jour globale si aucun filtre n'est défini
+	if len(filter) == 0 {
+		return fmt.Errorf("MongoLoadSession: no research criteria (id, device_token) provided")
+	}
+
+	// 4. Appel à ta fonction standardisée Update
+	// Elle effectue un $set sur les champs restants dans 'doc' pour les documents correspondant au 'filter'
+	return Sessions.Update(filter, doc)
 }

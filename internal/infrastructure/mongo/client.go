@@ -14,7 +14,9 @@ var MongoClient *mongo.Client
 
 func InitMongo() {
 	// 1. On récupère l'URI depuis le .env
-	uri := os.Getenv("MONGO_URI")
+	user := os.Getenv("MONGO_ROOT_USER")
+	password := os.Getenv("MONGO_ROOT_PASSWORD")
+	uri := "mongodb://" + user + ":" + password + "@mongo:27017"
 
 	// SÉCURITÉ : Si vide, on met une valeur par défaut, MAIS on prévient
 	if uri == "" {

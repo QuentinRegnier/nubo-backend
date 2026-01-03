@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/docs"
 	"github.com/QuentinRegnier/nubo-backend/internal/api"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/websocket"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
@@ -66,14 +67,8 @@ func main() {
 	r := gin.Default()
 	api.SetupRoutes(r)
 
-	r.GET("/swagger.json", func(c *gin.Context) {
-		c.File("./docs/swagger.json")
-	})
-
-	// Servir l'interface HTML (Scalar)
-	r.GET("/docs", func(c *gin.Context) {
-		c.File("./docs.html")
-	})
+	// Initialiser la documentation
+	docs.InitDocsRoutes(r)
 
 	port := os.Getenv("PORT")
 	if port == "" {
