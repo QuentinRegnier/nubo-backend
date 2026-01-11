@@ -4,7 +4,8 @@ CREATE TABLE IF NOT EXISTS comments (
     user_id BIGINT REFERENCES auth.users(id), -- id de l'utilisateur
     content TEXT, -- contenu du commentaire
     visibility BOOLEAN DEFAULT TRUE, -- visibilité du commentaire
-    created_at TIMESTAMPTZ DEFAULT now() -- date de création
+    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
+    updated_at TIMESTAMPTZ DEFAULT now() -- date de mise à jour
 );
 
 CREATE INDEX idx_comments_post_created ON comments(post_id, created_at DESC);

@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS messages (
     visibility BOOLEAN DEFAULT TRUE, -- true si le message est visible par les membres (ou supprimé par l'expéditeur)
     content TEXT, -- contenu du message
     attachments JSONB, -- pointeurs vers fichiers S3 / metadata
-    created_at TIMESTAMPTZ DEFAULT now() -- date de création
+    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
+    updated_at TIMESTAMPTZ DEFAULT now() -- date de dernière mise à jour
 );
 
 CREATE INDEX idx_message_conv_created ON messages(conversation_id, created_at DESC);

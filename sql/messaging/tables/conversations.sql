@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     last_read_by_all_message_id BIGINT DEFAULT NULL, -- id du dernier message lu par tous
     state SMALLINT DEFAULT 0, -- état de la conversation (0 = active, 1 = supprimée, 2 = archivée)
     laws SMALLINT[], -- lois applicables à la conversation
-    created_at TIMESTAMPTZ DEFAULT now() -- date de création
+    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
+    updated_at TIMESTAMPTZ DEFAULT now() -- date de dernière mise à jour
 );
 
 CREATE INDEX idx_conversations_last_message ON conversations(last_message_id);

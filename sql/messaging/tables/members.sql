@@ -5,5 +5,7 @@ CREATE TABLE IF NOT EXISTS members (
     role SMALLINT DEFAULT 0, -- rôle du membre (0 = membre, 1 = admin, 2 = créateur)
     joined_at TIMESTAMPTZ DEFAULT now(), -- date d'adhésion
     unread_count INT DEFAULT 0, -- nombre de messages non lus
+    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
+    updated_at TIMESTAMPTZ DEFAULT now() -- date de dernière mise à jour
     UNIQUE(conversation_id, user_id)
 );

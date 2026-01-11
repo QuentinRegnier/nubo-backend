@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
     notifications JSONB, -- paramètres de notification
     language TEXT, -- langue
     theme SMALLINT NOT NULL DEFAULT 0 -- thème clair/sombre
+    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
+    updated_at TIMESTAMPTZ DEFAULT now(), -- date de dernière mise à jour
 );
 
 CREATE INDEX idx_user_settings_user_id ON user_settings(user_id);

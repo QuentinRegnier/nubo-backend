@@ -6,6 +6,7 @@ import (
 	"log"
 	"reflect"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
@@ -14,6 +15,12 @@ import (
 )
 
 // ---------------- Initialisation ----------------
+// Permet au Sentinel de retrouver la collection par son nom string
+var (
+	collectionRegistry = make(map[string]*Collection)
+	registryMu         sync.RWMutex
+)
+
 // declarations globales
 var (
 	Users         *Collection
@@ -46,17 +53,22 @@ func InitCacheDatabase() {
 	schemaMessages := domain.MessagesSchema
 
 	// variables globales
-	Users = NewCollection("users", schemaUsers, redisgo.Rdb, GlobalStrategy)
-	UserSettings = NewCollection("user_settings", schemaUserSettings, redisgo.Rdb, GlobalStrategy)
-	Sessions = NewCollection("sessions", schemaSessions, redisgo.Rdb, GlobalStrategy)
-	Relations = NewCollection("relations", schemaRelations, redisgo.Rdb, GlobalStrategy)
-	Posts = NewCollection("posts", schemaPosts, redisgo.Rdb, GlobalStrategy)
-	Comments = NewCollection("comments", schemaComments, redisgo.Rdb, GlobalStrategy)
-	Likes = NewCollection("likes", schemaLikes, redisgo.Rdb, GlobalStrategy)
-	Media = NewCollection("media", schemaMedia, redisgo.Rdb, GlobalStrategy)
-	Conversations = NewCollection("conversations", schemaConversations, redisgo.Rdb, GlobalStrategy)
-	Members = NewCollection("members", schemaMembers, redisgo.Rdb, GlobalStrategy)
-	Messages = NewCollection("messages", schemaMessages, redisgo.Rdb, GlobalStrategy)
+	// MODIFICATION : On définit qui est permanent (false) et qui est évictable (true)
+
+	// Données CRITIQUES (Pas de suppression auto)
+	Users = NewCollection("users", schemaUsers, redisgo.Rdb, false)
+	UserSettings = NewCollection("user_settings", schemaUserSettings, redisgo.Rdb, false)
+
+	// Données EVICTABLES (Suppression si RAM pleine)
+	Sessions = NewCollection("sessions", schemaSessions, redisgo.Rdb, true)
+	Posts = NewCollection("posts", schemaPosts, redisgo.Rdb, true)
+	Comments = NewCollection("comments", schemaComments, redisgo.Rdb, true)
+	Likes = NewCollection("likes", schemaLikes, redisgo.Rdb, true)
+	Media = NewCollection("media", schemaMedia, redisgo.Rdb, true)
+	Conversations = NewCollection("conversations", schemaConversations, redisgo.Rdb, true)
+	Members = NewCollection("members", schemaMembers, redisgo.Rdb, true)
+	Messages = NewCollection("messages", schemaMessages, redisgo.Rdb, true)
+	Relations = NewCollection("relations", schemaRelations, redisgo.Rdb, true)
 
 	log.Println("Structure Redis (caches) initialisée")
 }
@@ -64,15 +76,15 @@ func InitCacheDatabase() {
 // ---------------- Collection et schéma ----------------
 
 type Collection struct {
-	Name       string                  // ex: "messages"
-	Schema     map[string]reflect.Kind // ex: {"id": reflect.Int, "content": reflect.String}
-	Redis      *redis.Client
-	LRU        *LRUCache     // pour mettre à jour la LRU si cache
-	Expiration time.Duration // TTL par défaut pour chaque élément, facultatif
+	Name        string                  // ex: "messages"
+	Schema      map[string]reflect.Kind // ex: {"id": reflect.Int, "content": reflect.String}
+	Redis       *redis.Client
+	IsEvictable bool
+	Expiration  time.Duration // TTL par défaut pour chaque élément, facultatif
 }
 
 // NewCollection crée une collection avec un schéma et LRU optionnel
-func NewCollection(name string, schema map[string]reflect.Kind, rdb *redis.Client, lru *LRUCache) *Collection {
+func NewCollection(name string, schema map[string]reflect.Kind, rdb *redis.Client, isEvictable bool) *Collection {
 	_, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -86,12 +98,19 @@ func NewCollection(name string, schema map[string]reflect.Kind, rdb *redis.Clien
 		log.Printf("Index initialisé pour collection=%s, champ=%s", name, field)
 	}
 
-	return &Collection{
-		Name:   name,
-		Schema: schema,
-		Redis:  rdb,
-		LRU:    lru,
+	c := &Collection{
+		Name:        name,
+		Schema:      schema,
+		Redis:       rdb,
+		IsEvictable: isEvictable,
 	}
+
+	// Enregistrement dans le registre pour le Sentinel
+	registryMu.Lock()
+	collectionRegistry[name] = c
+	registryMu.Unlock()
+
+	return c
 }
 
 // ---------------- Validation ----------------
@@ -184,9 +203,14 @@ func (c *Collection) Set(ctx context.Context, obj map[string]any) error {
 		}
 	}
 
-	// Mise à jour LRU
-	if c.LRU != nil {
-		c.LRU.MarkUsed(c.Name, id)
+	// Mise à jour LRU Distribué (ZADD)
+	if c.IsEvictable {
+		// Score = Maintenant, Member = "collection:id"
+		member := c.Name + ":" + id
+		c.Redis.ZAdd(ctx, "idx:lru:global", &redis.Z{
+			Score:  float64(time.Now().UnixNano()),
+			Member: member,
+		})
 	}
 
 	return nil
@@ -218,8 +242,13 @@ func (c *Collection) Get(ctx context.Context, filter map[string]any) ([]map[stri
 
 		results = append(results, obj)
 
-		if c.LRU != nil {
-			c.LRU.MarkUsed(c.Name, id)
+		// Pipeline optimisé possible, mais on peut faire simple ici :
+		if c.IsEvictable {
+			member := c.Name + ":" + id
+			c.Redis.ZAdd(ctx, "idx:lru:global", &redis.Z{
+				Score:  float64(time.Now().UnixNano()),
+				Member: member,
+			})
 		}
 	}
 
@@ -281,10 +310,10 @@ func (c *Collection) Delete(ctx context.Context, filter map[string]any) error {
 			}
 		}
 
-		if c.LRU != nil {
-			c.LRU.mu.Lock()
-			delete(c.LRU.elements, c.Name+":"+id)
-			c.LRU.mu.Unlock()
+		// Nettoyage du LRU global pour ne pas laisser de fantômes
+		if c.IsEvictable {
+			member := c.Name + ":" + id
+			pipe.ZRem(ctx, "idx:lru:global", member)
 		}
 	}
 
@@ -373,9 +402,16 @@ func (c *Collection) Update(ctx context.Context, filter map[string]interface{}, 
 		// 4. Sauvegarder l'objet complet mis à jour
 		pipe.HMSet(ctx, objKey, obj)
 
-		// 5. Mise à jour LRU
-		if c.LRU != nil {
-			c.LRU.MarkUsed(c.Name, id)
+		// 5. Mise à jour LRU Distribué
+		if c.IsEvictable {
+			member := c.Name + ":" + id
+			// Note: On pourrait utiliser pipe.ZAdd, mais attention au contexte
+			// Pour l'instant on laisse en appel direct ou on l'ajoute au pipe existant
+			// Si tu veux l'ajouter au pipe (recommandé) :
+			pipe.ZAdd(ctx, "idx:lru:global", &redis.Z{
+				Score:  float64(time.Now().UnixNano()),
+				Member: member,
+			})
 		}
 	}
 

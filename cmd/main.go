@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"time"
@@ -40,14 +41,13 @@ func main() {
 	// Nettoyage au démarrage
 	service.InitData()
 
-	// ⚡ Initialiser la stratégie Redis
-	redisgo.GlobalStrategy = redisgo.NewLRUCache(redis.Rdb)
-
-	// ⚡ Démarrer le watcher mémoire
-	// maxRAM = 0 => autodétection
-	// marge = 200 Mo de marge de sécurité
-	// interval = toutes les 2 secondes
-	redisgo.GlobalStrategy.StartMemoryWatcher(0, 200*1024*1024, 2*time.Second)
+	// ⚡ Démarrer le Sentinel Distribué (Mode Dynamique)
+	// Argument 1 : Context
+	// Argument 2 : Client Redis
+	// Argument 3 : MARGE DE SÉCURITÉ (Ce qu'on doit laisser libre).
+	//              Ex: 256MB. Redis prendra tout le reste disponible.
+	// Argument 4 : Intervalle de vérification
+	redisgo.StartMemorySentinel(context.Background(), redis.Rdb, 256*1024*1024, 2*time.Second)
 
 	// Initialiser le Hub et lancer sa boucle
 	websocket.InitHub()

@@ -6,207 +6,138 @@ import (
 	"log"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-redis/redis/v8"
 )
 
-// ---------------- Types ----------------
+// ---------------- Sentinel (Gardien Mémoire) ----------------
 
-// Type d’un noeud Redis
-type NodeType int
-
-const (
-	NodeFlux NodeType = iota
-	NodeCache
-)
-
-// Un élément dans la LRU globale
-type CacheElement struct {
-	NodeName  string // nom du noeud (ex: "messages")
-	ElementID string // ex: "392"
-	prev      *CacheElement
-	next      *CacheElement
-}
-
-// LRU globale pour les éléments de type cache
-type LRUCache struct {
-	elements map[string]*CacheElement // clé = nodeName:elementID
-	head     *CacheElement
-	tail     *CacheElement
-	mu       sync.Mutex
-	rdb      *redis.Client
-}
-
-// ---------------- Initialisation ----------------
-
-// NewLRUCache initialise un cache LRU global
-func NewLRUCache(rdb *redis.Client) *LRUCache {
-	return &LRUCache{
-		elements: make(map[string]*CacheElement),
-		rdb:      rdb,
-	}
-}
-
-// ---------------- Gestion usage ----------------
-
-// MarkUsed marque un élément comme utilisé (move to tail)
-func (lru *LRUCache) MarkUsed(nodeName, elementID string) {
-	lru.mu.Lock()
-	defer lru.mu.Unlock()
-
-	key := nodeName + ":" + elementID
-	elem, exists := lru.elements[key]
-	if exists {
-		lru.moveToTail(elem)
-		return
-	}
-
-	elem = &CacheElement{NodeName: nodeName, ElementID: elementID}
-	lru.elements[key] = elem
-	lru.append(elem)
-}
-
-func (lru *LRUCache) moveToTail(elem *CacheElement) {
-	if elem == lru.tail {
-		return
-	}
-	lru.remove(elem)
-	lru.append(elem)
-}
-
-func (lru *LRUCache) append(elem *CacheElement) {
-	if lru.tail != nil {
-		lru.tail.next = elem
-		elem.prev = lru.tail
-		elem.next = nil
-		lru.tail = elem
-	} else {
-		lru.head = elem
-		lru.tail = elem
-	}
-}
-
-func (lru *LRUCache) remove(elem *CacheElement) {
-	if elem.prev != nil {
-		elem.prev.next = elem.next
-	} else {
-		lru.head = elem.next
-	}
-	if elem.next != nil {
-		elem.next.prev = elem.prev
-	} else {
-		lru.tail = elem.prev
-	}
-	elem.prev = nil
-	elem.next = nil
-}
-
-func (lru *LRUCache) purgeOldest() {
-	if lru.head == nil {
-		return
-	}
-	old := lru.head
-	log.Printf("Purging Redis cache element (LRU): node=%s, id=%s\n", old.NodeName, old.ElementID)
-	lru.remove(old)
-	delete(lru.elements, old.NodeName+":"+old.ElementID)
-
-	// suppression via Collection.Delete
-	collection := &Collection{
-		Name:  old.NodeName,
-		Redis: lru.rdb,
-		LRU:   lru,
-	}
-	filter := map[string]interface{}{"id": old.ElementID}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := collection.Delete(ctx, filter); err != nil {
-		log.Printf("Erreur suppression via Collection.Delete: %v\n", err)
-	}
-}
-
-// ---------------- Mémoire ----------------
-
-// StartMemoryWatcher surveille la RAM réelle de Redis via la commande INFO
-func (lru *LRUCache) StartMemoryWatcher(maxRAM uint64, marge uint64, interval time.Duration) {
+// StartMemorySentinel surveille la RAM et déclenche l'éviction en gardant une marge de sécurité.
+// securityMargin : Espace libre à garantir (ex: 200MB).
+// Si Redis a 1GB de RAM et marge=200MB, on nettoie dès qu'on dépasse 800MB.
+func StartMemorySentinel(ctx context.Context, rdb *redis.Client, securityMargin int64, interval time.Duration) {
 	go func() {
-		// Intervalle de vérification
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
+		log.Printf("[Sentinel] Démarrage surveillance dynamique (Marge de sécu: %d MB)", securityMargin/1024/1024)
 
-		for range ticker.C {
-			// 1. Interroger Redis pour obtenir l'info mémoire
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			infoStr, err := lru.rdb.Info(ctx, "memory").Result()
-			cancel()
-
-			if err != nil {
-				log.Printf("Erreur lors de la surveillance mémoire Redis: %v", err)
-				continue
-			}
-
-			// 2. Parser la réponse pour obtenir 'used_memory' en octets
-			usedMemory, err := parseRedisUsedMemory(infoStr)
-			if err != nil {
-				log.Printf("Erreur parsing info mémoire: %v", err)
-				continue
-			}
-
-			// 3. Définir la limite
-			// Si maxRAM est 0, on essaye de deviner la RAM système (attention: seulement valide si Redis est sur la même machine)
-			limit := maxRAM
-			if limit == 0 {
-				limit = getTotalRAM()
-			}
-			seuil := limit - marge
-
-			// 4. Purge si nécessaire
-			if usedMemory > seuil {
-				log.Printf("⚠️ ALERTE RAM REDIS: Utilisé=%d, Seuil=%d. Démarrage purge...", usedMemory, seuil)
-
-				// On purge tant qu'on est au-dessus du seuil
-				// On met une limite de sécurité (ex: max 50 items par tick) pour ne pas bloquer le thread indéfiniment
-				itemsPurged := 0
-				maxPurgePerCycle := 50
-
-				lru.mu.Lock()
-				for usedMemory > seuil && lru.head != nil && itemsPurged < maxPurgePerCycle {
-					lru.purgeOldest() // Cette fonction supprime de la LRU ET de Redis
-					itemsPurged++
-
-					// Estimation grossière : on réduit virtuellement usedMemory pour la boucle
-					// (Pour être précis, il faudrait refaire un rdb.Info(), mais c'est lourd)
-					// On suppose ici qu'on va revérifier au prochain tick.
-				}
-				lru.mu.Unlock()
-
-				log.Printf("Fin cycle purge: %d éléments supprimés.", itemsPurged)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				checkAndEvictDynamic(ctx, rdb, securityMargin)
 			}
 		}
 	}()
 }
 
-// parseRedisUsedMemory extrait la valeur "used_memory" de la sortie de la commande INFO MEMORY
-func parseRedisUsedMemory(info string) (uint64, error) {
-	lines := strings.Split(info, "\r\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "used_memory:") {
-			parts := strings.Split(line, ":")
-			if len(parts) == 2 {
-				return strconv.ParseUint(parts[1], 10, 64)
+// checkAndEvictDynamic calcule la limite en temps réel
+func checkAndEvictDynamic(ctx context.Context, rdb *redis.Client, margin int64) {
+	// 1. Récupérer toutes les infos mémoire d'un coup
+	info, err := rdb.Info(ctx, "memory").Result()
+	if err != nil {
+		log.Printf("[Sentinel] Erreur lecture info mémoire: %v", err)
+		return
+	}
+
+	// 2. Parser les valeurs clés
+	usedMemory := parseRedisInfoInt(info, "used_memory")
+	maxMemory := parseRedisInfoInt(info, "maxmemory")                   // Limite config Redis (redis.conf)
+	totalSystemMemory := parseRedisInfoInt(info, "total_system_memory") // RAM totale du serveur/conteneur
+
+	// 3. Déterminer la limite réelle (Plafond)
+	var ceiling int64
+	if maxMemory > 0 {
+		ceiling = maxMemory
+	} else {
+		ceiling = totalSystemMemory
+	}
+
+	// Si on n'arrive pas à lire la mémoire système (cas rare), on ne fait rien par sécurité
+	if ceiling == 0 {
+		return
+	}
+
+	// 4. Calculer le seuil de déclenchement (Plafond - Marge)
+	triggerLimit := ceiling - margin
+
+	// Si on est en dessous du seuil, tout va bien
+	if usedMemory < triggerLimit {
+		return
+	}
+
+	log.Printf("[Sentinel] ⚠️ ALERTE RAM: Utilisé %d MB > Seuil %d MB (Plafond %d - Marge %d). Nettoyage...",
+		usedMemory/1024/1024, triggerLimit/1024/1024, ceiling/1024/1024, margin/1024/1024)
+
+	// 5. Boucle de suppression (inchangée par rapport à avant)
+	evictedCount := 0
+	safetyLoop := 0
+
+	// On boucle tant qu'on dépasse la limite dynamique
+	for usedMemory > triggerLimit && safetyLoop < 50 {
+		items, err := rdb.ZPopMin(ctx, "idx:lru:global", 50).Result()
+		if err != nil || len(items) == 0 {
+			break
+		}
+
+		for _, item := range items {
+			member, ok := item.Member.(string)
+			if !ok {
+				continue
+			}
+
+			parts := strings.SplitN(member, ":", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			collName, id := parts[0], parts[1]
+
+			registryMu.RLock()
+			coll, exists := collectionRegistry[collName]
+			registryMu.RUnlock()
+
+			if exists {
+				_ = coll.Delete(ctx, map[string]any{"id": id})
+				evictedCount++
 			}
 		}
+
+		// Mise à jour rapide de la mémoire utilisée pour la boucle
+		// On refait un petit appel léger juste pour 'used_memory'
+		usedMemory, _ = getRedisMemoryUsage(ctx, rdb)
+		safetyLoop++
 	}
-	return 0, nil // ou erreur si non trouvé
+
+	if evictedCount > 0 {
+		log.Printf("[Sentinel] Fin cycle: %d supprimés. RAM actuelle: %d MB", evictedCount, usedMemory/1024/1024)
+	}
 }
 
-// getTotalRAM reste utile si Redis tourne sur la même machine (bare metal),
-// mais attention si tu utilises Docker avec des limites de conteneur.
-func getTotalRAM() uint64 {
-	// ... (ton implémentation actuelle runtime.ReadMemStats est correcte pour la RAM Système du conteneur Go)
-	// Mais idéalement, il vaut mieux passer une valeur explicite 'maxRAM' dans la config.
-	return 0 // Je te conseille de forcer l'usage du paramètre maxRAM
+// Helper générique pour parser les champs de INFO MEMORY
+func parseRedisInfoInt(info string, key string) int64 {
+	lines := strings.Split(info, "\r\n")
+	prefix := key + ":"
+	for _, line := range lines {
+		if after, ok := strings.CutPrefix(line, prefix); ok {
+			valStr := after
+			val, _ := strconv.ParseInt(valStr, 10, 64)
+			return val
+		}
+	}
+	return 0
+}
+
+// getRedisMemoryUsage récupère la mémoire utilisée actuelle via INFO MEMORY
+// Utilisé principalement dans la boucle de nettoyage pour vérifier si on est repassé sous le seuil.
+func getRedisMemoryUsage(ctx context.Context, rdb *redis.Client) (int64, error) {
+	info, err := rdb.Info(ctx, "memory").Result()
+	if err != nil {
+		return 0, err
+	}
+	// Réutilisation du helper pour éviter la duplication de code
+	return parseRedisInfoInt(info, "used_memory"), nil
 }
 
 // ---------------- Flux ----------------
@@ -260,8 +191,3 @@ func SubscribeFlux(rdb *redis.Client, nodeName string) (<-chan []byte, context.C
 
 	return ch, cancel
 }
-
-// ---------------- Global ----------------
-
-// GlobalStrategy est l’instance globale de stratégie LRU utilisée par toute l’app
-var GlobalStrategy *LRUCache

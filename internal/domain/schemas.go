@@ -42,6 +42,8 @@ var UserSettingsSchema = map[string]reflect.Kind{
 	"notifications": reflect.Map, // JSONB
 	"language":      reflect.String,
 	"theme":         reflect.Int,
+	"created_at":    reflect.Struct,
+	"updated_at":    reflect.Struct,
 }
 
 // SessionsCache
@@ -63,6 +65,7 @@ var RelationsSchema = map[string]reflect.Kind{
 	"secondary_id": reflect.Int,
 	"state":        reflect.Int,
 	"created_at":   reflect.Struct,
+	"updated_at":   reflect.Struct,
 }
 
 // PostsCache
@@ -85,6 +88,7 @@ var CommentsSchema = map[string]reflect.Kind{
 	"content":    reflect.String,
 	"visibility": reflect.Bool,
 	"created_at": reflect.Struct,
+	"updated_at": reflect.Struct,
 }
 
 // LikesCache
@@ -103,6 +107,7 @@ var MediaSchema = map[string]reflect.Kind{
 	"storage_path": reflect.String,
 	"visibility":   reflect.Bool,
 	"created_at":   reflect.Struct,
+	"updated_at":   reflect.Struct,
 }
 
 // ConversationsCache
@@ -114,6 +119,7 @@ var ConversationsSchema = map[string]reflect.Kind{
 	"last_read_by_all_message_id": reflect.Int,
 	"state":                       reflect.Int,
 	"created_at":                  reflect.Struct,
+	"updated_at":                  reflect.Struct,
 }
 
 // MembersCache
@@ -124,6 +130,8 @@ var MembersSchema = map[string]reflect.Kind{
 	"role":            reflect.Int,
 	"joined_at":       reflect.Struct,
 	"unread_count":    reflect.Int,
+	"created_at":      reflect.Struct,
+	"updated_at":      reflect.Struct,
 }
 
 // MessagesCache
@@ -136,4 +144,5 @@ var MessagesSchema = map[string]reflect.Kind{
 	"content":         reflect.String,
 	"attachments":     reflect.Map, // JSONB
 	"created_at":      reflect.Struct,
+	"updated_at":      reflect.Struct,
 }

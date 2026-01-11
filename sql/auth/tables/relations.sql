@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS relations (
     secondary_id BIGINT REFERENCES users(id), -- id de l'utilisateur suivi
     state SMALLINT DEFAULT 1, -- état du suivi (2 = amis, 1 = suivi, 0 = inactif, -1 = bloqué)
     created_at TIMESTAMPTZ DEFAULT now(), -- date de création
+    updated_at TIMESTAMPTZ DEFAULT now(), -- date de dernière mise à jour
     UNIQUE(secondary_id, primary_id)
 );
 

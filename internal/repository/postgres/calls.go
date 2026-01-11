@@ -373,37 +373,52 @@ func ProcUpdateSession(ID int, RefreshToken string, DeviceInfo any, DeviceToken 
 
 	const functionID = 5
 
-	// 1. Préparation des arguments (gestion des types spéciaux)
-	args := make([]interface{}, 5)
-	args[0] = ID           // p_id (ex: UUID)
-	args[1] = RefreshToken // p_refresh_token (ex: "refresh_token_string")
-	args[4] = ExpiresAt    // p_expires_at (ex: timestamp ou nil)
+	// 1. Préparation des arguments (Il faut 6 arguments, pas 5)
+	args := make([]any, 6)
+	args[0] = ID           // $1
+	args[1] = RefreshToken // $2
 
-	// Gestion spéciale pour p_device_info (JSONB)
+	// Gestion spéciale pour p_device_info (JSONB) -> $3
 	if DeviceInfo == nil {
 		args[2] = nil
 	} else {
-		args[2] = DeviceInfo
+		// IMPORTANT : On convertit la MAP en STRING JSON pour Postgres
+		bytes, err := json.Marshal(DeviceInfo)
+		if err != nil {
+			fmt.Printf("⚠️ Warning ProcUpdateSession: échec marshal DeviceInfo: %v\n", err)
+			args[2] = "{}"
+		} else {
+			args[2] = string(bytes)
+		}
 	}
-	// Gestion spéciale pour p_device_token (TEXT)
+
+	// Gestion spéciale pour p_device_token (TEXT) -> $4
 	if DeviceToken == "" {
 		args[3] = nil
 	} else {
 		args[3] = DeviceToken
 	}
 
-	// 2. Définition de la requête SQL
+	// Gestion spéciale pour p_ip_history (TEXT[]) -> $5
+	// C'est l'argument qui manquait !
+	if len(IPHistory) == 0 {
+		args[4] = nil
+	} else {
+		args[4] = pq.Array(IPHistory)
+	}
+
+	args[5] = ExpiresAt // $6 (Décalé à la fin)
+
+	// 2. Définition de la requête SQL (6 paramètres)
 	sqlStatement := `
-		CALL auth.proc_update_session($1, $2, $3 , $4, $5)
+		CALL auth.proc_update_session($1, $2, $3, $4, $5, $6)
 	`
 
-	// 3. Exécution avec tous les paramètres
-	//    On utilise Exec() et on "déplie" le slice 'params'
+	// 3. Exécution
 	_, err := postgres.PostgresDB.Exec(sqlStatement, args...)
 	if err != nil {
 		return fmt.Errorf("erreur lors de l'exécution de ProcUpdateSession (ID %d): %w", functionID, err)
 	}
 
-	// 4. Retour du succès
 	return nil
 }
