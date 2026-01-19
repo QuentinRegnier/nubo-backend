@@ -18,7 +18,6 @@ func JWTMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Retirer "Bearer " si présent
 		if len(tokenString) > 7 && tokenString[:7] == "Bearer " {
 			tokenString = tokenString[7:]
 		}
@@ -42,7 +41,6 @@ func JWTMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Vérification expiration
 		if exp, ok := claims["exp"].(float64); ok {
 			if time.Now().After(time.Unix(int64(exp), 0)) {
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token expiré"})
@@ -50,8 +48,16 @@ func JWTMiddleware() gin.HandlerFunc {
 			}
 		}
 
-		// Mettre l’ID utilisateur dans le contexte
-		c.Set("userID", claims["sub"])
+		// EXTRACTION DES DONNÉES CLÉS
+		c.Set("userID", claims["sub"]) // ID de l'utilisateur
+
+		if dev, ok := claims["dev"].(string); ok {
+			c.Set("deviceToken", dev) // Identifiant unique de la session
+		} else {
+			// Si c'est un vieux token sans claim 'dev', on rejette par sécurité
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token format obsolete (missing device info)"})
+			return
+		}
 
 		c.Next()
 	}

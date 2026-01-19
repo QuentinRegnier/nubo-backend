@@ -10,9 +10,11 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	postgresgo "github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
 // addImage gère l'upload (S3/Disque)
@@ -56,6 +58,8 @@ func CreateUser(
 	sessions.ID = sessionID
 	sessions.UserID = userID
 	sessions.CreatedAt = createdAtSession
+	sessions.MasterToken, err = pkg.GenerateToken(req.ID, sessions.DeviceToken, variables.MasterTokenExpirationSeconds)
+	sessions.CurrentSecret = security.DeriveNextSecret(sessions.DeviceToken, sessions.MasterToken, sessions.MasterToken, sessions.DeviceToken)
 
 	if err := mongo.MongoCreateUser(req); err != nil {
 		log.Printf("Erreur Mongo CreateUser: %v", err)
@@ -146,14 +150,18 @@ func Login(
 	} else {
 		fmt.Println("🔓 MOT DE PASSE VALIDE ! Chargement session...")
 
-		sessions, err = redis.RedisLoadSession(user.ID, input.DeviceToken)
+		sessions, err = redis.RedisLoadSession(user.ID, input.DeviceToken, "", "")
 		if sessions.ID != 0 && sessions.UserID == user.ID && sessions.DeviceToken == input.DeviceToken {
 			sessions.DeviceInfo = input.DeviceInfo
 			if pkg.Exists(sessions.IPHistory, input.IPAddress[0]) == false && len(input.IPAddress) > 0 {
 				sessions.IPHistory = append(sessions.IPHistory, input.IPAddress[0])
 			}
-			sessions.ExpiresAt = time.Now().Add(pkg.TIMETOKEN)
-			sessions.RefreshToken, err = pkg.GenerateToken(user.Username)
+			sessions.ExpiresAt = time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
+			sessions.MasterToken, err = pkg.GenerateToken(user.ID, input.DeviceToken, variables.MasterTokenExpirationSeconds)
+			sessions.CurrentSecret = security.DeriveNextSecret(sessions.DeviceToken, sessions.MasterToken, sessions.MasterToken, sessions.DeviceToken)
+			sessions.LastSecret = sessions.DeviceToken
+			sessions.LastJWT = ""
+			sessions.ToleranceTime = time.Time{}
 			if err != nil {
 				return domain.UserRequest{}, domain.SessionsRequest{}, err
 			}
@@ -168,25 +176,29 @@ func Login(
 				}
 			}(sessions)
 			go func(sess domain.SessionsRequest) {
-				errPg := postgresgo.ProcUpdateSession(sess.ID, sess.RefreshToken, sess.DeviceInfo, sess.DeviceToken, sess.IPHistory, sess.ExpiresAt)
+				errPg := postgresgo.ProcUpdateSession(sess.ID, sess.MasterToken, sess.DeviceInfo, sess.DeviceToken, sess.IPHistory, sess.ExpiresAt)
 				if errPg != nil {
 					log.Printf("Erreur Postgres UpdateSession: %v", errPg)
 				}
 			}(sessions)
 			return user, sessions, nil
 		}
-		sessions, err = mongo.MongoLoadSession(user.ID, input.DeviceToken)
+		sessions, err = mongo.MongoLoadSession(user.ID, input.DeviceToken, "", "")
 		if sessions.ID != 0 && sessions.UserID == user.ID && sessions.DeviceToken == input.DeviceToken {
 			sessions.DeviceInfo = input.DeviceInfo
 			if pkg.Exists(sessions.IPHistory, input.IPAddress[0]) == false && len(input.IPAddress) > 0 {
 				sessions.IPHistory = append(sessions.IPHistory, input.IPAddress[0])
 			}
-			sessions.ExpiresAt = time.Now().Add(pkg.TIMETOKEN)
-			sessions.RefreshToken, err = pkg.GenerateToken(user.Username)
+			sessions.ExpiresAt = time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
+			sessions.MasterToken, err = pkg.GenerateToken(user.ID, input.DeviceToken, variables.MasterTokenExpirationSeconds)
+			sessions.CurrentSecret = security.DeriveNextSecret(sessions.DeviceToken, sessions.MasterToken, sessions.MasterToken, sessions.DeviceToken)
+			sessions.LastSecret = sessions.DeviceToken
+			sessions.LastJWT = ""
+			sessions.ToleranceTime = time.Time{}
 			if err != nil {
 				return domain.UserRequest{}, domain.SessionsRequest{}, err
 			}
-			err = postgresgo.ProcUpdateSession(sessions.ID, sessions.RefreshToken, sessions.DeviceInfo, sessions.DeviceToken, sessions.IPHistory, sessions.ExpiresAt)
+			err = postgresgo.ProcUpdateSession(sessions.ID, sessions.MasterToken, sessions.DeviceInfo, sessions.DeviceToken, sessions.IPHistory, sessions.ExpiresAt)
 			if err != nil {
 				return domain.UserRequest{}, domain.SessionsRequest{}, err
 			}
@@ -198,7 +210,7 @@ func Login(
 				}
 			}(sessions)
 			go func(sess domain.SessionsRequest) {
-				errPg := postgresgo.ProcUpdateSession(sess.ID, sess.RefreshToken, sess.DeviceInfo, sess.DeviceToken, sess.IPHistory, sess.ExpiresAt)
+				errPg := postgresgo.ProcUpdateSession(sess.ID, sess.MasterToken, sess.DeviceInfo, sess.DeviceToken, sess.IPHistory, sess.ExpiresAt)
 				if errPg != nil {
 					log.Printf("Erreur Postgres UpdateSession: %v", errPg)
 				}
@@ -216,8 +228,12 @@ func Login(
 			if pkg.Exists(sessions.IPHistory, input.IPAddress[0]) == false && len(input.IPAddress) > 0 {
 				sessions.IPHistory = append(sessions.IPHistory, input.IPAddress[0])
 			}
-			sessions.ExpiresAt = time.Now().Add(pkg.TIMETOKEN)
-			sessions.RefreshToken, err = pkg.GenerateToken(user.Username)
+			sessions.ExpiresAt = time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
+			sessions.MasterToken, err = pkg.GenerateToken(user.ID, input.DeviceToken, variables.MasterTokenExpirationSeconds)
+			sessions.CurrentSecret = security.DeriveNextSecret(sessions.DeviceToken, sessions.MasterToken, sessions.MasterToken, sessions.DeviceToken)
+			sessions.LastSecret = sessions.DeviceToken
+			sessions.LastJWT = ""
+			sessions.ToleranceTime = time.Time{}
 			if err != nil {
 				return domain.UserRequest{}, domain.SessionsRequest{}, err
 			}
@@ -226,7 +242,7 @@ func Login(
 				_ = mongo.MongoCreateSession(sessions)
 			}(sessions)
 			go func(sess domain.SessionsRequest) {
-				errPg := postgresgo.ProcUpdateSession(sess.ID, sess.RefreshToken, sess.DeviceInfo, sess.DeviceToken, sess.IPHistory, sess.ExpiresAt)
+				errPg := postgresgo.ProcUpdateSession(sess.ID, sess.MasterToken, sess.DeviceInfo, sess.DeviceToken, sess.IPHistory, sess.ExpiresAt)
 				if errPg != nil {
 					log.Printf("Erreur Postgres UpdateSession: %v", errPg)
 				}
@@ -234,16 +250,20 @@ func Login(
 			return user, sessions, nil
 		}
 		// Creer une session
-		sessions.RefreshToken, err = pkg.GenerateToken(user.Username)
+		sessions.MasterToken, err = pkg.GenerateToken(user.ID, input.DeviceToken, variables.MasterTokenExpirationSeconds)
 		sessions.DeviceInfo = input.DeviceInfo
 		sessions.DeviceToken = input.DeviceToken
+		sessions.CurrentSecret = security.DeriveNextSecret(sessions.DeviceToken, sessions.MasterToken, sessions.MasterToken, sessions.DeviceToken)
+		sessions.LastSecret = sessions.DeviceToken
+		sessions.LastJWT = ""
+		sessions.ToleranceTime = time.Time{}
 		if len(input.IPAddress) > 0 {
 			sessions.IPHistory = []string{input.IPAddress[0]}
 		} else {
 			return domain.UserRequest{}, domain.SessionsRequest{}, domain.ErrInvalidIPAddress
 		}
-		sessions.ExpiresAt = time.Now().Add(pkg.TIMETOKEN)
-		sessionID, createdAtSession, err := postgresgo.FuncCreateSession(user.ID, sessions.RefreshToken, sessions.DeviceInfo, sessions.DeviceToken, sessions.IPHistory, sessions.ExpiresAt)
+		sessions.ExpiresAt = time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
+		sessionID, createdAtSession, err := postgresgo.FuncCreateSession(user.ID, sessions.MasterToken, sessions.DeviceInfo, sessions.DeviceToken, sessions.IPHistory, sessions.ExpiresAt)
 		if err != nil {
 			return domain.UserRequest{}, domain.SessionsRequest{}, err
 		}

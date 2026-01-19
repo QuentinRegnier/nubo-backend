@@ -2,12 +2,12 @@ CREATE OR REPLACE FUNCTION auth.func_load_sessions(
     p_id BIGINT DEFAULT NULL,
     p_user_id BIGINT DEFAULT NULL,
     p_device_token TEXT DEFAULT NULL,
-    p_refresh_token TEXT DEFAULT NULL
+    p_master_token TEXT DEFAULT NULL
 )
 RETURNS TABLE (
     id BIGINT,
     user_id BIGINT,
-    refresh_token TEXT,
+    master_token TEXT,
     device_token TEXT,
     device_info JSONB,
     ip_history INET[],
@@ -21,7 +21,7 @@ BEGIN
         SELECT
             s.id,
             s.user_id,
-            s.refresh_token,
+            s.master_token,
             s.device_token,
             s.device_info,
             s.ip_history,
@@ -37,7 +37,7 @@ BEGIN
     SELECT
         s.id,
         s.user_id,
-        s.refresh_token,
+        s.master_token,
         s.device_token,
         s.device_info,
         s.ip_history,
@@ -48,6 +48,6 @@ BEGIN
         (p_id IS NULL OR s.id = p_id)
         AND (p_user_id IS NULL OR s.user_id = p_user_id)
         AND (p_device_token IS NULL OR s.device_token = p_device_token)
-        AND (p_refresh_token IS NULL OR s.refresh_token = p_refresh_token);
+        AND (p_master_token IS NULL OR s.master_token = p_master_token);
 END;
-$$ LANGUAGE plpgsql STABLE;x
+$$ LANGUAGE plpgsql STABLE;

@@ -43,14 +43,37 @@ type UserRequest struct { // CreateUser
 }
 
 type SessionsRequest struct { // CreateSession
-	ID           int            `bson:"id" json:"id"`
-	UserID       int            `bson:"user_id" json:"user_id"`
-	RefreshToken string         `bson:"refresh_token" json:"refresh_token"`
-	DeviceToken  string         `bson:"device_token" json:"device_token"` // FCM token
-	DeviceInfo   map[string]any `bson:"device_info" json:"device_info"`   // JSONB
-	IPHistory    []string       `bson:"ip_history" json:"ip_history"`     // INET[]
-	CreatedAt    time.Time      `bson:"created_at" json:"created_at"`
-	ExpiresAt    time.Time      `bson:"expires_at" json:"expires_at"`
+	ID            int            `bson:"id" json:"id"`
+	UserID        int            `bson:"user_id" json:"user_id"`
+	MasterToken   string         `bson:"master_token" json:"master_token"`
+	DeviceToken   string         `bson:"device_token" json:"device_token"`
+	DeviceInfo    map[string]any `bson:"device_info" json:"device_info"`
+	IPHistory     []string       `bson:"ip_history" json:"ip_history"`
+	CurrentSecret string         `bson:"current_secret" json:"current_secret"`
+	LastSecret    string         `bson:"last_secret" json:"last_secret"`
+	LastJWT       string         `bson:"last_jwt" json:"last_jwt"`
+	ToleranceTime time.Time      `bson:"tolerance_time" json:"tolerance_time"`
+	CreatedAt     time.Time      `bson:"created_at" json:"created_at"`
+	ExpiresAt     time.Time      `bson:"expires_at" json:"expires_at"`
+}
+
+type RenewJWTResponse struct {
+	Token   string `json:"token"`
+	Message string `json:"message"`
+}
+
+// RefreshMasterInput : Structure du Body pour le hard-refresh
+type RefreshMasterInput struct {
+	UserID      int    `json:"id_user" binding:"required"`
+	MasterToken string `json:"master_token" binding:"required"` // L'ancien MasterToken
+	Username    string `json:"username" binding:"required"`     // Le username de l'utilisateur
+}
+
+// RefreshMasterResponse : Ce qu'on renvoie au client
+type RefreshMasterResponse struct {
+	MasterToken string `json:"master_token"`
+	Token       string `json:"token"` // Le nouveau JWT
+	Message     string `json:"message"`
 }
 
 // Structure interne

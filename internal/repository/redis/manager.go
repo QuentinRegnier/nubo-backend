@@ -58,9 +58,9 @@ func InitCacheDatabase() {
 	// Données CRITIQUES (Pas de suppression auto)
 	Users = NewCollection("users", schemaUsers, redisgo.Rdb, false)
 	UserSettings = NewCollection("user_settings", schemaUserSettings, redisgo.Rdb, false)
+	Sessions = NewCollection("sessions", schemaSessions, redisgo.Rdb, false)
 
 	// Données EVICTABLES (Suppression si RAM pleine)
-	Sessions = NewCollection("sessions", schemaSessions, redisgo.Rdb, true)
 	Posts = NewCollection("posts", schemaPosts, redisgo.Rdb, true)
 	Comments = NewCollection("comments", schemaComments, redisgo.Rdb, true)
 	Likes = NewCollection("likes", schemaLikes, redisgo.Rdb, true)

@@ -88,34 +88,48 @@ func MongoLoadUser(ID int, Username string, Email string, Phone string) (domain.
 
 	return u, nil
 }
-func MongoLoadSession(ID int, DeviceToken string) (domain.SessionsRequest, error) {
+func MongoLoadSession(ID int, DeviceToken string, MasterToken string, CurrentSecret string) (domain.SessionsRequest, error) {
 	var s domain.SessionsRequest
 
-	// Construction du filtre de recherche
-	filter := make(map[string]interface{})
+	// Construction du filtre de recherche (uniquement les valeurs valides)
+	filter := make(map[string]any)
+
 	if ID != -1 {
 		filter["user_id"] = ID
 	} else {
 		filter["user_id"] = nil
 	}
+
 	if DeviceToken != "" {
 		filter["device_token"] = DeviceToken
 	} else {
 		filter["device_token"] = nil
 	}
 
-	if len(filter) == 0 {
-		return s, fmt.Errorf("MongoLoadSession: no research criteria (id, device_token) provided")
+	if MasterToken != "" {
+		filter["master_token"] = MasterToken
+	} else {
+		filter["master_token"] = nil
 	}
 
-	// Appel à ta fonction utilitaire existante
+	if CurrentSecret != "" {
+		filter["current_secret"] = CurrentSecret
+	} else {
+		filter["current_secret"] = nil
+	}
+
+	if len(filter) == 0 {
+		return s, fmt.Errorf("MongoLoadSession: no research criteria (id, device_token, master_token) provided")
+	}
+
+	// Appel à la fonction utilitaire
 	docs, err := Sessions.Get(filter, nil)
 	if err != nil {
 		return s, err
 	}
 
 	if len(docs) == 0 {
-		return s, nil // Retourne une structure vide, pas d'erreur, comme MongoLoadUser
+		return s, nil // aucune session trouvée, pas une erreur
 	}
 
 	// Conversion Map -> Struct

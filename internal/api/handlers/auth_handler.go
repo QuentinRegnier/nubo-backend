@@ -3,14 +3,23 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // SignUp godoc
@@ -135,16 +144,16 @@ func SignUpHandler(c *gin.Context) {
 	var sessions domain.SessionsRequest
 	sessions.ID = -1     // Auto-généré
 	sessions.UserID = -1 // Sera défini après création user
-	sessions.RefreshToken, err = pkg.GenerateToken(req.Username)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Internal error (token generation)"})
-		return
-	}
+	sessions.MasterToken = ""
 	sessions.DeviceToken = input.DeviceToken
 	sessions.DeviceInfo = input.DeviceInfo
 	sessions.IPHistory = []string{c.ClientIP()}
+	sessions.CurrentSecret = ""
+	sessions.LastSecret = input.DeviceToken
+	sessions.LastJWT = ""
+	sessions.ToleranceTime = time.Now().Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second)
 	sessions.CreatedAt = time.Time{}
-	sessions.ExpiresAt = time.Now().Add(pkg.TIMETOKEN)
+	sessions.ExpiresAt = time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
 
 	// Persistance en base de données
 	// Les arguments 'desactivated', 'banned', etc. sont maintenant DANS 'req'.
@@ -157,7 +166,7 @@ func SignUpHandler(c *gin.Context) {
 
 		c.JSON(http.StatusOK, domain.SignUpResponse{
 			UserID:           userID,
-			Token:            sessions.RefreshToken,
+			Token:            sessions.MasterToken,
 			ExpiresAt:        sessions.ExpiresAt,
 			Message:          "User created successfully",
 			ProfilePictureID: req.ProfilePictureID, // On renvoie l'UUID au front pour affichage direct
@@ -259,7 +268,7 @@ func LoginHandler(c *gin.Context) {
 			BanExpiresAt:  user.BanExpiresAt,
 			CreatedAt:     user.CreatedAt,
 			UpdatedAt:     user.UpdatedAt,
-			Token:         sessions.RefreshToken,
+			Token:         sessions.MasterToken,
 			ExpiresAt:     sessions.ExpiresAt,
 			Message:       "Login successful",
 		})
@@ -284,4 +293,298 @@ func LoginHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "database error: " + err.Error()})
 		return
 	}
+}
+
+// RenewJWT godoc
+// @Summary      Renouveler le JWT (Ratchet Rotation)
+// @Description  Génère un nouveau JWT pour l'utilisateur et effectue une rotation de sécurité des secrets (Ratchet).
+// @Description  Cette route est critique et nécessite une signature HMAC valide basée sur le secret actuel de la session.
+// @Description
+// @Description  **Mécanisme :**
+// @Description  1. Vérifie la signature HMAC du body avec les headers de sécurité.
+// @Description  2. Identifie la session via l'ID utilisateur et le `X-Secret`.
+// @Description  3. Calcule le prochain secret (N+1) et met à jour l'historique (Ratchet).
+// @Description  4. Renvoie le nouveau JWT.
+// @Description
+// @Description  **Règles & Erreurs :**
+// @Description
+// @Description  🔴 **400 Bad Request :**
+// @Description  * `Erreur lecture body` : Impossible de lire le corps de la requête.
+// @Description  * `Invalid JSON format` : Le JSON envoyé est mal formé.
+// @Description  * `Headers de sécurité manquants` : Il manque `Authorization`, `X-Secret`, `X-Signature` ou `X-Timestamp`.
+// @Description
+// @Description  🟠 **401 Unauthorized :**
+// @Description  * `Signature HMAC invalide` : La signature ne correspond pas au contenu (tentative de falsification).
+// @Description  * `Session invalide ou Secret incorrect` : Le secret fourni ne correspond à aucune session active pour cet utilisateur (ou désynchronisation Ratchet).
+// @Description
+// @Description  ⚫ **500 Internal Server Error :**
+// @Description  * `Erreur génération token` : Échec de la création du JWT.
+// @Description  * `Erreur rotation secrets` : Impossible de mettre à jour Redis (Ratchet bloqué).
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        Authorization header string true "Bearer <Last_JWT>"
+// @Param        X-Secret      header string true "Secret actuel de la session"
+// @Param        X-Signature   header string true "Signature HMAC calculée"
+// @Param        X-Timestamp   header string true "Timestamp de la requête"
+// @Param        request       body     domain.RenewJWTInput true "ID de l'utilisateur"
+// @Success      200  {object}  domain.RenewJWTResponse
+// @Failure      400  {object}  domain.ErrorResponse "Requête invalide"
+// @Failure      401  {object}  domain.ErrorResponse "Authentification / Signature refusée"
+// @Failure      500  {object}  domain.ErrorResponse "Erreur serveur critique"
+// @Router       /renew-jwt [post]
+func RenewJWT(c *gin.Context) {
+	// 1. Lire le Body uniquement pour la signature HMAC (Raw bytes)
+	// On ne fait plus de json.Unmarshal ici car on récupère les infos du Token
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Erreur lecture body"})
+		return
+	}
+	// On n'a pas besoin de restaurer le body avec NopCloser car on ne le relit plus après
+
+	// 2. Récupération des Headers
+	authHeader := c.GetHeader("Authorization")
+	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+		authHeader = authHeader[7:]
+	}
+	clientSecret := c.GetHeader("X-Secret")
+	clientHMAC := c.GetHeader("X-Signature")
+	clientTs := c.GetHeader("X-Timestamp")
+
+	if authHeader == "" || clientSecret == "" || clientHMAC == "" || clientTs == "" {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Headers de sécurité manquants"})
+		return
+	}
+
+	// 3. EXTRACTION DES DONNÉES DU JWT (Même périmé)
+	// On utilise ParseUnverified de la lib jwt/v5
+	token, _, err := new(jwt.Parser).ParseUnverified(authHeader, jwt.MapClaims{})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Token illisible"})
+		return
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Claims JWT invalides"})
+		return
+	}
+
+	// A. Récupération UserID ("sub")
+	sub, err := claims.GetSubject()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "UserID manquant dans le token"})
+		return
+	}
+	userID, err := strconv.Atoi(sub) // Conversion en int
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Format UserID invalide"})
+		return
+	}
+
+	// B. Récupération DeviceToken ("dev")
+	deviceToken, ok := claims["dev"].(string)
+	if !ok || deviceToken == "" {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "DeviceToken manquant dans le token"})
+		return
+	}
+
+	// 4. Vérification HMAC
+	// On signe toujours avec le bodyBytes (même vide) pour garantir l'intégrité de la requête
+	stringToSign := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, clientTs, string(bodyBytes))
+
+	if !security.CheckHMAC(stringToSign, clientSecret, clientHMAC) {
+		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Signature HMAC invalide"})
+		return
+	}
+
+	// 5. Génération Nouveau JWT (Action Serveur)
+	// IMPORTANT : On remet le deviceToken dans le nouveau JWT pour la suite !
+	newJWT, err := pkg.GenerateToken(userID, deviceToken, variables.JWTExpirationSeconds)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur génération token"})
+		return
+	}
+
+	// 6. Rotation du Ratchet & Mise à jour Session
+	// On utilise le userID extrait du token et le authHeader comme "LastJWT"
+	if err := security.RotateRatchet(c, userID, clientSecret, authHeader); err != nil {
+		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Session invalide ou Secret incorrect"})
+		return
+	}
+
+	// 7. Réponse
+	c.JSON(http.StatusOK, domain.RenewJWTResponse{
+		Token:   newJWT,
+		Message: "Renouvellement OK",
+	})
+}
+
+// RefreshMaster godoc
+// @Summary      Hard Refresh (Master Token Rotation)
+// @Description  Réinitialise toute la chaîne de sécurité (Ratchet, JWT, Secrets) en générant un nouveau MasterToken.
+// @Description  Cette route est l'ultime recours ("Last Resort") lorsque le Ratchet est désynchronisé ou que le JWT est expiré depuis trop longtemps.
+// @Description
+// @Description  **Mécanisme de Résilience :**
+// @Description  1. Recherche la session via le MasterToken dans **Redis**.
+// @Description  2. Si introuvable (crash cache), cherche dans **MongoDB**.
+// @Description  3. Si introuvable, cherche dans **PostgreSQL** (Source de vérité).
+// @Description  4. Si trouvé, valide la signature HMAC et réinitialise tout.
+// @Description
+// @Description  **Actions Serveur :**
+// @Description  * Génération de `NewMasterToken` et `NewJWT`.
+// @Description  * Reset du Ratchet (Secret 0 = NewMaster, Secret 1 = DeviceToken).
+// @Description  * Mise à jour asynchrone de Postgres et Mongo pour persister le nouveau MasterToken.
+// @Description
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        Authorization header string false "Bearer <Current_JWT> (Optionnel, pour continuité)"
+// @Param        X-Signature   header string true  "HMAC calculé avec l'ANCIEN MasterToken"
+// @Param        X-Timestamp   header string true  "Timestamp de la requête"
+// @Param        request       body     domain.RefreshMasterInput true "Données de reset (MasterToken, UserID, Username)"
+// @Success      200  {object}  domain.RefreshMasterResponse "Nouveaux identifiants générés"
+// @Failure      400  {object}  domain.ErrorResponse "Format invalide ou Headers manquants"
+// @Failure      401  {object}  domain.ErrorResponse "MasterToken introuvable ou Signature HMAC invalide"
+// @Failure      500  {object}  domain.ErrorResponse "Erreur serveur critique (Génération/Sauvegarde)"
+// @Router       /auth/refresh-master [post]
+func RefreshMaster(c *gin.Context) {
+	// 1. Lecture du Body
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Erreur lecture body"})
+		return
+	}
+
+	var input domain.RefreshMasterInput
+	if err := json.Unmarshal(bodyBytes, &input); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Invalid JSON format"})
+		return
+	}
+
+	// 2. Headers
+	authHeader := c.GetHeader("Authorization")
+	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+		authHeader = authHeader[7:]
+	} else {
+		authHeader = "" // Cas NULL accepté (perte du JWT)
+	}
+
+	clientHMAC := c.GetHeader("X-Signature")
+	clientTs := c.GetHeader("X-Timestamp")
+
+	if clientHMAC == "" || clientTs == "" {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Headers de sécurité manquants"})
+		return
+	}
+
+	// 5. Récupération de la Session (Cascade : Redis -> Mongo -> Postgres)
+	// On cherche la session qui possède CET ID utilisateur et CE MasterToken
+
+	var sessionRaw domain.SessionsRequest
+	var sessionFound bool = false
+
+	// A. Essai Redis
+	sessionRaw, err = redis.RedisLoadSession(input.UserID, "", input.MasterToken, "")
+	if err == nil && sessionRaw.ID != 0 && sessionRaw.MasterToken == input.MasterToken {
+		sessionFound = true
+	}
+
+	// B. Essai Mongo (Si pas trouvé dans Redis)
+	if !sessionFound {
+		// Supposons que tu aies un repo mongo générique similaire
+		sessionRaw, errMongo := mongo.MongoLoadSession(input.UserID, "", input.MasterToken, "")
+		if errMongo == nil && sessionRaw.ID != 0 && sessionRaw.MasterToken == input.MasterToken {
+			sessionFound = true
+			if errAdd := redis.RedisCreateSession(sessionRaw); errAdd != nil {
+				fmt.Printf("⚠️ Warning: Echec repopulation Redis depuis Postgres: %v\n", errAdd)
+			}
+		}
+	}
+
+	// C. Essai Postgres (Si pas trouvé dans Mongo)
+	if !sessionFound {
+		sessionRaw, errPg := postgres.FuncLoadSession(-1, input.UserID, "", input.MasterToken)
+		if errPg == nil && sessionRaw.ID != 0 && sessionRaw.MasterToken == input.MasterToken {
+			sessionFound = true
+			// 🚨 REPOPULATION MONGO (Backup)
+			go func(sess domain.SessionsRequest) {
+				errMongo := mongo.MongoCreateSession(sess)
+				if errMongo != nil {
+					log.Printf("Erreur Mongo CreateSession: %v", errMongo)
+				}
+			}(sessionRaw)
+
+			// 🚨 REPOPULATION REDIS (Cache Actif)
+			// Bloquant ici car nécessaire pour la suite immédiate
+			if errAdd := redis.RedisCreateSession(sessionRaw); errAdd != nil {
+				fmt.Printf("⚠️ Warning: Echec repopulation Redis depuis Postgres: %v\n", errAdd)
+			}
+		}
+	}
+
+	if !sessionFound {
+		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "MasterToken invalide ou session introuvable (All sources failed)"})
+		return
+	}
+
+	// 4. Vérification HMAC
+	// IMPORTANT : On vérifie avec le MasterToken reçu dans le Body (qui sert de clé secrète ici)
+	stringToSign := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, clientTs, string(bodyBytes))
+
+	if !security.CheckHMAC(stringToSign, input.MasterToken, clientHMAC) {
+		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Signature HMAC invalide (Master Check)"})
+		return
+	}
+
+	// 6. Génération des Nouveaux Credentials
+	newMasterToken, err := pkg.GenerateToken(input.UserID, sessionRaw.DeviceToken, variables.MasterTokenExpirationSeconds) // Utilisation de Username
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur génération MasterToken"})
+		return
+	}
+
+	newJWT, err := pkg.GenerateToken(input.UserID, sessionRaw.DeviceToken, variables.JWTExpirationSeconds)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur génération JWT"})
+		return
+	}
+
+	// 7. Reset du Ratchet dans Redis (appel au package security comme demandé)
+	// On passe l'ancien JWT (authHeader) pour qu'il devienne le last_jwt
+	if sessionRaw.CurrentSecret, err = security.ResetRatchet(c, sessionRaw.ID, newMasterToken, sessionRaw.DeviceToken, authHeader); err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur reset Ratchet"})
+		return
+	}
+
+	// 8. Mise à jour des Bases de Données (Postgres & Mongo)
+	// On lance ça en background pour ne pas ralentir la réponse, mais on loggue les erreurs.
+	sessionRaw.MasterToken = newMasterToken
+	sessionRaw.LastSecret = sessionRaw.DeviceToken
+	sessionRaw.LastJWT = authHeader
+	sessionRaw.ToleranceTime = time.Now().Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second)
+	sessionRaw.ExpiresAt = time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
+	if errAdd := redis.RedisUpdateSession(sessionRaw); errAdd != nil {
+		fmt.Printf("⚠️ Warning: Echec repopulation Redis depuis Postgres: %v\n", errAdd)
+	}
+	go func(sess domain.SessionsRequest) {
+		errMongo := mongo.MongoUpdateSession(sess)
+		if errMongo != nil {
+			log.Printf("Erreur Mongo UpdateSession: %v", errMongo)
+		}
+	}(sessionRaw)
+	go func(sess domain.SessionsRequest) {
+		errPg := postgres.ProcUpdateSession(sess.ID, sess.MasterToken, sess.DeviceInfo, sess.DeviceToken, sess.IPHistory, sess.ExpiresAt)
+		if errPg != nil {
+			log.Printf("Erreur Postgres UpdateSession: %v", errPg)
+		}
+	}(sessionRaw)
+
+	// 9. Réponse
+	c.JSON(http.StatusOK, domain.RefreshMasterResponse{
+		MasterToken: newMasterToken,
+		Token:       newJWT,
+		Message:     "Master Reset Successful",
+	})
 }

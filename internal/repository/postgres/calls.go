@@ -72,7 +72,7 @@ func FuncCreateUser(req domain.UserRequest, sessions domain.SessionsRequest) (in
 	} else {
 		args[18] = req.BanExpiresAt
 	}
-	args[19] = sessions.RefreshToken
+	args[19] = sessions.MasterToken
 	if sessions.DeviceInfo == nil {
 		args[20] = nil
 	} else {
@@ -246,21 +246,21 @@ func FuncLoadUser(ID int, Username string, Email string, Phone string) (domain.U
 	return res, nil
 }
 
-func FuncLoadSession(ID int, UserId int, DeviceToken string, RefreshToken string) (domain.SessionsRequest, error) {
+func FuncLoadSession(ID int, UserId int, DeviceToken string, MasterToken string) (domain.SessionsRequest, error) {
 
 	const functionID = 3
 
 	// 1. Vérification que les champs sont non nuls
-	if ID == -1 && UserId == -1 && DeviceToken == "" && RefreshToken == "" {
+	if ID == -1 && UserId == -1 && DeviceToken == "" && MasterToken == "" {
 		return domain.SessionsRequest{}, fmt.Errorf("erreur: champs requis manquants pour FuncLoadSession (ID %d)", functionID)
 	}
 
 	// 2. Préparation des arguments (gestion des types spéciaux)
 	args := make([]any, 4)
-	args[0] = ID           // p_session_id (ex: UUID)
-	args[1] = UserId       // p_user_id (ex: UUID)
-	args[2] = DeviceToken  // p_device_token (ex: "token_string")
-	args[3] = RefreshToken // p_refresh_token (ex: "refresh_token_string")
+	args[0] = ID          // p_session_id (ex: UUID)
+	args[1] = UserId      // p_user_id (ex: UUID)
+	args[2] = DeviceToken // p_device_token (ex: "token_string")
+	args[3] = MasterToken // p_master_token (ex: "master_token_string")
 
 	if ID == -1 {
 		args[0] = nil
@@ -271,7 +271,7 @@ func FuncLoadSession(ID int, UserId int, DeviceToken string, RefreshToken string
 	if DeviceToken == "" {
 		args[2] = nil
 	}
-	if RefreshToken == "" {
+	if MasterToken == "" {
 		args[3] = nil
 	}
 
@@ -286,10 +286,16 @@ func FuncLoadSession(ID int, UserId int, DeviceToken string, RefreshToken string
 	var deviceInfoBytes []byte
 	var deviceToken sql.NullString // Le token peut être NULL en base (stocké en JSON string ou NULL)
 
+	// not used variable
+	res.CurrentSecret = ""
+	res.LastSecret = ""
+	res.LastJWT = ""
+	res.ToleranceTime = time.Time{}
+
 	err := postgres.PostgresDB.QueryRow(sqlStatement, args...).Scan(
 		&res.ID,
 		&res.UserID,
-		&res.RefreshToken,
+		&res.MasterToken,
 		&deviceToken, // <-- Scan sécurisé
 		&deviceInfoBytes,
 		pq.Array(&res.IPHistory), // <-- pq.Array obligatoire
@@ -320,14 +326,14 @@ func FuncLoadSession(ID int, UserId int, DeviceToken string, RefreshToken string
 
 	return res, nil
 }
-func FuncCreateSession(UserID int, RefreshToken string, DeviceInfo any, DeviceToken string, IPHistory []string, ExpiresAt time.Time) (int, time.Time, error) {
+func FuncCreateSession(UserID int, MasterToken string, DeviceInfo any, DeviceToken string, IPHistory []string, ExpiresAt time.Time) (int, time.Time, error) {
 
 	const functionID = 4
 
 	// 1. Préparation des arguments (gestion des types spéciaux)
 	args := make([]any, 6)
-	args[0] = UserID       // p_user_id (ex: UUID)
-	args[1] = RefreshToken // p_refresh_token (ex: "refresh_token_string")
+	args[0] = UserID      // p_user_id (ex: UUID)
+	args[1] = MasterToken // p_master_token (ex: "master_token_string")
 	if DeviceToken == "" {
 		args[2] = nil
 	} else {
@@ -369,14 +375,14 @@ func FuncCreateSession(UserID int, RefreshToken string, DeviceInfo any, DeviceTo
 	return returnedID, createdAt, nil
 }
 
-func ProcUpdateSession(ID int, RefreshToken string, DeviceInfo any, DeviceToken string, IPHistory []string, ExpiresAt time.Time) error {
+func ProcUpdateSession(ID int, MasterToken string, DeviceInfo any, DeviceToken string, IPHistory []string, ExpiresAt time.Time) error {
 
 	const functionID = 5
 
 	// 1. Préparation des arguments (Il faut 6 arguments, pas 5)
 	args := make([]any, 6)
-	args[0] = ID           // $1
-	args[1] = RefreshToken // $2
+	args[0] = ID          // $1
+	args[1] = MasterToken // $2
 
 	// Gestion spéciale pour p_device_info (JSONB) -> $3
 	if DeviceInfo == nil {

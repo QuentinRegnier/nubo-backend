@@ -1,7 +1,7 @@
 # Lancer l'API Nubo
 
 Vous pouvez lancer l'API en **mode développement** ou **mode production**.  
-Un script `run.sh` simplifie le choix entre DEV et PROD.
+Un script `lauch.sh` simplifie le choix entre DEV et PROD.
 
 ## Méthode manuelle
 

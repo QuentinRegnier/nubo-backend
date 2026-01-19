@@ -6,6 +6,7 @@ select mode in "DEV" "PROD"; do
     case $mode in
         DEV)
             echo "🚀 Lancement en mode DEV"
+            go run github.com/swaggo/swag/cmd/swag@latest init -g cmd/main.go -d . --parseDependency --parseInternal
             docker compose \
               -f docker-compose.dev.yml \
               up -d --build --remove-orphans

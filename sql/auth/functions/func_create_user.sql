@@ -18,7 +18,7 @@ CREATE OR REPLACE FUNCTION auth.func_create_user(
     p_banned BOOLEAN,
     p_ban_reason TEXT,
     p_ban_expires_at TIMESTAMPTZ,
-    p_refresh_token TEXT,
+    p_master_token TEXT,
     p_device_info JSONB,
     p_device_token TEXT, 
     p_ip_history INET[],
@@ -44,8 +44,8 @@ BEGIN
     RETURNING id, created_at, updated_at INTO v_user_id, v_created_at_user, v_updated_at_user;
 
     -- 2️⃣ Créer la session (user_settings supprimé)
-    INSERT INTO auth.sessions (user_id, refresh_token, device_info, device_token, ip_history, expires_at)
-    VALUES (v_user_id, p_refresh_token, p_device_info, p_device_token::jsonb, p_ip_history, p_expires_at)
+    INSERT INTO auth.sessions (user_id, master_token, device_info, device_token, ip_history, expires_at)
+    VALUES (v_user_id, p_master_token, p_device_info, p_device_token::jsonb, p_ip_history, p_expires_at)
     RETURNING id, created_at INTO v_session_id, v_created_at_session;
 END;
 $$;

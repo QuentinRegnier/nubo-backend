@@ -139,7 +139,7 @@ func RedisLoadUser(ID int, Username string, Email string, Phone string) (domain.
 }
 
 // RedisLoadSession charge une session depuis le cache Redis
-func RedisLoadSession(ID int, DeviceToken string) (domain.SessionsRequest, error) {
+func RedisLoadSession(ID int, DeviceToken string, MasterToken string, CurrentSecret string) (domain.SessionsRequest, error) {
 	var s domain.SessionsRequest
 
 	// 1. Construction du filtre
@@ -150,6 +150,12 @@ func RedisLoadSession(ID int, DeviceToken string) (domain.SessionsRequest, error
 	}
 	if DeviceToken != "" {
 		filter["device_token"] = map[string]any{"$eq": DeviceToken}
+	}
+	if MasterToken != "" {
+		filter["master_token"] = map[string]any{"$eq": MasterToken}
+	}
+	if CurrentSecret != "" {
+		filter["current_secret"] = map[string]any{"$eq": CurrentSecret}
 	}
 
 	if len(filter) == 0 {

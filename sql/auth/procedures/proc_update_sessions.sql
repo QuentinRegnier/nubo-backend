@@ -11,7 +11,7 @@ AS $$
 BEGIN
     UPDATE auth.sessions
     SET
-        refresh_token = COALESCE(p_refresh_token, refresh_token),
+        master_token = COALESCE(p_master_token, master_token),
         device_info   = COALESCE(p_device_info, device_info),
         device_token  = COALESCE(p_device_token, device_token),
         ip_history    = COALESCE(p_ip_history, ip_history),

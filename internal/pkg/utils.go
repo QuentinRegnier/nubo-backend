@@ -16,8 +16,6 @@ import (
 
 // Ce fichier contient les fonctions utilitaires pures (sans état, helpers)
 
-const TIMETOKEN = time.Hour * 24
-
 // cleanStr : Nettoyage anti-XSS et SQL simple
 func CleanStr(input string) string {
 	cleaned := strings.TrimSpace(input)
@@ -30,10 +28,11 @@ func CleanStr(input string) string {
 }
 
 // generateToken : Création JWT
-func GenerateToken(userID string) (string, error) {
+func GenerateToken(userID int, deviceToken string, expirationSeconds int) (string, error) {
 	claims := jwt.MapClaims{
 		"sub": userID,
-		"exp": time.Now().Add(TIMETOKEN).Unix(),
+		"dev": deviceToken, // Ajout du claim personnalisé
+		"exp": time.Now().Add(time.Second * time.Duration(expirationSeconds)).Unix(),
 		"iat": time.Now().Unix(),
 	}
 
@@ -55,7 +54,7 @@ func GenerateTokenDevice(deviceInfo []string) string {
 
 // ToMap convertit une structure en map[string]any en préservant les types Go exacts (int, time.Time, etc.)
 // Cela corrige les erreurs de validation "attendu struct, reçu int64".
-func ToMap(in interface{}) (map[string]any, error) {
+func ToMap(in any) (map[string]any, error) {
 	out := make(map[string]any)
 	v := reflect.ValueOf(in)
 

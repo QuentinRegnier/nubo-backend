@@ -14,17 +14,36 @@ import (
 )
 
 func SetupRoutes(r *gin.Engine) {
-	// Routes REST ...
+	// =========================================================================
+	// 0. Middleware GLOBAL (S'applique à TOUTES les routes)
+	// =========================================================================
+
+	// Active la gestion automatique des OPTIONS et du CORS
+	r.Use(middleware.CORSMiddleware())
+
+	// Récupération automatique des panics (évite que le serveur crash totalement)
+	r.Use(gin.Recovery())
+
+	// =========================================================================
+	// 1. ROUTES PUBLIQUES (Aucune sécu ou sécu spécifique interne)
+	// =========================================================================
+
+	// Authentification (Sécu interne spécifique)
 	r.POST("/signup", handlers.SignUpHandler)
 	r.POST("/login", handlers.LoginHandler)
-	r.GET("/posts", GetPostsHandler)
-	r.POST("/posts", CreatePostHandler)
+
+	// Renouvellement de Tokens (Ratchet / Master)
+	// Ces routes gèrent leur propre sécurité (HMAC spécial, checks BDD...)
+	r.POST("/renew-jwt", handlers.RenewJWT)
+	r.POST("/refresh-master", handlers.RefreshMaster)
 
 	// WebSocket
 	r.GET("/token", func(c *gin.Context) {
 		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-			"sub": "user123",
+			"sub": 1234,
+			"dev": "device-token-sample",
 			"exp": time.Now().Add(time.Hour * 24).Unix(), // expire dans 24h
+			"iat": time.Now().Unix(),
 		})
 		secret := os.Getenv("JWT_SECRET")
 		if secret == "" {
@@ -33,7 +52,63 @@ func SetupRoutes(r *gin.Engine) {
 		tokenString, _ := token.SignedString([]byte(secret))
 		c.JSON(200, gin.H{"token": tokenString})
 	})
+
+	// WebSocket Connection (Sécu via Query param ou Header standard, géré par le handler WS)
+	// Note: Si tu veux JWT pour le WS, tu peux utiliser le middleware ici ou dans le handler.
+	// Pour l'instant, je le laisse avec le middleware JWT comme dans ton exemple.
 	r.GET("/ws", middleware.JWTMiddleware(), websocket.WSHandler)
+
+	// =========================================================================
+	// 2. ROUTES SÉCURISÉES (JWT + HMAC + RATCHET)
+	// Toutes les routes ci-dessous nécessitent :
+	// - Un JWT valide (Identity)
+	// - Une signature HMAC valide (Integrity & Anti-Replay)
+	// =========================================================================
+
+	// On crée un groupe "plat" qui applique les deux middlewares d'un coup
+	secured := r.Group("/")
+	secured.Use(middleware.JWTMiddleware())  // 1. Qui est-ce ? (Populate context with UserID & DeviceToken)
+	secured.Use(middleware.HMACMiddleware()) // 2. Est-ce authentique ? (Check Signature with Redis Secret)
+
+	// --- Posts ---
+	secured.GET("/posts", GetPostsHandler)
+	secured.POST("/posts", CreatePostHandler)
+	secured.GET("/posts/more", LoadMorePostsHandler) // J'invente l'URL pour "LoadMore"
+	secured.PUT("/posts", ModifyPostHandler)
+	//secured.DELETE("/posts/:id", handlers.DeletePost) // Exemple si tu l'as
+
+	// --- Actions Sociales ---
+	secured.POST("/like", LikeHandler)
+	secured.DELETE("/like", UnlikeHandler)
+	secured.POST("/comment", CommentHandler)
+	secured.DELETE("/comment", UncommentHandler)
+	secured.GET("/comments", LoadCommentsHandler)
+	secured.POST("/signal", SignalHandler)
+
+	// --- Profil Utilisateur ---
+	secured.PUT("/profile/picture", ProfilePictureHandler)
+	secured.PUT("/profile/description", DescriptionHandler)
+	secured.PUT("/profile/localisation", LocalisationHandler)
+	secured.PUT("/profile/study", StudyHandler)
+	secured.PUT("/profile/work", WorkHandler)
+	secured.PUT("/profile/confidentiality", ConfidentialityHandler)
+	secured.PUT("/profile/username", UsernameHandler)
+	secured.PUT("/profile/name", NameHandler)
+	secured.PUT("/profile/lastname", LastNameHandler)
+	secured.PUT("/profile/language", LanguageHandler)
+
+	// --- Administration / Modération ---
+	secured.POST("/ban", BanHandler)
+
+	// --- Messagerie / Groupes ---
+	secured.POST("/conversation", ConversationHandler)
+	secured.POST("/group", GroupHandler)
+	secured.GET("/user/groups", UserGroupHandler)
+	secured.GET("/group/admins", AdminGroupHandler)
+	secured.POST("/message", MessageHandler)
+	secured.GET("/messages/new", LoadNewMessagesHandler)
+	secured.POST("/image/upload", LoadImageHandler)
+	secured.POST("/friendship", FriendShipHandler)
 }
 
 func GetPostsHandler(c *gin.Context) {
