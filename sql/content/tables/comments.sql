@@ -1,11 +1,11 @@
 CREATE TABLE IF NOT EXISTS comments (
-    id BIGSERIAL PRIMARY KEY, -- id unique du commentaire
-    post_id BIGINT REFERENCES posts(id) ON DELETE CASCADE, -- id du post
-    user_id BIGINT REFERENCES auth.users(id), -- id de l'utilisateur
-    content TEXT, -- contenu du commentaire
-    visibility BOOLEAN DEFAULT TRUE, -- visibilité du commentaire
-    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
-    updated_at TIMESTAMPTZ DEFAULT now() -- date de mise à jour
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    post_id BIGINT REFERENCES posts(id) ON DELETE CASCADE,
+    user_id BIGINT REFERENCES users(id), -- Harmonisé vers 'users'
+    content TEXT,
+    visibility BOOLEAN,                 -- Modifié : Plus de valeur par défaut (TRUE)
+    created_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    updated_at TIMESTAMPTZ              -- Modifié : Plus de DEFAULT now()
 );
 
 CREATE INDEX idx_comments_post_created ON comments(post_id, created_at DESC);

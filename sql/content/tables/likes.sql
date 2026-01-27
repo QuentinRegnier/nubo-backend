@@ -1,9 +1,9 @@
 CREATE TABLE IF NOT EXISTS likes (
-    id BIGSERIAL PRIMARY KEY, -- id unique du like
-    target_type SMALLINT NOT NULL, -- type de la cible (0 = post, 1 = message, 2 = commentaire)
-    target_id BIGINT NOT NULL, -- id de la cible
-    user_id BIGINT REFERENCES auth.users(id), -- id de l'utilisateur
-    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    target_type SMALLINT NOT NULL,
+    target_id BIGINT NOT NULL,
+    user_id BIGINT REFERENCES users(id), -- Harmonisé vers 'users'
+    created_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
     UNIQUE(target_type, target_id, user_id)
 );
 

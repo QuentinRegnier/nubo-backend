@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/docs"
@@ -14,9 +15,11 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	mongogo "github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
+	"github.com/QuentinRegnier/nubo-backend/internal/worker"
 	"github.com/gin-gonic/gin"
 )
 
@@ -29,6 +32,30 @@ import (
 //
 // @BasePath        /api/v11
 func main() {
+	// --- INITIALISATION SNOWFLAKE ---
+
+	// 1. On récupère la variable définie dans le docker-compose
+	nodeIDStr := os.Getenv("NODE_ID")
+	if nodeIDStr == "" {
+		// Par sécurité, si tu oublies de le mettre, on prévient ou on met 0 par défaut
+		log.Println("⚠️ ATTENTION : NODE_ID non défini, utilisation de 0 par défaut")
+		nodeIDStr = "0"
+	}
+
+	// 2. On convertit le string "1" en int64 1
+	nodeID, err := strconv.ParseInt(nodeIDStr, 10, 64)
+	if err != nil {
+		log.Fatalf("Erreur: NODE_ID doit être un nombre entier. Reçu: %s", nodeIDStr)
+	}
+
+	// 3. On lance le moteur Snowflake
+	err = pkg.InitSnowflake(nodeID)
+	if err != nil {
+		log.Fatalf("Impossible d'initialiser Snowflake: %v", err)
+	}
+
+	log.Printf("✅ Snowflake initialisé avec le Node ID : %d", nodeID)
+
 	// Initialiser PostgreSQL
 	postgres.InitPostgres()
 
@@ -63,6 +90,9 @@ func main() {
 
 	// Initialiser le Cuckoo Filter
 	cuckoo.InitCuckooFilter()
+
+	// Lance le moteur V12
+	worker.StartBackgroundWorkers(context.Background())
 
 	r := gin.Default()
 	api.SetupRoutes(r)

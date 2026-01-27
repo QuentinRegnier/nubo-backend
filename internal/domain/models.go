@@ -16,7 +16,7 @@ type Location struct {
 
 // RegisterRequest représente le payload complet envoyé par l'app
 type UserRequest struct { // CreateUser
-	ID               int       `bson:"id" json:"id"` // Attention: défini comme Int dans ton schéma
+	ID               int64     `bson:"id" json:"id"` // Attention: défini comme Int dans ton schéma
 	Username         string    `bson:"username" json:"username"`
 	Email            string    `bson:"email" json:"email"`
 	EmailVerified    bool      `bson:"email_verified" json:"email_verified"`
@@ -28,7 +28,7 @@ type UserRequest struct { // CreateUser
 	Birthdate        time.Time `bson:"birthdate" json:"birthdate"` // reflect.Struct correspond souvent à time.Time
 	Sex              int       `bson:"sex" json:"sex"`
 	Bio              string    `bson:"bio" json:"bio"`
-	ProfilePictureID int       `bson:"profile_picture_id" json:"profile_picture_id"`
+	ProfilePictureID int64     `bson:"profile_picture_id" json:"profile_picture_id"`
 	Grade            int       `bson:"grade" json:"grade"`
 	Location         string    `bson:"location" json:"location"`
 	School           string    `bson:"school" json:"school"`
@@ -43,8 +43,8 @@ type UserRequest struct { // CreateUser
 }
 
 type SessionsRequest struct { // CreateSession
-	ID            int            `bson:"id" json:"id"`
-	UserID        int            `bson:"user_id" json:"user_id"`
+	ID            int64          `bson:"id" json:"id"`
+	UserID        int64          `bson:"user_id" json:"user_id"`
 	MasterToken   string         `bson:"master_token" json:"master_token"`
 	DeviceToken   string         `bson:"device_token" json:"device_token"`
 	DeviceInfo    map[string]any `bson:"device_info" json:"device_info"`
@@ -64,7 +64,7 @@ type RenewJWTResponse struct {
 
 // RefreshMasterInput : Structure du Body pour le hard-refresh
 type RefreshMasterInput struct {
-	UserID      int    `json:"id_user" binding:"required"`
+	UserID      int64  `json:"id_user" binding:"required"`
 	MasterToken string `json:"master_token" binding:"required"` // L'ancien MasterToken
 	Username    string `json:"username" binding:"required"`     // Le username de l'utilisateur
 }
@@ -91,25 +91,25 @@ type SignUpInput struct {
 	Location     string         `json:"location" example:"Paris"`
 	School       string         `json:"school" example:"42"`
 	Work         string         `json:"work" example:"Developer"`
-	DeviceToken  string         `json:"device_token" binding:"required" example:"device_123"`
 	DeviceInfo   map[string]any `json:"device_info" example:"{\"model\":\"iphone\",\"os\":\"ios15\"}"`
+	DeviceToken  string         `json:"device_token" binding:"required" example:"eyJhbGciOiJIUzI1Ni..."`
 }
 type SignUpResponse struct {
-	UserID           int       `json:"user_id" example:"42"`
-	Token            string    `json:"token" example:"eyJhbGciOiJIUzI1Ni..."`
+	UserID           int64     `json:"user_id" example:"42"`
+	MasterToken      string    `json:"master_token" example:"eyJhbGciOiJIUzI1Ni..."`
+	JWT              string    `json:"jwt" example:"eyJhbGciOiJIUzI1Ni..."`
 	ExpiresAt        time.Time `json:"expires_at"`
 	Message          string    `json:"message" example:"User created successfully"`
-	ProfilePictureID int       `bson:"profile_picture_id" json:"profile_picture_id"`
+	ProfilePictureID int64     `bson:"profile_picture_id" json:"profile_picture_id"`
 }
 type LoginInput struct {
 	Email        string         `json:"email" binding:"required,email" example:"john@nubo.com"`
 	PasswordHash string         `json:"password_hash" binding:"required" example:"hashed_secret_123"`
-	DeviceToken  string         `json:"device_token" binding:"required" example:"device_token_xyz"`
 	DeviceInfo   map[string]any `json:"device_info" example:"{\"os\":\"ios\",\"model\":\"iphone\"}"`
-	IPAddress    []string       `json:"ip_address" example:"[\"192.168.1.1\"]"`
+	DeviceToken  string         `json:"device_token" binding:"required" example:"eyJhbGciOiJIUzI1Ni..."`
 }
 type LoginResponse struct {
-	UserID        int       `json:"user_id" example:"42"`
+	UserID        int64     `json:"user_id" example:"42"`
 	Username      string    `json:"username" example:"johndoe"`
 	Email         string    `json:"email" example:"john@nubo.com"`
 	EmailVerified bool      `json:"email_verified" example:"true"`
@@ -131,7 +131,17 @@ type LoginResponse struct {
 	BanExpiresAt  time.Time `json:"ban_expires_at"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
-	Token         string    `json:"token" example:"eyJhbGci..."`
+	MasterToken   string    `json:"master_token" example:"eyJhbGci..."`
+	JWT           string    `json:"jwt" example:"eyJhbGciOiJIUzI1Ni..."`
 	ExpiresAt     time.Time `json:"expires_at"`
 	Message       string    `json:"message" example:"Login successful"`
+}
+
+type MediaRequest struct {
+	ID          int64     `bson:"id" json:"id"`
+	OwnerID     int64     `bson:"owner_id" json:"owner_id"`
+	StoragePath string    `bson:"storage_path" json:"storage_path"`
+	Visibility  bool      `bson:"visibility" json:"visibility"`
+	CreatedAt   time.Time `bson:"created_at" json:"created_at"`
+	UpdatedAt   time.Time `bson:"updated_at" json:"updated_at"`
 }

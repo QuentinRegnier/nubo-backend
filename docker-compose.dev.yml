@@ -31,6 +31,8 @@ services:
       - ./docs:/app/docs:ro  # On monte le dossier docs pour la documentation
     env_file:
       - .env
+    environment:
+      - NODE_ID=1  # <--- SPÉCIFIQUE À API 1
     depends_on:
       - minio
       - postgres
@@ -50,6 +52,8 @@ services:
       - ./docs:/app/docs:ro  # On monte le dossier docs pour la documentation
     env_file:
       - .env
+    environment:
+      - NODE_ID=2  # <--- SPÉCIFIQUE À API 2
     depends_on:
       - minio
       - postgres

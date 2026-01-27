@@ -8,6 +8,78 @@
     },
     "basePath": "/api/v11",
     "paths": {
+        "/auth/refresh-master": {
+            "post": {
+                "description": "Réinitialise toute la chaîne de sécurité (Ratchet, JWT, Secrets) en générant un nouveau MasterToken.\nCette route est l'ultime recours (\"Last Resort\") lorsque le Ratchet est désynchronisé ou que le JWT est expiré depuis trop longtemps.\n\n**Mécanisme de Résilience :**\n1. Recherche la session via le MasterToken dans **Redis**.\n2. Si introuvable (crash cache), cherche dans **MongoDB**.\n3. Si introuvable, cherche dans **PostgreSQL** (Source de vérité).\n4. Si trouvé, valide la signature HMAC et réinitialise tout.\n\n**Actions Serveur :**\n* Génération de `NewMasterToken` et `NewJWT`.\n* Reset du Ratchet (Secret 0 = NewMaster, Secret 1 = DeviceToken).\n* Mise à jour asynchrone de Postgres et Mongo pour persister le nouveau MasterToken.\n",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Hard Refresh (Master Token Rotation)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer \u003cCurrent_JWT\u003e (Optionnel, pour continuité)",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "HMAC calculé avec l'ANCIEN MasterToken",
+                        "name": "X-Signature",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp de la requête",
+                        "name": "X-Timestamp",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Données de reset (MasterToken, UserID, Username)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.RefreshMasterInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Nouveaux identifiants générés",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.RefreshMasterResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Format invalide ou Headers manquants",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "MasterToken introuvable ou Signature HMAC invalide",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Erreur serveur critique (Génération/Sauvegarde)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/login": {
             "post": {
                 "description": "Authentifie un utilisateur via email/password et renvoie son profil complet + token.\n\n**Règles \u0026 Erreurs :**\n\n🔴 **400 Bad Request :**\n* `The 'data' field containing the JSON is required` : Champ 'data' manquant.\n* `Invalid JSON format in 'data'` : Le JSON envoyé est mal formé.\n\n🟠 **401 Unauthorized :**\n* `Invalid email or password` : Identifiants incorrects ou utilisateur introuvable.\n\n⛔ **403 Forbidden :**\n* `Account deactivated` : Le compte a été désactivé.\n* `Account banned` : Le compte a été banni.\n\n⚫ **500 Internal Server Error :**\n* `database error` : Erreur technique interne.",
@@ -65,6 +137,77 @@
                     },
                     "500": {
                         "description": "Erreur serveur",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/renew-jwt": {
+            "post": {
+                "description": "Génère un nouveau JWT pour l'utilisateur et effectue une rotation de sécurité des secrets (Ratchet).\nCette route est critique et nécessite une signature HMAC valide basée sur le secret actuel de la session.\n\n**Mécanisme :**\n1. Vérifie la signature HMAC du body avec les headers de sécurité.\n2. Identifie la session via l'ID utilisateur et le `X-Secret`.\n3. Calcule le prochain secret (N+1) et met à jour l'historique (Ratchet).\n4. Renvoie le nouveau JWT.\n\n**Règles \u0026 Erreurs :**\n\n🔴 **400 Bad Request :**\n* `Erreur lecture body` : Impossible de lire le corps de la requête.\n* `Invalid JSON format` : Le JSON envoyé est mal formé.\n* `Headers de sécurité manquants` : Il manque `Authorization`, `X-Secret`, `X-Signature` ou `X-Timestamp`.\n\n🟠 **401 Unauthorized :**\n* `Signature HMAC invalide` : La signature ne correspond pas au contenu (tentative de falsification).\n* `Session invalide ou Secret incorrect` : Le secret fourni ne correspond à aucune session active pour cet utilisateur (ou désynchronisation Ratchet).\n\n⚫ **500 Internal Server Error :**\n* `Erreur génération token` : Échec de la création du JWT.\n* `Erreur rotation secrets` : Impossible de mettre à jour Redis (Ratchet bloqué).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Renouveler le JWT (Ratchet Rotation)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer \u003cLast_JWT\u003e",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Secret actuel de la session",
+                        "name": "X-Secret",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Signature HMAC calculée",
+                        "name": "X-Signature",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp de la requête",
+                        "name": "X-Timestamp",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.RenewJWTResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Requête invalide",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Authentification / Signature refusée",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Erreur serveur critique",
                         "schema": {
                             "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
                         }
@@ -194,6 +337,10 @@
                     "type": "integer",
                     "example": 0
                 },
+                "jwt": {
+                    "type": "string",
+                    "example": "eyJhbGciOiJIUzI1Ni..."
+                },
                 "last_name": {
                     "type": "string",
                     "example": "Doe"
@@ -201,6 +348,10 @@
                 "location": {
                     "type": "string",
                     "example": "Paris"
+                },
+                "master_token": {
+                    "type": "string",
+                    "example": "eyJhbGci..."
                 },
                 "message": {
                     "type": "string",
@@ -222,10 +373,6 @@
                     "type": "integer",
                     "example": 1
                 },
-                "token": {
-                    "type": "string",
-                    "example": "eyJhbGci..."
-                },
                 "updated_at": {
                     "type": "string"
                 },
@@ -243,11 +390,66 @@
                 }
             }
         },
+        "github_com_QuentinRegnier_nubo-backend_internal_domain.RefreshMasterInput": {
+            "type": "object",
+            "required": [
+                "id_user",
+                "master_token",
+                "username"
+            ],
+            "properties": {
+                "id_user": {
+                    "type": "integer"
+                },
+                "master_token": {
+                    "description": "L'ancien MasterToken",
+                    "type": "string"
+                },
+                "username": {
+                    "description": "Le username de l'utilisateur",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_QuentinRegnier_nubo-backend_internal_domain.RefreshMasterResponse": {
+            "type": "object",
+            "properties": {
+                "master_token": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "token": {
+                    "description": "Le nouveau JWT",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_QuentinRegnier_nubo-backend_internal_domain.RenewJWTResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_QuentinRegnier_nubo-backend_internal_domain.SignUpResponse": {
             "type": "object",
             "properties": {
                 "expires_at": {
                     "type": "string"
+                },
+                "jwt": {
+                    "type": "string",
+                    "example": "eyJhbGciOiJIUzI1Ni..."
+                },
+                "master_token": {
+                    "type": "string",
+                    "example": "eyJhbGciOiJIUzI1Ni..."
                 },
                 "message": {
                     "type": "string",
@@ -255,10 +457,6 @@
                 },
                 "profile_picture_id": {
                     "type": "integer"
-                },
-                "token": {
-                    "type": "string",
-                    "example": "eyJhbGciOiJIUzI1Ni..."
                 },
                 "user_id": {
                     "type": "integer",

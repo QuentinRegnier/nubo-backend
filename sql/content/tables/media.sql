@@ -1,10 +1,10 @@
 CREATE TABLE IF NOT EXISTS media (
-    id BIGSERIAL PRIMARY KEY, -- id unique du média
-    owner_id BIGINT REFERENCES auth.users(id), -- id du propriétaire
-    storage_path TEXT, -- chemin de stockage
-    visibility BOOLEAN DEFAULT TRUE, -- true si le media est utilisé dans un post/un message/une image de profil publique
-    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
-    updated_at TIMESTAMPTZ DEFAULT now() -- date de mise à jour
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    owner_id BIGINT REFERENCES users(id), -- Harmonisé vers 'users'
+    storage_path TEXT,
+    visibility BOOLEAN,                 -- Modifié : Plus de valeur par défaut (TRUE)
+    created_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    updated_at TIMESTAMPTZ              -- Modifié : Plus de DEFAULT now()
 );
 
 CREATE INDEX idx_media_owner ON media(owner_id);

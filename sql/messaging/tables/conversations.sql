@@ -1,13 +1,13 @@
 CREATE TABLE IF NOT EXISTS conversations (
-    id BIGSERIAL PRIMARY KEY, -- id unique de la conversation
-    type SMALLINT, -- type de la conversation (0 = message privée, 1 = groupe, 2 = communauté, 3 = annonce)
-    title TEXT DEFAULT NULL, -- titre de la conversation
-    last_message_id BIGINT UNIQUE DEFAULT NULL, -- id du dernier message
-    last_read_by_all_message_id BIGINT DEFAULT NULL, -- id du dernier message lu par tous
-    state SMALLINT DEFAULT 0, -- état de la conversation (0 = active, 1 = supprimée, 2 = archivée)
-    laws SMALLINT[], -- lois applicables à la conversation
-    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
-    updated_at TIMESTAMPTZ DEFAULT now() -- date de dernière mise à jour
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    type SMALLINT,
+    title TEXT,                         -- Modifié : Plus de DEFAULT NULL
+    last_message_id BIGINT UNIQUE,      -- Modifié : Plus de DEFAULT NULL
+    last_read_by_all_message_id BIGINT, -- Modifié : Plus de DEFAULT NULL
+    state SMALLINT,                     -- Modifié : Plus de valeur par défaut (0)
+    laws SMALLINT[],
+    created_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    updated_at TIMESTAMPTZ              -- Modifié : Plus de DEFAULT now()
 );
 
 CREATE INDEX idx_conversations_last_message ON conversations(last_message_id);

@@ -60,14 +60,34 @@ func HMACMiddleware() gin.HandlerFunc {
 		userIDRaw, existsUID := c.Get("userID")
 		deviceTokenRaw, existsDev := c.Get("deviceToken")
 
+		fmt.Println("🔐 HMAC Middleware: Extracted Context -", "userID:", userIDRaw, "deviceToken:", deviceTokenRaw)
+
 		if !existsUID || !existsDev {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Contexte d'authentification manquant"})
 			return
 		}
 
-		userIDStr := fmt.Sprintf("%v", userIDRaw)
-		userID, _ := strconv.Atoi(userIDStr)
+		var userID int64
+
+		// On utilise un Switch de Type pour gérer tous les cas (Float du JWT ou String)
+		switch v := userIDRaw.(type) {
+		case float64:
+			userID = int64(v) // Conversion directe Float -> Int64
+		case string:
+			// Si jamais le token a été généré avec l'ID en string (recommandé)
+			p, err := strconv.ParseInt(v, 10, 64)
+			if err == nil {
+				userID = p
+			}
+		case int64: // Peu probable avec JWT JSON mais possible
+			userID = v
+		default:
+			fmt.Printf("❌ Type userID inconnu: %T\n", v)
+		}
+
 		deviceToken := fmt.Sprintf("%v", deviceTokenRaw)
+
+		fmt.Printf("🔐 HMAC Middleware: userID=%d, deviceToken=%s\n", userID, deviceToken)
 
 		// 3. Récupération Session Redis
 		//filter := map[string]any{
@@ -85,19 +105,25 @@ func HMACMiddleware() gin.HandlerFunc {
 		var sessionFound bool = false
 
 		// A. Essai Redis
+		// AJOUT DE LOGS ICI
 		session, err := redis.RedisLoadSession(userID, deviceToken, "", "")
 		if err == nil && session.ID != 0 {
+			fmt.Println("✅ Session trouvée dans Redis")
 			sessionFound = true
+		} else {
+			fmt.Printf("⚠️ Redis Load Echec: %v (UserID: %d, Device: %s)\n", err, userID, deviceToken)
 		}
 
 		if !sessionFound {
-			// Supposons que tu aies un repo mongo générique similaire
+			// B. Essai Mongo
+			// AJOUT DE LOGS ICI
 			session, errMongo := mongo.MongoLoadSession(userID, deviceToken, "", "")
 			if errMongo == nil && session.ID != 0 {
+				fmt.Println("✅ Session trouvée dans Mongo")
 				sessionFound = true
-				if errAdd := redis.RedisCreateSession(session); errAdd != nil {
-					fmt.Printf("⚠️ Warning: Echec repopulation Redis depuis MongoDB: %v\n", errAdd)
-				}
+				// Repopulation...
+			} else {
+				fmt.Printf("⚠️ Mongo Load Echec: %v\n", errMongo)
 			}
 		}
 
@@ -125,7 +151,11 @@ func HMACMiddleware() gin.HandlerFunc {
 			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		}
 
-		stringToSignReq := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, clientTs, string(bodyBytes))
+		// --- CHANGEMENT ICI ---
+		// On utilise la fonction intelligente qui gère le multipart
+		contentToSign := security.GetBodyToSign(c.Request, bodyBytes)
+
+		stringToSignReq := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, clientTs, contentToSign)
 
 		// On initialise avec le secret actuel par défaut
 		usedSecret := session.CurrentSecret

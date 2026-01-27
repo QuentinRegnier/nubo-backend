@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"log"
 	"os"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 
 	"github.com/chai2010/webp"
@@ -28,85 +28,86 @@ const (
 
 func SetMinioClient(client *miniogo.Client) { minio.MinioClient = client }
 
-func UploadMedia(file io.ReadSeeker, originalFilename string, ownerID string) (int, error) {
+func UploadMedia(file io.ReadSeeker, originalFilename string, ownerID int64, mediaID int64) error {
 
-	// ... (Toute la partie 1 à 4 : Analyse, Encodage, Upload Minio reste identique) ...
-	// --- 1. ANALYSE & 2. OPTIMISATION ---
+	// --- 1. ANALYSE & OPTIMISATION IMAGE (CPU Heavy) ---
 	config, _, err := image.DecodeConfig(file)
 	if err != nil {
-		return 0, fmt.Errorf("fichier invalide: %v", err)
+		return fmt.Errorf("fichier invalide: %v", err)
 	}
+
 	if config.Width*config.Height > MaxPixels {
-		return 0, fmt.Errorf("image trop grande")
+		return fmt.Errorf("image trop grande")
 	}
+
 	file.Seek(0, 0)
-	srcImg, err := imaging.Decode(file)
+	img, _, err := image.Decode(file)
 	if err != nil {
-		return 0, fmt.Errorf("erreur decode: %v", err)
+		return fmt.Errorf("erreur decode: %v", err)
 	}
-	finalImg := imaging.Resize(srcImg, MaxWidth, 0, imaging.Lanczos)
-	// --- 3. ENCODAGE ---
+
+	if bounds := img.Bounds(); bounds.Dx() > MaxWidth {
+		img = imaging.Resize(img, MaxWidth, 0, imaging.Lanczos)
+	}
+
 	var buf bytes.Buffer
-	if err := webp.Encode(&buf, finalImg, &webp.Options{Lossless: false, Quality: 80}); err != nil {
-		return 0, fmt.Errorf("erreur webp: %v", err)
+	if err := webp.Encode(&buf, img, &webp.Options{Lossless: false, Quality: 80}); err != nil {
+		return fmt.Errorf("erreur encodage webp: %v", err)
 	}
-	// --- 4. UPLOAD MINIO ---
+
+	// --- 2. UPLOAD MINIO (IO Network) ---
+	objectName := fmt.Sprintf("%s.webp", uuid.New().String())
 	bucketName := os.Getenv("MINIO_BUCKET_NAME")
-	if bucketName == "" {
-		bucketName = "nubo-bucket"
-	}
-	fileUUID := uuid.New().String()
-	storagePath := fmt.Sprintf("%s/%s/%s.webp", fileUUID[0:2], fileUUID[2:4], fileUUID)
-	_, err = minio.MinioClient.PutObject(context.Background(), bucketName, storagePath, &buf, int64(buf.Len()), miniogo.PutObjectOptions{ContentType: "image/webp"})
+	storagePath := objectName // On stocke juste le nom ou "media/nom.webp" selon ta stratégie
+
+	_, err = minio.MinioClient.PutObject(context.Background(), bucketName, objectName, &buf, int64(buf.Len()), miniogo.PutObjectOptions{ContentType: "image/webp"})
 	if err != nil {
-		return 0, fmt.Errorf("erreur minio: %v", err)
+		return fmt.Errorf("erreur minio: %v", err)
 	}
 
-	// --- 5. SAUVEGARDE DB ---
+	// --- 3. CRÉATION DE L'OBJET & ID SNOWFLAKE (Go Authority) ---
+	now := time.Now().UTC()
 
-	// A. Postgres (Logique existante)
-	var dbOwnerID interface{}
-	if ownerID == "" || ownerID == "system" {
-		dbOwnerID = nil
-	} else {
-		dbOwnerID = ownerID
+	media := domain.MediaRequest{
+		ID:          mediaID,
+		OwnerID:     ownerID,
+		StoragePath: storagePath,
+		Visibility:  true, // Par défaut visible, à ajuster selon ta logique
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
-	var newMediaID int
-	err = postgres.PostgresDB.QueryRow(`
-		SELECT content.func_create_media($1, $2)
-	`, dbOwnerID, storagePath).Scan(&newMediaID)
+	// --- 5. CACHE REDIS (Immédiat) ---
+	// On met en cache pour que l'UI puisse afficher l'image tout de suite si besoin
+	// Clé ex: "media:12345"
 
-	if err != nil {
-		fmt.Printf("❌ ERREUR SQL FUNC_CREATE_MEDIA : %v\n", err)
-		_ = minio.MinioClient.RemoveObject(context.Background(), bucketName, storagePath, miniogo.RemoveObjectOptions{})
-		return 0, fmt.Errorf("erreur sql: %v", err)
-	}
-
-	// B. Préparation Objet pour NoSQL (Mongo & Redis)
-
-	// CORRECTION TYPE : MongoDB et Redis attendent un INT pour "owner_id".
-	// Si on n'a pas d'ID (inscription), on met 0.
-	var ownerIDInt int = 0
-	// (Note: on ne tente pas de convertir "profile_xxx" en int, ça resterait 0, c'est ce qu'on veut)
-
-	mediaObj := map[string]interface{}{
-		"id":           newMediaID,
-		"owner_id":     ownerIDInt, // <--- INT (0), pas String ("")
-		"storage_path": storagePath,
-		"created_at":   time.Now(),
-		"visibility":   true,
-	}
-
-	// C. Mongo
-	if err := mongo.Media.Set(mediaObj); err != nil {
-		fmt.Printf("⚠️ Erreur Mongo Media Set: %v\n", err)
-	}
-
-	// D. Redis (AJOUT)
-	if err := redis.RedisCreateMedia(mediaObj); err != nil {
+	// On écrit directement dans Redis (Set avec expiration par exemple 24h)
+	if err := redis.RedisCreateMedia(media); err != nil {
 		fmt.Printf("⚠️ Erreur Redis Media Set: %v\n", err)
 	}
 
-	return newMediaID, nil
+	// --- 6. PERSISTANCE ASYNCHRONE (Mongo + Postgres) ---
+	// C'est ici qu'on remplace les appels SQL directs par la file d'attente
+	ctx := context.Background()
+
+	err = redis.EnqueueDB(
+		ctx,
+		mediaID,
+		ownerID,
+		redis.EntityMedia, // Assure-toi d'avoir défini cette constante dans async_queue.go
+		redis.ActionCreate,
+		media,           // Le payload complet
+		redis.TargetAll, // Mongo ET Postgres
+	)
+
+	if err != nil {
+		// Cas critique : Si Redis échoue, on supprime l'image de Minio pour ne pas laisser de fichiers orphelins
+		// (Ou on logge une erreur critique)
+		log.Printf("❌ CRITICAL: Impossible d'enqueue le Media %d : %v", mediaID, err)
+		_ = minio.MinioClient.RemoveObject(context.Background(), bucketName, objectName, miniogo.RemoveObjectOptions{})
+		return fmt.Errorf("erreur systeme persistance: %v", err)
+	}
+
+	log.Printf("✅ Media %d uploadé et mis en file d'attente (Owner: %d)", mediaID, ownerID)
+	return nil
 }

@@ -45,11 +45,17 @@ definitions:
       grade:
         example: 0
         type: integer
+      jwt:
+        example: eyJhbGciOiJIUzI1Ni...
+        type: string
       last_name:
         example: Doe
         type: string
       location:
         example: Paris
+        type: string
+      master_token:
+        example: eyJhbGci...
         type: string
       message:
         example: Login successful
@@ -66,9 +72,6 @@ definitions:
       sex:
         example: 1
         type: integer
-      token:
-        example: eyJhbGci...
-        type: string
       updated_at:
         type: string
       user_id:
@@ -81,18 +84,53 @@ definitions:
         example: Dev
         type: string
     type: object
+  github_com_QuentinRegnier_nubo-backend_internal_domain.RefreshMasterInput:
+    properties:
+      id_user:
+        type: integer
+      master_token:
+        description: L'ancien MasterToken
+        type: string
+      username:
+        description: Le username de l'utilisateur
+        type: string
+    required:
+    - id_user
+    - master_token
+    - username
+    type: object
+  github_com_QuentinRegnier_nubo-backend_internal_domain.RefreshMasterResponse:
+    properties:
+      master_token:
+        type: string
+      message:
+        type: string
+      token:
+        description: Le nouveau JWT
+        type: string
+    type: object
+  github_com_QuentinRegnier_nubo-backend_internal_domain.RenewJWTResponse:
+    properties:
+      message:
+        type: string
+      token:
+        type: string
+    type: object
   github_com_QuentinRegnier_nubo-backend_internal_domain.SignUpResponse:
     properties:
       expires_at:
+        type: string
+      jwt:
+        example: eyJhbGciOiJIUzI1Ni...
+        type: string
+      master_token:
+        example: eyJhbGciOiJIUzI1Ni...
         type: string
       message:
         example: User created successfully
         type: string
       profile_picture_id:
         type: integer
-      token:
-        example: eyJhbGciOiJIUzI1Ni...
-        type: string
       user_id:
         example: 42
         type: integer
@@ -105,6 +143,67 @@ info:
   title: Mon API Propre
   version: "1.0"
 paths:
+  /auth/refresh-master:
+    post:
+      consumes:
+      - application/json
+      description: |
+        Réinitialise toute la chaîne de sécurité (Ratchet, JWT, Secrets) en générant un nouveau MasterToken.
+        Cette route est l'ultime recours ("Last Resort") lorsque le Ratchet est désynchronisé ou que le JWT est expiré depuis trop longtemps.
+
+        **Mécanisme de Résilience :**
+        1. Recherche la session via le MasterToken dans **Redis**.
+        2. Si introuvable (crash cache), cherche dans **MongoDB**.
+        3. Si introuvable, cherche dans **PostgreSQL** (Source de vérité).
+        4. Si trouvé, valide la signature HMAC et réinitialise tout.
+
+        **Actions Serveur :**
+        * Génération de `NewMasterToken` et `NewJWT`.
+        * Reset du Ratchet (Secret 0 = NewMaster, Secret 1 = DeviceToken).
+        * Mise à jour asynchrone de Postgres et Mongo pour persister le nouveau MasterToken.
+      parameters:
+      - description: Bearer <Current_JWT> (Optionnel, pour continuité)
+        in: header
+        name: Authorization
+        type: string
+      - description: HMAC calculé avec l'ANCIEN MasterToken
+        in: header
+        name: X-Signature
+        required: true
+        type: string
+      - description: Timestamp de la requête
+        in: header
+        name: X-Timestamp
+        required: true
+        type: string
+      - description: Données de reset (MasterToken, UserID, Username)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.RefreshMasterInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Nouveaux identifiants générés
+          schema:
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.RefreshMasterResponse'
+        "400":
+          description: Format invalide ou Headers manquants
+          schema:
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse'
+        "401":
+          description: MasterToken introuvable ou Signature HMAC invalide
+          schema:
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse'
+        "500":
+          description: Erreur serveur critique (Génération/Sauvegarde)
+          schema:
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse'
+      summary: Hard Refresh (Master Token Rotation)
+      tags:
+      - auth
   /login:
     post:
       consumes:
@@ -154,6 +253,69 @@ paths:
       summary: Connecter un utilisateur
       tags:
       - users
+  /renew-jwt:
+    post:
+      consumes:
+      - application/json
+      description: "Génère un nouveau JWT pour l'utilisateur et effectue une rotation
+        de sécurité des secrets (Ratchet).\nCette route est critique et nécessite
+        une signature HMAC valide basée sur le secret actuel de la session.\n\n**Mécanisme
+        :**\n1. Vérifie la signature HMAC du body avec les headers de sécurité.\n2.
+        Identifie la session via l'ID utilisateur et le `X-Secret`.\n3. Calcule le
+        prochain secret (N+1) et met à jour l'historique (Ratchet).\n4. Renvoie le
+        nouveau JWT.\n\n**Règles & Erreurs :**\n\n\U0001F534 **400 Bad Request :**\n*
+        `Erreur lecture body` : Impossible de lire le corps de la requête.\n* `Invalid
+        JSON format` : Le JSON envoyé est mal formé.\n* `Headers de sécurité manquants`
+        : Il manque `Authorization`, `X-Secret`, `X-Signature` ou `X-Timestamp`.\n\n\U0001F7E0
+        **401 Unauthorized :**\n* `Signature HMAC invalide` : La signature ne correspond
+        pas au contenu (tentative de falsification).\n* `Session invalide ou Secret
+        incorrect` : Le secret fourni ne correspond à aucune session active pour cet
+        utilisateur (ou désynchronisation Ratchet).\n\n⚫ **500 Internal Server Error
+        :**\n* `Erreur génération token` : Échec de la création du JWT.\n* `Erreur
+        rotation secrets` : Impossible de mettre à jour Redis (Ratchet bloqué)."
+      parameters:
+      - description: Bearer <Last_JWT>
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Secret actuel de la session
+        in: header
+        name: X-Secret
+        required: true
+        type: string
+      - description: Signature HMAC calculée
+        in: header
+        name: X-Signature
+        required: true
+        type: string
+      - description: Timestamp de la requête
+        in: header
+        name: X-Timestamp
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.RenewJWTResponse'
+        "400":
+          description: Requête invalide
+          schema:
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse'
+        "401":
+          description: Authentification / Signature refusée
+          schema:
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse'
+        "500":
+          description: Erreur serveur critique
+          schema:
+            $ref: '#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse'
+      summary: Renouveler le JWT (Ratchet Rotation)
+      tags:
+      - auth
   /signup:
     post:
       consumes:

@@ -28,9 +28,9 @@ func CleanStr(input string) string {
 }
 
 // generateToken : Création JWT
-func GenerateToken(userID int, deviceToken string, expirationSeconds int) (string, error) {
+func GenerateToken(userID int64, deviceToken string, expirationSeconds int) (string, error) {
 	claims := jwt.MapClaims{
-		"sub": userID,
+		"sub": fmt.Sprintf("%d", userID),
 		"dev": deviceToken, // Ajout du claim personnalisé
 		"exp": time.Now().Add(time.Second * time.Duration(expirationSeconds)).Unix(),
 		"iat": time.Now().Unix(),
@@ -44,12 +44,6 @@ func GenerateToken(userID int, deviceToken string, expirationSeconds int) (strin
 	}
 
 	return token.SignedString([]byte(secret))
-}
-
-// generateTokenDevice : Déclaration pour le token device
-func GenerateTokenDevice(deviceInfo []string) string {
-	// Logique de hashage device ici
-	return "dev_token_xyz123"
 }
 
 // ToMap convertit une structure en map[string]any en préservant les types Go exacts (int, time.Time, etc.)

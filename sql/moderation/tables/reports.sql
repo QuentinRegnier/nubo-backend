@@ -1,13 +1,15 @@
 CREATE TABLE IF NOT EXISTS reports (
-    id BIGSERIAL PRIMARY KEY, -- id unique du rapport
-    actor_id BIGINT REFERENCES auth.users(id), -- id de l'utilisateur ayant signalé
-    target_type SMALLINT NOT NULL, -- type de la cible (user/post/comment/etc)
-    target_id BIGINT NOT NULL, -- id de la cible
-    reason TEXT, -- raison du signalement
-    rationale TEXT DEFAULT NULL, -- explication des mesures prises
-    state SMALLINT DEFAULT 0, -- état du rapport (0=pending, 1=reviewed, 2=resolved)
-    created_at TIMESTAMPTZ DEFAULT now() -- date de création
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    actor_id BIGINT REFERENCES users(id), -- Harmonisé vers 'users'
+    target_type SMALLINT NOT NULL,
+    target_id BIGINT NOT NULL,
+    reason TEXT,
+    rationale TEXT,                     -- Modifié : Plus de DEFAULT NULL
+    state SMALLINT,                     -- Modifié : Plus de valeur par défaut (0)
+    created_at TIMESTAMPTZ              -- Modifié : Plus de DEFAULT now()
 );
 
 CREATE INDEX idx_reports_actor ON reports(actor_id);
 CREATE INDEX idx_reports_created ON reports(created_at);
+CREATE INDEX idx_reports_target ON reports(target_type, target_id);
+CREATE INDEX idx_reports_state ON reports(state);

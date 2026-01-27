@@ -8,175 +8,139 @@ CREATE SCHEMA views;
 
 SET search_path TO auth;
 CREATE TABLE IF NOT EXISTS users (
-    id BIGSERIAL PRIMARY KEY, -- id unique de l'utilisateur
-    username TEXT UNIQUE NOT NULL, -- nom d'utilisateur unique
-    email TEXT UNIQUE NOT NULL, -- email unique
-    email_verified BOOLEAN DEFAULT FALSE, -- email vérifié
-    phone TEXT UNIQUE, -- numéro de téléphone unique
-    phone_verified BOOLEAN DEFAULT FALSE, -- numéro de téléphone vérifié
-    password_hash TEXT NOT NULL, -- mot de passe haché
-    first_name TEXT NOT NULL, -- prénom
-    last_name TEXT NOT NULL, -- nom de famille
-    birthdate DATE, -- date de naissance
-    sex SMALLINT, -- sexe
-    bio TEXT, -- biographie
-    profile_picture_id BIGINT, -- id de l'image de profil
-    grade SMALLINT NOT NULL DEFAULT 0, -- grade de l'utilisateur
-    location TEXT, -- localisation de l'utilisateur
-    school TEXT, -- école
-    work TEXT, -- emplois
-    badges TEXT[], -- badges
-    desactivated BOOLEAN DEFAULT FALSE, -- compte désactivé
-    banned BOOLEAN DEFAULT FALSE, -- compte banni
-    ban_reason TEXT DEFAULT NULL, -- raison du bannissement
-    ban_expires_at TIMESTAMPTZ DEFAULT NULL, -- date d'expiration du bannissement
-    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
-    updated_at TIMESTAMPTZ DEFAULT now() -- date de mise à jour
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur (correspond à int64)
+    username TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    email_verified BOOLEAN,             -- Modifié : Plus de valeur par défaut
+    phone TEXT UNIQUE,
+    phone_verified BOOLEAN,             -- Modifié : Plus de valeur par défaut
+    password_hash TEXT NOT NULL,
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
+    birthdate DATE,
+    sex SMALLINT,
+    bio TEXT,
+    profile_picture_id BIGINT,
+    grade SMALLINT NOT NULL,            -- Modifié : Plus de valeur par défaut (0)
+    location TEXT,
+    school TEXT,
+    work TEXT,
+    badges TEXT[],
+    desactivated BOOLEAN,               -- Modifié : Plus de valeur par défaut
+    banned BOOLEAN,                     -- Modifié : Plus de valeur par défaut
+    ban_reason TEXT,
+    ban_expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    updated_at TIMESTAMPTZ              -- Modifié : Plus de DEFAULT now()
 );
-
 CREATE INDEX idx_users_username ON users(username);
 CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_phone ON users(phone);
 CREATE TABLE IF NOT EXISTS relations (
-    id BIGSERIAL PRIMARY KEY, -- id unique du suivi
-    primary_id BIGINT REFERENCES users(id), -- id de l'utilisateur qui suit
-    secondary_id BIGINT REFERENCES users(id), -- id de l'utilisateur suivi
-    state SMALLINT DEFAULT 1, -- état du suivi (2 = amis, 1 = suivi, 0 = inactif, -1 = bloqué)
-    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    primary_id BIGINT REFERENCES users(id),
+    secondary_id BIGINT REFERENCES users(id),
+    state SMALLINT,                     -- Modifié : Plus de valeur par défaut (1)
+    created_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    updated_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
     UNIQUE(secondary_id, primary_id)
 );
-
 CREATE INDEX idx_relations_primary_id ON relations(primary_id);
 CREATE INDEX idx_relations_secondary_id ON relations(secondary_id);
 CREATE TABLE IF NOT EXISTS sessions (
-    id BIGSERIAL PRIMARY KEY,        -- id unique de la session
-    user_id BIGINT REFERENCES users(id) NOT NULL,          -- id de l'utilisateur
-    refresh_token TEXT NOT NULL,                          -- token de rafraîchissement
-    device_token JSONB,                           -- identifiant unique de l'appareil
-    device_info JSONB,                                    -- informations sur l'appareil (OS, modèle, version...)
-    ip_history INET[],                                    -- historique des IP utilisées
-    created_at TIMESTAMPTZ DEFAULT now(),                -- date de création
-    expires_at TIMESTAMPTZ                                -- date d'expiration
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    user_id BIGINT REFERENCES users(id) NOT NULL,
+    master_token TEXT NOT NULL,
+    device_token TEXT NOT NULL,
+    device_info JSONB,
+    ip_history INET[],
+    current_secret TEXT,
+    last_secret TEXT,
+    last_jwt TEXT,
+    tolerance_time TIMESTAMPTZ,
+    created_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    expires_at TIMESTAMPTZ
 );
-CREATE UNIQUE INDEX idx_sessions_user_device 
-  ON sessions(user_id, device_token);
+CREATE UNIQUE INDEX idx_sessions_user_device ON sessions(user_id, device_token);
 CREATE TABLE IF NOT EXISTS user_settings (
-    id BIGSERIAL PRIMARY KEY, -- id unique des paramètres utilisateur
-    user_id BIGINT UNIQUE REFERENCES users(id) ON DELETE CASCADE, -- id unique de l'utilisateur
-    privacy JSONB, -- paramètres de confidentialité
-    notifications JSONB, -- paramètres de notification
-    language TEXT, -- langue
-    theme SMALLINT NOT NULL DEFAULT 0 -- thème clair/sombre
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    user_id BIGINT UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    privacy JSONB,
+    notifications JSONB,
+    language TEXT,
+    theme SMALLINT NOT NULL,            -- Modifié : Plus de valeur par défaut
+    created_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    updated_at TIMESTAMPTZ              -- Modifié : Plus de DEFAULT now()
 );
 CREATE INDEX idx_user_settings_user_id ON user_settings(user_id);
-CREATE OR REPLACE FUNCTION auth.func_create_relation(
-    p_primary_id BIGINT,
-    p_secondary_id BIGINT,
-    p_state SMALLINT DEFAULT 1
-) RETURNS BIGINT AS $$
-DECLARE
-    v_relation_id BIGINT;
+CREATE OR REPLACE FUNCTION auth.func_load_user(
+    p_id BIGINT DEFAULT NULL,
+    p_username TEXT DEFAULT NULL,
+    p_email TEXT DEFAULT NULL,
+    p_phone TEXT DEFAULT NULL
+)
+RETURNS TABLE (
+    id BIGINT,
+    username TEXT,
+    email TEXT,
+    email_verified BOOLEAN,
+    phone TEXT,
+    phone_verified BOOLEAN,
+    password_hash TEXT,
+    first_name TEXT,
+    last_name TEXT,
+    birthdate DATE,
+    sex SMALLINT,
+    bio TEXT,
+    profile_picture_id BIGINT,
+    grade SMALLINT,
+    location TEXT,
+    school TEXT,
+    work TEXT,
+    badges TEXT[],
+    desactivated BOOLEAN,
+    banned BOOLEAN,
+    ban_reason TEXT,
+    ban_expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ
+) AS $$
 BEGIN
-    INSERT INTO auth.relations(primary_id, secondary_id, state)
-    VALUES (p_primary_id, p_secondary_id, p_state)
-    ON CONFLICT (primary_id, secondary_id) DO UPDATE
-    SET state = excluded.state
-    RETURNING id INTO v_relation_id;
-
-    RETURN v_relation_id;
+    RETURN QUERY
+    SELECT
+        u.id,
+        u.username,
+        u.email,
+        u.email_verified,
+        u.phone,
+        u.phone_verified,
+        u.password_hash,
+        u.first_name,
+        u.last_name,
+        u.birthdate,
+        u.sex,
+        u.bio,
+        u.profile_picture_id,
+        u.grade,
+        u.location,
+        u.school,
+        u.work,
+        u.badges,
+        u.desactivated,
+        u.banned,
+        u.ban_reason,
+        u.ban_expires_at,
+        u.created_at,
+        u.updated_at
+    FROM auth.users AS u
+    WHERE
+        (p_id IS NULL OR u.id = p_id)
+        AND (p_username IS NULL OR TRIM(u.username) = TRIM(p_username))
+        -- MODIFICATION ICI : On nettoie les espaces (TRIM) et on ignore la casse (LOWER)
+        AND (p_email IS NULL OR TRIM(LOWER(u.email)) = TRIM(LOWER(p_email)))
+        AND (p_phone IS NULL OR TRIM(u.phone) = TRIM(p_phone));
 END;
-$$ LANGUAGE plpgsql;
-CREATE OR REPLACE FUNCTION auth.func_create_session(
-    p_user_id BIGINT,
-    p_refresh_token TEXT,
-    p_device_token TEXT,
-    p_device_info JSONB,
-    p_ip_history INET[],
-    p_expires_at TIMESTAMPTZ
-) RETURNS BIGINT AS $$
-DECLARE
-    v_session_id BIGINT;
-BEGIN
-    INSERT INTO auth.sessions (
-        user_id, refresh_token, device_token, device_info, ip_history, expires_at
-    ) VALUES (
-        p_user_id, p_refresh_token, p_device_token, p_device_info, p_ip_history, p_expires_at
-    )
-    RETURNING id INTO v_session_id;
-
-    RETURN v_session_id;
-END;
-$$ LANGUAGE plpgsql;
-CREATE OR REPLACE FUNCTION auth.func_create_user_settings(
-    p_user_id BIGINT,
-    p_privacy JSONB,
-    p_notifications JSONB,
-    p_language TEXT,
-    p_theme SMALLINT DEFAULT 0
-) RETURNS BIGINT AS $$
-DECLARE
-    v_settings_id BIGINT;
-BEGIN
-    INSERT INTO auth.user_settings (
-        user_id, privacy, notifications, language, theme
-    ) VALUES (
-        p_user_id, p_privacy, p_notifications, p_language, p_theme
-    )
-    RETURNING id INTO v_settings_id;
-
-    RETURN v_settings_id;
-END;
-$$ LANGUAGE plpgsql;
-CREATE OR REPLACE FUNCTION auth.func_create_user(
-    p_username TEXT,
-    p_email TEXT,
-    p_phone TEXT,
-    p_password_hash TEXT,
-    p_first_name TEXT,
-    p_last_name TEXT,
-    p_birthdate DATE,
-    p_sex SMALLINT,
-    p_bio TEXT,
-    p_profile_picture_id BIGINT,
-    p_grade SMALLINT,
-    p_location TEXT,
-    p_school TEXT,
-    p_work TEXT,
-    p_badges TEXT[],
-    p_desactivated BOOLEAN,
-    p_banned BOOLEAN,
-    p_ban_reason TEXT,
-    p_ban_expires_at TIMESTAMPTZ,
-    p_refresh_token TEXT,
-    p_device_info JSONB,
-    p_device_token TEXT, 
-    p_ip_history INET[],
-    p_expires_at TIMESTAMPTZ,
-    OUT v_user_id BIGINT,
-    OUT v_created_at_user TIMESTAMPTZ,
-    OUT v_updated_at_user TIMESTAMPTZ,
-    OUT v_session_id BIGINT,
-    OUT v_created_at_session TIMESTAMPTZ
-) LANGUAGE plpgsql 
-AS $$
-BEGIN
-    -- 1️⃣ Créer l'utilisateur
-    INSERT INTO auth.users (
-        username, email, phone, password_hash, first_name, last_name,
-        birthdate, sex, bio, profile_picture_id, grade, location, school, work, badges,
-        desactivated, banned, ban_reason, ban_expires_at
-    ) VALUES (
-        p_username, p_email, p_phone, p_password_hash, p_first_name, p_last_name,
-        p_birthdate, p_sex, p_bio, p_profile_picture_id, p_grade, p_location, p_school, p_work, p_badges,
-        p_desactivated, p_banned, p_ban_reason, p_ban_expires_at
-    )
-    RETURNING id, created_at, updated_at INTO v_user_id, v_created_at_user, v_updated_at_user;
-
-    -- 2️⃣ Créer la session (user_settings supprimé)
-    INSERT INTO auth.sessions (user_id, refresh_token, device_info, device_token, ip_history, expires_at)
-    VALUES (v_user_id, p_refresh_token, p_device_info, p_device_token::jsonb, p_ip_history, p_expires_at)
-    RETURNING id, created_at INTO v_session_id, v_created_at_session;
-END;
-$$;
+$$ LANGUAGE plpgsql STABLE;
 CREATE OR REPLACE FUNCTION auth.func_load_relations(
     p_id BIGINT DEFAULT NULL,
     p_primary_id BIGINT DEFAULT NULL,
@@ -210,12 +174,12 @@ CREATE OR REPLACE FUNCTION auth.func_load_sessions(
     p_id BIGINT DEFAULT NULL,
     p_user_id BIGINT DEFAULT NULL,
     p_device_token TEXT DEFAULT NULL,
-    p_refresh_token TEXT DEFAULT NULL
+    p_master_token TEXT DEFAULT NULL
 )
 RETURNS TABLE (
     id BIGINT,
     user_id BIGINT,
-    refresh_token TEXT,
+    master_token TEXT,
     device_token TEXT,
     device_info JSONB,
     ip_history INET[],
@@ -229,7 +193,7 @@ BEGIN
         SELECT
             s.id,
             s.user_id,
-            s.refresh_token,
+            s.master_token,
             s.device_token,
             s.device_info,
             s.ip_history,
@@ -245,7 +209,7 @@ BEGIN
     SELECT
         s.id,
         s.user_id,
-        s.refresh_token,
+        s.master_token,
         s.device_token,
         s.device_info,
         s.ip_history,
@@ -256,7 +220,7 @@ BEGIN
         (p_id IS NULL OR s.id = p_id)
         AND (p_user_id IS NULL OR s.user_id = p_user_id)
         AND (p_device_token IS NULL OR s.device_token = p_device_token)
-        AND (p_refresh_token IS NULL OR s.refresh_token = p_refresh_token);
+        AND (p_master_token IS NULL OR s.master_token = p_master_token);
 END;
 $$ LANGUAGE plpgsql STABLE;
 CREATE OR REPLACE FUNCTION auth.func_load_user_settings(
@@ -286,355 +250,95 @@ BEGIN
         AND (p_user_id IS NULL OR s.user_id = p_user_id);
 END;
 $$ LANGUAGE plpgsql STABLE;
-CREATE OR REPLACE FUNCTION auth.func_load_user(
-    p_id BIGINT DEFAULT NULL,
-    p_username TEXT DEFAULT NULL,
-    p_email TEXT DEFAULT NULL,
-    p_phone TEXT DEFAULT NULL
-)
-RETURNS TABLE (
-    id BIGINT,
-    username TEXT,
-    email TEXT,
-    email_verified BOOLEAN,
-    phone TEXT,
-    phone_verified BOOLEAN,
-    first_name TEXT,
-    last_name TEXT,
-    birthdate DATE,
-    sex SMALLINT,
-    bio TEXT,
-    profile_picture_id BIGINT,
-    grade SMALLINT,
-    location TEXT,
-    school TEXT,
-    work TEXT,
-    badges TEXT[],
-    desactivated BOOLEAN,
-    banned BOOLEAN,
-    ban_reason TEXT,
-    ban_expires_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT
-        u.id,
-        u.username,
-        u.email,
-        u.email_verified,
-        u.phone,
-        u.phone_verified,
-        u.first_name,
-        u.last_name,
-        u.birthdate,
-        u.sex,
-        u.bio,
-        u.profile_picture_id,
-        u.grade,
-        u.location,
-        u.school,
-        u.work,
-        u.badges,
-        u.desactivated,
-        u.banned,
-        u.ban_reason,
-        u.ban_expires_at,
-        u.created_at,
-        u.updated_at
-    FROM auth.users AS u
-    WHERE
-        (p_id IS NULL OR u.id = p_id)
-        AND (p_username IS NULL OR u.username = p_username)
-        AND (p_email IS NULL OR u.email = p_email)
-        AND (p_phone IS NULL OR u.phone = p_phone);
-END;
-$$ LANGUAGE plpgsql STABLE;
-CREATE OR REPLACE PROCEDURE proc_delete_relation(
-    p_user_id BIGINT,
-    p_target_id BIGINT
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    DELETE FROM auth.relations
-    WHERE (follower_id = p_user_id AND followed_id = p_target_id)
-       OR (follower_id = p_target_id AND followed_id = p_user_id);
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_delete_session(
-    p_id BIGINT DEFAULT NULL,
-    p_user_id BIGINT DEFAULT NULL,
-    p_device_token TEXT DEFAULT NULL,
-    p_refresh_token TEXT DEFAULT NULL
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    -- Vérification qu'au moins un critère est fourni
-    IF p_id IS NULL AND p_user_id IS NULL AND p_device_token IS NULL AND p_refresh_token IS NULL THEN
-        RAISE EXCEPTION 'At least one criterion must be provided to delete a session';
-    END IF;
 
-    DELETE FROM sessions
-    WHERE (id = p_id OR p_id IS NULL)
-      AND (user_id = p_user_id OR p_user_id IS NULL)
-      AND (device_token = p_device_token OR p_device_token IS NULL)
-      AND (refresh_token = p_refresh_token OR p_refresh_token IS NULL);
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_delete_user_settings(
-    p_id BIGINT DEFAULT NULL,
-    p_user_id BIGINT DEFAULT NULL
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    -- Vérification qu'au moins un critère est fourni
-    IF p_id IS NULL AND p_user_id IS NULL THEN
-        RAISE EXCEPTION 'At least one criterion must be provided to delete a user setting';
-    END IF;
-
-    DELETE FROM user_settings
-    WHERE (id = p_id OR p_id IS NULL)
-      AND (user_id = p_user_id OR p_user_id IS NULL);
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_delete_user(
-    p_id BIGINT DEFAULT NULL,
-    p_username TEXT DEFAULT NULL,
-    p_email TEXT DEFAULT NULL,
-    p_phone TEXT DEFAULT NULL,
-    p_ban BOOLEAN DEFAULT FALSE,
-    p_ban_reason TEXT DEFAULT NULL,
-    p_ban_expires_at TIMESTAMPTZ DEFAULT NULL
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    -- Vérification qu'au moins un critère est fourni
-    IF p_id IS NULL AND p_username IS NULL AND p_email IS NULL AND p_phone IS NULL THEN
-        RAISE EXCEPTION 'At least one criterion must be provided to deactivate or ban a user';
-    END IF;
-
-    UPDATE users
-    SET desactivated = TRUE,
-        banned = p_ban,
-        ban_reason = CASE WHEN p_ban THEN p_ban_reason ELSE NULL END,
-        ban_expires_at = CASE WHEN p_ban THEN p_ban_expires_at ELSE NULL END,
-        updated_at = now()
-    WHERE (id = p_id OR p_id IS NULL)
-      AND (username = p_username OR p_username IS NULL)
-      AND (email = p_email OR p_email IS NULL)
-      AND (phone = p_phone OR p_phone IS NULL);
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_update_relation(
-    p_primary_id BIGINT,
-    p_secondary_id BIGINT,
-    p_state SMALLINT DEFAULT NULL
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    UPDATE auth.relations
-    SET state = COALESCE(p_state, state)
-    WHERE primary_id = p_primary_id 
-      AND secondary_id = p_secondary_id;
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_update_sessions(
-    p_id BIGINT,
-    p_refresh_token TEXT DEFAULT NULL,
-    p_device_info JSONB DEFAULT NULL,
-    p_ip_history INET[] DEFAULT NULL,
-    p_expires_at TIMESTAMPTZ DEFAULT NULL
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    UPDATE sessions
-    SET
-        refresh_token = COALESCE(p_refresh_token, refresh_token),
-        device_info   = COALESCE(p_device_info, device_info),
-        ip_history    = COALESCE(p_ip_history, ip_history),
-        expires_at    = COALESCE(p_expires_at, expires_at)
-    WHERE id = p_id;
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_update_user_settings(
-    p_id BIGINT,
-    p_user_id BIGINT,
-    p_privacy JSONB DEFAULT NULL,
-    p_notifications JSONB DEFAULT NULL,
-    p_language TEXT DEFAULT NULL,
-    p_theme TEXT DEFAULT NULL
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    UPDATE user_settings
-    SET 
-        privacy           = COALESCE(p_privacy, privacy),
-        notifications     = COALESCE(p_notifications, notifications),
-        language          = COALESCE(p_language, language),
-        theme             = COALESCE(p_theme, theme)
-    WHERE (id = p_id OR p_id IS NULL)
-      AND (user_id = p_user_id OR p_user_id IS NULL);
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_update_user(
-    p_user_id BIGINT,
-    p_username TEXT,
-    p_email TEXT,
-    p_email_verified BOOLEAN,
-    p_phone TEXT,
-    p_phone_verified BOOLEAN,
-    p_password_hash TEXT,
-    p_first_name TEXT DEFAULT NULL,
-    p_last_name TEXT DEFAULT NULL,
-    p_profile_picture_id BIGINT DEFAULT NULL,
-    p_location TEXT DEFAULT NULL,
-    p_school TEXT DEFAULT NULL,
-    p_work TEXT DEFAULT NULL,
-    p_desactivated BOOLEAN DEFAULT NULL,
-    p_updated_at TIMESTAMPTZ DEFAULT NULL
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    UPDATE users
-    SET username = COALESCE(p_username, username),
-        email = COALESCE(p_email, email),
-        phone = COALESCE(p_phone, phone),
-        password_hash = COALESCE(p_password_hash, password_hash),
-        first_name = COALESCE(p_first_name, first_name),
-        last_name = COALESCE(p_last_name, last_name),
-        profile_picture_id = COALESCE(p_profile_picture_id, profile_picture_id),
-        location = COALESCE(p_location, location),
-        school = COALESCE(p_school, school),
-        work = COALESCE(p_work, work),
-        updated_at = COALESCE(p_updated_at, now())
-    WHERE id = p_user_id;
-END;
-$$;
 ------------------------------------------------------------------------------
 
 SET search_path TO content;
 CREATE TABLE IF NOT EXISTS posts (
-    id BIGSERIAL PRIMARY KEY, -- id unique du post
-    user_id BIGINT REFERENCES auth.users(id) NOT NULL, -- id de l'utilisateur
-    content TEXT, -- contenu du post
-    media_ids BIGINT[], -- ids des médias associés
-    visibility SMALLINT DEFAULT 0, -- visibilité (2= supprimer, 1 = amis, 0 = public)
-    location TEXT, -- localisation
-    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
-    updated_at TIMESTAMPTZ DEFAULT now() -- date de mise à jour
-);
-CREATE TABLE IF NOT EXISTS comments (
-    id BIGSERIAL PRIMARY KEY, -- id unique du commentaire
-    post_id BIGINT REFERENCES posts(id) ON DELETE CASCADE, -- id du post
-    user_id BIGINT REFERENCES auth.users(id), -- id de l'utilisateur
-    content TEXT, -- contenu du commentaire
-    visibility BOOLEAN DEFAULT TRUE, -- visibilité du commentaire
-    created_at TIMESTAMPTZ DEFAULT now() -- date de création
-);
-CREATE TABLE IF NOT EXISTS likes (
-    id BIGSERIAL PRIMARY KEY, -- id unique du like
-    target_type SMALLINT NOT NULL, -- type de la cible (0 = post, 1 = message, 2 = commentaire)
-    target_id BIGINT NOT NULL, -- id de la cible
-    user_id BIGINT REFERENCES auth.users(id), -- id de l'utilisateur
-    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
-    UNIQUE(target_type, target_id, user_id)
-);
-CREATE TABLE IF NOT EXISTS media (
-    id BIGSERIAL PRIMARY KEY, -- id unique du média
-    owner_id BIGINT REFERENCES auth.users(id), -- id du propriétaire
-    storage_path TEXT, -- chemin de stockage
-    visibility BOOLEAN DEFAULT TRUE, -- true si le media est utilisé dans un post/un message/une image de profil publique
-    created_at TIMESTAMPTZ DEFAULT now() -- date de création
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    user_id BIGINT REFERENCES auth.users(id) NOT NULL, -- Harmonisé vers 'users'
+    content TEXT,
+    media_ids BIGINT[],
+    visibility SMALLINT,                -- Modifié : Plus de valeur par défaut (0)
+    location TEXT,
+    created_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    updated_at TIMESTAMPTZ              -- Modifié : Plus de DEFAULT now()
 );
 CREATE INDEX idx_posts_user_created ON posts(user_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS comments (
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    post_id BIGINT REFERENCES posts(id) ON DELETE CASCADE,
+    user_id BIGINT REFERENCES auth.users(id), -- Harmonisé vers 'users'
+    content TEXT,
+    visibility BOOLEAN,                 -- Modifié : Plus de valeur par défaut (TRUE)
+    created_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    updated_at TIMESTAMPTZ              -- Modifié : Plus de DEFAULT now()
+);
+CREATE INDEX idx_comments_post_created ON comments(post_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS likes (
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    target_type SMALLINT NOT NULL,
+    target_id BIGINT NOT NULL,
+    user_id BIGINT REFERENCES auth.users(id), -- Harmonisé vers 'users'
+    created_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    UNIQUE(target_type, target_id, user_id)
+);
+CREATE INDEX idx_likes_target ON likes(target_type, target_id);
+CREATE TABLE IF NOT EXISTS media (
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    owner_id BIGINT REFERENCES auth.users(id), -- Harmonisé vers 'users'
+    storage_path TEXT,
+    visibility BOOLEAN,                 -- Modifié : Plus de valeur par défaut (TRUE)
+    created_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    updated_at TIMESTAMPTZ              -- Modifié : Plus de DEFAULT now()
+);
 CREATE INDEX idx_media_owner ON media(owner_id);
 CREATE INDEX idx_media_created ON media(created_at);
-CREATE INDEX idx_likes_target ON likes(target_type, target_id);
-CREATE INDEX idx_comments_post_created ON comments(post_id, created_at DESC);
-CREATE OR REPLACE FUNCTION content.func_add_like(
-    p_target_type SMALLINT,
-    p_target_id BIGINT,
-    p_user_id BIGINT
-) RETURNS BIGINT AS $$
-DECLARE
-    v_like_id BIGINT;
-BEGIN
-    INSERT INTO content.likes(target_type, target_id, user_id)
-    VALUES (p_target_type, p_target_id, p_user_id)
-    ON CONFLICT (target_type, target_id, user_id) DO NOTHING
-    RETURNING id INTO v_like_id;
-
-    -- Si le like existait déjà, on récupère son id
-    IF v_like_id IS NULL THEN
-        SELECT id INTO v_like_id
-        FROM content.likes
-        WHERE target_type = p_target_type
-          AND target_id = p_target_id
-          AND user_id = p_user_id;
-    END IF;
-
-    RETURN v_like_id;
-END;
-$$ LANGUAGE plpgsql;
-CREATE OR REPLACE FUNCTION content.func_create_comment(
-    p_post_id BIGINT,
-    p_user_id BIGINT,
-    p_content TEXT
-) RETURNS BIGINT
+CREATE OR REPLACE FUNCTION content.func_load_posts(
+    p_user_id BIGINT DEFAULT NULL,            -- filtrer sur un utilisateur spécifique (NULL = tous)
+    p_post_ids BIGINT[] DEFAULT NULL,         -- liste d'IDs de posts à charger (NULL = aucun filtre)
+    p_visibility SMALLINT[] DEFAULT ARRAY[0,1], -- visibilités autorisées (0=public,1=amis)
+    p_order_mode SMALLINT DEFAULT 0         -- 0=plus récents, 1=plus anciens
+)
+RETURNS TABLE(
+    id BIGINT,
+    user_id BIGINT,
+    content TEXT,
+    media_ids BIGINT[],
+    visibility SMALLINT,
+    location TEXT,
+    created_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ,
+    like_count INT
+)
 LANGUAGE plpgsql
 AS $$
-DECLARE
-    v_comment_id BIGINT;
 BEGIN
-    INSERT INTO content.comments(post_id, user_id, content)
-    VALUES (p_post_id, p_user_id, p_content)
-    RETURNING id INTO v_comment_id;
-
-    RETURN v_comment_id;
-END;
-$$;
-CREATE OR REPLACE FUNCTION content.func_create_media(
-    p_owner_id BIGINT,
-    p_storage_path TEXT
-) RETURNS BIGINT
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    v_media_id BIGINT;
-BEGIN
-    INSERT INTO content.media(owner_id, storage_path)
-    VALUES (p_owner_id, p_storage_path)
-    RETURNING id INTO v_media_id;
-
-    RETURN v_media_id;
-END;
-$$;
-CREATE OR REPLACE FUNCTION content.func_create_post(
-    p_user_id BIGINT,
-    p_content TEXT,
-    p_media_ids BIGINT[],
-    p_visibility SMALLINT,
-    p_location TEXT
-) RETURNS BIGINT
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    v_post_id BIGINT;
-BEGIN
-    INSERT INTO content.posts(user_id, content, media_ids, visibility, location)
-    VALUES (p_user_id, p_content, p_media_ids, p_visibility, p_location)
-    RETURNING id INTO v_post_id;
-
-    RETURN v_post_id;
+    RETURN QUERY
+    SELECT 
+        p.id,
+        p.user_id,
+        p.content,
+        p.media_ids,
+        p.visibility,
+        p.location,
+        p.created_at,
+        p.updated_at,
+        COALESCE(
+            (SELECT COUNT(*) 
+             FROM content.likes l 
+             WHERE l.target_type = 0 
+               AND l.target_id = p.id),
+        0) AS like_count
+    FROM content.posts p
+    WHERE
+        p.visibility != 2  -- ne pas charger les posts supprimés
+        AND (p_user_id IS NULL OR p.user_id = p_user_id)
+        AND (p_post_ids IS NULL OR p.id = ANY(p_post_ids))
+        AND (p.visibility = ANY(p_visibility))
+    ORDER BY
+        CASE WHEN p_order_mode = 0 THEN p.created_at END DESC,  -- plus récents
+        CASE WHEN p_order_mode = 1 THEN p.created_at END ASC;   -- plus anciens
 END;
 $$;
 CREATE OR REPLACE FUNCTION content.func_load_comments(
@@ -746,311 +450,47 @@ BEGIN
         CASE WHEN p_order_mode = 1 THEN m.created_at END ASC;   -- plus anciens
 END;
 $$;
-CREATE OR REPLACE FUNCTION content.func_load_posts(
-    p_user_id BIGINT DEFAULT NULL,            -- filtrer sur un utilisateur spécifique (NULL = tous)
-    p_post_ids BIGINT[] DEFAULT NULL,         -- liste d'IDs de posts à charger (NULL = aucun filtre)
-    p_visibility SMALLINT[] DEFAULT ARRAY[0,1], -- visibilités autorisées (0=public,1=amis)
-    p_order_mode SMALLINT DEFAULT 0         -- 0=plus récents, 1=plus anciens
-)
-RETURNS TABLE(
-    id BIGINT,
-    user_id BIGINT,
-    content TEXT,
-    media_ids BIGINT[],
-    visibility SMALLINT,
-    location TEXT,
-    created_at TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ,
-    like_count INT
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    RETURN QUERY
-    SELECT 
-        p.id,
-        p.user_id,
-        p.content,
-        p.media_ids,
-        p.visibility,
-        p.location,
-        p.created_at,
-        p.updated_at,
-        COALESCE(
-            (SELECT COUNT(*) 
-             FROM content.likes l 
-             WHERE l.target_type = 0 
-               AND l.target_id = p.id),
-        0) AS like_count
-    FROM content.posts p
-    WHERE
-        p.visibility != 2  -- ne pas charger les posts supprimés
-        AND (p_user_id IS NULL OR p.user_id = p_user_id)
-        AND (p_post_ids IS NULL OR p.id = ANY(p_post_ids))
-        AND (p.visibility = ANY(p_visibility))
-    ORDER BY
-        CASE WHEN p_order_mode = 0 THEN p.created_at END DESC,  -- plus récents
-        CASE WHEN p_order_mode = 1 THEN p.created_at END ASC;   -- plus anciens
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_delete_comment(
-    p_id BIGINT DEFAULT NULL,
-    p_post_id BIGINT DEFAULT NULL,
-    p_user_id BIGINT DEFAULT NULL
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    -- Vérification qu'au moins un critère est fourni
-    IF p_id IS NULL AND p_post_id IS NULL AND p_user_id IS NULL THEN
-        RAISE EXCEPTION 'At least one criterion must be provided to hide a comment';
-    END IF;
 
-    UPDATE comments
-    SET visibility = FALSE
-    WHERE (id = p_id OR p_id IS NULL)
-      AND (post_id = p_post_id OR p_post_id IS NULL)
-      AND (user_id = p_user_id OR p_user_id IS NULL);
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_delete_media(
-    p_id BIGINT DEFAULT NULL,
-    p_owner_id BIGINT DEFAULT NULL
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    -- Vérification qu'au moins un critère est fourni
-    IF p_id IS NULL AND p_owner_id IS NULL THEN
-        RAISE EXCEPTION 'At least one criterion must be provided to disable a media';
-    END IF;
-
-    UPDATE media
-    SET visibility = FALSE
-    WHERE (id = p_id OR p_id IS NULL)
-      AND (owner_id = p_owner_id OR p_owner_id IS NULL);
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_delete_post(
-    p_id BIGINT DEFAULT NULL,
-    p_user_id BIGINT DEFAULT NULL
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    -- Vérification qu'au moins un critère est fourni
-    IF p_id IS NULL AND p_user_id IS NULL THEN
-        RAISE EXCEPTION 'At least one criterion must be provided to hide a post';
-    END IF;
-
-    UPDATE posts
-    SET visibility = 2,
-        updated_at = now()
-    WHERE (id = p_id OR p_id IS NULL)
-      AND (user_id = p_user_id OR p_user_id IS NULL);
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_remove_like(
-    p_target_type SMALLINT,
-    p_target_id BIGINT,
-    p_user_id BIGINT
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    DELETE FROM content.likes
-    WHERE target_type = p_target_type
-      AND target_id = p_target_id
-      AND user_id = p_user_id;
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_update_comment(
-    p_comment_id BIGINT,
-    p_user_id BIGINT,
-    p_content TEXT
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    UPDATE content.comments
-    SET content = p_content
-    WHERE id = p_comment_id AND user_id = p_user_id;
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_update_post(
-    p_post_id BIGINT,
-    p_user_id BIGINT,
-    p_content TEXT
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    UPDATE content.posts
-    SET content = p_content,
-        updated_at = now()
-    WHERE id = p_post_id AND user_id = p_user_id;
-END;
-$$;
-CREATE OR REPLACE PROCEDURE content.proc_update_media_owner(
-    p_media_id BIGINT,
-    p_new_owner_id BIGINT
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    UPDATE content.media
-    SET 
-        owner_id = p_new_owner_id,
-        visibility = TRUE -- On s'assure qu'elle devient visible
-    WHERE id = p_media_id;
-END;
-$$;
 ------------------------------------------------------------------------------
 
 SET search_path TO messaging;
 CREATE TABLE IF NOT EXISTS conversations (
-    id BIGSERIAL PRIMARY KEY, -- id unique de la conversation
-    type SMALLINT, -- type de la conversation (0 = message privée, 1 = groupe, 2 = communauté, 3 = annonce)
-    title TEXT DEFAULT NULL, -- titre de la conversation
-    last_message_id BIGINT UNIQUE DEFAULT NULL, -- id du dernier message
-    last_read_by_all_message_id BIGINT DEFAULT NULL, -- id du dernier message lu par tous
-    state SMALLINT DEFAULT 0, -- état de la conversation (0 = active, 1 = supprimée, 2 = archivée)
-    laws SMALLINT[], -- lois applicables à la conversation
-    created_at TIMESTAMPTZ DEFAULT now() -- date de création
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    type SMALLINT,
+    title TEXT,                         -- Modifié : Plus de DEFAULT NULL
+    last_message_id BIGINT UNIQUE,      -- Modifié : Plus de DEFAULT NULL
+    last_read_by_all_message_id BIGINT, -- Modifié : Plus de DEFAULT NULL
+    state SMALLINT,                     -- Modifié : Plus de valeur par défaut (0)
+    laws SMALLINT[],
+    created_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    updated_at TIMESTAMPTZ              -- Modifié : Plus de DEFAULT now()
 );
-
 CREATE INDEX idx_conversations_last_message ON conversations(last_message_id);
 CREATE TABLE IF NOT EXISTS members (
-    id BIGSERIAL PRIMARY KEY, -- id unique du membre
-    conversation_id BIGINT REFERENCES conversations(id), -- id de la conversation
-    user_id BIGINT REFERENCES auth.users(id), -- id de l'utilisateur
-    role SMALLINT DEFAULT 0, -- rôle du membre (0 = membre, 1 = admin, 2 = créateur)
-    joined_at TIMESTAMPTZ DEFAULT now(), -- date d'adhésion
-    unread_count INT DEFAULT 0, -- nombre de messages non lus
-    UNIQUE(conversation_id, user_id)
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    conversation_id BIGINT REFERENCES conversations(id), -- Corrigé : pointe vers 'conversations'
+    user_id BIGINT REFERENCES auth.users(id), -- Harmonisé vers 'users'
+    role SMALLINT,                      -- Modifié : Plus de valeur par défaut (0)
+    joined_at TIMESTAMPTZ,              -- Modifié : Plus de DEFAULT now()
+    unread_count INT,                   -- Modifié : Plus de valeur par défaut (0)
+    created_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    updated_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    UNIQUE(conversation_id, user_id)    -- Note : Virgule ajoutée ici (absente dans l'original)
 );
+CREATE INDEX idx_members_conversation ON members(conversation_id);
+CREATE INDEX idx_members_user ON members(user_id);
 CREATE TABLE IF NOT EXISTS messages (
-    id BIGSERIAL PRIMARY KEY, -- id unique du message
-    conversation_id BIGINT REFERENCES conversations(id), -- id de la conversation
-    sender_id BIGINT NOT NULL, -- id de l'expéditeur
-    message_type SMALLINT NOT NULL DEFAULT 0, -- 0=text, 1=image, 2=publication, 3=vocal, 4=vidéo
-    visibility BOOLEAN DEFAULT TRUE, -- true si le message est visible par les membres (ou supprimé par l'expéditeur)
-    content TEXT, -- contenu du message
-    attachments JSONB, -- pointeurs vers fichiers S3 / metadata
-    created_at TIMESTAMPTZ DEFAULT now() -- date de création
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    conversation_id BIGINT REFERENCES conversations(id), -- Corrigé : pointe vers 'conversations'
+    sender_id BIGINT NOT NULL,          -- Note : Pas de FK explicite ici dans l'original, gardé tel quel
+    message_type SMALLINT NOT NULL,     -- Modifié : Plus de valeur par défaut (0)
+    visibility BOOLEAN,                 -- Modifié : Plus de valeur par défaut (TRUE)
+    content TEXT,
+    attachments JSONB,
+    created_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    updated_at TIMESTAMPTZ              -- Modifié : Plus de DEFAULT now()
 );
-
 CREATE INDEX idx_message_conv_created ON messages(conversation_id, created_at DESC);
-CREATE OR REPLACE FUNCTION messaging.func_create_conversation(
-    p_type SMALLINT,
-    p_members JSONB, -- tableau JSON du type [{ "user_id": "...", "role": 2}, ...]
-    p_title TEXT DEFAULT NULL,
-    p_laws SMALLINT[] DEFAULT '{}'
-) RETURNS BIGINT AS $$
-DECLARE
-    v_conversation_id BIGINT;
-    v_user_ids BIGINT[];
-    v_roles SMALLINT[];
-BEGIN
-    -- 1️⃣ Création de la conversation
-    INSERT INTO messaging.conversations (type, title, laws)
-    VALUES (p_type, p_title, p_laws)
-    RETURNING id INTO v_conversation_id;
-
-    -- 2️⃣ Extraction des données membres depuis le JSON fourni
-    SELECT
-        array_agg((m->>'user_id')::BIGINT),
-        array_agg(COALESCE((m->>'role')::SMALLINT, 0))
-    INTO v_user_ids, v_roles
-    FROM jsonb_array_elements(p_members) AS m;
-
-    -- 3️⃣ Appel à la fonction d’ajout multiple de membres
-    PERFORM messaging.func_create_members_bulk(
-        v_conversation_id,
-        v_user_ids,
-        v_roles
-    );
-
-    -- 4️⃣ Retourne l’ID de la conversation nouvellement créée
-    RETURN v_conversation_id;
-END;
-$$ LANGUAGE plpgsql;
-CREATE OR REPLACE FUNCTION messaging.func_create_members(
-    p_conversation_id BIGINT,
-    p_user_ids BIGINT[],
-    p_roles SMALLINT[] DEFAULT '{}'
-)
-RETURNS BIGINT[]
-LANGUAGE sql
-AS $$
-WITH input_data AS (
-    SELECT
-        unnest(p_user_ids) AS user_id,
-        unnest(
-            CASE 
-                WHEN array_length(p_roles,1) IS NULL THEN array_fill(0::smallint, ARRAY[array_length(p_user_ids,1)])
-                ELSE p_roles
-            END
-        ) AS role
-),
-inserted AS (
-    INSERT INTO messaging.members (conversation_id, user_id, role)
-    SELECT p_conversation_id, user_id, role
-    FROM input_data
-    ON CONFLICT (conversation_id, user_id) DO UPDATE
-        SET role = EXCLUDED.role
-    RETURNING id
-)
-SELECT array_agg(id) FROM inserted;
-$$;
-CREATE OR REPLACE FUNCTION messaging.func_create_message(
-    p_conversation_id BIGINT,
-    p_sender_id BIGINT,
-    p_content TEXT,
-    p_attachments JSONB,
-    p_message_type SMALLINT DEFAULT 0,
-    p_visibility BOOLEAN DEFAULT TRUE
-) RETURNS BIGINT
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    v_message_id BIGINT;
-    v_user_id BIGINT;
-BEGIN
-    -- 1️⃣ Insertion du message
-    INSERT INTO messaging.messages(conversation_id, sender_id, message_type, visibility, content, attachments)
-    VALUES (p_conversation_id, p_sender_id, p_message_type, p_visibility, p_content, p_attachments)
-    RETURNING id INTO v_message_id;
-
-    -- 2️⃣ Met à jour la conversation via la procédure proc_update_conversation
-    CALL proc_update_conversation(
-        p_conversation_id := p_conversation_id,
-        p_last_message_id := v_message_id
-    );
-
-    -- 3️⃣ Met à jour les unread_count pour tous les membres sauf l’expéditeur
-    FOR v_user_id IN
-        SELECT user_id
-        FROM messaging.members
-        WHERE conversation_id = p_conversation_id
-          AND user_id <> p_sender_id
-    LOOP
-        CALL proc_update_member(
-            p_conversation_id := p_conversation_id,
-            p_user_id := v_user_id,
-            p_unread_count := (
-                SELECT unread_count + 1
-                FROM messaging.members
-                WHERE conversation_id = p_conversation_id
-                  AND user_id = v_user_id
-            )
-        );
-    END LOOP;
-
-    -- 4️⃣ Retourne l’identifiant du message nouvellement créé
-    RETURN v_message_id;
-END;
-$$;
 CREATE OR REPLACE FUNCTION messaging.func_load_conversation(
     p_user_id BIGINT
 )
@@ -1152,177 +592,24 @@ AS $$
       AND visibility = TRUE  -- exclut les messages supprimés
     ORDER BY created_at ASC;
 $$;
-CREATE OR REPLACE PROCEDURE proc_delete_conversation(
-    p_conversation_id BIGINT
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    UPDATE messaging.conversations
-    SET state = 1
-    WHERE id = p_conversation_id;
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_delete_member(
-    p_conversation_id BIGINT,
-    p_user_id BIGINT
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    DELETE FROM messaging.members
-    WHERE conversation_id = p_conversation_id AND user_id = p_user_id;
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_delete_messages(
-    p_message_ids BIGINT[],
-    p_user_id BIGINT
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    UPDATE messaging.messages
-    SET visibility = FALSE
-    WHERE id = ANY(p_message_ids)
-      AND sender_id = p_user_id
-      AND visibility = TRUE;
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_update_conversation(
-    p_conversation_id BIGINT,
-    p_title TEXT DEFAULT NULL,
-    p_last_message_id BIGINT DEFAULT NULL,
-    p_state SMALLINT DEFAULT NULL,
-    p_laws SMALLINT[] DEFAULT NULL
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    UPDATE conversations
-    SET
-        title = COALESCE(p_title, title),
-        last_message_id = COALESCE(p_last_message_id, last_message_id),
-        state = COALESCE(p_state, state),
-        laws = COALESCE(p_laws, laws)
-    WHERE id = p_conversation_id;
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_update_member(
-    p_conversation_id BIGINT,
-    p_user_id BIGINT,
-    p_role SMALLINT DEFAULT NULL,
-    p_unread_count INT DEFAULT NULL
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    UPDATE members
-    SET
-        role = COALESCE(p_role, role),
-        unread_count = COALESCE(p_unread_count, unread_count)
-    WHERE conversation_id = p_conversation_id
-      AND user_id = p_user_id;
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_update_message(
-    p_message_id BIGINT,
-    p_user_id BIGINT,
-    p_content TEXT
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    UPDATE messaging.messages
-    SET content = p_content,
-        updated_at = now()
-    WHERE id = p_message_id
-      AND sender_id = p_user_id
-      AND message_type = 0 -- uniquement texte
-      AND visibility = TRUE;       -- actif
-END;
-$$;
-CREATE OR REPLACE PROCEDURE proc_update_user_role_conversation(
-    p_conversation_id BIGINT,
-    p_user_id BIGINT
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    -- Met à jour la table 'members'
-    UPDATE members
-    SET 
-        -- Bascule le rôle entre 0 et 1
-        -- Si le rôle est 0 (membre), il devient 1 (admin)
-        -- Si le rôle est 1 (admin), il devient 0 (membre)
-        -- Si le rôle est 2 (créateur) ou autre, il reste inchangé
-        role = CASE
-                 WHEN role = 0 THEN 1
-                 WHEN role = 1 THEN 0
-                 ELSE role 
-               END
-    WHERE 
-        conversation_id = p_conversation_id 
-        AND user_id = p_user_id;
-END;
-$$;
+
 ------------------------------------------------------------------------------
 
 SET search_path TO moderation;
 CREATE TABLE IF NOT EXISTS reports (
-    id BIGSERIAL PRIMARY KEY, -- id unique du rapport
-    actor_id BIGINT REFERENCES auth.users(id), -- id de l'utilisateur ayant signalé
-    target_type SMALLINT NOT NULL, -- type de la cible (user/post/comment/etc)
-    target_id BIGINT NOT NULL, -- id de la cible
-    reason TEXT, -- raison du signalement
-    rationale TEXT DEFAULT NULL, -- explication des mesures prises
-    state SMALLINT DEFAULT 0, -- état du rapport (0=pending, 1=reviewed, 2=resolved)
-    created_at TIMESTAMPTZ DEFAULT now() -- date de création
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    actor_id BIGINT REFERENCES auth.users(id), -- Harmonisé vers 'users'
+    target_type SMALLINT NOT NULL,
+    target_id BIGINT NOT NULL,
+    reason TEXT,
+    rationale TEXT,                     -- Modifié : Plus de DEFAULT NULL
+    state SMALLINT,                     -- Modifié : Plus de valeur par défaut (0)
+    created_at TIMESTAMPTZ              -- Modifié : Plus de DEFAULT now()
 );
-
 CREATE INDEX idx_reports_actor ON reports(actor_id);
 CREATE INDEX idx_reports_created ON reports(created_at);
-CREATE OR REPLACE FUNCTION moderation.func_load_reports_by_state(
-    p_state SMALLINT,
-    p_limit INT
-)
--- 1. Définit la structure de retour (correspond à la table 'reports')
-RETURNS TABLE (
-    id BIGINT,
-    actor_id BIGINT,
-    target_type SMALLINT,
-    target_id BIGINT,
-    reason TEXT,
-    rationale TEXT,
-    state SMALLINT,
-    created_at TIMESTAMPTZ
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    -- 2. Retourne le résultat de la requête
-    RETURN QUERY
-    SELECT
-        r.id,
-        r.actor_id,
-        r.target_type,
-        r.target_id,
-        r.reason,
-        r.rationale,
-        r.state,
-        r.created_at
-    FROM
-        moderation.reports AS r
-    WHERE
-        -- 3. Filtre par l'état demandé
-        r.state = p_state
-    ORDER BY
-        -- 4. Trie par date de création (les "premiers" = les plus anciens)
-        r.created_at ASC
-    LIMIT
-        -- 5. Limite au nombre N demandé
-        p_limit;
-END;
-$$;
+CREATE INDEX idx_reports_target ON reports(target_type, target_id);
+CREATE INDEX idx_reports_state ON reports(state);
 CREATE OR REPLACE PROCEDURE proc_create_report(
     p_actor_id BIGINT,
     p_target_type SMALLINT,
@@ -1354,6 +641,7 @@ BEGIN
         id = p_report_id;
 END;
 $$;
+
 ------------------------------------------------------------------------------
 
 SET search_path TO views;

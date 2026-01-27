@@ -7,8 +7,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables" // Pour ToleranceTimeSeconds
 )
@@ -21,71 +19,31 @@ func DeriveNextSecret(secretCurrent, secretLast, masterToken, deviceToken string
 }
 
 // RotateRatchet effectue la rotation atomique et sécurisée
-func RotateRatchet(ctx context.Context, userID int, clientCurrentSecret string, incomingJWT string) error {
-	// 1. FILTRE STRICT : On cherche par UserID ET par le Secret fourni.
-	// Si le secret n'est pas le bon, Redis ne renverra rien, donc erreur.
-	filter := map[string]any{
-		"user_id":        map[string]any{"$eq": userID},
-		"current_secret": map[string]any{"$eq": clientCurrentSecret},
-	}
-
-	sessionsData, err := redis.Sessions.Get(ctx, filter)
-	if err != nil || len(sessionsData) == 0 {
+func RotateRatchet(ctx context.Context, userID int64, clientCurrentSecret string, incomingJWT string) error {
+	sessionRaw, err := redis.RedisLoadSession(userID, "", "", clientCurrentSecret)
+	if err != nil {
 		return errors.New("session introuvable ou secret invalide")
 	}
-
-	// On prend la session trouvée (forcément la bonne grâce au filtre)
-	sessionRaw := sessionsData[0]
-	var s domain.SessionsRequest
-	if err := pkg.ToStruct(sessionRaw, &s); err != nil {
+	var newCurrentSecret, newLastSecret string
+	if sessionRaw.CurrentSecret != "" && sessionRaw.LastSecret != "" {
+		newCurrentSecret = DeriveNextSecret(sessionRaw.CurrentSecret, sessionRaw.LastSecret, sessionRaw.MasterToken, sessionRaw.DeviceToken)
+		newLastSecret = sessionRaw.CurrentSecret
+	} else {
+		newCurrentSecret = DeriveNextSecret(sessionRaw.DeviceToken, sessionRaw.MasterToken, sessionRaw.MasterToken, sessionRaw.DeviceToken)
+		newLastSecret = sessionRaw.DeviceToken
+	}
+	sessionRaw.CurrentSecret = newCurrentSecret
+	sessionRaw.LastSecret = newLastSecret
+	sessionRaw.LastJWT = incomingJWT
+	sessionRaw.ToleranceTime = time.Now().Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second)
+	if err := redis.RedisUpdateSession(sessionRaw); err != nil {
 		return err
 	}
-
-	// 2. Calcul des Nouveaux Secrets
-	var newCurrentSecret, newLastSecret string
-
-	if s.CurrentSecret != "" && s.LastSecret != "" {
-		newCurrentSecret = DeriveNextSecret(s.CurrentSecret, s.LastSecret, s.MasterToken, s.DeviceToken)
-		newLastSecret = s.CurrentSecret // L'actuel devient le "last" (N)
-	} else {
-		// Fallback (Recovery)
-		newCurrentSecret = DeriveNextSecret(s.DeviceToken, s.MasterToken, s.MasterToken, s.DeviceToken)
-		newLastSecret = s.DeviceToken
-	}
-
-	// 3. Mise à jour Redis
-	updateData := map[string]any{
-		"current_secret": newCurrentSecret,
-		"last_secret":    newLastSecret,
-
-		// Le token fourni par l'utilisateur devient le "dernier connu" pour la tolérance
-		"last_jwt": incomingJWT,
-
-		// On définit la fenêtre de tolérance à partir de MAINTENANT
-		"tolerance_time": time.Now().Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second),
-
-		// ON NE TOUCHE PAS A EXPIRES_AT (C'est celle du MasterToken)
-	}
-
-	updateFilter := map[string]any{"id": map[string]any{"$eq": s.ID}}
-	return redis.Sessions.Update(ctx, updateFilter, updateData)
+	return redis.EnqueueDB(ctx, sessionRaw.ID, 0, redis.EntitySession, redis.ActionUpdate, sessionRaw, redis.TargetMongo)
 }
 
 // ResetRatchet effectue un hard-reset de la session (Changement MasterToken)
-func ResetRatchet(ctx context.Context, sessionID int, newMasterToken, deviceToken, oldJWT string) (string, error) {
-	// Calcul de l'état initial du Ratchet selon tes règles :
-	// Secret 0 = MasterToken
-	// Secret 1 = DeviceToken
-	// Secret 2 (Le premier Current) = f(S1, S0, Master, Device)
-
-	// S0 (Last dans la logique d'init, mais ici Last sera DeviceToken)
-	// S1 (DeviceToken)
-
-	// On applique ta règle serveur :
-	// current_secret = new_secret (C'est à dire le premier dérivé)
-	// last_secret = Device_Token
-
-	// Calcul du premier "Current Secret" utilisable
+func ResetRatchet(ctx context.Context, sessionID int64, newMasterToken, deviceToken, oldJWT string) (string, error) {
 	if newMasterToken == "" || deviceToken == "" {
 		return "", errors.New("ResetRatchet: newMasterToken et deviceToken ne peuvent pas être vides")
 	}

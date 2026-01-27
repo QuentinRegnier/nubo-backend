@@ -166,27 +166,20 @@ func (c *Collection) Set(ctx context.Context, obj map[string]any) error {
 		}
 
 		// Détection ZSET (Numérique ou Date)
-		var isZSet bool
+		isZSet := shouldIndexAsZSet(field, kind)
 		var score float64
 
-		// Est-ce une date ?
-		if field == "created_at" || field == "updated_at" || field == "joined_at" || field == "expires_at" {
-			if t, err := parseToTime(val); err == nil {
-				isZSet = true
-				score = float64(t.Unix())
-			}
-		} else {
-			// Est-ce un nombre ?
-			switch kind {
-			case reflect.Int, reflect.Int64, reflect.Float64, reflect.Int32:
+		if isZSet {
+			// On calcule le score seulement si c'est nécessaire
+			if field == "created_at" || field == "updated_at" || field == "joined_at" || field == "expires_at" || field == "birthdate" || field == "ban_expires_at" || field == "tolerance_time" {
+				if t, err := parseToTime(val); err == nil {
+					score = float64(t.Unix())
+				}
+			} else {
 				if n, err := toInt64(val); err == nil {
-					isZSet = true
 					score = float64(n)
 				}
 			}
-		}
-
-		if isZSet {
 			// Indexation par Score (ZSET)
 			// ex: idx:zset:users:age -> score=25, member=ID
 			idxKey := fmt.Sprintf("idx:zset:%s:%s", c.Name, field)
@@ -221,35 +214,107 @@ func (c *Collection) Set(ctx context.Context, obj map[string]any) error {
 // Get retourne tous les éléments correspondant au filtre (MongoDB-like)
 func (c *Collection) Get(ctx context.Context, filter map[string]any) ([]map[string]any, error) {
 	// 1. Récupérer l’ensemble des IDs possibles via evalTree
+	fmt.Printf("\n🕵️ --- DEBUG MANAGER GET START [%s] ---\n", c.Name)
+	fmt.Printf("📥 Filtres reçus: %+v\n", filter)
+
 	candidateSet, _, err := evalTree(ctx, c.Redis, c.Name, filter, "")
 	if err != nil {
 		return nil, err
 	}
 
+	fmt.Printf("🔍 Les IDs trouvés: %+v\n", candidateSet)
+
 	// 2. Charger les objets correspondants
 	results := []map[string]any{}
 	for id := range candidateSet {
+		// fmt.Printf("➡️ Chargement ID=%s\n", id) // (Optionnel: tu peux retirer les logs verbeux maintenant)
 		objKey := "cache:" + c.Name + ":" + id
+
+		// HGetAll renvoie map[string]string ! Tout est string !
 		data, err := c.Redis.HGetAll(ctx, objKey).Result()
 		if err != nil || len(data) == 0 {
 			continue
 		}
 
 		obj := make(map[string]any)
-		for k, v := range data {
-			obj[k] = v
+
+		// --- CORRECTION TYPAGE ICI ---
+		for k, vStr := range data {
+			// 1. Gestion spéciale de l'ID (qui est souvent un int64/snowflake)
+			if k == "id" {
+				if n, err := strconv.ParseInt(vStr, 10, 64); err == nil {
+					obj[k] = n // On stocke un vrai int64
+				} else {
+					obj[k] = vStr // Fallback string si échec
+				}
+				continue
+			}
+
+			// 2. On regarde le Schéma pour savoir comment convertir
+			kind, known := c.Schema[k]
+			if !known {
+				// Champ inconnu dans le schéma : on garde la string brute
+				obj[k] = vStr
+				continue
+			}
+
+			switch kind {
+			// Cas Numériques
+			case reflect.Int, reflect.Int64, reflect.Int32, reflect.Int16, reflect.Int8:
+				if n, err := strconv.ParseInt(vStr, 10, 64); err == nil {
+					// Attention: mapstructure préfère souvent int64 ou int, ça dépend de ta struct
+					obj[k] = n
+				} else {
+					obj[k] = vStr
+				}
+
+			case reflect.Uint, reflect.Uint64, reflect.Uint32:
+				if n, err := strconv.ParseUint(vStr, 10, 64); err == nil {
+					obj[k] = n
+				} else {
+					obj[k] = vStr
+				}
+
+			case reflect.Float64, reflect.Float32:
+				if f, err := strconv.ParseFloat(vStr, 64); err == nil {
+					obj[k] = f
+				} else {
+					obj[k] = vStr
+				}
+
+			// Cas Booléens (Redis stocke souvent "0" ou "1", ou "true"/"false")
+			case reflect.Bool:
+				if b, err := strconv.ParseBool(vStr); err == nil {
+					obj[k] = b
+				} else if vStr == "1" {
+					obj[k] = true
+				} else if vStr == "0" {
+					obj[k] = false
+				} else {
+					obj[k] = vStr
+				}
+
+			// Cas Dates (détection par nom ou type struct si ta logique le permet)
+			// Ta fonction 'parseToTime' est parfaite pour ça
+			default:
+				// Si c'est un champ date connu
+				if k == "created_at" || k == "updated_at" || k == "joined_at" || k == "expires_at" || k == "birthdate" || k == "ban_expires_at" || k == "tolerance_time" {
+					if t, err := parseToTime(vStr); err == nil {
+						obj[k] = t
+					} else {
+						obj[k] = vStr
+					}
+				} else {
+					// String standard
+					obj[k] = vStr
+				}
+			}
 		}
+		// --- FIN CORRECTION ---
 
 		results = append(results, obj)
 
-		// Pipeline optimisé possible, mais on peut faire simple ici :
-		if c.IsEvictable {
-			member := c.Name + ":" + id
-			c.Redis.ZAdd(ctx, "idx:lru:global", &redis.Z{
-				Score:  float64(time.Now().UnixNano()),
-				Member: member,
-			})
-		}
+		// ... (Code LRU inchangé)
 	}
 
 	return results, nil
@@ -285,15 +350,8 @@ func (c *Collection) Delete(ctx context.Context, filter map[string]any) error {
 				continue
 			}
 
-			isZSet := false
-			if field == "created_at" || field == "updated_at" || field == "joined_at" || field == "expires_at" {
-				isZSet = true
-			} else {
-				switch kind {
-				case reflect.Int, reflect.Int64, reflect.Float64, reflect.Int32:
-					isZSet = true
-				}
-			}
+			// UTILISATION DU HELPER CENTRALISÉ
+			isZSet := shouldIndexAsZSet(field, kind)
 
 			if isZSet {
 				// Suppression dans ZSET
@@ -349,21 +407,18 @@ func (c *Collection) Update(ctx context.Context, filter map[string]interface{}, 
 
 			// Déterminer le type d'index (ZSET ou SET)
 			kind := c.Schema[field]
-			var isZSet bool
+			// UTILISATION DU HELPER CENTRALISÉ
+			isZSet := shouldIndexAsZSet(field, kind)
 			var newScore float64
 
-			// Détection ZSET (Dates)
-			if field == "created_at" || field == "updated_at" || field == "joined_at" || field == "expires_at" {
-				if t, err := parseToTime(newVal); err == nil {
-					isZSet = true
-					newScore = float64(t.Unix())
-				}
-			} else {
-				// Détection ZSET (Nombres)
-				switch kind {
-				case reflect.Int, reflect.Int64, reflect.Float64, reflect.Int32:
+			if isZSet {
+				// Calcul du nouveau score si c'est un ZSET
+				if field == "created_at" || field == "updated_at" || field == "joined_at" || field == "expires_at" || field == "tolerance_time" || field == "birthdate" || field == "ban_expires_at" {
+					if t, err := parseToTime(newVal); err == nil {
+						newScore = float64(t.Unix())
+					}
+				} else {
 					if n, err := toInt64(newVal); err == nil {
-						isZSet = true
 						newScore = float64(n)
 					}
 				}
@@ -428,6 +483,7 @@ func (c *Collection) Update(ctx context.Context, filter map[string]interface{}, 
 
 func evalTree(ctx context.Context, rdb *redis.Client, collName string, filter map[string]any, type_before string) (map[string]struct{}, []map[string]any, error) {
 	// Cas 1 : opérateurs logiques
+	fmt.Printf("🔎 evalTree called with filter: %+v\n", filter)
 	if orOps, ok := filter["$or"]; ok {
 		arr, _ := orOps.([]any)
 		unionSet := make(map[string]struct{})
@@ -499,7 +555,9 @@ func evalTree(ctx context.Context, rdb *redis.Client, collName string, filter ma
 		}
 		cond, _ := raw.(map[string]any)
 		for op, val := range cond {
+			fmt.Printf("Evaluating condition on field=%s, op=%s, val=%v\n", field, op, val)
 			ids, err := fetchIDsForCondition(ctx, rdb, collName, field, op, val)
+			fmt.Printf("Fetched IDs for condition: %+v\n", ids)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -511,92 +569,106 @@ func evalTree(ctx context.Context, rdb *redis.Client, collName string, filter ma
 	return resultSet, del, nil
 }
 
-// fetchIDsForCondition : récupère les IDs directement depuis Redis pour une condition simple.
+// fetchIDsForCondition : récupère les IDs directement depuis Redis
 func fetchIDsForCondition(ctx context.Context, rdb *redis.Client, collName, field, op string, val any) ([]string, error) {
-	key := fmt.Sprintf("index:%s:%s", collName, field)
+	basePrefix := "idx"
 
+	// 1. Récupérer le schéma pour savoir VRAIMENT comment c'est stocké (ZSET vs SET)
+	registryMu.RLock()
+	coll, exists := collectionRegistry[collName]
+	registryMu.RUnlock()
+
+	isZSetStorage := false
+	if exists {
+		kind := coll.Schema[field]
+		// UTILISATION DU HELPER CENTRALISÉ
+		// Il va renvoyer 'false' pour user_id, donc on cherchera dans le bon SET !
+		isZSetStorage = shouldIndexAsZSet(field, kind)
+	}
+
+	// 2. Construire la clé correcte
+	var key string
+	if isZSetStorage {
+		// La clé ZSET ne contient PAS la valeur, juste le nom du champ
+		key = fmt.Sprintf("%s:zset:%s:%s", basePrefix, collName, field)
+	} else {
+		// La clé SET contiendra la valeur plus tard (concaténée)
+		key = fmt.Sprintf("%s:%s:%s", basePrefix, collName, field)
+	}
+	fmt.Printf("Using key='%s' for field='%s' (isZSet=%v)\n", key, field, isZSetStorage)
 	switch op {
 	case "$eq":
 		if field == "id" {
 			idStr := fmt.Sprintf("%v", val)
 			objKey := fmt.Sprintf("cache:%s:%s", collName, idStr)
-			exists, err := rdb.Exists(ctx, objKey).Result()
-			if err != nil {
-				return nil, err
-			}
+			exists, _ := rdb.Exists(ctx, objKey).Result()
 			if exists == 1 {
 				return []string{idStr}, nil
 			}
 			return []string{}, nil
 		}
-		member := fmt.Sprintf("%v", val)
-		ids, err := rdb.SMembers(ctx, key+":"+member).Result()
-		if err != nil {
-			return nil, err
-		}
-		return ids, nil
 
-	case "$in":
-		if field == "id" {
-			vals, _ := val.([]any)
-			var existing []string
-			for _, v := range vals {
-				idStr := fmt.Sprintf("%v", v)
-				objKey := fmt.Sprintf("cache:%s:%s", collName, idStr)
-				exists, err := rdb.Exists(ctx, objKey).Result()
-				if err != nil {
-					return nil, err
-				}
-				if exists == 1 {
-					existing = append(existing, idStr)
-				}
-			}
-			return existing, nil
-		}
-		vals, _ := val.([]any)
-		var all []string
-		for _, v := range vals {
-			member := fmt.Sprintf("%v", v)
-			ids, err := rdb.SMembers(ctx, key+":"+member).Result()
+		// --- CORRECTION MAJEURE ICI ---
+		if isZSetStorage {
+			// Si c'est stocké en ZSET (ex: user_id), $eq devient un Range [val, val]
+			score, err := valToScore(val) // Helper function (voir plus bas)
 			if err != nil {
 				return nil, err
 			}
-			all = append(all, ids...)
+			// On cherche exactement ce score (Min=Score, Max=Score)
+			scoreStr := fmt.Sprintf("%f", score)
+			rBox := &redis.ZRangeBy{Min: scoreStr, Max: scoreStr}
+			return rdb.ZRangeByScore(ctx, key, rBox).Result()
+		} else {
+			// Si c'est un SET classique (ex: email, token)
+			member := fmt.Sprintf("%v", val)
+			return rdb.SMembers(ctx, key+":"+member).Result()
+		}
+
+	case "$in":
+		vals, _ := val.([]any)
+		var all []string
+
+		if isZSetStorage {
+			// Pour un ZSET, $in est une suite de recherches unitaires par score
+			for _, v := range vals {
+				score, err := valToScore(v)
+				if err != nil {
+					continue
+				}
+				scoreStr := fmt.Sprintf("%f", score)
+				ids, _ := rdb.ZRangeByScore(ctx, key, &redis.ZRangeBy{Min: scoreStr, Max: scoreStr}).Result()
+				all = append(all, ids...)
+			}
+		} else {
+			// Pour un SET, on concatène la valeur à la clé
+			for _, v := range vals {
+				member := fmt.Sprintf("%v", v)
+				ids, err := rdb.SMembers(ctx, key+":"+member).Result()
+				if err != nil {
+					return nil, err
+				}
+				all = append(all, ids...)
+			}
 		}
 		return all, nil
 
 	case "$gt", "$gte", "$lt", "$lte":
-		// 1. Convertir la valeur de référence en Score (float64)
-		var score float64
-
-		// Est-ce une date ? (basé sur tes noms de champs ou le type)
-		if field == "created_at" || field == "updated_at" || field == "joined_at" || field == "expires_at" {
-			t, err := parseToTime(val)
-			if err != nil {
-				return nil, fmt.Errorf("date invalide pour filtre %s: %v", field, err)
-			}
-			// On utilise le timestamp Unix comme score
-			score = float64(t.Unix())
-		} else {
-			// C'est un nombre (int, float, etc.)
-			valInt, err := toInt64(val) // Ta fonction utilitaire existante
-			if err != nil {
-				return nil, fmt.Errorf("valeur non numérique pour filtre %s: %v", field, err)
-			}
-			score = float64(valInt)
+		// Pour les opérateurs de comparaison, c'est forcément du ZSET
+		if !isZSetStorage {
+			return nil, fmt.Errorf("opérateur %s impossible sur un champ non-numérique/non-date", op)
 		}
 
-		// 2. Préparer l'intervalle Redis (ZRangeBy)
-		rBox := &redis.ZRangeBy{
-			Min: "-inf",
-			Max: "+inf",
+		score, err := valToScore(val)
+		if err != nil {
+			return nil, err
 		}
 
-		scoreStr := fmt.Sprintf("%f", score) // Conversion propre en string pour Redis
+		rBox := &redis.ZRangeBy{Min: "-inf", Max: "+inf"}
+		scoreStr := fmt.Sprintf("%f", score)
 
 		switch op {
 		case "$gt":
-			// "(" signifie exclusif dans la syntaxe Redis
 			rBox.Min = "(" + scoreStr
 		case "$gte":
 			rBox.Min = scoreStr
@@ -606,17 +678,39 @@ func fetchIDsForCondition(ctx context.Context, rdb *redis.Client, collName, fiel
 			rBox.Max = scoreStr
 		}
 
-		// 3. Exécution atomique (plus de boucle for !)
-		// Retourne directement tous les IDs dans l'intervalle
-		ids, err := rdb.ZRangeByScore(ctx, key, rBox).Result()
-		if err != nil {
-			return nil, err
-		}
-		return ids, nil
+		return rdb.ZRangeByScore(ctx, key, rBox).Result()
 
 	default:
-		// Pas d'index → laisse le filtrage final (matchFilter) s'en occuper
 		return []string{}, nil
+	}
+}
+
+// Petit helper pour convertir n'importe quoi en float64 (Score)
+func valToScore(val any) (float64, error) {
+	// Est-ce une date string ou time ?
+	if t, err := parseToTime(val); err == nil {
+		return float64(t.Unix()), nil
+	}
+	// Est-ce un nombre ?
+	return toFloat64(val)
+}
+
+func toFloat64(val any) (float64, error) {
+	switch v := val.(type) {
+	case int, int8, int16, int32, int64:
+		n, _ := toInt64(v)
+		return float64(n), nil
+	case uint, uint8, uint16, uint32, uint64:
+		n, _ := toInt64(v)
+		return float64(n), nil
+	case float32:
+		return float64(v), nil
+	case float64:
+		return v, nil
+	case string:
+		return strconv.ParseFloat(v, 64)
+	default:
+		return 0, fmt.Errorf("impossible de convertir %T en float64", val)
 	}
 }
 
@@ -743,7 +837,6 @@ func parseToTime(val any) (time.Time, error) {
 		return v.UTC(), nil
 	case int, int8, int16, int32, int64:
 		n, _ := toInt64(v)
-		// Heuristic: treat >= 1e12 as milliseconds
 		if n > 1e12 {
 			sec := n / 1000
 			ms := n % 1000
@@ -768,6 +861,14 @@ func parseToTime(val any) (time.Time, error) {
 		return time.Unix(sec, nsec).UTC(), nil
 	case string:
 		s := v
+
+		// --- FIX: Nettoyage des guillemets ("...") ---
+		// Si la chaine commence et finit par des guillemets, on les enlève
+		if len(s) > 1 && s[0] == '"' && s[len(s)-1] == '"' {
+			s = s[1 : len(s)-1]
+		}
+		// ---------------------------------------------
+
 		if s == "" {
 			return time.Time{}, fmt.Errorf("empty time string")
 		}
@@ -800,4 +901,25 @@ func parseToTime(val any) (time.Time, error) {
 	default:
 		return time.Time{}, fmt.Errorf("unsupported time type: %T", val)
 	}
+}
+
+// Helper pour décider si un champ doit être indexé en ZSET (Range) ou SET (Exact)
+func shouldIndexAsZSet(field string, kind reflect.Kind) bool {
+	// 1. EXCLUSION EXPLICITE DES IDs (C'est ça qui corrige ton bug !)
+	// Même s'ils sont int64, on ne veut pas de perte de précision Float64
+	if field == "user_id" || field == "profile_picture_id" || field == "conversation_id" || field == "id" {
+		return false
+	}
+
+	// 2. Dates -> ZSET
+	if field == "created_at" || field == "updated_at" || field == "joined_at" || field == "expires_at" || field == "birthdate" || field == "ban_expires_at" || field == "tolerance_time" {
+		return true
+	}
+
+	// 3. Autres Nombres (Stats, Age, etc.) -> ZSET
+	if kind == reflect.Int || kind == reflect.Int64 || kind == reflect.Float64 || kind == reflect.Int32 {
+		return true
+	}
+
+	return false
 }

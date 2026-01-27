@@ -1,11 +1,14 @@
 CREATE TABLE IF NOT EXISTS members (
-    id BIGSERIAL PRIMARY KEY, -- id unique du membre
-    conversation_id BIGINT REFERENCES conversations_meta(id), -- id de la conversation
-    user_id BIGINT REFERENCES auth.users(id), -- id de l'utilisateur
-    role SMALLINT DEFAULT 0, -- rôle du membre (0 = membre, 1 = admin, 2 = créateur)
-    joined_at TIMESTAMPTZ DEFAULT now(), -- date d'adhésion
-    unread_count INT DEFAULT 0, -- nombre de messages non lus
-    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
-    updated_at TIMESTAMPTZ DEFAULT now() -- date de dernière mise à jour
-    UNIQUE(conversation_id, user_id)
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    conversation_id BIGINT REFERENCES conversations(id), -- Corrigé : pointe vers 'conversations'
+    user_id BIGINT REFERENCES users(id), -- Harmonisé vers 'users'
+    role SMALLINT,                      -- Modifié : Plus de valeur par défaut (0)
+    joined_at TIMESTAMPTZ,              -- Modifié : Plus de DEFAULT now()
+    unread_count INT,                   -- Modifié : Plus de valeur par défaut (0)
+    created_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    updated_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    UNIQUE(conversation_id, user_id)    -- Note : Virgule ajoutée ici (absente dans l'original)
 );
+
+CREATE INDEX idx_members_conversation ON members(conversation_id);
+CREATE INDEX idx_members_user ON members(user_id);

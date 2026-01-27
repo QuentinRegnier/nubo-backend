@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -110,8 +113,8 @@ func SignUpHandler(c *gin.Context) {
 	req.School = input.School
 	req.Work = input.Work
 	req.Badges = []string{}
-	req.Desactivated = true // Par défaut
-	req.Banned = false      // Par défaut
+	req.Desactivated = false // Par défaut
+	req.Banned = false       // Par défaut
 	req.BanReason = ""
 	req.BanExpiresAt = time.Time{}
 	req.CreatedAt = time.Time{}
@@ -119,26 +122,6 @@ func SignUpHandler(c *gin.Context) {
 
 	// --- C. LOGIQUE UPLOAD ---
 	fileHeader, errFile := c.FormFile("profile_picture")
-	var mediaID int = -1 // Valeur par défaut "pas d'image"
-
-	if errFile == nil {
-		file, err := fileHeader.Open()
-		if err != nil {
-			c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Cannot read file"})
-			return
-		}
-		defer file.Close()
-
-		// On récupère l'ID entier de la BDD
-		mediaID, err = service.UploadMedia(file, "profile_"+req.Username, "")
-		if err != nil {
-			fmt.Printf("❌ ERREUR UPLOAD : %v\n", err)
-			c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Internal error (image upload)"})
-			return
-		}
-	}
-
-	req.ProfilePictureID = mediaID
 
 	// --- D. CRÉATION USER & TOKEN ---
 	var sessions domain.SessionsRequest
@@ -149,7 +132,7 @@ func SignUpHandler(c *gin.Context) {
 	sessions.DeviceInfo = input.DeviceInfo
 	sessions.IPHistory = []string{c.ClientIP()}
 	sessions.CurrentSecret = ""
-	sessions.LastSecret = input.DeviceToken
+	sessions.LastSecret = sessions.DeviceToken
 	sessions.LastJWT = ""
 	sessions.ToleranceTime = time.Now().Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second)
 	sessions.CreatedAt = time.Time{}
@@ -159,14 +142,15 @@ func SignUpHandler(c *gin.Context) {
 	// Les arguments 'desactivated', 'banned', etc. sont maintenant DANS 'req'.
 	// J'assume que la signature de FuncCreateUser a changé pour accepter (req, token, ...).
 
-	userID, err := service.CreateUser(req, sessions)
+	userID, JWT, err := service.CreateUser(&req, &sessions, fileHeader, errFile)
 
 	if err == nil {
 		//go StartWebsocket()
 
 		c.JSON(http.StatusOK, domain.SignUpResponse{
 			UserID:           userID,
-			Token:            sessions.MasterToken,
+			MasterToken:      sessions.MasterToken,
+			JWT:              JWT,
 			ExpiresAt:        sessions.ExpiresAt,
 			Message:          "User created successfully",
 			ProfilePictureID: req.ProfilePictureID, // On renvoie l'UUID au front pour affichage direct
@@ -236,11 +220,11 @@ func LoginHandler(c *gin.Context) {
 		}
 	}
 
-	// Ajout de l'IP du client manuellement
-	input.IPAddress = []string{c.ClientIP()}
+	IPAddress := []string{c.ClientIP()}
 
 	// --- B. MAPPING VERS STRUCTURE INTERNE ---
-	user, sessions, err = service.Login(input)
+	var JWT string
+	user, sessions, JWT, err = service.Login(input, IPAddress)
 
 	if err == nil {
 		//go StartWebsocket()
@@ -268,7 +252,8 @@ func LoginHandler(c *gin.Context) {
 			BanExpiresAt:  user.BanExpiresAt,
 			CreatedAt:     user.CreatedAt,
 			UpdatedAt:     user.UpdatedAt,
-			Token:         sessions.MasterToken,
+			MasterToken:   sessions.MasterToken,
+			JWT:           JWT,
 			ExpiresAt:     sessions.ExpiresAt,
 			Message:       "Login successful",
 		})
@@ -327,7 +312,6 @@ func LoginHandler(c *gin.Context) {
 // @Param        X-Secret      header string true "Secret actuel de la session"
 // @Param        X-Signature   header string true "Signature HMAC calculée"
 // @Param        X-Timestamp   header string true "Timestamp de la requête"
-// @Param        request       body     domain.RenewJWTInput true "ID de l'utilisateur"
 // @Success      200  {object}  domain.RenewJWTResponse
 // @Failure      400  {object}  domain.ErrorResponse "Requête invalide"
 // @Failure      401  {object}  domain.ErrorResponse "Authentification / Signature refusée"
@@ -377,7 +361,7 @@ func RenewJWT(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "UserID manquant dans le token"})
 		return
 	}
-	userID, err := strconv.Atoi(sub) // Conversion en int
+	userID, err := strconv.ParseInt(sub, 10, 64) // Conversion en int64
 	if err != nil {
 		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Format UserID invalide"})
 		return
@@ -392,7 +376,8 @@ func RenewJWT(c *gin.Context) {
 
 	// 4. Vérification HMAC
 	// On signe toujours avec le bodyBytes (même vide) pour garantir l'intégrité de la requête
-	stringToSign := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, clientTs, string(bodyBytes))
+	contentToSign := security.GetBodyToSign(c.Request, bodyBytes)
+	stringToSign := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, clientTs, contentToSign)
 
 	if !security.CheckHMAC(stringToSign, clientSecret, clientHMAC) {
 		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Signature HMAC invalide"})
@@ -414,11 +399,45 @@ func RenewJWT(c *gin.Context) {
 		return
 	}
 
-	// 7. Réponse
-	c.JSON(http.StatusOK, domain.RenewJWTResponse{
+	// 7. PRÉPARATION DE LA RÉPONSE SIGNÉE
+	// On prépare l'objet réponse
+	respData := domain.RenewJWTResponse{
 		Token:   newJWT,
 		Message: "Renouvellement OK",
-	})
+	}
+
+	// A. Sérialisation manuelle en JSON pour la signature
+	respBytes, err := json.Marshal(respData)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur encoding réponse"})
+		return
+	}
+
+	// B. Génération du Timestamp et Signature
+	respTs := fmt.Sprintf("%d", time.Now().Unix())
+
+	// C. Build StringToSign (Response Binding)
+	// On signe : METHOD | PATH | TS_REPONSE | BODY_REPONSE
+	stringToSignResp := security.BuildStringToSign(
+		c.Request.Method,
+		c.Request.URL.Path,
+		respTs,
+		string(respBytes),
+	)
+
+	// D. Calcul HMAC
+	// Règle : On utilise le secret qui a validé la requête (clientSecret)
+	// C'est ce secret qui est devenu 'LastSecret' dans la BDD après la rotation.
+	h := hmac.New(sha256.New, []byte(clientSecret))
+	h.Write([]byte(stringToSignResp))
+	respSig := hex.EncodeToString(h.Sum(nil))
+
+	// E. Ajout des Headers
+	c.Header("X-Timestamp", respTs)
+	c.Header("X-Signature", respSig)
+
+	// F. Envoi de la réponse
+	c.Data(http.StatusOK, "application/json", respBytes)
 }
 
 // RefreshMaster godoc
@@ -450,17 +469,39 @@ func RenewJWT(c *gin.Context) {
 // @Failure      500  {object}  domain.ErrorResponse "Erreur serveur critique (Génération/Sauvegarde)"
 // @Router       /auth/refresh-master [post]
 func RefreshMaster(c *gin.Context) {
-	// 1. Lecture du Body
+	// 1. Lecture du Body (Nécessaire pour le calcul HMAC manuel plus bas)
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Erreur lecture body"})
 		return
 	}
 
+	// [IMPORTANT] Restaurer le body pour que c.PostForm puisse le lire ensuite
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+	// 2. Parsing des données (Support Form-Data ET Raw JSON)
 	var input domain.RefreshMasterInput
-	if err := json.Unmarshal(bodyBytes, &input); err != nil {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Invalid JSON format"})
-		return
+	jsonData := c.PostForm("data")
+
+	if jsonData != "" {
+		// CAS 1 : Multipart/Form-Data (celui que tu veux utiliser)
+		if err := json.Unmarshal([]byte(jsonData), &input); err != nil {
+			c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Invalid JSON format in 'data': " + err.Error()})
+			return
+		}
+	} else {
+		// CAS 2 : Raw JSON (Fallback, au cas où)
+		// Si 'data' est vide, on essaie de parser le body entier
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, &input); err != nil {
+				c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Invalid JSON format"})
+				return
+			}
+		} else {
+			// Aucun contenu trouvé
+			c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "The 'data' field containing the JSON is required"})
+			return
+		}
 	}
 
 	// 2. Headers
@@ -480,8 +521,6 @@ func RefreshMaster(c *gin.Context) {
 	}
 
 	// 5. Récupération de la Session (Cascade : Redis -> Mongo -> Postgres)
-	// On cherche la session qui possède CET ID utilisateur et CE MasterToken
-
 	var sessionRaw domain.SessionsRequest
 	var sessionFound bool = false
 
@@ -497,8 +536,9 @@ func RefreshMaster(c *gin.Context) {
 		sessionRaw, errMongo := mongo.MongoLoadSession(input.UserID, "", input.MasterToken, "")
 		if errMongo == nil && sessionRaw.ID != 0 && sessionRaw.MasterToken == input.MasterToken {
 			sessionFound = true
+			// Repopulation Cache
 			if errAdd := redis.RedisCreateSession(sessionRaw); errAdd != nil {
-				fmt.Printf("⚠️ Warning: Echec repopulation Redis depuis Postgres: %v\n", errAdd)
+				fmt.Printf("⚠️ Warning: Echec repopulation Redis depuis Mongo: %v\n", errAdd)
 			}
 		}
 	}
@@ -508,16 +548,12 @@ func RefreshMaster(c *gin.Context) {
 		sessionRaw, errPg := postgres.FuncLoadSession(-1, input.UserID, "", input.MasterToken)
 		if errPg == nil && sessionRaw.ID != 0 && sessionRaw.MasterToken == input.MasterToken {
 			sessionFound = true
-			// 🚨 REPOPULATION MONGO (Backup)
-			go func(sess domain.SessionsRequest) {
-				errMongo := mongo.MongoCreateSession(sess)
-				if errMongo != nil {
-					log.Printf("Erreur Mongo CreateSession: %v", errMongo)
-				}
-			}(sessionRaw)
 
-			// 🚨 REPOPULATION REDIS (Cache Actif)
-			// Bloquant ici car nécessaire pour la suite immédiate
+			// 🚨 REPOPULATION MONGO (Backup via Queue)
+			// On envoie une action CREATE vers Mongo car elle n'existait pas
+			redis.EnqueueDB(c, sessionRaw.ID, 0, redis.EntitySession, redis.ActionCreate, sessionRaw, redis.TargetMongo)
+
+			// 🚨 REPOPULATION REDIS (Cache Actif - Synchrone requis ici)
 			if errAdd := redis.RedisCreateSession(sessionRaw); errAdd != nil {
 				fmt.Printf("⚠️ Warning: Echec repopulation Redis depuis Postgres: %v\n", errAdd)
 			}
@@ -529,17 +565,19 @@ func RefreshMaster(c *gin.Context) {
 		return
 	}
 
-	// 4. Vérification HMAC
-	// IMPORTANT : On vérifie avec le MasterToken reçu dans le Body (qui sert de clé secrète ici)
-	stringToSign := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, clientTs, string(bodyBytes))
-
+	// 4. Vérification HMAC (Master Check)
+	contentToSign := security.GetBodyToSign(c.Request, bodyBytes)
+	fmt.Printf("ContentToSign for Master Check: %s\n", contentToSign)                                                     // --- IGNORE ---
+	fmt.Printf("Arguments for Master Check: Method=%s, Path=%s, Ts=%s\n", c.Request.Method, c.Request.URL.Path, clientTs) // --- IGNORE ---
+	stringToSign := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, clientTs, contentToSign)
+	fmt.Printf("StringToSign for Master Check: %s\n", stringToSign) // --- IGNORE ---
 	if !security.CheckHMAC(stringToSign, input.MasterToken, clientHMAC) {
 		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Signature HMAC invalide (Master Check)"})
 		return
 	}
 
 	// 6. Génération des Nouveaux Credentials
-	newMasterToken, err := pkg.GenerateToken(input.UserID, sessionRaw.DeviceToken, variables.MasterTokenExpirationSeconds) // Utilisation de Username
+	newMasterToken, err := pkg.GenerateToken(input.UserID, sessionRaw.DeviceToken, variables.MasterTokenExpirationSeconds)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur génération MasterToken"})
 		return
@@ -551,40 +589,65 @@ func RefreshMaster(c *gin.Context) {
 		return
 	}
 
-	// 7. Reset du Ratchet dans Redis (appel au package security comme demandé)
-	// On passe l'ancien JWT (authHeader) pour qu'il devienne le last_jwt
+	// 7. Reset du Ratchet dans Redis
 	if sessionRaw.CurrentSecret, err = security.ResetRatchet(c, sessionRaw.ID, newMasterToken, sessionRaw.DeviceToken, authHeader); err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur reset Ratchet"})
 		return
 	}
 
-	// 8. Mise à jour des Bases de Données (Postgres & Mongo)
-	// On lance ça en background pour ne pas ralentir la réponse, mais on loggue les erreurs.
+	// 8. Mise à jour des Bases de Données (Redis Sync + Queue Async)
+
+	// Mise à jour de l'objet local
 	sessionRaw.MasterToken = newMasterToken
 	sessionRaw.LastSecret = sessionRaw.DeviceToken
 	sessionRaw.LastJWT = authHeader
 	sessionRaw.ToleranceTime = time.Now().Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second)
 	sessionRaw.ExpiresAt = time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
-	if errAdd := redis.RedisUpdateSession(sessionRaw); errAdd != nil {
-		fmt.Printf("⚠️ Warning: Echec repopulation Redis depuis Postgres: %v\n", errAdd)
-	}
-	go func(sess domain.SessionsRequest) {
-		errMongo := mongo.MongoUpdateSession(sess)
-		if errMongo != nil {
-			log.Printf("Erreur Mongo UpdateSession: %v", errMongo)
-		}
-	}(sessionRaw)
-	go func(sess domain.SessionsRequest) {
-		errPg := postgres.ProcUpdateSession(sess.ID, sess.MasterToken, sess.DeviceInfo, sess.DeviceToken, sess.IPHistory, sess.ExpiresAt)
-		if errPg != nil {
-			log.Printf("Erreur Postgres UpdateSession: %v", errPg)
-		}
-	}(sessionRaw)
 
-	// 9. Réponse
-	c.JSON(http.StatusOK, domain.RefreshMasterResponse{
+	// A. Redis (Immédiat pour le cache)
+	if errAdd := redis.RedisUpdateSession(sessionRaw); errAdd != nil {
+		fmt.Printf("⚠️ Warning: Echec update Redis: %v\n", errAdd)
+	}
+
+	// TargetBoth : On veut mettre à jour Mongo (Doc) ET Postgres (Relationnel)
+	// car le MasterToken a changé (info critique).
+	redis.EnqueueDB(c, sessionRaw.ID, 0, redis.EntitySession, redis.ActionUpdate, sessionRaw, redis.TargetAll)
+
+	// 9. PRÉPARATION DE LA RÉPONSE SIGNÉE
+	respData := domain.RefreshMasterResponse{
 		MasterToken: newMasterToken,
 		Token:       newJWT,
 		Message:     "Master Reset Successful",
-	})
+	}
+
+	// A. Sérialisation
+	respBytes, err := json.Marshal(respData)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur encoding réponse"})
+		return
+	}
+
+	// B. Timestamp
+	respTs := fmt.Sprintf("%d", time.Now().Unix())
+
+	// C. StringToSign
+	stringToSignResp := security.BuildStringToSign(
+		c.Request.Method,
+		c.Request.URL.Path,
+		respTs,
+		string(respBytes),
+	)
+
+	// D. Calcul HMAC
+	// Règle : On utilise l'ANCIEN MasterToken (input.MasterToken) car le client ne connait pas encore le nouveau.
+	h := hmac.New(sha256.New, []byte(input.MasterToken))
+	h.Write([]byte(stringToSignResp))
+	respSig := hex.EncodeToString(h.Sum(nil))
+
+	// E. Headers
+	c.Header("X-Timestamp", respTs)
+	c.Header("X-Signature", respSig)
+
+	// F. Envoi
+	c.Data(http.StatusOK, "application/json", respBytes)
 }

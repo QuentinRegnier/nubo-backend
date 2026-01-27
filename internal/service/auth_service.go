@@ -1,14 +1,15 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"mime/multipart"
 	"strings"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
@@ -17,63 +18,91 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// addImage gère l'upload (S3/Disque)
-func AddImage(rawBinaryData string, name string) int {
-	reader := strings.NewReader(rawBinaryData)
-	mediaID, err := UploadMedia(reader, name, "system")
-	if err != nil {
-		log.Printf("Erreur upload image '%s' : %v", name, err)
-		return 0
-	}
-	return mediaID
-}
-
 func CreateUser(
-	req domain.UserRequest,
-	sessions domain.SessionsRequest,
-) (int, error) {
-	// Enregistrement dans PostgreSQL
-	userID, createdAtUser, updatedAtUser, sessionID, createdAtSession, err := postgresgo.FuncCreateUser(req, sessions)
-	if err != nil {
-		return 0, err
-	}
-	// (Le reste de CreateUser est inchangé...)
-	if pkg.EstNonVide(req.ProfilePictureID) {
-		_, err := postgres.PostgresDB.Exec("CALL content.proc_update_media_owner($1, $2)", req.ProfilePictureID, userID)
-		if err != nil {
-			log.Printf("⚠️ Erreur liaison avatar Postgres (MediaID: %v) : %v", req.ProfilePictureID, err)
-		}
-		filter := map[string]any{"id": req.ProfilePictureID}
-		update := map[string]any{"owner_id": userID}
-		if err := mongo.Media.Update(filter, update); err != nil {
-			log.Printf("⚠️ Erreur liaison avatar Mongo (MediaID: %v) : %v", req.ProfilePictureID, err)
-		} else {
-			log.Printf("✅ Avatar lié avec succès (PG + Mongo) à l'utilisateur %v", userID)
-		}
-	}
+	req *domain.UserRequest,
+	sessions *domain.SessionsRequest,
+	fileHeader *multipart.FileHeader,
+	errFile error,
+) (int64, string, error) { // Note: J'ai changé le retour en int64 car Snowflake génère des int64
 
+	// 1. GÉNÉRATION DES DONNÉES (La "Vérité" est ici, dans Go)
+	// ---------------------------------------------------------
+	now := time.Now().UTC()
+
+	// Génération des IDs Snowflake (Plus besoin de demander à Postgres)
+	userID := pkg.GenerateID()
+	fmt.Printf("🆕 Création nouvel utilisateur avec ID Snowflake: %d\n", userID)
+	sessionID := pkg.GenerateID()
+	fmt.Printf("🆕 Création nouvelle session avec ID Snowflake: %d\n", sessionID)
+
+	// Préparation de l'objet User
 	req.ID = userID
-	req.CreatedAt = createdAtUser
-	req.UpdatedAt = updatedAtUser
+	req.CreatedAt = now
+	req.UpdatedAt = now
+
+	// Gestion de l'avatar (upload si présent)
+	mediaID := pkg.GenerateID() // <--- ID Snowflake
+	req.ProfilePictureID = mediaID
+
+	// Préparation de l'objet Session
 	sessions.ID = sessionID
 	sessions.UserID = userID
-	sessions.CreatedAt = createdAtSession
+	sessions.CreatedAt = now
+
+	// Génération des Tokens (inchangé, mais utilise les nouveaux IDs)
+	var err error
 	sessions.MasterToken, err = pkg.GenerateToken(req.ID, sessions.DeviceToken, variables.MasterTokenExpirationSeconds)
+	if err != nil {
+		return -1, "", err
+	}
 	sessions.CurrentSecret = security.DeriveNextSecret(sessions.DeviceToken, sessions.MasterToken, sessions.MasterToken, sessions.DeviceToken)
 
-	if err := mongo.MongoCreateUser(req); err != nil {
-		log.Printf("Erreur Mongo CreateUser: %v", err)
+	// 2. MISE EN CACHE IMMÉDIATE (Lecture rapide pour le user)
+	// --------------------------------------------------------
+	// On écrit dans Redis tout de suite pour que le user puisse se loguer/voir son profil
+	// sans attendre le worker Postgres.
+	if err := redis.RedisCreateUser(*req); err != nil {
+		log.Printf("⚠️ Warning: Echec cache Redis User: %v", err)
 	}
-	if err := mongo.MongoCreateSession(sessions); err != nil {
-		log.Printf("Erreur Mongo CreateSession: %v", err)
-	}
-	if err := redis.RedisCreateUser(req); err != nil {
-		log.Printf("Warning: Echec cache Redis User: %v", err)
-	}
-	if err := redis.RedisCreateSession(sessions); err != nil {
-		log.Printf("Warning: Echec cache Redis Session: %v", err)
+	if err := redis.RedisCreateSession(*sessions); err != nil {
+		log.Printf("⚠️ Warning: Echec cache Redis Session: %v", err)
 	}
 
+	// 3. PERSISTANCE ASYNCHRONE (Le "Write-Behind")
+	// ---------------------------------------------
+	ctx := context.Background() // Contexte pour Redis
+
+	// A. Enqueue Création User (Mongo + Postgres)
+	err = redis.EnqueueDB(ctx, userID, 0, redis.EntityUser, redis.ActionCreate, req, redis.TargetAll)
+	if err != nil {
+		log.Printf("❌ CRITICAL: Impossible d'enqueue le User %d : %v", userID, err)
+		// Ici, tu pourrais décider de renvoyer une erreur, ou de retry
+	}
+
+	// B. Enqueue Création Session (Mongo + Postgres)
+	// Note: Assure-toi d'avoir EntitySession défini dans tes constantes
+	err = redis.EnqueueDB(ctx, sessionID, userID, redis.EntitySession, redis.ActionCreate, sessions, redis.TargetAll)
+	if err != nil {
+		log.Printf("❌ CRITICAL: Impossible d'enqueue la Session %d : %v", sessionID, err)
+	}
+
+	// C. Upload de l'avatar si présent
+	if errFile == nil {
+		file, err := fileHeader.Open()
+		if err != nil {
+			return -1, "", fmt.Errorf("cannot read file: %w", err)
+		}
+		defer file.Close()
+
+		// On récupère l'ID entier de la BDD
+		err = UploadMedia(file, "profile_"+req.Username, userID, mediaID)
+		if err != nil {
+			return -1, "", fmt.Errorf("internal error (image upload): %w", err)
+		}
+	}
+
+	// 4. CUCKOO FILTERS (Mémoire - inchangé)
+	// --------------------------------------
 	if cuckoo.GlobalCuckoo != nil {
 		cuckoo.GlobalCuckoo.Insert([]byte("username:" + req.Username))
 		cuckoo.GlobalCuckoo.Insert([]byte("email:" + req.Email))
@@ -85,203 +114,223 @@ func CreateUser(
 		cuckoo.BroadcastCuckooUpdate(cuckoo.ActionAdd, "phone", req.Phone)
 	}()
 
-	return userID, nil
+	newJWT, err := pkg.GenerateToken(req.ID, sessions.DeviceToken, variables.JWTExpirationSeconds)
+	if err != nil {
+		return 0, "", err
+	}
+
+	// 5. RETOUR INSTANTANÉ
+	return userID, newJWT, nil
 }
 
 func Login(
 	input domain.LoginInput,
-) (domain.UserRequest, domain.SessionsRequest, error) {
+	IPAddress []string,
+) (domain.UserRequest, domain.SessionsRequest, string, error) {
 	fmt.Printf("\n🚀 SERVICE LOGIN APPELÉ pour l'email : [%s]\n", input.Email)
 
 	var user domain.UserRequest
 	var sessions domain.SessionsRequest
 	var err error
 
-	// 1. Redis
+	// ---------------------------------------------------------
+	// 1. CHARGEMENT DE L'UTILISATEUR (Fallback: Redis -> Mongo -> Postgres)
+	// ---------------------------------------------------------
+
+	// A. Essai Redis
 	user, err = redis.RedisLoadUser(-1, "", input.Email, "")
 	if err != nil {
 		fmt.Printf("🔸 Redis: erreur (%v)\n", err)
+	} else {
+		fmt.Println("✅ Utilisateur trouvé dans Redis !")
+		fmt.Println("User loaded from Redis:", user)
 	}
 
-	// CORRECTION ICI : On vérifie l'ID, pas EstNonVide
+	// B. Essai Mongo (si pas dans Redis)
 	if user.ID == 0 {
 		fmt.Println("🔸 Redis: User non trouvé, passage à Mongo...")
-
-		// 2. Mongo
 		user, err = mongo.MongoLoadUser(-1, "", input.Email, "")
 		if err != nil {
 			fmt.Printf("🔸 Mongo: erreur (%v)\n", err)
-		}
-
-		// CORRECTION ICI
-		if user.ID == 0 {
-			fmt.Println("🔸 Mongo: User non trouvé, passage à Postgres...")
-
-			// 3. Postgres
-			user, err = postgresgo.FuncLoadUser(-1, "", input.Email, "")
-			if err != nil {
-				fmt.Printf("❌ ERREUR CRITIQUE APPEL POSTGRES : %v\n", err)
-				return domain.UserRequest{}, domain.SessionsRequest{}, err
-			}
-
-			// CORRECTION ICI
-			if user.ID == 0 {
-				fmt.Printf("❌ ERREUR : Utilisateur introuvable dans AUCUNE base pour l'email '%s'\n", input.Email)
-				return domain.UserRequest{}, domain.SessionsRequest{}, domain.ErrNotFound
+		} else {
+			fmt.Println("✅ Utilisateur trouvé dans Mongo !")
+			fmt.Println("User loaded from Mongo:", user)
+			if errAdd := redis.RedisCreateUser(user); errAdd != nil {
+				log.Printf("⚠️ Warning: Echec cache Redis User: %v", errAdd)
 			}
 		}
 	}
+
+	// C. Essai Postgres (si pas dans Mongo)
+	if user.ID == 0 {
+		fmt.Println("🔸 Mongo: User non trouvé, passage à Postgres...")
+		user, err = postgresgo.FuncLoadUser(-1, "", input.Email, "")
+		if err != nil {
+			fmt.Printf("❌ ERREUR CRITIQUE APPEL POSTGRES : %v\n", err)
+			return domain.UserRequest{}, domain.SessionsRequest{}, "", err
+		}
+
+		if user.ID == 0 {
+			fmt.Printf("❌ ERREUR : Utilisateur introuvable dans AUCUNE base pour l'email '%s'\n", input.Email)
+			return domain.UserRequest{}, domain.SessionsRequest{}, "", domain.ErrNotFound
+		}
+
+		fmt.Println("✅ Utilisateur trouvé dans Postgres !")
+		fmt.Println("User loaded from Postgres:", user)
+		if errAdd := redis.RedisCreateUser(user); errAdd != nil {
+			log.Printf("⚠️ Warning: Echec cache Redis User: %v", errAdd)
+		}
+		redis.EnqueueDB(context.Background(), user.ID, 0, redis.EntityUser, redis.ActionCreate, &user, redis.TargetMongo)
+	}
+
+	// ---------------------------------------------------------
+	// 2. VÉRIFICATION DU MOT DE PASSE
+	// ---------------------------------------------------------
 
 	fmt.Println("✅ UTILISATEUR TROUVÉ ! Analyse du mot de passe...")
-	fmt.Printf("👉 INPUT : '%s' (Len: %d)\n", input.PasswordHash, len(input.PasswordHash))
-	fmt.Printf("👉 DB    : '%s' (Len: %d)\n", user.PasswordHash, len(user.PasswordHash))
-
-	// Comparaison Mot de passe
-	// TRIM pour éviter les problèmes d'espaces si la BDD est sale
+	// TRIM pour sécurité (espaces fantômes en BDD)
 	if strings.TrimSpace(user.PasswordHash) != strings.TrimSpace(input.PasswordHash) {
-		fmt.Println("🔒 MOT DE PASSE INCORRECT (Mismatch)")
-		return domain.UserRequest{}, domain.SessionsRequest{}, domain.ErrInvalidCredentials
-	} else if user.Desactivated == true || user.Banned == true {
-		if user.Desactivated == true && user.Banned == false {
-			return domain.UserRequest{}, domain.SessionsRequest{}, domain.ErrDesactivated
+		fmt.Println("🔒 MOT DE PASSE INCORRECT")
+		return domain.UserRequest{}, domain.SessionsRequest{}, "", domain.ErrInvalidCredentials
+	}
+
+	// Vérification Statut Compte
+	if user.Desactivated || user.Banned {
+		if user.Desactivated {
+			return domain.UserRequest{}, domain.SessionsRequest{}, "", domain.ErrDesactivated
+		}
+		return domain.UserRequest{}, domain.SessionsRequest{}, "", domain.ErrBanned
+	}
+
+	fmt.Println("🔓 MOT DE PASSE VALIDE ! Gestion de la session...")
+
+	// ---------------------------------------------------------
+	// 3. GESTION DE LA SESSION (Load or Create)
+	// ---------------------------------------------------------
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	isNewSession := false
+	DeviceToken := input.DeviceToken
+
+	// A. TENTATIVE DE RECUPERATION (Redis -> Mongo -> Postgres)
+	// On essaie de trouver une session active pour ce device
+	sessions, _ = redis.RedisLoadSession(user.ID, DeviceToken, "", "")
+	if sessions.ID == 0 {
+		sessions, _ = mongo.MongoLoadSession(user.ID, DeviceToken, "", "")
+		if sessions.ID == 0 {
+			sessions, _ = postgresgo.FuncLoadSession(-1, user.ID, DeviceToken, "")
+			if sessions.ID == 0 {
+				fmt.Println("🔸 Postgres: Session non trouvée, création d'une nouvelle session...")
+			} else {
+				if err := redis.RedisCreateSession(sessions); err != nil {
+					log.Printf("⚠️ Warning: Echec mise à jour cache Redis Session: %v", err)
+				}
+				if err := redis.EnqueueDB(ctx, sessions.ID, 0, redis.EntitySession, redis.ActionCreate, sessions, redis.TargetMongo); err != nil {
+					log.Printf("⚠️ Warning: Echec mise à jour cache Redis Session: %v", err)
+				}
+				fmt.Println("✅ Session trouvée dans Postgres")
+			}
 		} else {
-			return domain.UserRequest{}, domain.SessionsRequest{}, domain.ErrBanned
+			if err := redis.RedisCreateSession(sessions); err != nil {
+				log.Printf("⚠️ Warning: Echec mise à jour cache Redis Session: %v", err)
+			}
+			fmt.Println("✅ Session trouvée dans Mongo")
 		}
 	} else {
-		fmt.Println("🔓 MOT DE PASSE VALIDE ! Chargement session...")
-
-		sessions, err = redis.RedisLoadSession(user.ID, input.DeviceToken, "", "")
-		if sessions.ID != 0 && sessions.UserID == user.ID && sessions.DeviceToken == input.DeviceToken {
-			sessions.DeviceInfo = input.DeviceInfo
-			if pkg.Exists(sessions.IPHistory, input.IPAddress[0]) == false && len(input.IPAddress) > 0 {
-				sessions.IPHistory = append(sessions.IPHistory, input.IPAddress[0])
-			}
-			sessions.ExpiresAt = time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
-			sessions.MasterToken, err = pkg.GenerateToken(user.ID, input.DeviceToken, variables.MasterTokenExpirationSeconds)
-			sessions.CurrentSecret = security.DeriveNextSecret(sessions.DeviceToken, sessions.MasterToken, sessions.MasterToken, sessions.DeviceToken)
-			sessions.LastSecret = sessions.DeviceToken
-			sessions.LastJWT = ""
-			sessions.ToleranceTime = time.Time{}
-			if err != nil {
-				return domain.UserRequest{}, domain.SessionsRequest{}, err
-			}
-			err = redis.RedisUpdateSession(sessions)
-			if err != nil {
-				return domain.UserRequest{}, domain.SessionsRequest{}, err
-			}
-			go func(sess domain.SessionsRequest) {
-				errMongo := mongo.MongoUpdateSession(sess)
-				if errMongo != nil {
-					log.Printf("Erreur Mongo UpdateSession: %v", errMongo)
-				}
-			}(sessions)
-			go func(sess domain.SessionsRequest) {
-				errPg := postgresgo.ProcUpdateSession(sess.ID, sess.MasterToken, sess.DeviceInfo, sess.DeviceToken, sess.IPHistory, sess.ExpiresAt)
-				if errPg != nil {
-					log.Printf("Erreur Postgres UpdateSession: %v", errPg)
-				}
-			}(sessions)
-			return user, sessions, nil
-		}
-		sessions, err = mongo.MongoLoadSession(user.ID, input.DeviceToken, "", "")
-		if sessions.ID != 0 && sessions.UserID == user.ID && sessions.DeviceToken == input.DeviceToken {
-			sessions.DeviceInfo = input.DeviceInfo
-			if pkg.Exists(sessions.IPHistory, input.IPAddress[0]) == false && len(input.IPAddress) > 0 {
-				sessions.IPHistory = append(sessions.IPHistory, input.IPAddress[0])
-			}
-			sessions.ExpiresAt = time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
-			sessions.MasterToken, err = pkg.GenerateToken(user.ID, input.DeviceToken, variables.MasterTokenExpirationSeconds)
-			sessions.CurrentSecret = security.DeriveNextSecret(sessions.DeviceToken, sessions.MasterToken, sessions.MasterToken, sessions.DeviceToken)
-			sessions.LastSecret = sessions.DeviceToken
-			sessions.LastJWT = ""
-			sessions.ToleranceTime = time.Time{}
-			if err != nil {
-				return domain.UserRequest{}, domain.SessionsRequest{}, err
-			}
-			err = postgresgo.ProcUpdateSession(sessions.ID, sessions.MasterToken, sessions.DeviceInfo, sessions.DeviceToken, sessions.IPHistory, sessions.ExpiresAt)
-			if err != nil {
-				return domain.UserRequest{}, domain.SessionsRequest{}, err
-			}
-			_ = redis.RedisCreateSession(sessions)
-			go func(sess domain.SessionsRequest) {
-				errMongo := mongo.MongoUpdateSession(sess)
-				if errMongo != nil {
-					log.Printf("Erreur Mongo UpdateSession: %v", errMongo)
-				}
-			}(sessions)
-			go func(sess domain.SessionsRequest) {
-				errPg := postgresgo.ProcUpdateSession(sess.ID, sess.MasterToken, sess.DeviceInfo, sess.DeviceToken, sess.IPHistory, sess.ExpiresAt)
-				if errPg != nil {
-					log.Printf("Erreur Postgres UpdateSession: %v", errPg)
-				}
-			}(sessions)
-			return user, sessions, nil
-		}
-
-		sessions, err = postgresgo.FuncLoadSession(-1, user.ID, input.DeviceToken, "")
-		if err != nil {
-			return domain.UserRequest{}, domain.SessionsRequest{}, err
-		}
-		if sessions.ID != 0 && sessions.UserID == user.ID && sessions.DeviceToken == input.DeviceToken {
-			// Modifier la session pour mettre à jour les infos
-			sessions.DeviceInfo = input.DeviceInfo
-			if pkg.Exists(sessions.IPHistory, input.IPAddress[0]) == false && len(input.IPAddress) > 0 {
-				sessions.IPHistory = append(sessions.IPHistory, input.IPAddress[0])
-			}
-			sessions.ExpiresAt = time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
-			sessions.MasterToken, err = pkg.GenerateToken(user.ID, input.DeviceToken, variables.MasterTokenExpirationSeconds)
-			sessions.CurrentSecret = security.DeriveNextSecret(sessions.DeviceToken, sessions.MasterToken, sessions.MasterToken, sessions.DeviceToken)
-			sessions.LastSecret = sessions.DeviceToken
-			sessions.LastJWT = ""
-			sessions.ToleranceTime = time.Time{}
-			if err != nil {
-				return domain.UserRequest{}, domain.SessionsRequest{}, err
-			}
-			_ = redis.RedisCreateSession(sessions)
-			go func(sess domain.SessionsRequest) {
-				_ = mongo.MongoCreateSession(sessions)
-			}(sessions)
-			go func(sess domain.SessionsRequest) {
-				errPg := postgresgo.ProcUpdateSession(sess.ID, sess.MasterToken, sess.DeviceInfo, sess.DeviceToken, sess.IPHistory, sess.ExpiresAt)
-				if errPg != nil {
-					log.Printf("Erreur Postgres UpdateSession: %v", errPg)
-				}
-			}(sessions)
-			return user, sessions, nil
-		}
-		// Creer une session
-		sessions.MasterToken, err = pkg.GenerateToken(user.ID, input.DeviceToken, variables.MasterTokenExpirationSeconds)
-		sessions.DeviceInfo = input.DeviceInfo
-		sessions.DeviceToken = input.DeviceToken
-		sessions.CurrentSecret = security.DeriveNextSecret(sessions.DeviceToken, sessions.MasterToken, sessions.MasterToken, sessions.DeviceToken)
-		sessions.LastSecret = sessions.DeviceToken
-		sessions.LastJWT = ""
-		sessions.ToleranceTime = time.Time{}
-		if len(input.IPAddress) > 0 {
-			sessions.IPHistory = []string{input.IPAddress[0]}
-		} else {
-			return domain.UserRequest{}, domain.SessionsRequest{}, domain.ErrInvalidIPAddress
-		}
-		sessions.ExpiresAt = time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
-		sessionID, createdAtSession, err := postgresgo.FuncCreateSession(user.ID, sessions.MasterToken, sessions.DeviceInfo, sessions.DeviceToken, sessions.IPHistory, sessions.ExpiresAt)
-		if err != nil {
-			return domain.UserRequest{}, domain.SessionsRequest{}, err
-		}
-		sessions.ID = sessionID
-		sessions.UserID = user.ID
-		sessions.CreatedAt = createdAtSession
-
-		err = mongo.MongoCreateSession(sessions)
-		if err != nil {
-			log.Printf("Erreur Mongo CreateSession lors du login: %v", err)
-		}
-		err = redis.RedisCreateSession(sessions)
-		if err != nil {
-			log.Printf("Warning: Echec cache Redis Session lors du login: %v", err)
-		}
-
-		return user, sessions, nil
+		fmt.Println("✅ Session trouvée dans Redis")
 	}
+
+	// B. MISE A JOUR OU CRÉATION
+	if sessions.ID != 0 {
+		// --- UPDATE EXISTING ---
+		// On met à jour l'historique IP
+		sessions.DeviceInfo = input.DeviceInfo
+		if len(IPAddress) > 0 && !pkg.Exists(sessions.IPHistory, IPAddress[0]) {
+			sessions.IPHistory = append(sessions.IPHistory, IPAddress[0])
+		}
+	} else {
+		// --- CREATE NEW ---
+		isNewSession = true
+
+		// Génération ID Snowflake & Dates (C'est Go qui décide !)
+		sessions.ID = pkg.GenerateID()
+		sessions.UserID = user.ID
+		sessions.CreatedAt = now
+
+		sessions.DeviceToken = DeviceToken
+		sessions.DeviceInfo = input.DeviceInfo
+
+		if len(IPAddress) > 0 {
+			sessions.IPHistory = []string{IPAddress[0]}
+		} else {
+			return domain.UserRequest{}, domain.SessionsRequest{}, "", domain.ErrInvalidIPAddress
+		}
+	}
+
+	// C. ROTATION DES TOKENS (Ratchet Algorithm) - Commun aux deux cas
+	sessions.ExpiresAt = now.Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
+
+	// Génération nouveau Master Token
+	sessions.MasterToken, err = pkg.GenerateToken(user.ID, DeviceToken, variables.MasterTokenExpirationSeconds)
+	if err != nil {
+		return domain.UserRequest{}, domain.SessionsRequest{}, "", err
+	}
+
+	// Dérivation des secrets (Sécurité)
+	sessions.CurrentSecret = security.DeriveNextSecret(sessions.DeviceToken, sessions.MasterToken, sessions.MasterToken, sessions.DeviceToken)
+	sessions.LastSecret = sessions.DeviceToken // Reset du cycle
+	sessions.LastJWT = ""
+	sessions.ToleranceTime = time.Time{}
+
+	// ---------------------------------------------------------
+	// 4. SAUVEGARDE & PERSISTANCE (Architecture Write-Behind)
+	// ---------------------------------------------------------
+
+	// A. CACHE REDIS (Immédiat)
+	// On utilise toujours RedisCreateSession ici (qui fait un SET) pour écraser le cache avec les nouvelles infos fraîches
+	if isNewSession {
+		if err := redis.RedisCreateSession(sessions); err != nil {
+			log.Printf("⚠️ Warning: Echec mise à jour cache Redis Session: %v", err)
+		}
+	} else {
+		if err := redis.RedisUpdateSession(sessions); err != nil {
+			log.Printf("⚠️ Warning: Echec mise à jour cache Redis Session: %v", err)
+		}
+	}
+	// B. PERSISTANCE ASYNCHRONE (Vers Mongo & Postgres)
+	// On choisit l'action : CREATE (si nouveau) ou UPDATE (si existant)
+	action := redis.ActionUpdate
+	if isNewSession {
+		action = redis.ActionCreate
+	}
+
+	// On envoie dans la file d'attente. Le worker s'occupera d'écrire dans PG et Mongo.
+	// TargetAll = On veut écrire dans les deux bases.
+	err = redis.EnqueueDB(
+		ctx,
+		sessions.ID,
+		0,
+		redis.EntitySession,
+		action,
+		sessions,
+		redis.TargetAll,
+	)
+
+	if err != nil {
+		// C'est rare (Redis down), mais il faut le logger en critique.
+		// L'utilisateur pourra quand même se connecter grâce au cache Redis mis à jour juste au-dessus.
+		log.Printf("❌ CRITICAL: Impossible d'enqueue la Session %d : %v", sessions.ID, err)
+	} else {
+		log.Printf("✅ Session %d mise en file d'attente (Action: %s)", sessions.ID, action)
+	}
+
+	newJWT, err := pkg.GenerateToken(user.ID, sessions.DeviceToken, variables.JWTExpirationSeconds)
+	if err != nil {
+		return domain.UserRequest{}, domain.SessionsRequest{}, "", err
+	}
+
+	return user, sessions, newJWT, nil
 }
 
 // startWebsocket

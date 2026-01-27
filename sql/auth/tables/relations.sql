@@ -1,10 +1,10 @@
 CREATE TABLE IF NOT EXISTS relations (
-    id BIGSERIAL PRIMARY KEY, -- id unique du suivi
-    primary_id BIGINT REFERENCES users(id), -- id de l'utilisateur qui suit
-    secondary_id BIGINT REFERENCES users(id), -- id de l'utilisateur suivi
-    state SMALLINT DEFAULT 1, -- état du suivi (2 = amis, 1 = suivi, 0 = inactif, -1 = bloqué)
-    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
-    updated_at TIMESTAMPTZ DEFAULT now(), -- date de dernière mise à jour
+    id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
+    primary_id BIGINT REFERENCES users(id),
+    secondary_id BIGINT REFERENCES users(id),
+    state SMALLINT,                     -- Modifié : Plus de valeur par défaut (1)
+    created_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
+    updated_at TIMESTAMPTZ,             -- Modifié : Plus de DEFAULT now()
     UNIQUE(secondary_id, primary_id)
 );
 

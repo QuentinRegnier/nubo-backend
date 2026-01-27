@@ -27,6 +27,8 @@ services:
       target: prod
     container_name: nubo_api1
     env_file: .env
+    environment:
+      - NODE_ID=1  # <--- SPÉCIFIQUE À API 1
     depends_on:
       - postgres
       - redis
@@ -42,6 +44,8 @@ services:
       target: prod
     container_name: nubo_api2
     env_file: .env
+    environment:
+      - NODE_ID=2  # <--- SPÉCIFIQUE À API 2
     depends_on:
       - postgres
       - redis
