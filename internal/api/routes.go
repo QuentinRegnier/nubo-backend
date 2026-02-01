@@ -71,44 +71,100 @@ func SetupRoutes(r *gin.Engine) {
 	secured.Use(middleware.HMACMiddleware()) // 2. Est-ce authentique ? (Check Signature with Redis Secret)
 
 	// --- Posts ---
-	secured.GET("/posts", GetPostsHandler)
-	secured.POST("/posts", CreatePostHandler)
-	secured.GET("/posts/more", LoadMorePostsHandler) // J'invente l'URL pour "LoadMore"
-	secured.PUT("/posts", ModifyPostHandler)
-	//secured.DELETE("/posts/:id", handlers.DeletePost) // Exemple si tu l'as
+	secured.GET("/feed", LoadFeedHandler)          // ℹ️❌
+	secured.GET("/feed/more", LoadMoreFeedHandler) // ℹ️❌
+	secured.GET("/posts", GetPostsHandler)         // ℹ️❌
+	secured.POST("/post", CreatePostHandler)       // ℹ️❌
+	secured.PATCH("/post", ModifyPostHandler)      // ℹ️❌
+	secured.DELETE("/post", DeletePost)            // ℹ️❌
 
 	// --- Actions Sociales ---
-	secured.POST("/like", LikeHandler)
-	secured.DELETE("/like", UnlikeHandler)
-	secured.POST("/comment", CommentHandler)
-	secured.DELETE("/comment", UncommentHandler)
-	secured.GET("/comments", LoadCommentsHandler)
-	secured.POST("/signal", SignalHandler)
+	secured.POST("/like", LikeHandler)            // ℹ️❌
+	secured.DELETE("/like", UnLikeHandler)        // ℹ️❌
+	secured.POST("/comment", CommentHandler)      // ℹ️❌
+	secured.DELETE("/comment", UnCommentHandler)  // ℹ️❌
+	secured.GET("/comments", LoadCommentsHandler) // ℹ️❌
+	secured.POST("/follow", FollowHandler)        // ℹ️❌
+	secured.DELETE("/follow", UnFollowHandler)    // ℹ️❌
+	secured.POST("/friend", FriendHandler)        // ℹ️❌
+	secured.DELETE("/friend", UnFriendHandler)    // ℹ️❌
+	secured.POST("/limited", LimitedHandler)      // ℹ️❌
+	secured.DELETE("/limited", UnLimitedHandler)  // ℹ️❌
+	secured.POST("/block", BlockHandler)          // ℹ️❌
+	secured.DELETE("/block", UnBlockHandler)      // ℹ️❌
+	secured.POST("/share", ShareHandler)          // ℹ️❌
+	secured.POST("/save", SaveHandler)            // ℹ️❌
+	secured.DELETE("/saved", UnSavedHandler)      // ℹ️❌
+	secured.GET("/saveds", LoadSavedsHandler)     // ℹ️❌
 
-	// --- Profil Utilisateur ---
-	secured.PUT("/profile/picture", ProfilePictureHandler)
-	secured.PUT("/profile/description", DescriptionHandler)
-	secured.PUT("/profile/localisation", LocalisationHandler)
-	secured.PUT("/profile/study", StudyHandler)
-	secured.PUT("/profile/work", WorkHandler)
-	secured.PUT("/profile/confidentiality", ConfidentialityHandler)
-	secured.PUT("/profile/username", UsernameHandler)
-	secured.PUT("/profile/name", NameHandler)
-	secured.PUT("/profile/lastname", LastNameHandler)
-	secured.PUT("/profile/language", LanguageHandler)
+	// --- Reglage ---
+	secured.PATCH("/profile", UpdateProfileHangler)            // ℹ️❌
+	secured.PATCH("/confidentials", UpdateConfidentialHandler) // ℹ️❌
+	secured.POST("/logout", LogoutHandler)                     // ℹ️❌
+	secured.GET("/sessions", LoadSessionsHandler)              // ℹ️❌
+	secured.DELETE("/sessions", DeleteSessionsHandler)         // ℹ️❌
+	secured.PATCH("/language", UpdateLanguageHandler)          // ℹ️❌
 
 	// --- Administration / Modération ---
-	secured.POST("/ban", BanHandler)
+	secured.POST("/ban", BanHandler)                                            // ℹ️❌
+	secured.POST("/restriction", RestrictionHandler)                            // ℹ️❌
+	secured.POST("/warning", WarningHandler)                                    // ℹ️❌
+	secured.GET("/reports", LoadReportHandler)                                  // ℹ️❌
+	secured.DELETE("/report", CloseReportHandler)                               // ℹ️❌
+	secured.PATCH("/report", UpdateManagerReportHandler)                        // ℹ️❌
+	secured.GET("/information-user", LoadAdminInformationUserHandler)           // ℹ️❌
+	secured.GET("/information-group", LoadAdminInformationGroupHandler)         // ℹ️❌
+	secured.GET("/information-community", LoadAdminInformationCommunityHandler) // ℹ️❌
+	secured.GET("/information-post", LoadAdminInformationPostHandler)           // ℹ️❌
+	secured.GET("/information-comment", LoadAdminInformationCommentHandler)     // ℹ️❌
+	secured.GET("/information-message", LoadAdminInformationMessageHandler)     // ℹ️❌
 
 	// --- Messagerie / Groupes ---
-	secured.POST("/conversation", ConversationHandler)
-	secured.POST("/group", GroupHandler)
-	secured.GET("/user/groups", UserGroupHandler)
-	secured.GET("/group/admins", AdminGroupHandler)
-	secured.POST("/message", MessageHandler)
-	secured.GET("/messages/new", LoadNewMessagesHandler)
-	secured.POST("/image/upload", LoadImageHandler)
-	secured.POST("/friendship", FriendShipHandler)
+	secured.POST("/conversation", ConversationHandler)                 // ℹ️❌
+	secured.DELETE("/conversation", DeleteConversationHandler)         // ℹ️❌
+	secured.PATCH("/conversation", ModifyConversationHandler)          // ℹ️❌
+	secured.GET("/conversations", LoadConversationHandler)             // ℹ️❌
+	secured.POST("/message", MessageHandler)                           // ℹ️❌
+	secured.GET("/messages", LoadNewMessagesHandler)                   // ℹ️❌
+	secured.DELETE("/messages", DeleteMessagesHandler)                 // ℹ️❌
+	secured.PATCH("/message", UpdateMessageHandler)                    // ℹ️❌
+	secured.POST("/user-group", AddUserGroupHandler)                   // ℹ️❌
+	secured.DELETE("/user-group", DeleteUserGroupHandler)              // ℹ️❌
+	secured.POST("/promote-group", SetAdminGroupHandler)               // ℹ️❌
+	secured.DELETE("/promote-group", DeleteAdminGroupHandler)          // ℹ️❌
+	secured.GET("/images-conversation", LoadImagesConversationHandler) // ℹ️❌
+	secured.GET("/community", LoadCommunityHandler)                    // ℹ️❌
+	secured.PATCH("/community", UpdateCommunityHandler)                // ℹ️❌
+	secured.POST("/community", CreateCommunityHandler)                 // ℹ️❌
+	secured.DELETE("/community", DeleteCommunityHandler)               // ℹ️❌
+	secured.POST("/join", JoinGroupHandler)                            // ℹ️❌
+	secured.POST("/quit", QuitGroupHandler)                            // ℹ️❌
+
+	// --- Recherche ---
+	secured.POST("/search/user", SearchUserHandler)           // ℹ️❌
+	secured.POST("/search/post", SearchPostHandler)           // ℹ️❌
+	secured.POST("/search/community", SearchCommunityHandler) // ℹ️❌
+	secured.POST("/search/message", SearchMessageHandler)     // ℹ️❌
+	secured.POST("/search/group", SearchGroupHandler)         // ℹ️❌
+	secured.POST("/search/tag", SearchTagHandler)             // ℹ️❌
+
+	// --- Report ---
+	secured.POST("/report/user", ReportUserHandler)           // ℹ️❌
+	secured.POST("/report/post", ReportPostHandler)           // ℹ️❌
+	secured.POST("/report/comment", ReportCommentHandler)     // ℹ️❌
+	secured.POST("/report/message", ReportMessageHandler)     // ℹ️❌
+	secured.POST("/report/community", ReportCommunityHandler) // ℹ️❌
+	secured.POST("/report/group", ReportGroupHandler)         // ℹ️❌
+}
+
+func LoadFeedHandler(c *gin.Context) {
+	// TODO: charger les posts du feed
+	c.JSON(http.StatusOK, gin.H{"posts": []string{"post 5", "post 6"}})
+}
+
+func LoadMoreFeedHandler(c *gin.Context) {
+	// TODO: charger plus de posts depuis la base
+	c.JSON(http.StatusOK, gin.H{"posts": []string{"post 3", "post 4"}})
 }
 
 func GetPostsHandler(c *gin.Context) {
@@ -121,9 +177,14 @@ func CreatePostHandler(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"message": "post created"})
 }
 
-func LoadMorePostsHandler(c *gin.Context) {
-	// TODO: charger plus de posts depuis la base
-	c.JSON(http.StatusOK, gin.H{"posts": []string{"post 3", "post 4"}})
+func ModifyPostHandler(c *gin.Context) {
+	// TODO: modifier un post dans la base
+	c.JSON(http.StatusOK, gin.H{"message": "post modified"})
+}
+
+func DeletePost(c *gin.Context) {
+	// TODO: supprimer post de la base
+	c.JSON(http.StatusOK, gin.H{"message": "post deleted"})
 }
 
 func LikeHandler(c *gin.Context) {
@@ -131,14 +192,19 @@ func LikeHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "post liked"})
 }
 
+func UnLikeHandler(c *gin.Context) {
+	// TODO: retirer un like à un post
+	c.JSON(http.StatusOK, gin.H{"message": "post unliked"})
+}
+
 func CommentHandler(c *gin.Context) {
 	// TODO: ajouter un commentaire à un post
 	c.JSON(http.StatusOK, gin.H{"message": "post commented"})
 }
 
-func SignalHandler(c *gin.Context) {
-	// TODO: gérer les signaux
-	c.JSON(http.StatusOK, gin.H{"message": "signal received"})
+func UnCommentHandler(c *gin.Context) {
+	// TODO: retirer un commentaire à un post
+	c.JSON(http.StatusOK, gin.H{"message": "post uncommented"})
 }
 
 func LoadCommentsHandler(c *gin.Context) {
@@ -146,19 +212,94 @@ func LoadCommentsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"comments": []string{"comment 1", "comment 2"}})
 }
 
-func UnlikeHandler(c *gin.Context) {
-	// TODO: retirer un like à un post
-	c.JSON(http.StatusOK, gin.H{"message": "post unliked"})
+func FollowHandler(c *gin.Context) {
+	// TODO: gérer les relations d'amitié
+	c.JSON(http.StatusOK, gin.H{"message": "friendship managed"})
 }
 
-func UncommentHandler(c *gin.Context) {
-	// TODO: retirer un commentaire à un post
-	c.JSON(http.StatusOK, gin.H{"message": "post uncommented"})
+func UnFollowHandler(c *gin.Context) {
+	// TODO: retirer une relation d'amitié
+	c.JSON(http.StatusOK, gin.H{"message": "friendship removed"})
 }
 
-func ModifyPostHandler(c *gin.Context) {
-	// TODO: modifier un post dans la base
-	c.JSON(http.StatusOK, gin.H{"message": "post modified"})
+func FriendHandler(c *gin.Context) {
+	// TODO: gérer les relations d'amitié
+	c.JSON(http.StatusOK, gin.H{"message": "friendship managed"})
+}
+
+func UnFriendHandler(c *gin.Context) {
+	// TODO: retirer une relation d'amitié
+	c.JSON(http.StatusOK, gin.H{"message": "friendship removed"})
+}
+
+func LimitedHandler(c *gin.Context) {
+	// TODO: gérer les relations d'amitié
+	c.JSON(http.StatusOK, gin.H{"message": "friendship managed"})
+}
+
+func UnLimitedHandler(c *gin.Context) {
+	// TODO: retirer une relation d'amitié
+	c.JSON(http.StatusOK, gin.H{"message": "friendship removed"})
+}
+
+func BlockHandler(c *gin.Context) {
+	// TODO: gérer les relations d'amitié
+	c.JSON(http.StatusOK, gin.H{"message": "friendship managed"})
+}
+
+func UnBlockHandler(c *gin.Context) {
+	// TODO: retirer une relation d'amitié
+	c.JSON(http.StatusOK, gin.H{"message": "friendship removed"})
+}
+
+func ShareHandler(c *gin.Context) {
+	// TODO: retirer une relation d'amitié
+	c.JSON(http.StatusOK, gin.H{"message": "post shared"})
+}
+
+func SaveHandler(c *gin.Context) {
+	// TODO: retirer une relation d'amitié
+	c.JSON(http.StatusOK, gin.H{"message": "post saved"})
+}
+
+func UnSavedHandler(c *gin.Context) {
+	// TODO: retirer une relation d'amitié
+	c.JSON(http.StatusOK, gin.H{"message": "post saved deleted"})
+}
+
+func LoadSavedsHandler(c *gin.Context) {
+	// TODO: retirer une relation d'amitié
+	c.JSON(http.StatusOK, gin.H{"message": "post saved load"})
+}
+
+func UpdateProfileHangler(c *gin.Context) {
+	// TODO: gérer la mise à jour du profil
+	c.JSON(http.StatusOK, gin.H{"message": "profile updated"})
+}
+
+func UpdateConfidentialHandler(c *gin.Context) {
+	// TODO: gérer la mise à jour des informations confidentielles
+	c.JSON(http.StatusOK, gin.H{"message": "confidential updated"})
+}
+
+func LogoutHandler(c *gin.Context) {
+	// TODO: gérer la déconnexion
+	c.JSON(http.StatusOK, gin.H{"message": "logged out"})
+}
+
+func LoadSessionsHandler(c *gin.Context) {
+	// TODO: charger les sessions depuis la base
+	c.JSON(http.StatusOK, gin.H{"sessions": []string{"session 1", "session 2"}})
+}
+
+func DeleteSessionsHandler(c *gin.Context) {
+	// TODO: supprimer les sessions de la base
+	c.JSON(http.StatusOK, gin.H{"message": "sessions deleted"})
+}
+
+func UpdateLanguageHandler(c *gin.Context) {
+	// TODO: gérer la mise à jour de la langue
+	c.JSON(http.StatusOK, gin.H{"message": "language updated"})
 }
 
 func BanHandler(c *gin.Context) {
@@ -166,54 +307,59 @@ func BanHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "user banned"})
 }
 
-func ProfilePictureHandler(c *gin.Context) {
-	// TODO: gérer la mise à jour de la photo de profil
-	c.JSON(http.StatusOK, gin.H{"message": "profile picture updated"})
+func RestrictionHandler(c *gin.Context) {
+	// TODO: gérer les restrictions
+	c.JSON(http.StatusOK, gin.H{"message": "user restricted"})
 }
 
-func DescriptionHandler(c *gin.Context) {
-	// TODO: gérer la mise à jour de la description
-	c.JSON(http.StatusOK, gin.H{"message": "description updated"})
+func WarningHandler(c *gin.Context) {
+	// TODO: gérer les avertissements
+	c.JSON(http.StatusOK, gin.H{"message": "user warned"})
 }
 
-func LocalisationHandler(c *gin.Context) {
-	// TODO: gérer la mise à jour de la localisation
-	c.JSON(http.StatusOK, gin.H{"message": "localisation updated"})
+func LoadReportHandler(c *gin.Context) {
+	// TODO: charger les rapports depuis la base
+	c.JSON(http.StatusOK, gin.H{"reports": []string{"reports 1", "reports 2"}})
 }
 
-func StudyHandler(c *gin.Context) {
-	// TODO: gérer la mise à jour des informations d'études
-	c.JSON(http.StatusOK, gin.H{"message": "study information updated"})
+func CloseReportHandler(c *gin.Context) {
+	// TODO: fermer un rapport
+	c.JSON(http.StatusOK, gin.H{"message": "report closed"})
 }
 
-func WorkHandler(c *gin.Context) {
-	// TODO: gérer la mise à jour des informations professionnelles
-	c.JSON(http.StatusOK, gin.H{"message": "work information updated"})
+func UpdateManagerReportHandler(c *gin.Context) {
+	// TODO: gérer la mise à jour du manager d'un rapport
+	c.JSON(http.StatusOK, gin.H{"message": "update manager report"})
 }
 
-func ConfidentialityHandler(c *gin.Context) {
-	// TODO: gérer la mise à jour des paramètres de confidentialité
-	c.JSON(http.StatusOK, gin.H{"message": "confidentiality settings updated"})
+func LoadAdminInformationUserHandler(c *gin.Context) {
+	// TODO: charger les informations d'un utilisateur
+	c.JSON(http.StatusOK, gin.H{"message": "information user"})
 }
 
-func UsernameHandler(c *gin.Context) {
-	// TODO: gérer la mise à jour du nom d'utilisateur
-	c.JSON(http.StatusOK, gin.H{"message": "username updated"})
+func LoadAdminInformationGroupHandler(c *gin.Context) {
+	// TODO: charger les informations d'un groupe
+	c.JSON(http.StatusOK, gin.H{"message": "information group"})
 }
 
-func NameHandler(c *gin.Context) {
-	// TODO: gérer la mise à jour du nom
-	c.JSON(http.StatusOK, gin.H{"message": "name updated"})
+func LoadAdminInformationCommunityHandler(c *gin.Context) {
+	// TODO: charger les informations d'une communauté
+	c.JSON(http.StatusOK, gin.H{"message": "information community"})
 }
 
-func LastNameHandler(c *gin.Context) {
-	// TODO: gérer la mise à jour du nom de famille
-	c.JSON(http.StatusOK, gin.H{"message": "last name updated"})
+func LoadAdminInformationPostHandler(c *gin.Context) {
+	// TODO: charger les informations d'un post
+	c.JSON(http.StatusOK, gin.H{"message": "information post"})
 }
 
-func LanguageHandler(c *gin.Context) {
-	// TODO: gérer la mise à jour de la langue
-	c.JSON(http.StatusOK, gin.H{"message": "language updated"})
+func LoadAdminInformationCommentHandler(c *gin.Context) {
+	// TODO: charger les informations d'un commentaire
+	c.JSON(http.StatusOK, gin.H{"message": "information comment"})
+}
+
+func LoadAdminInformationMessageHandler(c *gin.Context) {
+	// TODO: charger les informations d'un message
+	c.JSON(http.StatusOK, gin.H{"message": "information message"})
 }
 
 func ConversationHandler(c *gin.Context) {
@@ -221,19 +367,19 @@ func ConversationHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "new conversation created"})
 }
 
-func GroupHandler(c *gin.Context) {
-	// TODO: gérer la création d'un nouveau groupe
-	c.JSON(http.StatusOK, gin.H{"message": "new group created"})
+func DeleteConversationHandler(c *gin.Context) {
+	// TODO: supprimer une conversation
+	c.JSON(http.StatusOK, gin.H{"message": "conversation deleted"})
 }
 
-func UserGroupHandler(c *gin.Context) {
-	// TODO: gérer la récupération des groupes d'un utilisateur
-	c.JSON(http.StatusOK, gin.H{"groups": []string{"group 1", "group 2"}})
+func ModifyConversationHandler(c *gin.Context) {
+	// TODO: gérer la modification d'une conversation
+	c.JSON(http.StatusOK, gin.H{"message": "conversation updated"})
 }
 
-func AdminGroupHandler(c *gin.Context) {
-	// TODO: gérer les administrateurs d'un groupe
-	c.JSON(http.StatusOK, gin.H{"message": "group admins retrieved"})
+func LoadConversationHandler(c *gin.Context) {
+	// TODO: charger les conversations depuis la base
+	c.JSON(http.StatusOK, gin.H{"conversations": []string{"conversation 1", "conversation 2", "conversation 3"}})
 }
 
 func MessageHandler(c *gin.Context) {
@@ -241,17 +387,132 @@ func MessageHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "message sent"})
 }
 
-func LoadImageHandler(c *gin.Context) {
-	// TODO: gérer le chargement d'une image
-	c.JSON(http.StatusOK, gin.H{"message": "image loaded"})
-}
-
-func FriendShipHandler(c *gin.Context) {
-	// TODO: gérer les relations d'amitié
-	c.JSON(http.StatusOK, gin.H{"message": "friendship managed"})
-}
-
 func LoadNewMessagesHandler(c *gin.Context) {
 	// TODO: gérer le chargement des nouveaux messages
 	c.JSON(http.StatusOK, gin.H{"messages": []string{"new message 1", "new message 2"}})
+}
+
+func DeleteMessagesHandler(c *gin.Context) {
+	// TODO: gérer la suppression des messages
+	c.JSON(http.StatusOK, gin.H{"message": "messages deleted"})
+}
+
+func UpdateMessageHandler(c *gin.Context) {
+	// TODO: gérer la mise à jour d'un message
+	c.JSON(http.StatusOK, gin.H{"message": "message updated"})
+}
+
+func AddUserGroupHandler(c *gin.Context) {
+	// TODO: gérer l'ajout d'un utilisateur à un groupe
+	c.JSON(http.StatusOK, gin.H{"message": "user added to group"})
+}
+
+func DeleteUserGroupHandler(c *gin.Context) {
+	// TODO: gérer la suppression d'un utilisateur d'un groupe
+	c.JSON(http.StatusOK, gin.H{"message": "user deleted from group"})
+}
+
+func SetAdminGroupHandler(c *gin.Context) {
+	// TODO: gérer la mise en admin d'un utilisateur
+	c.JSON(http.StatusOK, gin.H{"message": "user promoted to admin"})
+}
+
+func DeleteAdminGroupHandler(c *gin.Context) {
+	// TODO: gérer la suppression de l'admin d'un utilisateur
+	c.JSON(http.StatusOK, gin.H{"message": "admin deleted from group"})
+}
+
+func LoadImagesConversationHandler(c *gin.Context) {
+	// TODO: charger les images des conversations depuis la base
+	c.JSON(http.StatusOK, gin.H{"images": []string{"image 1", "image 2"}})
+}
+
+func LoadCommunityHandler(c *gin.Context) {
+	// TODO: charger les communautés depuis la base
+	c.JSON(http.StatusOK, gin.H{"communities": []string{"community 1", "community 2"}})
+}
+
+func UpdateCommunityHandler(c *gin.Context) {
+	// TODO: gérer la mise à jour d'une communauté
+	c.JSON(http.StatusOK, gin.H{"message": "community updated"})
+}
+
+func CreateCommunityHandler(c *gin.Context) {
+	// TODO: gérer la création d'une nouvelle communauté
+	c.JSON(http.StatusOK, gin.H{"message": "community created"})
+}
+
+func DeleteCommunityHandler(c *gin.Context) {
+	// TODO: gérer la suppression d'une communauté
+	c.JSON(http.StatusOK, gin.H{"message": "community deleted"})
+}
+
+func JoinGroupHandler(c *gin.Context) {
+	// TODO: gérer l'ajout d'un utilisateur à un groupe
+	c.JSON(http.StatusOK, gin.H{"message": "group joined"})
+}
+
+func QuitGroupHandler(c *gin.Context) {
+	// TODO: gérer la sortie d'un utilisateur d'un groupe
+	c.JSON(http.StatusOK, gin.H{"message": "group left"})
+}
+
+func SearchUserHandler(c *gin.Context) {
+	// TODO: gérer la recherche d'un utilisateur
+	c.JSON(http.StatusOK, gin.H{"users": []string{"user 1", "user 2"}})
+}
+
+func SearchPostHandler(c *gin.Context) {
+	// TODO: gérer la recherche d'un post
+	c.JSON(http.StatusOK, gin.H{"posts": []string{"post 1", "post 2"}})
+}
+
+func SearchCommunityHandler(c *gin.Context) {
+	// TODO: gérer la recherche d'une communauté
+	c.JSON(http.StatusOK, gin.H{"communities": []string{"community 1", "community 2"}})
+}
+
+func SearchMessageHandler(c *gin.Context) {
+	// TODO: gérer la recherche d'un message
+	c.JSON(http.StatusOK, gin.H{"messages": []string{"new message 1", "new message 2"}})
+}
+
+func SearchGroupHandler(c *gin.Context) {
+	// TODO: gérer la recherche d'un groupe
+	c.JSON(http.StatusOK, gin.H{"groups": []string{"group 1", "group 2"}})
+}
+
+func SearchTagHandler(c *gin.Context) {
+	// TODO: gérer la recherche d'un tag
+	c.JSON(http.StatusOK, gin.H{"tags": []string{"tag 1", "tag 2"}})
+}
+
+func ReportUserHandler(c *gin.Context) {
+	// TODO: gérer la création d'un rapport
+	c.JSON(http.StatusOK, gin.H{"message": "user reported"})
+}
+
+func ReportPostHandler(c *gin.Context) {
+	// TODO: gérer la création d'un rapport
+	c.JSON(http.StatusOK, gin.H{"message": "post reported"})
+}
+
+func ReportCommentHandler(c *gin.Context) {
+	// TODO: gérer la création d'un rapport
+	c.JSON(http.StatusOK, gin.H{"message": "comment reported"})
+}
+
+func ReportMessageHandler(c *gin.Context) {
+	// TODO: gérer la création d'un rapport
+	c.JSON(http.StatusOK, gin.H{"message": "message reported"})
+}
+
+func ReportCommunityHandler(c *gin.Context) {
+	// TODO: gérer la création d'un rapport
+	c.JSON(http.StatusOK, gin.H{"message": "community reported"})
+}
+
+func ReportGroupHandler(c *gin.Context) {
+	// TODO: gérer la création d'un rapport
+	c.JSON(http.StatusOK, gin.H{"message": "group reported"})
 }

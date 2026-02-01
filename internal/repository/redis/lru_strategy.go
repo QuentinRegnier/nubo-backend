@@ -1,4 +1,3 @@
-// internal/cache/strategy_redis.go
 package redis
 
 import (

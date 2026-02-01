@@ -65,10 +65,13 @@ type AsyncEvent struct {
 
 const (
 	QueueShards = 64
-	// On change le préfixe pour séparer les files par Type et Action
+
+	// QueueBasePrefix est le préfixe utilisé pour séparer les files par Type et Action.
 	// Format de la liste : q:{shardID}:{Type}:{Action}
 	QueueBasePrefix = "q:"
-	// Format du Dashboard : h:stats:{shardID}
+
+	// StatsBasePrefix est le préfixe utilisé pour les métriques du Dashboard.
+	// Format : h:stats:{shardID}
 	StatsBasePrefix = "h:stats:"
 )
 

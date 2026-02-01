@@ -10,7 +10,7 @@ import (
 	"github.com/lib/pq"
 )
 
-// EntityMapper définit comment transformer un struct en ligne SQL
+// EntityMapper définit comment transformer un struct en ligne SQL.
 type EntityMapper interface {
 	TableName() string
 	Columns() []string
@@ -18,7 +18,7 @@ type EntityMapper interface {
 	BuildUpdateQuery(tempTable string) string
 }
 
-// Factory pour récupérer le bon mapper
+// GetMapper retourne le mapper correspondant au type d'entité Redis.
 func GetMapper(entity redis.EntityType) EntityMapper {
 	switch entity {
 	// --- AUTH ---
