@@ -8,3 +8,4 @@ CREATE TABLE IF NOT EXISTS likes (
 );
 
 CREATE INDEX idx_likes_target ON likes(target_type, target_id);
+CREATE INDEX idx_likes_user ON likes(user_id);

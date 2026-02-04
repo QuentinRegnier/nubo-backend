@@ -1,17 +1,14 @@
-CREATE OR REPLACE VIEW conversation_participants_view AS
+CREATE OR REPLACE VIEW views.conversation_user_view AS
 SELECT
-    cm.conversation_id,
     cm.user_id,
-    u.username,
-    u.first_name,
-    u.last_name,
-    cm.role,
-    cm.joined_at,
-    cm.unread_count,
-    conv.type AS conversation_type,
-    conv.title AS conversation_title,
-    conv.state AS conversation_state,
-    conv.created_at AS conversation_created_at
-FROM messaging.conversation_members cm
-JOIN messaging.conversations_meta conv ON cm.conversation_id = conv.id
-JOIN auth.users u ON cm.user_id = u.id;
+    ARRAY_AGG(cm.conversation_id ORDER BY last_msg.created_at DESC NULLS LAST) AS conversation_ids
+FROM messaging.members cm
+         LEFT JOIN LATERAL (
+    SELECT m.created_at
+    FROM messaging.messages m
+    WHERE m.conversation_id = cm.conversation_id
+      AND m.sender_id != cm.user_id
+ORDER BY m.created_at DESC
+    LIMIT 1
+    ) last_msg ON true
+GROUP BY cm.user_id;

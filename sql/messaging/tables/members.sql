@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS members (
     id BIGINT PRIMARY KEY,              -- Modifié : BIGINT pur
     conversation_id BIGINT REFERENCES conversations(id), -- Corrigé : pointe vers 'conversations'
-    user_id BIGINT REFERENCES users(id), -- Harmonisé vers 'users'
+    user_id BIGINT REFERENCES auth.users(id), -- Harmonisé vers 'users'
     role SMALLINT,                      -- Modifié : Plus de valeur par défaut (0)
     joined_at TIMESTAMPTZ,              -- Modifié : Plus de DEFAULT now()
     unread_count INT,                   -- Modifié : Plus de valeur par défaut (0)

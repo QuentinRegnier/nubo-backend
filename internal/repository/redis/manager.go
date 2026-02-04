@@ -147,6 +147,8 @@ func (c *Collection) Set(ctx context.Context, obj map[string]any) error {
 		return err
 	}
 
+	pipe := c.Redis.TxPipeline()
+
 	id := fmt.Sprintf("%v", obj["id"])
 	objKey := "cache:" + c.Name + ":" + id
 
@@ -161,16 +163,16 @@ func (c *Collection) Set(ctx context.Context, obj map[string]any) error {
 			continue
 		}
 		val, ok := obj[field]
-		if !ok {
+		if !ok || val == nil {
 			continue
 		}
 
-		// Détection ZSET (Numérique ou Date)
+		// Détection du type d'indexation (ZSET pour numérique/dates, SET pour le reste)
 		isZSet := shouldIndexAsZSet(field, kind)
-		var score float64
 
 		if isZSet {
-			// On calcule le score seulement si c'est nécessaire
+			// --- CAS ZSET (Numérique ou Date) ---
+			var score float64
 			if field == "created_at" || field == "updated_at" || field == "joined_at" || field == "expires_at" || field == "birthdate" || field == "ban_expires_at" || field == "tolerance_time" {
 				if t, err := parseToTime(val); err == nil {
 					score = float64(t.Unix())
@@ -180,19 +182,24 @@ func (c *Collection) Set(ctx context.Context, obj map[string]any) error {
 					score = float64(n)
 				}
 			}
-			// Indexation par Score (ZSET)
-			// ex: idx:zset:users:age -> score=25, member=ID
+
 			idxKey := fmt.Sprintf("idx:zset:%s:%s", c.Name, field)
 			c.Redis.ZAdd(ctx, idxKey, &redis.Z{
 				Score:  score,
 				Member: id,
 			})
+			// Remplacer la logique SET par celle-ci
 		} else {
-			// Indexation par Valeur Exacte (SET)
-			// ex: idx:users:role:admin -> member=ID
-			valStr := fmt.Sprintf("%v", val)
-			idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr)
-			c.Redis.SAdd(ctx, idxKey, id)
+			if reflect.TypeOf(val).Kind() == reflect.Slice {
+				s := reflect.ValueOf(val)
+				for i := 0; i < s.Len(); i++ {
+					valStr := fmt.Sprintf("%v", s.Index(i).Interface())
+					pipe.SRem(ctx, fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr), id)
+				}
+			} else {
+				valStr := fmt.Sprintf("%v", val)
+				pipe.SRem(ctx, fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr), id)
+			}
 		}
 	}
 
@@ -353,18 +360,24 @@ func (c *Collection) Delete(ctx context.Context, filter map[string]any) error {
 			// UTILISATION DU HELPER CENTRALISÉ
 			isZSet := shouldIndexAsZSet(field, kind)
 
+			// Dans la boucle de nettoyage des index de (c *Collection) Delete
 			if isZSet {
-				// Suppression dans ZSET
 				idxKey := fmt.Sprintf("idx:zset:%s:%s", c.Name, field)
 				pipe.ZRem(ctx, idxKey, id)
 			} else {
-				// Suppression dans SET
-				valStr := fmt.Sprintf("%v", val)
-				idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr)
-				pipe.SRem(ctx, idxKey, id)
-
-				// Note: Tu avais une logique pour supprimer les clés vides après,
-				// tu peux la garder si tu veux, ici je simplifie pour la clarté.
+				// GESTION TABLEAUX : On itère pour supprimer l'ID de chaque membre
+				if reflect.TypeOf(val).Kind() == reflect.Slice {
+					s := reflect.ValueOf(val)
+					for i := 0; i < s.Len(); i++ {
+						valStr := fmt.Sprintf("%v", s.Index(i).Interface())
+						idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr)
+						pipe.SRem(ctx, idxKey, id)
+					}
+				} else {
+					valStr := fmt.Sprintf("%v", val)
+					idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr)
+					pipe.SRem(ctx, idxKey, id)
+				}
 			}
 		}
 
@@ -436,18 +449,29 @@ func (c *Collection) Update(ctx context.Context, filter map[string]interface{}, 
 					Member: id,
 				})
 			} else {
-				// CAS SET (Valeurs distinctes, ex: username, role)
-				// IL FAUT SUPPRIMER L'ANCIENNE ENTRÉE
+				// 1. On retire l'ANCIENNE valeur (individuellement si tableau)
 				if hasOld {
-					oldValStr := fmt.Sprintf("%v", oldVal)
-					oldIdxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, oldValStr)
-					pipe.SRem(ctx, oldIdxKey, id) // <-- SUPPRESSION ICI
+					if reflect.TypeOf(oldVal).Kind() == reflect.Slice {
+						sOld := reflect.ValueOf(oldVal)
+						for i := 0; i < sOld.Len(); i++ {
+							oldStr := fmt.Sprintf("%v", sOld.Index(i).Interface())
+							pipe.SRem(ctx, fmt.Sprintf("idx:%s:%s:%s", c.Name, field, oldStr), id)
+						}
+					} else {
+						pipe.SRem(ctx, fmt.Sprintf("idx:%s:%s:%s", c.Name, field, fmt.Sprintf("%v", oldVal)), id)
+					}
 				}
 
-				// ET AJOUTER LA NOUVELLE
-				newValStr := fmt.Sprintf("%v", newVal)
-				newIdxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, newValStr)
-				pipe.SAdd(ctx, newIdxKey, id)
+				// 2. On ajoute la NOUVELLE valeur (individuellement si tableau)
+				if reflect.TypeOf(newVal).Kind() == reflect.Slice {
+					sNew := reflect.ValueOf(newVal)
+					for i := 0; i < sNew.Len(); i++ {
+						newStr := fmt.Sprintf("%v", sNew.Index(i).Interface())
+						pipe.SAdd(ctx, fmt.Sprintf("idx:%s:%s:%s", c.Name, field, newStr), id)
+					}
+				} else {
+					pipe.SAdd(ctx, fmt.Sprintf("idx:%s:%s:%s", c.Name, field, fmt.Sprintf("%v", newVal)), id)
+				}
 			}
 
 			// 3. Mettre à jour l'objet en mémoire pour le HMSet final
@@ -674,7 +698,7 @@ func fetchIDsForCondition(ctx context.Context, rdb *redis.Client, collName, fiel
 			rBox.Min = scoreStr
 		case "$lt":
 			rBox.Max = "(" + scoreStr
-		case "$lte":
+		default:
 			rBox.Max = scoreStr
 		}
 
@@ -774,7 +798,7 @@ func deleteIDsFromCondition(cond map[string]any, ids *[]string) {
 					if idInt < valInt {
 						newIDs = append(newIDs, id)
 					}
-				case "$lte":
+				default:
 					if idInt <= valInt {
 						newIDs = append(newIDs, id)
 					}

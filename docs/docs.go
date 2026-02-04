@@ -151,6 +151,83 @@ const docTemplate = `{
                 }
             }
         },
+        "/post": {
+            "post": {
+                "description": "Crée un post avec du contenu texte, des hashtags, des mentions d'utilisateurs et entre 1 et 4 images.\nCette route nécessite une authentification par JWT et une signature HMAC valide.\n\n**Règles de validation \u0026 Erreurs :**\n\n🔴 **400 Bad Request (Erreurs client) :**\n* ` + "`" + `Field 'data' is required` + "`" + ` : Le champ texte 'data' contenant le JSON est manquant.\n* ` + "`" + `Invalid JSON: ...` + "`" + ` : Le format JSON dans le champ 'data' est incorrect.\n* ` + "`" + `Too many tags (max 10)` + "`" + ` : Le nombre de hashtags ou d'utilisateurs tagués dépasse 10.\n* ` + "`" + `Maximum 4 images allowed` + "`" + ` : Vous avez tenté d'envoyer plus de 4 fichiers média.\n\n🟠 **401 Unauthorized (Authentification) :**\n* ` + "`" + `Utilisateur non identifié` + "`" + ` : Le userID n'a pas pu être extrait du token JWT ou contexte manquant.\n* ` + "`" + `Signature HMAC invalide` + "`" + ` : (Géré par le middleware) La signature ne correspond pas au contenu.\n\n⚫ **500 Internal Server Error (Serveur) :**\n* ` + "`" + `Failed to create post: ...` + "`" + ` : Erreur lors de l'upload MinIO ou de l'insertion dans la file d'attente Redis (Queue).",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "posts"
+                ],
+                "summary": "Créer une nouvelle publication",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer \u003cvotre_jwt\u003e",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Signature HMAC de la requête",
+                        "name": "X-Signature",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timestamp Unix de la requête",
+                        "name": "X-Timestamp",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "Images du post (1 à 4 fichiers)",
+                        "name": "media",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Données JSON (domain.CreatePostInput)",
+                        "name": "data",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.CreatePostResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Données invalides ou trop de fichiers",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Session expirée ou signature HMAC corrompue",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Erreur interne de persistance",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/renew-jwt": {
             "post": {
                 "description": "Génère un nouveau JWT pour l'utilisateur et effectue une rotation de sécurité des secrets (Ratchet).\nCette route est critique et nécessite une signature HMAC valide basée sur le secret actuel de la session.\n\n**Mécanisme :**\n1. Vérifie la signature HMAC du body avec les headers de sécurité.\n2. Identifie la session via l'ID utilisateur et le ` + "`" + `X-Secret` + "`" + `.\n3. Calcule le prochain secret (N+1) et met à jour l'historique (Ratchet).\n4. Renvoie le nouveau JWT.\n\n**Règles \u0026 Erreurs :**\n\n🔴 **400 Bad Request :**\n* ` + "`" + `Erreur lecture body` + "`" + ` : Impossible de lire le corps de la requête.\n* ` + "`" + `Invalid JSON format` + "`" + ` : Le JSON envoyé est mal formé.\n* ` + "`" + `Headers de sécurité manquants` + "`" + ` : Il manque ` + "`" + `Authorization` + "`" + `, ` + "`" + `X-Secret` + "`" + `, ` + "`" + `X-Signature` + "`" + ` ou ` + "`" + `X-Timestamp` + "`" + `.\n\n🟠 **401 Unauthorized :**\n* ` + "`" + `Signature HMAC invalide` + "`" + ` : La signature ne correspond pas au contenu (tentative de falsification).\n* ` + "`" + `Session invalide ou Secret incorrect` + "`" + ` : Le secret fourni ne correspond à aucune session active pour cet utilisateur (ou désynchronisation Ratchet).\n\n⚫ **500 Internal Server Error :**\n* ` + "`" + `Erreur génération token` + "`" + ` : Échec de la création du JWT.\n* ` + "`" + `Erreur rotation secrets` + "`" + ` : Impossible de mettre à jour Redis (Ratchet bloqué).",
@@ -280,6 +357,14 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "github_com_QuentinRegnier_nubo-backend_internal_domain.CreatePostResponse": {
+            "type": "object",
+            "properties": {
+                "post_id": {
+                    "type": "integer"
+                }
+            }
+        },
         "github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse": {
             "type": "object",
             "properties": {

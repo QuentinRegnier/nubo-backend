@@ -11,3 +11,5 @@ CREATE TABLE IF NOT EXISTS conversations (
 );
 
 CREATE INDEX idx_conversations_last_message ON conversations(last_message_id);
+CREATE INDEX idx_conversations_created ON conversations(created_at DESC);
+CREATE INDEX idx_conversations_state ON conversations(state);

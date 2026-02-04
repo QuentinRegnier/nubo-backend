@@ -57,7 +57,7 @@ func InitCacheDatabase() {
 	Likes = NewMongoCollection("nubo_mongo", "content.likes", schemaLikes)
 	Media = NewMongoCollection("nubo_mongo", "content.media", schemaMedia)
 	ConversationsMeta = NewMongoCollection("nubo_mongo", "messaging.conversations", schemaConversations)
-	ConversationMembers = NewMongoCollection("nubo_mongo", "messaging.conversation_members", schemaMembers)
+	ConversationMembers = NewMongoCollection("nubo_mongo", "messaging.members", schemaMembers)
 	Messages = NewMongoCollection("nubo_mongo", "messaging.messages", schemaMessages)
 
 	log.Println("Structure MongoDB initialisée")
@@ -144,7 +144,12 @@ func (c *MongoCollection) Get(filter map[string]any, projection map[string]any) 
 	if err != nil {
 		return nil, err
 	}
-	defer cur.Close(ctx)
+
+	defer func() {
+		if err := cur.Close(ctx); err != nil {
+			log.Printf("Erreur lors de la fermeture du curseur: %v", err)
+		}
+	}()
 
 	var results []map[string]any
 	if err := cur.All(ctx, &results); err != nil {

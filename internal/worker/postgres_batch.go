@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"strings"
@@ -108,7 +109,16 @@ func bulkInsertPostgres(ctx context.Context, entity redis.EntityType, events []r
 		log.Printf("❌ Erreur BeginTx Insert: %v", err)
 		return
 	}
-	defer tx.Rollback() // Sécurité
+
+	committed := false
+	defer func() {
+		if !committed {
+			err := tx.Rollback()
+			if err != nil && err != sql.ErrTxDone {
+				log.Printf("⚠️ Erreur lors du Rollback: %v", err)
+			}
+		}
+	}()
 
 	// CORRECTION ICI : On n'utilise plus pq.CopyIn directement car il gère mal les schémas "auth.users"
 	copyQuery := GenerateCopyQuery(mapper.TableName(), mapper.Columns())
@@ -119,12 +129,21 @@ func bulkInsertPostgres(ctx context.Context, entity redis.EntityType, events []r
 		log.Printf("❌ Erreur Prepare CopyIn: %v", err)
 		return
 	}
-	defer stmt.Close()
+
+	defer func() {
+		if err := stmt.Close(); err != nil {
+			log.Printf("Error closing file: %v", err)
+		}
+	}()
 
 	// On pousse les données
 	for _, e := range events {
-		row := mapper.ToRow(e.Payload)
-		_, err := stmt.Exec(row...)
+		row, err := mapper.ToRow(e.Payload)
+		if err != nil {
+			log.Printf("❌ Erreur mapping payload: %v", err)
+			continue // On passe à l'événement suivant
+		}
+		_, err = stmt.Exec(row...)
 		if err != nil {
 			log.Printf("❌ Erreur Exec CopyIn: %v", err)
 			return
@@ -134,12 +153,20 @@ func bulkInsertPostgres(ctx context.Context, entity redis.EntityType, events []r
 	// On ferme le statement pour flusher les données
 	if _, err := stmt.Exec(); err != nil {
 		log.Printf("❌ Erreur Flush CopyIn: %v", err)
+		_ = stmt.Close() // On ferme quand même
+		return
+	}
+
+	if err := stmt.Close(); err != nil {
+		log.Printf("❌ Erreur closing statement: %v", err)
 		return
 	}
 
 	if err := tx.Commit(); err != nil {
 		log.Printf("❌ Erreur Commit Insert: %v", err)
 	}
+
+	committed = true
 }
 
 // --- 2. BULK UPDATE (Temp Table + COPY) ---
@@ -154,7 +181,16 @@ func bulkUpdatePostgres(ctx context.Context, entity redis.EntityType, events []r
 		log.Printf("❌ Erreur BeginTx Update: %v", err)
 		return
 	}
-	defer tx.Rollback()
+
+	committed := false
+	defer func() {
+		if !committed {
+			err := tx.Rollback()
+			if err != nil && err != sql.ErrTxDone {
+				log.Printf("⚠️ Erreur lors du Rollback: %v", err)
+			}
+		}
+	}()
 
 	// A. Création table temporaire (copie structure)
 	// On utilise time.Now().UnixNano() pour un nom unique par batch
@@ -176,20 +212,28 @@ func bulkUpdatePostgres(ctx context.Context, entity redis.EntityType, events []r
 	}
 
 	for _, e := range events {
-		row := mapper.ToRow(e.Payload)
+		row, err := mapper.ToRow(e.Payload)
+		if err != nil {
+			log.Printf("❌ Erreur mapping payload pour update: %v", err)
+			continue
+		}
 		if _, err := stmt.Exec(row...); err != nil {
 			log.Printf("❌ Erreur Exec CopyIn Temp: %v", err)
-			stmt.Close()
+			_ = stmt.Close()
 			return
 		}
 	}
 
 	if _, err := stmt.Exec(); err != nil {
 		log.Printf("❌ Erreur Flush CopyIn Temp: %v", err)
-		stmt.Close()
+		_ = stmt.Close() // On ignore ici car on gère déjà l'erreur Exec
 		return
 	}
-	stmt.Close() // Important de fermer avant de requêter la table
+
+	if err := stmt.Close(); err != nil {
+		log.Printf("❌ Erreur closing statement temp: %v", err)
+		return
+	}
 
 	// C. Merge (UPDATE FROM)
 	queryUpdate := mapper.BuildUpdateQuery(tempTable)
@@ -201,6 +245,8 @@ func bulkUpdatePostgres(ctx context.Context, entity redis.EntityType, events []r
 	if err := tx.Commit(); err != nil {
 		log.Printf("❌ Erreur Commit Update: %v", err)
 	}
+
+	committed = true
 }
 
 // --- 3. BULK DELETE (WHERE ID = ANY(...)) ---

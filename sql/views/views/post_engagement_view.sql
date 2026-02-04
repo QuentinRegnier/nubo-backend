@@ -1,7 +1,4 @@
--- Vue : post_engagement_view
--- Donne le nombre de likes et de commentaires pour chaque post
-
-CREATE OR REPLACE VIEW post_engagement_view AS
+CREATE OR REPLACE VIEW views.post_engagement_view AS
 SELECT
     p.id AS post_id,
     p.user_id,
@@ -14,13 +11,13 @@ SELECT
     COALESCE(l.like_count, 0) AS like_count,
     COALESCE(c.comment_count, 0) AS comment_count
 FROM content.posts p
-LEFT JOIN (
+         LEFT JOIN (
     SELECT target_id, COUNT(*) AS like_count
     FROM content.likes
     WHERE target_type = 0 -- 0 = post
     GROUP BY target_id
 ) l ON p.id = l.target_id
-LEFT JOIN (
+         LEFT JOIN (
     SELECT post_id, COUNT(*) AS comment_count
     FROM content.comments
     GROUP BY post_id
