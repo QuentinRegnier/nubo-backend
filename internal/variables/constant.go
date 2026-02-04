@@ -17,3 +17,5 @@ const (
 	TimeShift = NodeBits + StepBits          // Décalage pour le timestamp (22)
 	NodeShift = StepBits                     // Décalage pour le noeud (12)
 )
+
+const MaxTags = 10

@@ -2,19 +2,18 @@ package domain
 
 import "time"
 
-// Phone :
+// ********************************************************
+// ****             Type in Intern                     ****
+// ********************************************************
+
 type Phone struct {
 	CountryCode int `json:"country_code" binding:"required"` // ex: 33
 	Number      int `json:"number" binding:"required"`       // ex: 746294017
 }
-
-// Location :
 type Location struct {
 	Lat  float64 `json:"lat"`
 	Long float64 `json:"long"`
 }
-
-// RegisterRequest représente le payload complet envoyé par l'app
 type UserRequest struct { // CreateUser
 	ID               int64     `bson:"id" json:"id"` // Attention: défini comme Int dans ton schéma
 	Username         string    `bson:"username" json:"username"`
@@ -41,7 +40,6 @@ type UserRequest struct { // CreateUser
 	CreatedAt        time.Time `bson:"created_at" json:"created_at"`
 	UpdatedAt        time.Time `bson:"updated_at" json:"updated_at"`
 }
-
 type SessionsRequest struct { // CreateSession
 	ID            int64          `bson:"id" json:"id"`
 	UserID        int64          `bson:"user_id" json:"user_id"`
@@ -57,26 +55,31 @@ type SessionsRequest struct { // CreateSession
 	ExpiresAt     time.Time      `bson:"expires_at" json:"expires_at"`
 }
 
-type RenewJWTResponse struct {
-	Token   string `json:"token"`
-	Message string `json:"message"`
+type MediaRequest struct {
+	ID          int64     `bson:"id" json:"id"`
+	OwnerID     int64     `bson:"owner_id" json:"owner_id"`
+	StoragePath string    `bson:"storage_path" json:"storage_path"`
+	Visibility  bool      `bson:"visibility" json:"visibility"`
+	CreatedAt   time.Time `bson:"created_at" json:"created_at"`
+	UpdatedAt   time.Time `bson:"updated_at" json:"updated_at"`
 }
 
-// RefreshMasterInput : Structure du Body pour le hard-refresh
-type RefreshMasterInput struct {
-	UserID      int64  `json:"id_user" binding:"required"`
-	MasterToken string `json:"master_token" binding:"required"` // L'ancien MasterToken
-	Username    string `json:"username" binding:"required"`     // Le username de l'utilisateur
+type PostRequest struct {
+	ID          int64     `bson:"id" json:"id"`
+	UserID      int64     `bson:"user_id" json:"user_id"`
+	Content     string    `bson:"content" json:"content"`
+	Hashtags    []string  `bson:"hashtags" json:"hashtags"`
+	Identifiers []int64   `bson:"identifiers" json:"identifiers"`
+	MediaIDs    []int64   `bson:"media_ids" json:"media_ids"`
+	Visibility  int       `bson:"visibility" json:"visibility"`
+	Location    string    `bson:"location" json:"location"`
+	CreatedAt   time.Time `bson:"created_at" json:"created_at"`
+	UpdatedAt   time.Time `bson:"updated_at" json:"updated_at"`
 }
 
-// RefreshMasterResponse : Ce qu'on renvoie au client
-type RefreshMasterResponse struct {
-	MasterToken string `json:"master_token"`
-	Token       string `json:"token"` // Le nouveau JWT
-	Message     string `json:"message"`
-}
-
-// Structure interne
+// ********************************************************
+// ****                Routes Types                    ****
+// ********************************************************
 
 type SignUpInput struct {
 	Username     string         `json:"username" binding:"required" example:"johndoe"`
@@ -102,6 +105,7 @@ type SignUpResponse struct {
 	Message          string    `json:"message" example:"User created successfully"`
 	ProfilePictureID int64     `bson:"profile_picture_id" json:"profile_picture_id"`
 }
+
 type LoginInput struct {
 	Email        string         `json:"email" binding:"required,email" example:"john@nubo.com"`
 	PasswordHash string         `json:"password_hash" binding:"required" example:"hashed_secret_123"`
@@ -137,11 +141,29 @@ type LoginResponse struct {
 	Message       string    `json:"message" example:"Login successful"`
 }
 
-type MediaRequest struct {
-	ID          int64     `bson:"id" json:"id"`
-	OwnerID     int64     `bson:"owner_id" json:"owner_id"`
-	StoragePath string    `bson:"storage_path" json:"storage_path"`
-	Visibility  bool      `bson:"visibility" json:"visibility"`
-	CreatedAt   time.Time `bson:"created_at" json:"created_at"`
-	UpdatedAt   time.Time `bson:"updated_at" json:"updated_at"`
+type RenewJWTResponse struct {
+	Token   string `json:"token"`
+	Message string `json:"message"`
+}
+
+type RefreshMasterInput struct {
+	UserID      int64  `json:"id_user" binding:"required"`
+	MasterToken string `json:"master_token" binding:"required"` // L'ancien MasterToken
+	Username    string `json:"username" binding:"required"`     // Le username de l'utilisateur
+}
+type RefreshMasterResponse struct {
+	MasterToken string `json:"master_token"`
+	Token       string `json:"token"` // Le nouveau JWT
+	Message     string `json:"message"`
+}
+
+type CreatePostInput struct {
+	Content     string   `json:"content"`
+	Hashtags    []string `json:"hashtags"`
+	Identifiers []int64  `json:"identifiers"` // Liste d'utilisateurs tagués
+	Location    string   `json:"location"`
+	Visibility  int      `json:"visibility"`
+}
+type CreatePostResponse struct {
+	PostID int64 `json:"post_id"`
 }

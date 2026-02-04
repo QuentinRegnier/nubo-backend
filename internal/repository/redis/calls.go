@@ -13,7 +13,7 @@ import (
 )
 
 // Helper pour convertir les slices/maps en JSON string pour Redis
-func prepareForRedis(m map[string]any) {
+func PrepareForRedis(m map[string]any) {
 	for k, v := range m {
 		if v == nil {
 			continue
@@ -41,7 +41,7 @@ func RedisCreateMedia(m domain.MediaRequest) error {
 		return err
 	}
 
-	prepareForRedis(doc)
+	PrepareForRedis(doc)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -81,7 +81,7 @@ func RedisCreateUser(u domain.UserRequest) error {
 	}
 
 	// Transforme les tableaux/maps (badges, etc.) en JSON string
-	prepareForRedis(doc)
+	PrepareForRedis(doc)
 
 	// 2. Contexte avec Timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -113,7 +113,7 @@ func RedisCreateSession(s domain.SessionsRequest) error {
 	fmt.Printf("🐞 DEBUG MAP REDIS: ID=%v, UserID=%v\n", doc["id"], doc["user_id"])
 
 	// Transforme device_info et ip_history en JSON string
-	prepareForRedis(doc)
+	PrepareForRedis(doc)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -266,7 +266,7 @@ func RedisUpdateSession(s domain.SessionsRequest) error {
 	// Si l'ID est dans la struct mais qu'on ne veut pas l'update (c'est la clé primaire), on l'enlève de la map d'update
 	// (Dans ton code précédent tu le supprimais après ToMap, ici on ne l'a juste pas mis dans doc)
 
-	prepareForRedis(doc)
+	PrepareForRedis(doc)
 
 	// 4. Construction du filtre
 	filter := make(map[string]any)
@@ -286,4 +286,26 @@ func RedisUpdateSession(s domain.SessionsRequest) error {
 	defer cancel()
 
 	return Sessions.Update(ctx, filter, doc)
+}
+func RedisCreatePost(s domain.PostRequest) error {
+	// --- CORRECTION : MAPPING MANUEL ---
+	doc := map[string]any{
+		"id":          s.ID,
+		"user_id":     s.UserID,
+		"content":     s.Content,
+		"hashtags":    s.Hashtags,
+		"identifiers": s.Identifiers,
+		"media_ids":   s.MediaIDs,
+		"visibility":  s.Visibility,
+		"location":    s.Location,
+		"created_at":  s.CreatedAt,
+		"updated_at":  s.UpdatedAt,
+	}
+
+	PrepareForRedis(doc)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	return Posts.Set(ctx, doc)
 }

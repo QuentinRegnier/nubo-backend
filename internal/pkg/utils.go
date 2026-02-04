@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"go.mongodb.org/mongo-driver/bson"
 )
@@ -82,14 +83,6 @@ func ToMap(in any) (map[string]any, error) {
 	return out, nil
 }
 
-func String2Int(s string) int {
-	i, err := strconv.Atoi(s)
-	if err != nil {
-		return 0
-	}
-	return i
-}
-
 // toStruct convertit une map[string]any en structure (comme User)
 // en respectant les tags `bson:"..."` pour que la validation du schéma fonctionne.
 func ToStruct(m map[string]any, out any) error {
@@ -108,37 +101,59 @@ func ToStruct(m map[string]any, out any) error {
 	return nil
 }
 
-// EstNonVide vérifie si une valeur est "non vide" selon son type
-func EstNonVide(v any) bool {
-	val := reflect.ValueOf(v)
-
-	switch val.Kind() {
-
-	case reflect.String:
-		return val.String() != ""
-
-	case reflect.Slice, reflect.Array:
-		return val.Len() > 0
-
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return val.Int() != -1
-
-	case reflect.Struct:
-		for i := 0; i < val.NumField(); i++ {
-			f := val.Field(i)
-			if !EstNonVide(f.Interface()) {
-				return false
-			}
-		}
-		return true
-
-	default:
-		// Pour les types non gérés, on considère que non vide = valeur zéro ?
-		return !val.IsZero()
-	}
-}
-
 // exists vérifie si une valeur existe dans une slice
 func Exists[T comparable](slice []T, value T) bool {
 	return slices.Contains(slice, value)
+}
+
+func SliceUniqueInt64(slice []int64) []int64 {
+	keys := make(map[int64]bool)
+	list := []int64{}
+	for _, entry := range slice {
+		if _, value := keys[entry]; !value {
+			keys[entry] = true
+			list = append(list, entry)
+		}
+	}
+	return list
+}
+
+func SliceUniqueStr(slice []string) []string {
+	keys := make(map[string]bool)
+	list := []string{}
+	for _, entry := range slice {
+		if _, value := keys[entry]; !value {
+			keys[entry] = true
+			list = append(list, entry)
+		}
+	}
+	return list
+}
+
+// GetUserIDFromContext extrait de manière sécurisée l'ID utilisateur du contexte Gin.
+// Elle gère les conversions de types string (JWT sub), float64 (JSON) et int64.
+func GetUserIDFromContext(c *gin.Context) (int64, error) {
+	val, exists := c.Get("userID")
+	if !exists {
+		return 0, fmt.Errorf("userID non trouvé dans le contexte")
+	}
+
+	switch v := val.(type) {
+	case int64:
+		return v, nil
+	case string:
+		// Cas fréquent : le 'sub' du JWT est souvent une string
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("format userID string invalide: %w", err)
+		}
+		return id, nil
+	case float64:
+		// Cas fréquent : JSON unmarshal transforme les nombres en float64
+		return int64(v), nil
+	case int:
+		return int64(v), nil
+	default:
+		return 0, fmt.Errorf("type userID inconnu: %T", v)
+	}
 }

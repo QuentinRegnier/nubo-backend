@@ -74,14 +74,16 @@ var RelationsSchema = map[string]reflect.Kind{
 
 // PostsCache
 var PostsSchema = map[string]reflect.Kind{
-	"id":         reflect.Int64,
-	"user_id":    reflect.Int64,
-	"content":    reflect.String,
-	"media_ids":  reflect.Slice, // UUID[]
-	"visibility": reflect.Int,
-	"location":   reflect.String,
-	"created_at": reflect.Struct,
-	"updated_at": reflect.Struct,
+	"id":          reflect.Int64,
+	"user_id":     reflect.Int64,
+	"content":     reflect.String,
+	"hashtags":    reflect.Slice, // Text[]
+	"identifiers": reflect.Slice, // UUID[]
+	"media_ids":   reflect.Slice, // UUID[]
+	"visibility":  reflect.Int,
+	"location":    reflect.String,
+	"created_at":  reflect.Struct,
+	"updated_at":  reflect.Struct,
 }
 
 // CommentsCache

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -14,7 +15,7 @@ import (
 type EntityMapper interface {
 	TableName() string
 	Columns() []string
-	ToRow(data any) []any
+	ToRow(data any) ([]any, error)
 	BuildUpdateQuery(tempTable string) string
 }
 
@@ -29,9 +30,9 @@ func GetMapper(entity redis.EntityType) EntityMapper {
 	// case redis.EntityRelation:
 	// 	return &RelationMapper{}
 
-	// // --- CONTENT ---
-	// case redis.EntityPost:
-	// 	return &PostMapper{}
+	// --- CONTENT ---
+	case redis.EntityPost:
+		return &PostMapper{}
 	// case redis.EntityComment:
 	// 	return &CommentMapper{}
 	case redis.EntityMedia:
@@ -71,11 +72,16 @@ func (m *UserMapper) Columns() []string {
 	}
 }
 
-func (m *UserMapper) ToRow(data any) []any {
+func (m *UserMapper) ToRow(data any) ([]any, error) {
 	// Hack JSON pour convertir map[string]interface{} (Redis) -> Struct
-	jsonBytes, _ := json.Marshal(data)
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
 	var u domain.UserRequest
-	json.Unmarshal(jsonBytes, &u)
+	if err := json.Unmarshal(jsonBytes, &u); err != nil {
+		return nil, err
+	}
 
 	// Conversion Date pour SQL (si vide)
 	// Attention aux champs optionnels (Pointers ou Zero values)
@@ -85,7 +91,7 @@ func (m *UserMapper) ToRow(data any) []any {
 		u.ProfilePictureID, u.Grade, u.Location, u.School, u.Work, pq.Array(u.Badges),
 		u.Desactivated, u.Banned, u.BanReason, u.BanExpiresAt,
 		u.CreatedAt, u.UpdatedAt,
-	}
+	}, nil
 }
 
 func (m *UserMapper) BuildUpdateQuery(tempTable string) string {
@@ -105,18 +111,26 @@ func (m *SessionMapper) Columns() []string {
 	}
 }
 
-func (m *SessionMapper) ToRow(data any) []any {
-	jsonBytes, _ := json.Marshal(data)
+func (m *SessionMapper) ToRow(data any) ([]any, error) {
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
 	var s domain.SessionsRequest
-	json.Unmarshal(jsonBytes, &s)
+	if err := json.Unmarshal(jsonBytes, &s); err != nil {
+		return nil, err
+	}
 
-	deviceInfoJSON, _ := json.Marshal(s.DeviceInfo)
+	deviceInfoJSON, err := json.Marshal(s.DeviceInfo)
+	if err != nil {
+		return nil, err
+	}
 
 	return []any{
 		s.ID, s.UserID, s.MasterToken, s.DeviceToken, string(deviceInfoJSON),
 		pq.Array(s.IPHistory), s.CurrentSecret, s.LastSecret, s.LastJWT,
 		s.ToleranceTime, s.CreatedAt, s.ExpiresAt,
-	}
+	}, nil
 }
 
 func (m *SessionMapper) BuildUpdateQuery(tempTable string) string {
@@ -150,28 +164,55 @@ func (m *SessionMapper) BuildUpdateQuery(tempTable string) string {
 //                                CONTENT SCHEMA
 // ============================================================================
 
-// // --- POST MAPPER (content.posts) ---
-// type PostMapper struct{}
+// --- POST MAPPER (content.posts) ---
+type PostMapper struct{}
 
-// func (m *PostMapper) TableName() string { return "content.posts" }
+func (m *PostMapper) TableName() string { return "content.posts" }
 
-// func (m *PostMapper) Columns() []string {
-// 	return []string{"id", "user_id", "content", "media_ids", "visibility", "location", "created_at", "updated_at"}
-// }
+func (m *PostMapper) Columns() []string {
+	// Correspondance exacte avec votre schéma de table
+	return []string{"id", "user_id", "content", "hashtags", "identifiers", "media_ids", "visibility", "location", "created_at", "updated_at"}
+}
 
-// func (m *PostMapper) ToRow(data any) []any {
-// 	jsonBytes, _ := json.Marshal(data)
-// 	var p domain.Post
-// 	json.Unmarshal(jsonBytes, &p)
+func (m *PostMapper) ToRow(data any) ([]any, error) {
+	// Conversion sécurisée des données venant de Redis
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	var p struct {
+		ID          int64     `json:"id"`
+		UserID      int64     `json:"user_id"`
+		Content     string    `json:"content"`
+		Hashtags    []string  `json:"hashtags"`
+		Identifiers []int64   `json:"identifiers"`
+		MediaIDs    []int64   `json:"media_ids"`
+		Visibility  int       `json:"visibility"`
+		Location    string    `json:"location"`
+		CreatedAt   time.Time `json:"created_at"`
+		UpdatedAt   time.Time `json:"updated_at"`
+	}
+	if err := json.Unmarshal(jsonBytes, &p); err != nil {
+		return nil, err
+	}
 
-// 	return []any{
-// 		p.ID, p.UserID, p.Content, pq.Array(p.MediaIDs), p.Visibility, p.Location, p.CreatedAt, p.UpdatedAt,
-// 	}
-// }
+	return []any{
+		p.ID,
+		p.UserID,
+		p.Content,
+		pq.Array(p.Hashtags), // Utilisation de pq.Array pour les types array SQL
+		pq.Array(p.Identifiers),
+		pq.Array(p.MediaIDs),
+		p.Visibility,
+		p.Location,
+		p.CreatedAt,
+		p.UpdatedAt,
+	}, nil
+}
 
-// func (m *PostMapper) BuildUpdateQuery(tempTable string) string {
-// 	return buildGenericUpdateQuery(m.TableName(), tempTable, m.Columns())
-// }
+func (m *PostMapper) BuildUpdateQuery(tempTable string) string {
+	return buildGenericUpdateQuery(m.TableName(), tempTable, m.Columns())
+}
 
 // --- MEDIA MAPPER (content.media) ---
 type MediaMapper struct{}
@@ -182,14 +223,19 @@ func (m *MediaMapper) Columns() []string {
 	return []string{"id", "owner_id", "storage_path", "visibility", "created_at", "updated_at"}
 }
 
-func (m *MediaMapper) ToRow(data any) []any {
-	jsonBytes, _ := json.Marshal(data)
+func (m *MediaMapper) ToRow(data any) ([]any, error) {
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
 	var med domain.MediaRequest
-	json.Unmarshal(jsonBytes, &med)
+	if err := json.Unmarshal(jsonBytes, &med); err != nil {
+		return nil, err
+	}
 
 	return []any{
 		med.ID, med.OwnerID, med.StoragePath, med.Visibility, med.CreatedAt, med.UpdatedAt,
-	}
+	}, nil
 }
 
 func (m *MediaMapper) BuildUpdateQuery(tempTable string) string {

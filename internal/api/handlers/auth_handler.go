@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -137,10 +138,6 @@ func SignUpHandler(c *gin.Context) {
 	sessions.ToleranceTime = time.Now().Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second)
 	sessions.CreatedAt = time.Time{}
 	sessions.ExpiresAt = time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
-
-	// Persistance en base de données
-	// Les arguments 'desactivated', 'banned', etc. sont maintenant DANS 'req'.
-	// J'assume que la signature de FuncCreateUser a changé pour accepter (req, token, ...).
 
 	userID, JWT, err := service.CreateUser(&req, &sessions, fileHeader, errFile)
 
@@ -522,46 +519,38 @@ func RefreshMaster(c *gin.Context) {
 
 	// 5. Récupération de la Session (Cascade : Redis -> Mongo -> Postgres)
 	var sessionRaw domain.SessionsRequest
-	var sessionFound bool = false
+	var sessionFound bool
 
 	// A. Essai Redis
-	sessionRaw, err = redis.RedisLoadSession(input.UserID, "", input.MasterToken, "")
-	if err == nil && sessionRaw.ID != 0 && sessionRaw.MasterToken == input.MasterToken {
+	if s, err := redis.RedisLoadSession(input.UserID, "", input.MasterToken, ""); err == nil && s.ID != 0 {
+		sessionRaw = s
 		sessionFound = true
 	}
 
-	// B. Essai Mongo (Si pas trouvé dans Redis)
+	// B. Essai Mongo
 	if !sessionFound {
-		// Supposons que tu aies un repo mongo générique similaire
-		sessionRaw, errMongo := mongo.MongoLoadSession(input.UserID, "", input.MasterToken, "")
-		if errMongo == nil && sessionRaw.ID != 0 && sessionRaw.MasterToken == input.MasterToken {
+		if s, err := mongo.MongoLoadSession(input.UserID, "", input.MasterToken, ""); err == nil && s.ID != 0 {
+			sessionRaw = s
 			sessionFound = true
-			// Repopulation Cache
-			if errAdd := redis.RedisCreateSession(sessionRaw); errAdd != nil {
-				fmt.Printf("⚠️ Warning: Echec repopulation Redis depuis Mongo: %v\n", errAdd)
-			}
+			_ = redis.RedisCreateSession(sessionRaw) // Repopulation cache
 		}
 	}
 
-	// C. Essai Postgres (Si pas trouvé dans Mongo)
+	// C. Essai Postgres
 	if !sessionFound {
-		sessionRaw, errPg := postgres.FuncLoadSession(-1, input.UserID, "", input.MasterToken)
-		if errPg == nil && sessionRaw.ID != 0 && sessionRaw.MasterToken == input.MasterToken {
+		s, err := postgres.FuncLoadSession(-1, input.UserID, "", input.MasterToken)
+		if err == nil && s.ID != 0 {
+			sessionRaw = s
 			sessionFound = true
-
-			// 🚨 REPOPULATION MONGO (Backup via Queue)
-			// On envoie une action CREATE vers Mongo car elle n'existait pas
-			redis.EnqueueDB(c, sessionRaw.ID, 0, redis.EntitySession, redis.ActionCreate, sessionRaw, redis.TargetMongo)
-
-			// 🚨 REPOPULATION REDIS (Cache Actif - Synchrone requis ici)
-			if errAdd := redis.RedisCreateSession(sessionRaw); errAdd != nil {
-				fmt.Printf("⚠️ Warning: Echec repopulation Redis depuis Postgres: %v\n", errAdd)
-			}
+			// Repopulation des backups
+			_ = redis.EnqueueDB(c, s.ID, 0, redis.EntitySession, redis.ActionCreate, s, redis.TargetMongo)
+			_ = redis.RedisCreateSession(s)
 		}
 	}
 
-	if !sessionFound {
-		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "MasterToken invalide ou session introuvable (All sources failed)"})
+	// SÉCURITÉ CRITIQUE : Si après les 3 essais on n'a rien, on arrête TOUT.
+	if !sessionFound || sessionRaw.ID == 0 {
+		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Session introuvable"})
 		return
 	}
 
@@ -611,7 +600,9 @@ func RefreshMaster(c *gin.Context) {
 
 	// TargetBoth : On veut mettre à jour Mongo (Doc) ET Postgres (Relationnel)
 	// car le MasterToken a changé (info critique).
-	redis.EnqueueDB(c, sessionRaw.ID, 0, redis.EntitySession, redis.ActionUpdate, sessionRaw, redis.TargetAll)
+	if err := redis.EnqueueDB(c, sessionRaw.ID, 0, redis.EntitySession, redis.ActionUpdate, sessionRaw, redis.TargetAll); err != nil {
+		log.Printf("Error enqueuing to DB: %v", err)
+	}
 
 	// 9. PRÉPARATION DE LA RÉPONSE SIGNÉE
 	respData := domain.RefreshMasterResponse{

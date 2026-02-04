@@ -92,13 +92,20 @@ func CreateUser(
 		if err != nil {
 			return -1, "", fmt.Errorf("cannot read file: %w", err)
 		}
-		defer file.Close()
+		defer func() {
+			if err := file.Close(); err != nil {
+				log.Printf("Error closing file: %v", err)
+			}
+		}()
 
 		// On récupère l'ID entier de la BDD
-		err = UploadMedia(file, "profile_"+req.Username, userID, mediaID)
-		if err != nil {
-			return -1, "", fmt.Errorf("internal error (image upload): %w", err)
-		}
+		go func() {
+			err = UploadMedia(file, "profile_"+req.Username, userID, mediaID)
+			if err != nil {
+				log.Printf("internal error (image upload): %v", err)
+				return
+			}
+		}()
 	}
 
 	// 4. CUCKOO FILTERS (Mémoire - inchangé)
@@ -180,7 +187,9 @@ func Login(
 		if errAdd := redis.RedisCreateUser(user); errAdd != nil {
 			log.Printf("⚠️ Warning: Echec cache Redis User: %v", errAdd)
 		}
-		redis.EnqueueDB(context.Background(), user.ID, 0, redis.EntityUser, redis.ActionCreate, &user, redis.TargetMongo)
+		if err := redis.EnqueueDB(context.Background(), user.ID, 0, redis.EntityUser, redis.ActionCreate, &user, redis.TargetMongo); err != nil {
+			log.Printf("Error enqueuing to DB: %v", err)
+		}
 	}
 
 	// ---------------------------------------------------------
@@ -334,6 +343,4 @@ func Login(
 }
 
 // startWebsocket
-func StartWebsocket() {
-
-}
+// func StartWebsocket() {}
