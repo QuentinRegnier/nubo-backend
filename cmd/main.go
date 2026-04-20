@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/docs"
 	"github.com/QuentinRegnier/nubo-backend/internal/api"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/websocket"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/mongo"
@@ -30,7 +30,7 @@ import (
 //
 //	go run github.com/swaggo/swag/cmd/swag@latest init -g cmd/main.go -d . --parseDependency --parseInternal
 //
-// @BasePath        /api/v11
+// @BasePath        /api/v12
 func main() {
 	// --- INITIALISATION SNOWFLAKE ---
 
@@ -65,19 +65,14 @@ func main() {
 	// Initialiser Redis
 	redis.InitRedis()
 
+	// NOUVEAU : Initialiser les collections du Repository Redis
+	redisgo.InitCacheDatabase()
+
 	// Nettoyage au démarrage
 	service.InitData()
 
-	// ⚡ Démarrer le Sentinel Distribué (Mode Dynamique)
-	// Argument 1 : Context
-	// Argument 2 : Client Redis
-	// Argument 3 : MARGE DE SÉCURITÉ (Ce qu'on doit laisser libre).
-	//              Ex: 256MB. Redis prendra tout le reste disponible.
-	// Argument 4 : Intervalle de vérification
-	redisgo.StartMemorySentinel(context.Background(), redis.Rdb, 256*1024*1024, 2*time.Second)
-
 	// Initialiser le Hub et lancer sa boucle
-	websocket.InitHub()
+	//websocket.InitHub()
 
 	// Initiatiser MinIO
 	minio.InitMinio()
@@ -85,11 +80,14 @@ func main() {
 	// Iniitaliser la structure MongoDB
 	mongogo.InitCacheDatabase()
 
-	// Initialiser la structure Redis (caches)
-	redisgo.InitCacheDatabase()
-
 	// Initialiser le Cuckoo Filter
 	cuckoo.InitCuckooFilter()
+
+	// --- NOUVEAU : CHARGEMENT DU CERVEAU DES TAGS ---
+	err = service.LoadTagsConfig("assets/tags_config.json")
+	if err != nil {
+		log.Fatalf("❌ Impossible de charger la configuration des tags : %v", err)
+	}
 
 	// Lance le moteur V12
 	worker.StartBackgroundWorkers(context.Background())
@@ -100,11 +98,26 @@ func main() {
 	// Initialiser la documentation
 	docs.InitDocsRoutes(r)
 
+	// Initialiser les Index Mongo
+	_ = mongo.EnsureIndexes(context.Background(), mongo.MongoClient.Database("nubo"))
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 	log.Printf("Server listening on %s", port)
-	log.Printf("v11 API ready")
-	r.Run(":" + port)
+	log.Printf("v12 API ready")
+
+	// SÉCURITÉ : Configuration stricte des Timeouts pour contrer Slowloris
+	srv := &http.Server{
+		Addr:         ":" + port,
+		Handler:      r,
+		ReadTimeout:  5 * time.Second,  // Temps max pour lire la requête (Headers + Body)
+		WriteTimeout: 10 * time.Second, // Temps max pour envoyer la réponse
+		IdleTimeout:  15 * time.Second, // Temps max de maintien d'une connexion keep-alive
+	}
+
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("❌ Erreur fatale du serveur HTTP: %v", err)
+	}
 }

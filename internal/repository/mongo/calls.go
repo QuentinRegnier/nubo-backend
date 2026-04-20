@@ -100,3 +100,47 @@ func MongoLoadSession(ID int64, DeviceToken string, MasterToken string, CurrentS
 
 	return s, nil
 }
+
+// MongoLoadPosts récupère une liste de posts en fonction de leurs IDs (Niveau 2 Fallback)
+func MongoLoadPosts(ids []int64) ([]domain.PostRequest, error) {
+	if len(ids) == 0 {
+		return []domain.PostRequest{}, nil
+	}
+
+	filter := map[string]any{
+		"id": map[string]any{"$in": ids},
+	}
+
+	docs, err := Posts.Get(filter, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var posts []domain.PostRequest
+	for _, doc := range docs {
+		var p domain.PostRequest
+		if err := pkg.ToStruct(doc, &p); err == nil {
+			posts = append(posts, p)
+		}
+	}
+
+	return posts, nil
+}
+
+// MongoLoadPostsPaginated récupère des posts avec filtres, tri et pagination (Cold Storage)
+func MongoLoadPostsPaginated(filter map[string]any, sort map[string]any, skip int64, limit int64) ([]domain.PostRequest, error) {
+	docs, err := Posts.GetPaginated(filter, sort, skip, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	var posts []domain.PostRequest
+	for _, doc := range docs {
+		var p domain.PostRequest
+		if err := pkg.ToStruct(doc, &p); err == nil {
+			posts = append(posts, p)
+		}
+	}
+
+	return posts, nil
+}

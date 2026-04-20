@@ -1,5 +1,6 @@
 package old
 
+/*
 import (
 	"encoding/json"
 	"fmt"
@@ -223,3 +224,4 @@ func ProcUpdateSession(ID int64, MasterToken string, DeviceInfo any, DeviceToken
 
 	return nil
 }
+*/

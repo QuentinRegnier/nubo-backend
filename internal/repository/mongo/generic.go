@@ -183,3 +183,36 @@ func (c *MongoCollection) Update(filter map[string]any, update map[string]any) e
 	_, err := collection.UpdateMany(ctx, filter, bson.M{"$set": update})
 	return err
 }
+
+// GetPaginated récupère les objets avec pagination (Skip/Limit) et tri (Sort)
+func (c *MongoCollection) GetPaginated(filter map[string]any, sort map[string]any, skip int64, limit int64) ([]map[string]any, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	collection := c.DB.Collection(c.Name)
+
+	opts := options.Find()
+	if sort != nil {
+		opts.SetSort(sort)
+	}
+	opts.SetSkip(skip)
+	opts.SetLimit(limit)
+
+	cur, err := collection.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		if err := cur.Close(ctx); err != nil {
+			log.Printf("Erreur lors de la fermeture du curseur: %v", err)
+		}
+	}()
+
+	var results []map[string]any
+	if err := cur.All(ctx, &results); err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}

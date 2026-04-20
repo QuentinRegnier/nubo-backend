@@ -1,4 +1,4 @@
-basePath: /api/v11
+basePath: /api/v12
 definitions:
   github_com_QuentinRegnier_nubo-backend_internal_domain.CreatePostResponse:
     properties:

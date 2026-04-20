@@ -18,10 +18,16 @@ func SetupRoutes(r *gin.Engine) {
 	// 0. Middleware GLOBAL (S'applique à TOUTES les routes)
 	// =========================================================================
 
-	// Active la gestion automatique des OPTIONS et du CORS
+	// 1. GUILLOTINE : Coupe les requêtes obèses avant même de les lire en RAM (Protège la RAM)
+	r.Use(middleware.MaxBodySize())
+
+	// 2. ANTI-SPAM : Bloque les attaques DDoS applicatives via Redis (Protège le CPU et BDD)
+	r.Use(middleware.RateLimiter())
+
+	// 3. CORS : Active la gestion automatique des OPTIONS et du CORS
 	r.Use(middleware.CORSMiddleware())
 
-	// Récupération automatique des panics (évite que le serveur crash totalement)
+	// 4. RECOVERY : Récupération automatique des panics (évite que le serveur crash totalement)
 	r.Use(gin.Recovery())
 
 	// =========================================================================

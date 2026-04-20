@@ -2,36 +2,32 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 )
 
 // --- CONFIGURATION DU CERVEAU ---
 const (
-	// Si une requête attend depuis plus de 2 secondes, c'est l'alerte rouge.
-	CriticalDelay = 2 * time.Second
-
-	// Si on a plus de 2000 items d'un coup, c'est très rentable d'envoyer.
+	CriticalDelay       = 2 * time.Second
 	HighVolumeThreshold = 2000
-
-	// Taille maximale d'un batch (pour ne pas exploser la RAM du worker)
-	MaxBatchSize = 5000
+	MaxBatchSize        = 5000
 )
 
 func runWorker(ctx context.Context, shardID int) {
-	// Petit ticker pour ne pas spammer Redis si tout est vide (poll toutes les 50ms)
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return // Arrêt propre
+			return
 
 		case <-ticker.C:
-			// 1. ANALYSE : On récupère le Dashboard du shard (0.5ms)
 			stats, err := redis.GetShardStats(ctx, shardID)
 			if err != nil {
 				log.Printf("⚠️ Worker %d: Impossible de lire les stats: %v", shardID, err)
@@ -39,18 +35,14 @@ func runWorker(ctx context.Context, shardID int) {
 			}
 
 			if len(stats) == 0 {
-				continue // Rien à faire, on attend le prochain tick
+				continue
 			}
 
-			// 2. DÉCISION : Quel groupe traiter en priorité ?
 			selectedStats := decideNextBatch(stats)
-
 			if selectedStats == nil {
 				continue
 			}
 
-			// 3. ACTION : On récupère le batch ciblé
-			// On limite la taille à MaxBatchSize
 			batchSize := selectedStats.Count
 			if batchSize > MaxBatchSize {
 				batchSize = MaxBatchSize
@@ -70,21 +62,14 @@ func runWorker(ctx context.Context, shardID int) {
 			}
 
 			if len(events) > 0 {
-				// 4. TRAITEMENT : On envoie aux BDD
-				// (Fonction processBatch inchangée, elle s'occupe juste d'appeler les flushers)
 				processBatch(ctx, events)
 			}
 		}
 	}
 }
 
-// decideNextBatch contient l'intelligence artificielle de tri
-// Retourne un pointeur vers la ligne de stats gagnante
 func decideNextBatch(stats []redis.QueueStats) *redis.QueueStats {
 	var bestCandidate *redis.QueueStats
-
-	// --- RÈGLE 1 : URGENCE ABSOLUE (Retard > 2s) ---
-	// On cherche celui qui a le plus grand retard critique
 	var maxDelay time.Duration
 
 	for i := range stats {
@@ -97,16 +82,11 @@ func decideNextBatch(stats []redis.QueueStats) *redis.QueueStats {
 		}
 	}
 
-	// Si on a trouvé une urgence, on la traite tout de suite !
 	if bestCandidate != nil {
-		// log.Printf("🔥 URGENCE : %s %s est en retard de %v", bestCandidate.Type, bestCandidate.Action, bestCandidate.Delay)
 		return bestCandidate
 	}
 
-	// --- RÈGLE 2 : RENTABILITÉ (Volume > 2000) ---
-	// Sinon, on cherche celui qui a le plus gros volume
 	var maxCount int64
-
 	for i := range stats {
 		s := &stats[i]
 		if s.Count >= HighVolumeThreshold {
@@ -118,14 +98,8 @@ func decideNextBatch(stats []redis.QueueStats) *redis.QueueStats {
 	}
 
 	if bestCandidate != nil {
-		// log.Printf("📦 VOLUME : %s %s a %d éléments", bestCandidate.Type, bestCandidate.Action, bestCandidate.Count)
 		return bestCandidate
 	}
-
-	// --- RÈGLE 3 : LE RESTE (Bouche-trou) ---
-	// Si personne n'est en retard et personne n'est énorme,
-	// on prend simplement celui qui a le plus d'éléments pour avancer le travail.
-	// (Ou celui qui est le plus vieux, au choix. Ici je privilégie le plus vieux pour éviter la famine)
 
 	for i := range stats {
 		s := &stats[i]
@@ -137,9 +111,8 @@ func decideNextBatch(stats []redis.QueueStats) *redis.QueueStats {
 	return bestCandidate
 }
 
-// processBatch trie les événements et les envoie aux bases
+// processBatch trie les événements et les envoie aux bases ET au cache
 func processBatch(ctx context.Context, events []redis.AsyncEvent) {
-	// On sépare les tâches pour Mongo et Postgres
 	var mongoEvents []redis.AsyncEvent
 	var pgEvents []redis.AsyncEvent
 
@@ -152,8 +125,7 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 		}
 	}
 
-	// 3. Exécution Parallèle (Mongo et Postgres en même temps)
-	// On n'attend pas que Mongo finisse pour commencer Postgres
+	// Exécution Parallèle : Mongo, Postgres ET Mise à jour du MOST Cache
 	done := make(chan bool)
 
 	go func() {
@@ -170,7 +142,57 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 		done <- true
 	}()
 
-	// On attend que les deux aient fini avant de prendre le prochain paquet
+	go func() {
+		// Mise à jour de l'index de découverte (MOST Cache)
+		updateMostCache(ctx, events)
+		done <- true
+	}()
+
+	// On attend que les 3 Goroutines aient terminé
 	<-done
 	<-done
+	<-done
+}
+
+// updateMostCache intercepte les événements pour alimenter les ZSETs (Tags, Profils, Classements)
+func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
+	for _, e := range events {
+
+		// 1. SI C'EST UN NOUVEAU POST
+		if e.Type == redis.EntityPost && e.Action == redis.ActionCreate {
+			jsonBytes, err := json.Marshal(e.Payload)
+			if err == nil {
+				var post domain.PostRequest
+				if err := json.Unmarshal(jsonBytes, &post); err == nil {
+					// A. Algorithme de Recommandation (Tags, Global, Recent)
+					service.UpdatePostRecommendationScore(ctx, post.ID, post.Hashtags)
+					// B. Chronologie Utilisateur (Grille Profil)
+					service.AddPostToUserProfile(ctx, post.UserID, post.ID)
+				}
+			}
+		}
+
+		// 2. SI C'EST UN NOUVEAU LIKE
+		if e.Type == redis.EntityLike && e.Action == redis.ActionCreate {
+			jsonBytes, err := json.Marshal(e.Payload)
+			if err == nil {
+				// Structure temporaire pour récupérer l'ID du post liké
+				var like struct {
+					TargetID int64 `json:"target_id"`
+				}
+				if err := json.Unmarshal(jsonBytes, &like); err == nil && like.TargetID != 0 {
+					// A. Compétition pure : on augmente le compteur de likes absolu
+					service.IncrementPostMetric(ctx, like.TargetID, "likes")
+
+					// B. Algorithme : Le post a reçu un like, on RECALCULE son score de recommandation globale !
+					// Note : On passe "nil" pour les hashtags car on ne les a pas dans l'événement de Like.
+					// Cela mettra à jour le classement Global et Recent, mais pas les Tags (pour le moment).
+					service.UpdatePostRecommendationScore(ctx, like.TargetID, nil)
+				}
+			}
+		}
+
+		// 3. (Optionnel pour le futur) SI C'EST UNE NOUVELLE VUE
+		// if e.Type == redis.EntityView && e.Action == redis.ActionCreate { ... }
+	}
 }

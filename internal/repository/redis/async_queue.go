@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 )
 
 // --- CONSTANTES ---
@@ -108,7 +108,7 @@ func EnqueueDB(ctx context.Context, id int64, partitionKey int64, entity EntityT
 	countField := fmt.Sprintf("%s:%s:count", entity, action)
 	tsField := fmt.Sprintf("%s:%s:ts", entity, action)
 
-	pipe := redis.Rdb.Pipeline()
+	pipe := redisgo.Rdb.Pipeline()
 	pipe.RPush(ctx, queueKey, bytes)
 	pipe.HIncrBy(ctx, statsKey, countField, 1)
 	pipe.HSetNX(ctx, statsKey, tsField, now)
@@ -137,7 +137,7 @@ func GetShardStats(ctx context.Context, shardID int) ([]QueueStats, error) {
 	statsKey := StatsBasePrefix + strconv.Itoa(shardID)
 
 	// Récupère tout le Hash (HGETALL)
-	rawMap, err := redis.Rdb.HGetAll(ctx, statsKey).Result()
+	rawMap, err := redisgo.Rdb.HGetAll(ctx, statsKey).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +193,7 @@ func PopSmartBatch(ctx context.Context, shardID int, entity EntityType, action A
 	statsKey := StatsBasePrefix + shardStr
 
 	// 1. Récupérer les éléments (LPOP count)
-	results, err := redis.Rdb.LPopCount(ctx, queueKey, int(batchSize)).Result()
+	results, err := redisgo.Rdb.LPopCount(ctx, queueKey, int(batchSize)).Result()
 	if err != nil { // Redis.Nil si vide
 		return nil, nil
 	}
@@ -232,7 +232,7 @@ func updateDashboardAfterPop(ctx context.Context, statsKey, queueKey, entity, ac
 	countField := fmt.Sprintf("%s:%s:count", entity, action)
 	tsField := fmt.Sprintf("%s:%s:ts", entity, action)
 
-	pipe := redis.Rdb.Pipeline()
+	pipe := redisgo.Rdb.Pipeline()
 
 	// Décrémente le compteur
 	pipe.HIncrBy(ctx, statsKey, countField, -poppedCnt)
@@ -253,13 +253,13 @@ func updateDashboardAfterPop(ctx context.Context, statsKey, queueKey, entity, ac
 		var nextEvt AsyncEvent
 		if json.Unmarshal([]byte(nextHeadVal), &nextEvt) == nil {
 			// Mise à jour du timestamp "oldest"
-			redis.Rdb.HSet(ctx, statsKey, tsField, nextEvt.Timestamp)
+			redisgo.Rdb.HSet(ctx, statsKey, tsField, nextEvt.Timestamp)
 		}
 	} else {
 		// La liste est vide ou erreur -> on nettoie le timestamp car il n'y a plus de "vieux"
-		redis.Rdb.HDel(ctx, statsKey, tsField)
+		redisgo.Rdb.HDel(ctx, statsKey, tsField)
 		// On peut aussi remettre le count à 0 par sécurité
-		redis.Rdb.HSet(ctx, statsKey, countField, 0)
+		redisgo.Rdb.HSet(ctx, statsKey, countField, 0)
 	}
 }
 

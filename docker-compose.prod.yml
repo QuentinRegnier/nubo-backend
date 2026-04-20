@@ -82,6 +82,7 @@ services:
   redis:
     image: redis:7
     container_name: nubo_redis
+    command: redis-server --maxmemory 4gb --maxmemory-policy volatile-lfu --lfu-log-factor 10 --lfu-decay-time 120 --appendonly yes
     volumes:
       - redis_data:/data
     networks: [internal]

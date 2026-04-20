@@ -2,310 +2,161 @@ package redis
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log"
-	"reflect"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 )
 
-// Helper pour convertir les slices/maps en JSON string pour Redis
-func PrepareForRedis(m map[string]any) {
-	for k, v := range m {
-		if v == nil {
-			continue
-		}
-		val := reflect.ValueOf(v)
-		// Si c'est un tableau, une slice ou une map, on le transforme en JSON string
-		if val.Kind() == reflect.Slice || val.Kind() == reflect.Map || val.Kind() == reflect.Struct {
-			// Petit fix de sécurité : on ignore les Time qui sont des structs mais gérés nativement par ton manager
-			if _, isTime := v.(time.Time); isTime {
-				continue
-			}
-			b, err := json.Marshal(v)
-			if err == nil {
-				m[k] = string(b)
-			}
-		}
-	}
+// Helper pour le contexte (timeout court pour ne pas bloquer l'API)
+func getCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 2*time.Second)
 }
 
-// RedisCreateMedia insère le média dans le cache Redis
-func RedisCreateMedia(m domain.MediaRequest) error {
-	doc, err := pkg.ToMap(m)
-	if err != nil {
-		log.Printf("Erreur conversion map Media pour Redis: %v", err)
+// ---------------- USER ----------------
+
+// RedisCreateUser sauvegarde l'utilisateur et crée des index légers (Pointeurs)
+func RedisCreateUser(u domain.UserRequest) error {
+	ctx, cancel := getCtx()
+	defer cancel()
+
+	// 1. Sauvegarde de l'objet principal (JSON)
+	if err := Users.SetObject(ctx, u.ID, u); err != nil {
 		return err
 	}
 
-	PrepareForRedis(doc)
+	// 2. Création des Index "Pointeurs" (Pour retrouver l'ID via Email/Username/Phone)
+	// Clé: "idx:user:email:jean@test.com" -> Valeur: "18293..."
+	// On utilise le même TTL que la collection
+	pipe := redisgo.Rdb.Pipeline()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+	if u.Email != "" {
+		pipe.Set(ctx, fmt.Sprintf("idx:user:email:%s", u.Email), u.ID, Users.DefaultTTL)
+	}
+	if u.Username != "" {
+		pipe.Set(ctx, fmt.Sprintf("idx:user:username:%s", u.Username), u.ID, Users.DefaultTTL)
+	}
+	if u.Phone != "" {
+		pipe.Set(ctx, fmt.Sprintf("idx:user:phone:%s", u.Phone), u.ID, Users.DefaultTTL)
+	}
 
-	return Media.Set(ctx, doc)
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
-// RedisCreateUser insère l'utilisateur dans le cache Redis avec indexation et LRU
-func RedisCreateUser(u domain.UserRequest) error {
-	// --- CORRECTION : MAPPING MANUEL ---
-	// On évite pkg.ToMap pour conserver les int64 intacts
-	doc := map[string]any{
-		"id":                 u.ID,
-		"username":           u.Username,
-		"email":              u.Email,
-		"phone":              u.Phone,
-		"password_hash":      u.PasswordHash,
-		"first_name":         u.FirstName,
-		"last_name":          u.LastName,
-		"bio":                u.Bio,
-		"profile_picture_id": u.ProfilePictureID, // int64 conservé !
-		"birthdate":          u.Birthdate,
-		"created_at":         u.CreatedAt,
-		"updated_at":         u.UpdatedAt,
-		"desactivated":       u.Desactivated,
-		"banned":             u.Banned,
-		"ban_reason":         u.BanReason,
-		"ban_expires_at":     u.BanExpiresAt,
-		"email_verified":     u.EmailVerified,
-		"phone_verified":     u.PhoneVerified,
-		"sex":                u.Sex,
-		"grade":              u.Grade,
-		"school":             u.School,
-		"work":               u.Work,
-		"location":           u.Location,
-		"badges":             u.Badges, // Sera converti en string JSON par prepareForRedis
-	}
-
-	// Transforme les tableaux/maps (badges, etc.) en JSON string
-	PrepareForRedis(doc)
-
-	// 2. Contexte avec Timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+// RedisLoadUser charge un utilisateur par ID, Username, Email ou Phone
+func RedisLoadUser(id int64, username string, email string, phone string) (domain.UserRequest, error) {
+	ctx, cancel := getCtx()
 	defer cancel()
 
-	// 3. Appel à Users.Set
-	return Users.Set(ctx, doc)
-}
+	var targetID int64 = id
 
-// RedisCreateSession insère la session dans le cache Redis
-func RedisCreateSession(s domain.SessionsRequest) error {
-	fmt.Printf("🐞 DEBUG GO STRUCT: ID=%d, UserID=%d\n", s.ID, s.UserID)
-	// --- CORRECTION : MAPPING MANUEL (C'est ici que ton bug était !) ---
-	doc := map[string]any{
-		"id":             s.ID,     // int64 (Snowflake)
-		"user_id":        s.UserID, // int64 (Snowflake) - RESTERA INT64 !
-		"device_token":   s.DeviceToken,
-		"master_token":   s.MasterToken,
-		"current_secret": s.CurrentSecret,
-		"last_secret":    s.LastSecret,
-		"last_jwt":       s.LastJWT,
-		"created_at":     s.CreatedAt,
-		"expires_at":     s.ExpiresAt,
-		"tolerance_time": s.ToleranceTime,
-		"device_info":    s.DeviceInfo, // Sera converti par prepareForRedis
-		"ip_history":     s.IPHistory,  // Sera converti par prepareForRedis
-	}
-
-	fmt.Printf("🐞 DEBUG MAP REDIS: ID=%v, UserID=%v\n", doc["id"], doc["user_id"])
-
-	// Transforme device_info et ip_history en JSON string
-	PrepareForRedis(doc)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	// Appel à Sessions.Set
-	return Sessions.Set(ctx, doc)
-}
-
-// RedisLoadUser charge un utilisateur depuis le cache Redis
-func RedisLoadUser(ID int64, Username string, Email string, Phone string) (domain.UserRequest, error) {
-	fmt.Println("RedisLoadUser called with:", ID, Username, Email, Phone)
-	var u domain.UserRequest
-
-	// 1. Construction du filtre compatible avec ton ORM Redis
-	// Rappel: Ton evalTree attend map[string]map[string]any
-	// Ex: "username": { "$eq": "Marie" }
-	filter := make(map[string]any)
-
-	if ID != -1 && ID != 0 {
-		filter["id"] = map[string]any{"$eq": ID}
-	} else if Email != "" {
-		filter["email"] = map[string]any{"$eq": Email}
-	} else if Username != "" {
-		filter["username"] = map[string]any{"$eq": Username}
-	} else if Phone != "" {
-		filter["phone"] = map[string]any{"$eq": Phone}
-	} else {
-		return domain.UserRequest{}, fmt.Errorf("aucun critère de recherche")
-	}
-
-	fmt.Println("RedisLoadUser filter:", filter)
-
-	// Si aucun filtre n'est défini, on évite de tout charger (ou on retourne une erreur selon ta logique)
-	if len(filter) == 0 {
-		return u, fmt.Errorf("aucun critère de recherche fourni pour RedisLoadUser")
-	}
-
-	// 2. Création du contexte
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	// 3. Appel à Users.Get
-	docs, err := Users.Get(ctx, filter)
-	if err != nil {
-		return u, err
-	}
-
-	// 4. Vérification si trouvé
-	if len(docs) == 0 {
-		return u, fmt.Errorf("utilisateur introuvable dans Redis")
-	}
-
-	if val, ok := docs[0]["badges"]; ok {
-		if str, ok := val.(string); ok && str != "" {
-			var badges []string
-			if err := json.Unmarshal([]byte(str), &badges); err == nil {
-				docs[0]["badges"] = badges
-			}
+	// 1. Si on n'a pas l'ID, on cherche dans les index pointeurs
+	if targetID <= 0 {
+		var key string
+		if email != "" {
+			key = fmt.Sprintf("idx:user:email:%s", email)
+		} else if username != "" {
+			key = fmt.Sprintf("idx:user:username:%s", username)
+		} else if phone != "" {
+			key = fmt.Sprintf("idx:user:phone:%s", phone)
+		} else {
+			return domain.UserRequest{}, fmt.Errorf("aucun critère de recherche")
 		}
+
+		// Récupération de l'ID depuis l'index
+		val, err := redisgo.Rdb.Get(ctx, key).Int64()
+		if err != nil {
+			return domain.UserRequest{}, fmt.Errorf("utilisateur introuvable dans redis (index miss)")
+		}
+		targetID = val
 	}
 
-	if err := pkg.ToStruct(docs[0], &u); err != nil {
-		log.Printf("Erreur conversion Redis User vers Struct: %v", err)
-		return u, err
+	// 2. Récupération de l'objet complet
+	var u domain.UserRequest
+	if err := Users.GetObject(ctx, targetID, &u); err != nil {
+		return domain.UserRequest{}, err
 	}
 
 	return u, nil
 }
 
-// RedisLoadSession charge une session depuis le cache Redis
-func RedisLoadSession(userID int64, DeviceToken string, MasterToken string, CurrentSecret string) (domain.SessionsRequest, error) {
-	fmt.Println("RedisLoadSession called with:", userID, DeviceToken, MasterToken, CurrentSecret)
-	var s domain.SessionsRequest
+// ---------------- SESSION ----------------
 
-	// 1. Construction du filtre
-	filter := make(map[string]any)
-
-	if userID != -1 {
-		filter["user_id"] = map[string]any{"$eq": userID}
-	}
-	if DeviceToken != "" {
-		filter["device_token"] = map[string]any{"$eq": DeviceToken}
-	}
-	if MasterToken != "" {
-		filter["master_token"] = map[string]any{"$eq": MasterToken}
-	}
-	if CurrentSecret != "" {
-		filter["current_secret"] = map[string]any{"$eq": CurrentSecret}
-	}
-
-	if len(filter) == 0 {
-		return s, fmt.Errorf("aucun critère de recherche fourni pour RedisLoadSession")
-	}
-
-	// 2. Contexte
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+// RedisCreateSession sauvegarde la session et son index de recherche
+func RedisCreateSession(s domain.SessionsRequest) error {
+	ctx, cancel := getCtx()
 	defer cancel()
 
-	// 3. Appel à Sessions.Get
-	docs, err := Sessions.Get(ctx, filter)
-	if err != nil {
-		return s, err
+	// 1. Objet Principal
+	if err := Sessions.SetObject(ctx, s.ID, s); err != nil {
+		return err
 	}
 
-	if len(docs) == 0 {
-		return s, fmt.Errorf("session introuvable dans Redis")
+	// 2. Index de recherche (UserID + DeviceToken -> SessionID)
+	// Utile pour retrouver la session lors du login ou middleware
+	if s.UserID != 0 && s.DeviceToken != "" {
+		idxKey := fmt.Sprintf("idx:session:%d:%s", s.UserID, s.DeviceToken)
+		return redisgo.Rdb.Set(ctx, idxKey, s.ID, Sessions.DefaultTTL).Err()
 	}
 
-	if val, ok := docs[0]["device_info"]; ok {
-		if str, ok := val.(string); ok && str != "" {
-			var info map[string]any
-			if err := json.Unmarshal([]byte(str), &info); err == nil {
-				docs[0]["device_info"] = info
-			}
+	return nil
+}
+
+// RedisUpdateSession est identique au Create dans un Object Store (Overwrite complet)
+func RedisUpdateSession(s domain.SessionsRequest) error {
+	return RedisCreateSession(s)
+}
+
+// RedisLoadSession charge une session.
+// Note : MasterToken et CurrentSecret ne sont plus indexés car rarement utilisés pour la recherche primaire.
+func RedisLoadSession(userID int64, deviceToken string, masterToken string, currentSecret string) (domain.SessionsRequest, error) {
+	ctx, cancel := getCtx()
+	defer cancel()
+
+	var targetID int64
+
+	// 1. Recherche de l'ID de session via l'index (UserID + DeviceToken)
+	if userID != -1 && deviceToken != "" {
+		idxKey := fmt.Sprintf("idx:session:%d:%s", userID, deviceToken)
+		val, err := redisgo.Rdb.Get(ctx, idxKey).Int64()
+		if err == nil {
+			targetID = val
 		}
 	}
-	if val, ok := docs[0]["ip_history"]; ok {
-		if str, ok := val.(string); ok && str != "" {
-			var ips []string
-			if err := json.Unmarshal([]byte(str), &ips); err == nil {
-				docs[0]["ip_history"] = ips
-			}
-		}
+
+	// (Optionnel) Si on voulait chercher par MasterToken, il faudrait créer un index pour ça.
+	// Pour l'instant, on assume que le flux principal passe par UserID+DeviceToken.
+
+	if targetID == 0 {
+		return domain.SessionsRequest{}, fmt.Errorf("session introuvable dans redis (index miss)")
 	}
 
-	if err := pkg.ToStruct(docs[0], &s); err != nil {
-		log.Printf("Erreur conversion Redis Session vers Struct: %v", err)
-		return s, err
+	// 2. Chargement de l'objet
+	var s domain.SessionsRequest
+	if err := Sessions.GetObject(ctx, targetID, &s); err != nil {
+		return domain.SessionsRequest{}, err
+	}
+
+	// Petit check de cohérence optionnel
+	if masterToken != "" && s.MasterToken != masterToken {
+		return domain.SessionsRequest{}, fmt.Errorf("master token mismatch")
 	}
 
 	return s, nil
 }
-func RedisUpdateSession(s domain.SessionsRequest) error {
-	// --- CORRECTION : MAPPING MANUEL ---
-	// Pour l'update, on doit s'assurer de passer les bons types pour ce qu'on met à jour
-	doc := map[string]any{
-		"user_id":        s.UserID,
-		"device_token":   s.DeviceToken,
-		"master_token":   s.MasterToken,
-		"current_secret": s.CurrentSecret,
-		"last_secret":    s.LastSecret,
-		"last_jwt":       s.LastJWT,
-		"created_at":     s.CreatedAt,
-		"expires_at":     s.ExpiresAt,
-		"tolerance_time": s.ToleranceTime,
-		"device_info":    s.DeviceInfo,
-		"ip_history":     s.IPHistory,
-	}
 
-	// Si l'ID est dans la struct mais qu'on ne veut pas l'update (c'est la clé primaire), on l'enlève de la map d'update
-	// (Dans ton code précédent tu le supprimais après ToMap, ici on ne l'a juste pas mis dans doc)
+// ---------------- CONTENU (Simple Key-Value) ----------------
 
-	PrepareForRedis(doc)
-
-	// 4. Construction du filtre
-	filter := make(map[string]any)
-
-	// On utilise l'ID pour cibler l'objet à mettre à jour
-	if s.ID != 0 {
-		filter["id"] = map[string]any{"$eq": s.ID}
-	} else if s.UserID != 0 && s.DeviceToken != "" {
-		// Fallback si on n'a pas l'ID de session direct
-		filter["user_id"] = map[string]any{"$eq": s.UserID}
-		filter["device_token"] = map[string]any{"$eq": s.DeviceToken}
-	} else {
-		return fmt.Errorf("RedisUpdateSession: impossible de cibler la session (manque ID ou UserID+DeviceToken)")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func RedisCreatePost(p domain.PostRequest) error {
+	ctx, cancel := getCtx()
 	defer cancel()
-
-	return Sessions.Update(ctx, filter, doc)
+	return Posts.SetObject(ctx, p.ID, p)
 }
-func RedisCreatePost(s domain.PostRequest) error {
-	// --- CORRECTION : MAPPING MANUEL ---
-	doc := map[string]any{
-		"id":          s.ID,
-		"user_id":     s.UserID,
-		"content":     s.Content,
-		"hashtags":    s.Hashtags,
-		"identifiers": s.Identifiers,
-		"media_ids":   s.MediaIDs,
-		"visibility":  s.Visibility,
-		"location":    s.Location,
-		"created_at":  s.CreatedAt,
-		"updated_at":  s.UpdatedAt,
-	}
 
-	PrepareForRedis(doc)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func RedisCreateMedia(m domain.MediaRequest) error {
+	ctx, cancel := getCtx()
 	defer cancel()
-
-	return Posts.Set(ctx, doc)
+	return Media.SetObject(ctx, m.ID, m)
 }

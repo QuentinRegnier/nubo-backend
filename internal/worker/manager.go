@@ -8,7 +8,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
-// StartBackgroundWorkers lance les 64 ouvriers qui tournent H24.
+// StartBackgroundWorkers lance les 64 ouvriers qui tournent H24 pour vider les Queues.
+// Plus besoin de Sentinel ici, Redis gère la RAM via volatile-lfu.
 func StartBackgroundWorkers(ctx context.Context) {
 	log.Println("🚜 Démarrage du moteur de persistance (64 Workers)...")
 
@@ -23,7 +24,6 @@ func StartBackgroundWorkers(ctx context.Context) {
 		}(i)
 	}
 
-	// On n'attend pas ici (c'est non bloquant pour le main),
-	// sauf si tu veux gérer un "Graceful Shutdown" propre.
+	// On n'attend pas ici, le main s'en charge.
 	log.Println("✅ Moteur de persistance opérationnel.")
 }

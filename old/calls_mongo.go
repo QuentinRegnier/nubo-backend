@@ -1,5 +1,6 @@
 package old
 
+/*
 import (
 	"fmt"
 	"time"
@@ -73,3 +74,4 @@ func MongoUpdateSession(s domain.SessionsRequest) error {
 	// Elle effectue un $set sur les champs restants dans 'doc' pour les documents correspondant au 'filter'
 	return mongo.Sessions.Update(filter, doc)
 }
+*/

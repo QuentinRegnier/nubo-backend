@@ -563,7 +563,7 @@ const docTemplate = `{
 var SwaggerInfo = &swag.Spec{
 	Version:          "1.0",
 	Host:             "",
-	BasePath:         "/api/v11",
+	BasePath:         "/api/v12",
 	Schemes:          []string{},
 	Title:            "Mon API Propre",
 	Description:      "Documentation de l'API.\nPour mettre à jour :",
