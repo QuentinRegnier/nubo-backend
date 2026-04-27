@@ -75,6 +75,9 @@ type PostRequest struct {
 	Location    string    `bson:"location" json:"location"`
 	CreatedAt   time.Time `bson:"created_at" json:"created_at"`
 	UpdatedAt   time.Time `bson:"updated_at" json:"updated_at"`
+	// TODO implémenter les champs de comptage (likes, vues) et les champs de recommandation (score, classement)
+	LikeCount int `json:"like_count"` // <-- À AJOUTER
+	ViewCount int `json:"view_count"` // <-- À AJOUTER
 }
 
 // ********************************************************

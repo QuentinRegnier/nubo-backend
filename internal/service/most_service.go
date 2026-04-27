@@ -2,48 +2,60 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
+	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-)
-
-// --- Constantes de Limites (Capping) ---
-const (
-	MaxTagElements       = 5000 // On ne garde que les 5000 posts les plus hauts par tag
-	MaxRankElements      = 5000 // On ne garde que le top 5000 (Likes, Vues, Global, Recent)
-	MaxUserPostsElements = 100  // On ne garde que les 100 derniers posts d'un utilisateur en RAM
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/lib/pq"
 )
 
 // ============================================================================
-// 1. GESTION DE L'ALGORITHME DE RECOMMANDATION (Tags, Global, Recent)
+// 1. MOTEUR DE RECOMMANDATION ET CLASSEMENTS
 // ============================================================================
 
-// UpdatePostRecommendationScore calcule le score algorithmique du post et
-// met à jour sa position dans TOUS les classements de découverte.
-// Cette fonction est appelée à la création du post ET à chaque nouvelle interaction (like, vue).
+// UpdatePostRecommendationScore recalcule le score et actualise les canaux globaux et tags.
 func UpdatePostRecommendationScore(ctx context.Context, postID int64, hashtags []string) {
-	// 1. Calcul du nouveau score (via notre moteur de recommandation "bouchon")
-	// Plus tard, on pourra passer des bonus spécifiques ici.
-	score := CalculateRecommendationScore(postID, nil)
-	scoreBoostRecent := CalculateRecommendationScore(postID, nil) // Modification necessary !!!
+	// TODO: Intégrer les paramètres de personnalisation utilisateur (Feed Cache) plus tard
 
-	// 2. Mise à jour dans le classement GLOBAL (Pour le feed "Pour Toi / Explorer")
-	globalKey := "rank:global"
-	_ = redis.ZAdd(ctx, globalKey, score, postID)
-	_ = redis.ZRemRangeByRank(ctx, globalKey, 0, -(MaxRankElements + 1))
+	scoreGlobal := CalculateRecommendationScore(postID, ScoreOptions{})
+	scoreBoostRecent := CalculateRecommendationScore(postID, ScoreOptions{BoostRecent: variables.BoostRecent})
+	scoreBoostLikes := CalculateRecommendationScore(postID, ScoreOptions{BoostLikes: variables.BoostLikes})
+	scoreBoostViews := CalculateRecommendationScore(postID, ScoreOptions{BoostViews: variables.BoostViews})
 
-	// 3. Mise à jour dans le classement RECENT (Découverte Fraîcheur)
-	// (Plus tard, on appliquera un boost temporel spécifique dans le calcul du score pour cette clé)
-	recentKey := "rank:recent"
-	_ = redis.ZAdd(ctx, recentKey, scoreBoostRecent, postID)
-	_ = redis.ZRemRangeByRank(ctx, recentKey, 0, -(MaxRankElements + 1))
+	scoreStrictRecent := float64(time.Now().UnixMilli())
 
-	// 4. Mise à jour dans les TAGS spécifiques (Le post monte ou descend dans son propre tag)
+	// Pré-hydratation conditionnelle : Si le post remonte via une interaction (sans hashtags fournis), on sécurise le L1
+	if len(hashtags) == 0 {
+		var tempPost domain.PostRequest
+		if err := redis.Posts.GetObject(ctx, postID, &tempPost); err != nil {
+			_, _ = GetPostsView([]int64{postID})
+		}
+	}
+
+	// Mise à jour des canaux globaux
+	_ = redis.ZAdd(ctx, "rank:global", scoreGlobal, postID)
+	_ = redis.ZRemRangeByRank(ctx, "rank:global", 0, -(variables.MaxRankElements + 1))
+
+	_ = redis.ZAdd(ctx, "rank:recent:global", scoreBoostRecent, postID)
+	_ = redis.ZRemRangeByRank(ctx, "rank:recent:global", 0, -(variables.MaxRankElements + 1))
+
+	_ = redis.ZAdd(ctx, "rank:likes:global", scoreBoostLikes, postID)
+	_ = redis.ZRemRangeByRank(ctx, "rank:likes:global", 0, -(variables.MaxRankElements + 1))
+
+	_ = redis.ZAdd(ctx, "rank:views:global", scoreBoostViews, postID)
+	_ = redis.ZRemRangeByRank(ctx, "rank:views:global", 0, -(variables.MaxRankElements + 1))
+
+	_ = redis.ZAdd(ctx, "rank:recent:strict", scoreStrictRecent, postID)
+	_ = redis.ZRemRangeByRank(ctx, "rank:recent:strict", 0, -(variables.MaxRankElements + 1))
+
+	// Mise à jour des canaux par Tag
 	if len(hashtags) > 0 {
 		officialTags := make(map[string]bool)
 		for _, hashtag := range hashtags {
@@ -54,95 +66,79 @@ func UpdatePostRecommendationScore(ctx context.Context, postID int64, hashtags [
 
 		for slug := range officialTags {
 			tagKey := fmt.Sprintf("idx:tag:%s", slug)
-			_ = redis.ZAdd(ctx, tagKey, score, postID)
-			_ = redis.ZRemRangeByRank(ctx, tagKey, 0, -(MaxTagElements + 1))
+			_ = redis.ZAdd(ctx, tagKey, scoreGlobal, postID)
+			_ = redis.ZRemRangeByRank(ctx, tagKey, 0, -(variables.MaxTagElements + 1))
 		}
 	}
 }
 
-// ============================================================================
-// 2. GESTION DES CLASSEMENTS PURS (Compteurs : Likes, Views)
-// ============================================================================
+// EvaluatePostAfterLike force l'insertion du post avec sa valeur absolue post-sauvegarde BDD.
+func EvaluatePostAfterLike(ctx context.Context, postID int64, totalLikes float64, hashtags []string) {
+	strictKey := "rank:likes:strict"
+	_ = redis.ZAdd(ctx, strictKey, totalLikes, postID)
+	_ = redis.ZRemRangeByRank(ctx, strictKey, 0, -(variables.MaxRankElements + 1))
 
-// IncrementPostMetric augmente le compteur brut d'un post (ex: "likes", "views").
-// C'est de la compétition pure (Score = Quantité).
-func IncrementPostMetric(ctx context.Context, postID int64, metric string) {
-	key := fmt.Sprintf("rank:%s:global", metric)
+	UpdatePostRecommendationScore(ctx, postID, hashtags)
+}
 
-	// 1. Incrémenter le score (+1)
-	err := redis.ZIncrBy(ctx, key, 1.0, postID)
-	if err != nil {
-		log.Printf("⚠️ Erreur ZIncrBy Rank %s: %v", metric, err)
-		return
-	}
+// EvaluatePostAfterView force l'insertion du post avec sa valeur absolue post-sauvegarde BDD.
+func EvaluatePostAfterView(ctx context.Context, postID int64, totalViews float64, hashtags []string) {
+	strictKey := "rank:views:strict"
+	_ = redis.ZAdd(ctx, strictKey, totalViews, postID)
+	_ = redis.ZRemRangeByRank(ctx, strictKey, 0, -(variables.MaxRankElements + 1))
 
-	// 2. Appliquer la limite stricte (Capping)
-	// On supprime du rang 0 (les moins likés) au rang -5001
-	err = redis.ZRemRangeByRank(ctx, key, 0, -(MaxRankElements + 1))
-	if err != nil {
-		log.Printf("⚠️ Erreur Capping Rank %s: %v", metric, err)
-	}
+	UpdatePostRecommendationScore(ctx, postID, hashtags)
 }
 
 // ============================================================================
-// 3. GESTION DU PROFIL UTILISATEUR (Chronologique strict)
+// 2. PROFILS UTILISATEURS
 // ============================================================================
 
-// AddPostToUserProfile ajoute un post à la grille rapide du profil utilisateur.
-// L'algorithme n'intervient pas ici : on veut un tri chronologique strict.
+// AddPostToUserProfile ajoute un post à la grille chronologique d'un profil.
 func AddPostToUserProfile(ctx context.Context, userID int64, postID int64) {
 	key := fmt.Sprintf("user:posts:%d", userID)
-
-	// Le score est purement basé sur le temps
 	score := float64(time.Now().UnixMilli())
 
-	// 1. Ajouter le post
-	err := redis.ZAdd(ctx, key, score, postID)
-	if err != nil {
-		log.Printf("⚠️ Erreur ZAdd UserProfile %d: %v", userID, err)
+	if err := redis.ZAdd(ctx, key, score, postID); err != nil {
 		return
 	}
-
-	// 2. Appliquer la limite stricte (Capping à 100)
-	err = redis.ZRemRangeByRank(ctx, key, 0, -(MaxUserPostsElements + 1))
-	if err != nil {
-		log.Printf("⚠️ Erreur Capping UserProfile %d: %v", userID, err)
-	}
+	_ = redis.ZRemRangeByRank(ctx, key, 0, -(variables.MaxUserPostsElements + 1))
 }
 
 // ============================================================================
-// 4. LECTURE & PAGINATION (Le Read-Path avec Fallback)
+// 3. LECTURE ET FALLBACKS (L1 -> L2 -> L3)
 // ============================================================================
 
-// GetUserProfilePosts récupère la grille d'un profil.
 func GetUserProfilePosts(ctx context.Context, userID int64, offset int64, limit int64) ([]domain.PostRequest, error) {
-	// 1. Fallback Cold Storage (Si on dépasse les 100 derniers posts)
-	if offset >= MaxUserPostsElements {
-		log.Printf("🧊 [COLD STORAGE] Lecture Mongo directe pour le profil %d (offset: %d)", userID, offset)
+	if offset >= variables.MaxUserPostsElements {
 		return getPostsFromMongoPaginated("user_id", userID, offset, limit)
 	}
 
-	// 2. Lecture RAM (MOST Cache)
 	key := fmt.Sprintf("user:posts:%d", userID)
 	return fetchAndHydrateFromZSET(ctx, key, offset, limit)
 }
 
-// GetRankedPosts récupère un classement (global, recent, likes, views).
 func GetRankedPosts(ctx context.Context, rankType string, offset int64, limit int64) ([]domain.PostRequest, error) {
-	if offset >= MaxRankElements {
-		log.Printf("🧊 [COLD STORAGE] Lecture Mongo directe pour le rank %s (offset: %d)", rankType, offset)
-
-		// Filtre vide : on cherche parmi tous les posts existants
+	if offset >= variables.MaxRankElements {
 		filter := map[string]any{}
+		var sort map[string]any
 
-		// Tri par défaut : du plus récent au plus ancien
-		sort := map[string]any{"created_at": -1}
+		switch rankType {
+		case "likes:strict", "likes:global":
+			sort = map[string]any{"like_count": -1, "created_at": -1}
+		case "views:strict", "views:global":
+			sort = map[string]any{"view_count": -1, "created_at": -1}
+		case "global", "recent:global", "recent:strict":
+			sort = map[string]any{"created_at": -1}
+		default:
+			sort = map[string]any{"created_at": -1}
+		}
 
-		// On interroge Mongo avec la nouvelle fonction paginée
+		// L2 (MongoDB)
 		docs, err := mongo.Posts.GetPaginated(filter, sort, offset, limit)
 		if err != nil {
-			log.Printf("⚠️ Erreur fallback Mongo RankedPosts: %v", err)
-			return []domain.PostRequest{}, err
+			// L3 (PostgreSQL)
+			return getPostsFromPostgresPaginated(ctx, rankType, offset, limit)
 		}
 
 		var posts []domain.PostRequest
@@ -159,34 +155,48 @@ func GetRankedPosts(ctx context.Context, rankType string, offset int64, limit in
 	return fetchAndHydrateFromZSET(ctx, key, offset, limit)
 }
 
-// GetTagPosts récupère la timeline d'un hashtag officiel.
 func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([]domain.PostRequest, error) {
-	if offset >= MaxTagElements {
-		log.Printf("🧊 [COLD STORAGE] Lecture Mongo directe pour le tag %s", slug)
-		// Requête Mongo: chercher le slug dans le tableau 'hashtags'
-		return getPostsFromMongoPaginated("hashtags", slug, offset, limit)
+	if offset >= variables.MaxTagElements {
+		posts, err := getPostsFromMongoPaginated("hashtags", slug, offset, limit)
+		if err != nil {
+			// L3 (PostgreSQL)
+			query := `SELECT id FROM content.posts WHERE $1 = ANY(hashtags) AND visibility != 2 ORDER BY created_at DESC OFFSET $2 LIMIT $3`
+			rows, err := postgres.PostgresDB.QueryContext(ctx, query, slug, offset, limit)
+			if err != nil {
+				return []domain.PostRequest{}, fmt.Errorf("erreur requête L3 Postgres tag: %w", err)
+			}
+			defer rows.Close()
+
+			var ids []int64
+			for rows.Next() {
+				var id int64
+				if err := rows.Scan(&id); err == nil {
+					ids = append(ids, id)
+				}
+			}
+			return GetPostsView(ids)
+		}
+		return posts, nil
 	}
 
 	key := fmt.Sprintf("idx:tag:%s", slug)
 	return fetchAndHydrateFromZSET(ctx, key, offset, limit)
 }
 
-// --- FONCTIONS UTILITAIRES PRIVÉES ---
+// ============================================================================
+// 4. ROUTINES PRIVÉES D'ACCÈS AUX DONNÉES
+// ============================================================================
 
-// fetchAndHydrateFromZSET mutualise la logique Redis ZSET -> Hydratation Object Cache
 func fetchAndHydrateFromZSET(ctx context.Context, key string, offset int64, limit int64) ([]domain.PostRequest, error) {
-	// 1. Récupération des IDs triés
-	// Note: offset+limit-1 car Redis ZREVRANGE est inclusif (0 à 19 = 20 éléments)
 	idStrings, err := redis.ZRevRange(ctx, key, offset, offset+limit-1)
 	if err != nil {
-		return nil, fmt.Errorf("erreur lecture ZSET %s: %v", key, err)
+		return nil, fmt.Errorf("erreur lecture ZSET %s: %w", key, err)
 	}
 
 	if len(idStrings) == 0 {
 		return []domain.PostRequest{}, nil
 	}
 
-	// 2. Conversion []string -> []int64
 	var ids []int64
 	for _, idStr := range idStrings {
 		var id int64
@@ -194,28 +204,18 @@ func fetchAndHydrateFromZSET(ctx context.Context, key string, offset int64, limi
 		ids = append(ids, id)
 	}
 
-	// 3. Hydratation via l'Object Cache (Le "Pipeline V2")
 	return GetPostsView(ids)
 }
 
-// getPostsFromMongoPaginated interroge directement MongoDB quand le client scrolle trop loin.
-// Remplace le mock par la vraie logique.
 func getPostsFromMongoPaginated(field string, value any, offset int64, limit int64) ([]domain.PostRequest, error) {
-	filter := map[string]any{
-		field: value,
-	}
-
-	// Tri chronologique par défaut (le plus récent en premier)
+	filter := map[string]any{field: value}
 	sort := map[string]any{"created_at": -1}
 
-	// Appel de la fonction que l'on vient d'ajouter dans generic.go
 	docs, err := mongo.Posts.GetPaginated(filter, sort, offset, limit)
 	if err != nil {
-		log.Printf("⚠️ Erreur fallback Mongo paginé: %v", err)
 		return []domain.PostRequest{}, err
 	}
 
-	// Conversion des map[string]any brutes en domain.PostRequest
 	var posts []domain.PostRequest
 	for _, doc := range docs {
 		var p domain.PostRequest
@@ -225,4 +225,103 @@ func getPostsFromMongoPaginated(field string, value any, offset int64, limit int
 	}
 
 	return posts, nil
+}
+
+func getPostsFromPostgresPaginated(ctx context.Context, rankType string, offset int64, limit int64) ([]domain.PostRequest, error) {
+	// TODO: Optimiser ces requêtes avec des vues matérialisées si la BDD dépasse 1M de lignes
+	var query string
+
+	switch rankType {
+	case "likes:strict":
+		query = `
+			SELECT p.id FROM content.posts p 
+			WHERE p.visibility != 2 
+			ORDER BY (SELECT COUNT(*) FROM content.likes l WHERE l.target_id = p.id AND l.target_type = 0) DESC, p.created_at DESC 
+			OFFSET $1 LIMIT $2`
+	case "views:strict":
+		query = `
+			SELECT p.id FROM content.posts p 
+			WHERE p.visibility != 2 
+			ORDER BY (SELECT COUNT(*) FROM content.views v WHERE v.target_id = p.id AND v.target_type = 0) DESC, p.created_at DESC 
+			OFFSET $1 LIMIT $2`
+	default:
+		query = `SELECT id FROM content.posts WHERE visibility != 2 ORDER BY created_at DESC OFFSET $1 LIMIT $2`
+	}
+
+	rows, err := postgres.PostgresDB.QueryContext(ctx, query, offset, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+
+	return GetPostsView(ids)
+}
+
+// ============================================================================
+// 5. AMORÇAGE (SEEDING)
+// ============================================================================
+
+// SeedMostCache lit l'intégralité de Postgres pour populer le L1 (RAM), L2 (Mongo) et le MOST Cache.
+func SeedMostCache() error {
+	ctx := context.Background()
+
+	// TODO: Traiter le seeding par lots (Batch) pour éviter une surcharge RAM lors du scan complet de la base
+	query := `
+		SELECT 
+			id, user_id, content, hashtags, identifiers, media_ids, visibility, location, created_at, updated_at,
+			(SELECT COUNT(*) FROM content.likes l WHERE l.target_id = p.id AND l.target_type = 0) AS like_count
+		FROM content.posts p
+		WHERE visibility != 2
+	`
+	rows, err := postgres.PostgresDB.QueryContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("erreur requête seeding: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var p domain.PostRequest
+		var location sql.NullString
+		var likeCount float64
+
+		err := rows.Scan(
+			&p.ID, &p.UserID, &p.Content, pq.Array(&p.Hashtags), pq.Array(&p.Identifiers),
+			pq.Array(&p.MediaIDs), &p.Visibility, &location, &p.CreatedAt, &p.UpdatedAt,
+			&likeCount,
+		)
+		if err != nil {
+			continue
+		}
+
+		if location.Valid {
+			p.Location = location.String
+		}
+
+		// A. Hydratation L2 (MongoDB)
+		doc, _ := pkg.ToMap(p)
+		if doc != nil {
+			_ = mongo.Posts.Set(doc)
+		}
+
+		// B. Hydratation L1 (OBJECT Cache)
+		_ = redis.Posts.SetObject(ctx, p.ID, p)
+
+		// C. Hydratation MOST Cache (ZSETs algorithmiques)
+		UpdatePostRecommendationScore(ctx, p.ID, p.Hashtags)
+
+		// D. Classement STRICT (Absolu)
+		_ = redis.ZAdd(ctx, "rank:likes:strict", likeCount, p.ID)
+		_ = redis.ZRemRangeByRank(ctx, "rank:likes:strict", 0, -(variables.MaxRankElements + 1))
+	}
+
+	log.Println("✅ Seeding terminé : synchronisation complète L1, L2 et MOST Cache.")
+	return nil
 }

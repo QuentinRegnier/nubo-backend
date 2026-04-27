@@ -9,6 +9,7 @@ import (
 	"time"
 
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	variables "github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -32,30 +33,24 @@ var (
 
 // InitCacheDatabase initialise les collections Redis avec la stratégie OBJECT (LFU)
 func InitCacheDatabase() {
-	// TTL STANDARD : 7 Jours (Pragmatique, évite la saturation).
-	standardTTL := 7 * 24 * time.Hour
-
-	// TTL HOT BUFFER : 24 Heures (Priorité extrêmement minimale pour la messagerie).
-	hotBufferTTL := 24 * time.Hour
-
 	// Données Critiques (Sessions/Users)
-	Users = NewCollection("user", standardTTL)
-	UserSettings = NewCollection("user_settings", standardTTL)
-	Sessions = NewCollection("session", standardTTL)
+	Users = NewCollection("user", variables.StandardTTL)
+	UserSettings = NewCollection("user_settings", variables.StandardTTL)
+	Sessions = NewCollection("session", variables.StandardTTL)
 
 	// Contenu (Posts, Media...)
-	Posts = NewCollection("post", standardTTL)
-	Comments = NewCollection("comment", standardTTL)
-	Media = NewCollection("media", standardTTL)
+	Posts = NewCollection("post", variables.StandardTTL)
+	Comments = NewCollection("comment", variables.StandardTTL)
+	Media = NewCollection("media", variables.StandardTTL)
 
 	// 🔴 Messages : Priorité minimale (Hot Buffer). Seront évincés en premier si besoin.
-	Messages = NewCollection("msg", hotBufferTTL)
+	Messages = NewCollection("msg", variables.StandardTTL)
 
 	// Relations & Meta
-	Likes = NewCollection("like", standardTTL)
-	Conversations = NewCollection("conv", standardTTL)
-	Members = NewCollection("member", standardTTL)
-	Relations = NewCollection("rel", standardTTL)
+	Likes = NewCollection("like", variables.StandardTTL)
+	Conversations = NewCollection("conv", variables.StandardTTL)
+	Members = NewCollection("member", variables.StandardTTL)
+	Relations = NewCollection("rel", variables.StandardTTL)
 
 	log.Println("✅ Structure Redis (Object Store LFU) initialisée")
 }

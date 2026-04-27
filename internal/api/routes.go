@@ -83,6 +83,7 @@ func SetupRoutes(r *gin.Engine) {
 	secured.POST("/post", handlers.CreatePostHandler) // ℹ️❌
 	secured.PATCH("/post", ModifyPostHandler)         // ℹ️❌
 	secured.DELETE("/post", DeletePost)               // ℹ️❌
+	secured.POST("/views/batch", handlers.RegisterBatchViewsHandler)
 
 	// --- Actions Sociales ---
 	secured.POST("/like", LikeHandler)            // ℹ️❌

@@ -37,6 +37,7 @@ const (
 	EntityConversation EntityType = "Conversations"
 	EntityMembers      EntityType = "Members"
 	EntityMessage      EntityType = "Messages"
+	EntityView         EntityType = "VIEW"
 	// Ajoute les autres entités selon tes besoins
 )
 

@@ -1,5 +1,7 @@
 package variables
 
+import "time"
+
 const (
 	ToleranceTimeSeconds         = 300     // 5 minutes
 	JWTExpirationSeconds         = 900     // 15 minutes
@@ -19,3 +21,9 @@ const (
 )
 
 const MaxTags = 10
+
+// Configuration temporelle OBJECT Cache
+const (
+	StandardTTL  = 7 * 24 * time.Hour // TTL STANDARD : 7 Jours (Pragmatique, évite la saturation).
+	HotBufferTTL = 24 * time.Hour     // TTL HOT BUFFER : 24 Heures (Priorité extrêmement minimale pour la messagerie).
+)

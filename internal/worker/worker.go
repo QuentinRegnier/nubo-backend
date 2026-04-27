@@ -172,27 +172,70 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 			}
 		}
 
-		// 2. SI C'EST UN NOUVEAU LIKE
+		// 2. SI C'EST UN NOUVEAU LIKE (ou un lot de likes agrégés)
 		if e.Type == redis.EntityLike && e.Action == redis.ActionCreate {
 			jsonBytes, err := json.Marshal(e.Payload)
 			if err == nil {
-				// Structure temporaire pour récupérer l'ID du post liké
-				var like struct {
-					TargetID int64 `json:"target_id"`
+				// NOUVELLE STRUCTURE : Intègre le count et le drapeau d'idempotence
+				var likeEvent struct {
+					TargetID              int64 `json:"target_id"`
+					Count                 int   `json:"count"`
+					AlreadyEvaluatedRedis bool  `json:"already_evaluated_redis"`
 				}
-				if err := json.Unmarshal(jsonBytes, &like); err == nil && like.TargetID != 0 {
-					// A. Compétition pure : on augmente le compteur de likes absolu
-					service.IncrementPostMetric(ctx, like.TargetID, "likes")
 
-					// B. Algorithme : Le post a reçu un like, on RECALCULE son score de recommandation globale !
-					// Note : On passe "nil" pour les hashtags car on ne les a pas dans l'événement de Like.
-					// Cela mettra à jour le classement Global et Recent, mais pas les Tags (pour le moment).
-					service.UpdatePostRecommendationScore(ctx, like.TargetID, nil)
+				if err := json.Unmarshal(jsonBytes, &likeEvent); err == nil && likeEvent.TargetID != 0 {
+
+					// ----------------------------------------------------------------
+					// A. MISE À JOUR BDD
+					// C'est ici (ou plus bas via flushPostgres) que tu fais le UPDATE SQL
+					// Il te faudra récupérer le vrai total et les hashtags renvoyés par Postgres
+					// Exemple conceptuel :
+					// totalLikes, hashtags := ...
+					// ----------------------------------------------------------------
+
+					// B. CORRECTION DU CACHE REDIS (Si l'OBJECT Cache l'avait raté)
+					if !likeEvent.AlreadyEvaluatedRedis {
+						// Le post était "froid" (pas en RAM), interaction_service n'a donc pas pu mettre à jour Redis.
+						// On force son entrée dans le MOST Cache avec la valeur absolue calculée par Postgres.
+
+						// TODO: Décommenter et utiliser les variables issues de ta BDD (totalLikes, hashtags)
+						// service.EvaluatePostAfterLike(ctx, likeEvent.TargetID, float64(totalLikes), hashtags)
+					}
 				}
 			}
 		}
 
-		// 3. (Optionnel pour le futur) SI C'EST UNE NOUVELLE VUE
-		// if e.Type == redis.EntityView && e.Action == redis.ActionCreate { ... }
+		// 3. SI C'EST UNE NOUVELLE VUE (ou un lot de vues agrégées)
+		if e.Type == redis.EntityView && e.Action == redis.ActionCreate {
+			jsonBytes, err := json.Marshal(e.Payload)
+			if err == nil {
+				// NOUVELLE STRUCTURE : Intègre le count et le drapeau d'idempotence
+				var viewEvent struct {
+					TargetID              int64 `json:"target_id"`
+					Count                 int   `json:"count"`
+					AlreadyEvaluatedRedis bool  `json:"already_evaluated_redis"`
+				}
+
+				if err := json.Unmarshal(jsonBytes, &viewEvent); err == nil && viewEvent.TargetID != 0 {
+
+					// ----------------------------------------------------------------
+					// A. MISE À JOUR BDD
+					// C'est ici (ou via flushPostgres) que tu fais le UPDATE SQL pour les vues.
+					// Tu récupères le vrai total et les hashtags renvoyés par Postgres.
+					// Exemple conceptuel :
+					// totalViews, hashtags := db.UpdatePostViews(viewEvent.TargetID, viewEvent.Count)
+					// ----------------------------------------------------------------
+
+					// B. CORRECTION DU CACHE REDIS (Si l'OBJECT Cache l'avait raté)
+					if !viewEvent.AlreadyEvaluatedRedis {
+						// Le post était "froid" (pas en RAM), interaction_service n'a donc pas pu mettre à jour Redis.
+						// On force son entrée dans le MOST Cache avec la valeur absolue calculée par Postgres.
+
+						// TODO: Décommenter et utiliser les variables issues de ta BDD (totalViews, hashtags)
+						// service.EvaluatePostAfterView(ctx, viewEvent.TargetID, float64(totalViews), hashtags)
+					}
+				}
+			}
+		}
 	}
 }

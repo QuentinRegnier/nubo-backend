@@ -89,6 +89,12 @@ func main() {
 		log.Fatalf("❌ Impossible de charger la configuration des tags : %v", err)
 	}
 
+	// --- NOUVEAU : SEEDING DU MOST CACHE ---
+	// Construit les classements Redis à partir de la base de données
+	if err := service.SeedMostCache(); err != nil {
+		log.Printf("⚠️ Avertissement lors du seeding: %v", err)
+	}
+
 	// Lance le moteur V12
 	worker.StartBackgroundWorkers(context.Background())
 

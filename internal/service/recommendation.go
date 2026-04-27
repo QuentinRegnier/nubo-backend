@@ -38,20 +38,27 @@ import (
 //
 // ============================================================================
 
-// CalculateRecommendationScore génère le score algorithmique d'un post.
-// Pour le moment, renvoie une valeur aléatoire en attendant l'implémentation finale.
-//
-// Paramètres :
-// - postID : L'identifiant du post à évaluer.
-// - bonuses : Un tableau de modificateurs (ex: [500.0, 150.0]) pour buffer le score. Inutilisé pour le moment.
-func CalculateRecommendationScore(postID int64, bonuses []float64) float64 {
-	// TODO: Implémenter le vrai calcul d'engagement et de Time Decay plus tard.
+// ScoreOptions permet de moduler le calcul du score algorithmique
+// en appliquant des boosts spécifiques (équivalent des arguments par défaut).
+// Une valeur non renseignée lors de l'appel vaudra automatiquement 0.0 en Go.
+type ScoreOptions struct {
+	BoostLikes  float64
+	BoostViews  float64
+	BoostRecent float64
+	// D'autres boosts pourront être ajoutés ici (BoostComments, BoostQuality...)
+}
 
-	// Pour le moment : Génération d'un score aléatoire entre 0 et 10000
-	// Cela permet de tester le comportement du ZSET (classement, capping)
-	// sans avoir l'algorithme définitif.
+// CalculateRecommendationScore génère le score algorithmique d'un post.
+func CalculateRecommendationScore(postID int64, opts ScoreOptions) float64 {
+	// TODO: Implémenter le vrai calcul d'engagement et de Time-Decay plus tard.
+	// Cette fonction utilisera "opts.BoostLikes", "opts.BoostViews", etc.
+
+	// L'intérieur reste volontairement factice pour le moment :
 	r := rand.New(rand.NewSource(time.Now().UnixNano() + postID))
 	randomScore := r.Float64() * 10000.0
+
+	// On utilise la variable opts de manière fantôme pour éviter l'erreur de compilation Go "declared but not used"
+	_ = opts.BoostLikes + opts.BoostViews + opts.BoostRecent
 
 	return randomScore
 }
