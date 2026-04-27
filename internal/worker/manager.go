@@ -15,6 +15,12 @@ func StartBackgroundWorkers(ctx context.Context) {
 
 	var wg sync.WaitGroup
 
+	// Lancement du Worker Pool de Recalcul des Scores (Time-Decay)
+	StartScoreUpdaterCron(ctx)
+
+	// Lancement du nettoyeur de Tags (Canonicalisation)
+	StartHashtagCanonCron(ctx)
+
 	// On lance 64 goroutines (une par shard Redis)
 	for i := 0; i < redis.QueueShards; i++ {
 		wg.Add(1)

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,6 +9,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+
+	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
 // --- Structures de Données (Miroir du JSON) ---
@@ -62,7 +67,12 @@ func LoadTagsConfig(filePath string) error {
 	if err != nil {
 		return fmt.Errorf("impossible d'ouvrir le fichier tags: %v", err)
 	}
-	defer file.Close()
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+			log.Printf("⚠️ Erreur lors de la fermeture du fichier tags: %v", err)
+		}
+	}(file)
 
 	// 2. Parsing JSON
 	var config TagsConfig
@@ -99,23 +109,50 @@ func LoadTagsConfig(filePath string) error {
 	return nil
 }
 
-// GetTagFromKeyword cherche si un mot (hashtag) correspond à un Tag officiel.
-// Retourne le slug du tag (ex: "dev") et true, ou "" et false.
-func GetTagFromKeyword(input string) (string, bool) {
-	configMutex.RLock() // Lecture seule, pas de blocage excessif
-	defer configMutex.RUnlock()
+// NormalizeHashtag effectue une normalisation lexicale stricte pour éviter 90% des doublons.
+func NormalizeHashtag(input string) string {
+	input = strings.ToLower(strings.TrimSpace(input))
+	input = strings.TrimPrefix(input, "#")
 
-	if keywordMap == nil {
+	// Retrait des caractères spéciaux : on ne garde que l'alphanumérique
+	var builder strings.Builder
+	builder.Grow(len(input))
+	for _, r := range input {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
+}
+
+// GetTagFromKeyword cherche le slug officiel (canonique) d'un hashtag.
+// Désormais, TOUS les hashtags sont valides (renvoie toujours true si non vide).
+func GetTagFromKeyword(ctx context.Context, input string) (string, bool) {
+	cleanInput := NormalizeHashtag(input)
+	if cleanInput == "" {
 		return "", false
 	}
 
-	// Nettoyage basique (minuscule + trim)
-	cleanInput := strings.ToLower(strings.TrimSpace(input))
-	// Enlève le '#' si présent
-	cleanInput = strings.TrimPrefix(cleanInput, "#")
-
+	// 1. Vérification dans l'index statique prioritaire (tags_config.json)
+	configMutex.RLock()
 	slug, found := keywordMap[cleanInput]
-	return slug, found
+	configMutex.RUnlock()
+
+	if found {
+		return slug, true
+	}
+
+	// 2. Vérification dans le mapping dynamique Redis (Fautes de frappe corrigées)
+	canonSlug, err := redisgo.Rdb.HGet(ctx, variables.RedisKeyHashtagCanonMap, cleanInput).Result()
+	if err == nil && canonSlug != "" {
+		return canonSlug, true
+	}
+
+	// 3. Si inconnu, le mot propre devient son propre tag (Nouveau Tag Communautaire)
+	// On l'ajoute silencieusement au SET des tags actifs pour que le Cron de nuit l'analyse.
+	_ = redisgo.Rdb.SAdd(ctx, variables.RedisKeyActiveTagsSet, cleanInput).Err()
+
+	return cleanInput, true
 }
 
 // GetTagsConfig retourne la configuration complète (utile pour l'envoyer au Frontend).

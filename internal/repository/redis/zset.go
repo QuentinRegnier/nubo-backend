@@ -71,3 +71,23 @@ func ZCount(ctx context.Context, key, min, max string) (int64, error) {
 func ZCard(ctx context.Context, key string) (int64, error) {
 	return redisgo.Rdb.ZCard(ctx, key).Result()
 }
+
+// zaddCapScript garantit l'atomicité de l'insertion et du nettoyage à X éléments.
+const zaddCapScript = `
+	local key = KEYS[1]
+	local score = tonumber(ARGV[1])
+	local member = ARGV[2]
+	local max_size = tonumber(ARGV[3])
+
+	redis.call('ZADD', key, score, member)
+	local current_size = redis.call('ZCARD', key)
+	if current_size > max_size then
+		redis.call('ZREMRANGEBYRANK', key, 0, current_size - max_size - 1)
+	end
+	return 1
+`
+
+// ZAddWithCap insère un élément et plafonne le ZSET en une seule passe atomique via Lua.
+func ZAddWithCap(ctx context.Context, key string, score float64, member interface{}, maxSize int) error {
+	return redisgo.Rdb.Eval(ctx, zaddCapScript, []string{key}, score, member, maxSize).Err()
+}

@@ -3,12 +3,14 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -22,72 +24,110 @@ import (
 
 // UpdatePostRecommendationScore recalcule le score et actualise les canaux globaux et tags.
 func UpdatePostRecommendationScore(ctx context.Context, postID int64, hashtags []string) {
-	// TODO: Intégrer les paramètres de personnalisation utilisateur (Feed Cache) plus tard
-
-	scoreGlobal := CalculateRecommendationScore(postID, ScoreOptions{})
-	scoreBoostRecent := CalculateRecommendationScore(postID, ScoreOptions{BoostRecent: variables.BoostRecent})
-	scoreBoostLikes := CalculateRecommendationScore(postID, ScoreOptions{BoostLikes: variables.BoostLikes})
-	scoreBoostViews := CalculateRecommendationScore(postID, ScoreOptions{BoostViews: variables.BoostViews})
-
-	scoreStrictRecent := float64(time.Now().UnixMilli())
-
-	// Pré-hydratation conditionnelle : Si le post remonte via une interaction (sans hashtags fournis), on sécurise le L1
-	if len(hashtags) == 0 {
-		var tempPost domain.PostRequest
-		if err := redis.Posts.GetObject(ctx, postID, &tempPost); err != nil {
-			_, _ = GetPostsView([]int64{postID})
+	// 1. Récupération des données brutes du post (Indispensable pour l'algorithme)
+	var p domain.PostRequest
+	if err := redis.Posts.GetObject(ctx, postID, &p); err != nil {
+		// Fallback L2/L3 si le post n'est pas dans le cache L1
+		posts, err := GetPostsView([]int64{postID})
+		if err != nil || len(posts) == 0 {
+			log.Printf("⚠️ Impossible de scorer le post %d : Introuvable", postID)
+			return
 		}
+		p = posts[0]
 	}
 
-	// Mise à jour des canaux globaux
-	_ = redis.ZAdd(ctx, "rank:global", scoreGlobal, postID)
-	_ = redis.ZRemRangeByRank(ctx, "rank:global", 0, -(variables.MaxRankElements + 1))
+	// Si les hashtags n'ont pas été fournis dans l'événement, on utilise ceux de l'entité
+	if len(hashtags) == 0 && len(p.Hashtags) > 0 {
+		hashtags = p.Hashtags
+	}
 
-	_ = redis.ZAdd(ctx, "rank:recent:global", scoreBoostRecent, postID)
-	_ = redis.ZRemRangeByRank(ctx, "rank:recent:global", 0, -(variables.MaxRankElements + 1))
+	// 2. Construction de la base algorithmique
+	ageSeconds := time.Since(p.CreatedAt).Seconds()
+	mediaCount := len(p.MediaIDs)
 
-	_ = redis.ZAdd(ctx, "rank:likes:global", scoreBoostLikes, postID)
-	_ = redis.ZRemRangeByRank(ctx, "rank:likes:global", 0, -(variables.MaxRankElements + 1))
+	baseOpts := ScoreOptions{
+		LikesCount:    p.LikeCount,
+		CommentsCount: p.CommentCount,
+		MediaCount:    mediaCount,
+		AgeSeconds:    ageSeconds,
+		// L'AuthorGrade et AuthorPostsInWindow pourront être hydratés ici plus tard
+	}
 
-	_ = redis.ZAdd(ctx, "rank:views:global", scoreBoostViews, postID)
-	_ = redis.ZRemRangeByRank(ctx, "rank:views:global", 0, -(variables.MaxRankElements + 1))
+	// 3. Calcul des différents flux
+	optsRecent := baseOpts
+	optsRecent.BoostRecent = variables.BoostRecent
 
-	_ = redis.ZAdd(ctx, "rank:recent:strict", scoreStrictRecent, postID)
-	_ = redis.ZRemRangeByRank(ctx, "rank:recent:strict", 0, -(variables.MaxRankElements + 1))
+	optsLikes := baseOpts
+	optsLikes.BoostLikes = variables.BoostLikes
 
-	// Mise à jour des canaux par Tag
+	optsComments := baseOpts
+	optsComments.BoostComments = variables.BoostComments
+
+	scoreGlobal := CalculateRecommendationScore(postID, baseOpts)
+	scoreBoostRecent := CalculateRecommendationScore(postID, optsRecent)
+	scoreBoostLikes := CalculateRecommendationScore(postID, optsLikes)
+	scoreBoostComments := CalculateRecommendationScore(postID, optsComments)
+
+	// Tri chronologique strict : on utilise le timestamp pour figer sa position
+	scoreStrictRecent := float64(p.CreatedAt.UnixMilli())
+
+	// 4. Mise à jour des ZSETs globaux (Via Script Lua Atomique)
+	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankGlobal, scoreGlobal, postID, variables.MaxRankElements)
+	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankRecentGlobal, scoreBoostRecent, postID, variables.MaxRankElements)
+	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankLikesGlobal, scoreBoostLikes, postID, variables.MaxRankElements)
+	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankCommentsGlobal, scoreBoostComments, postID, variables.MaxRankElements)
+	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankRecentStrict, scoreStrictRecent, postID, variables.MaxRankElements)
+
+	// 5. Mise à jour des canaux par Tag
 	if len(hashtags) > 0 {
 		officialTags := make(map[string]bool)
 		for _, hashtag := range hashtags {
-			if slug, found := GetTagFromKeyword(hashtag); found {
+			if slug, found := GetTagFromKeyword(ctx, hashtag); found {
 				officialTags[slug] = true
 			}
 		}
 
 		for slug := range officialTags {
-			tagKey := fmt.Sprintf("idx:tag:%s", slug)
-			_ = redis.ZAdd(ctx, tagKey, scoreGlobal, postID)
-			_ = redis.ZRemRangeByRank(ctx, tagKey, 0, -(variables.MaxTagElements + 1))
+			tagKey := fmt.Sprintf(variables.RedisKeyRankTag, slug)
+			_ = redis.ZAddWithCap(ctx, tagKey, scoreGlobal, postID, variables.MaxTagElements)
 		}
 	}
 }
 
 // EvaluatePostAfterLike force l'insertion du post avec sa valeur absolue post-sauvegarde BDD.
 func EvaluatePostAfterLike(ctx context.Context, postID int64, totalLikes float64, hashtags []string) {
-	strictKey := "rank:likes:strict"
-	_ = redis.ZAdd(ctx, strictKey, totalLikes, postID)
-	_ = redis.ZRemRangeByRank(ctx, strictKey, 0, -(variables.MaxRankElements + 1))
-
+	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankLikesStrict, totalLikes, postID, variables.MaxRankElements)
 	UpdatePostRecommendationScore(ctx, postID, hashtags)
 }
 
 // EvaluatePostAfterView force l'insertion du post avec sa valeur absolue post-sauvegarde BDD.
 func EvaluatePostAfterView(ctx context.Context, postID int64, totalViews float64, hashtags []string) {
-	strictKey := "rank:views:strict"
-	_ = redis.ZAdd(ctx, strictKey, totalViews, postID)
-	_ = redis.ZRemRangeByRank(ctx, strictKey, 0, -(variables.MaxRankElements + 1))
-
+	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankViewsStrict, totalViews, postID, variables.MaxRankElements)
 	UpdatePostRecommendationScore(ctx, postID, hashtags)
+}
+
+// ============================================================================
+// 1.5 VECTORISATION DE CONTENU (PILIER 3)
+// ============================================================================
+
+// StoreContentVector calcule et stocke de manière asynchrone le vecteur du post.
+func StoreContentVector(ctx context.Context, post domain.PostRequest) {
+	// Génération mathématique du vecteur (224 dimensions)
+	vector := GenerateContentVector(post.CreatedAt, post.Hashtags, post.UserID)
+
+	// Sérialisation JSON (le tableau de float32 est extrêmement léger)
+	vectorBytes, err := json.Marshal(vector)
+	if err != nil {
+		log.Printf("⚠️ Erreur sérialisation vecteur post %d: %v", post.ID, err)
+		return
+	}
+
+	// Stockage Redis avec TTL 7 jours (Selon TDD)
+	key := fmt.Sprintf(variables.RedisKeyContentVector, post.ID)
+	err = redisgo.Rdb.Set(ctx, key, vectorBytes, 7*24*time.Hour).Err()
+	if err != nil {
+		log.Printf("⚠️ Erreur sauvegarde Redis vecteur post %d: %v", post.ID, err)
+	}
 }
 
 // ============================================================================
@@ -165,7 +205,12 @@ func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([
 			if err != nil {
 				return []domain.PostRequest{}, fmt.Errorf("erreur requête L3 Postgres tag: %w", err)
 			}
-			defer rows.Close()
+			defer func(rows *sql.Rows) {
+				err := rows.Close()
+				if err != nil {
+					log.Printf("⚠️ Erreur fermeture rows L3 Postgres tag: %v", err)
+				}
+			}(rows)
 
 			var ids []int64
 			for rows.Next() {
@@ -200,7 +245,10 @@ func fetchAndHydrateFromZSET(ctx context.Context, key string, offset int64, limi
 	var ids []int64
 	for _, idStr := range idStrings {
 		var id int64
-		fmt.Sscanf(idStr, "%d", &id)
+		_, err := fmt.Sscanf(idStr, "%d", &id)
+		if err != nil {
+			return nil, err
+		}
 		ids = append(ids, id)
 	}
 
@@ -252,7 +300,12 @@ func getPostsFromPostgresPaginated(ctx context.Context, rankType string, offset 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			log.Printf("⚠️ Erreur fermeture rows L3 Postgres paginé: %v", err)
+		}
+	}(rows)
 
 	var ids []int64
 	for rows.Next() {
@@ -318,8 +371,7 @@ func SeedMostCache() error {
 		UpdatePostRecommendationScore(ctx, p.ID, p.Hashtags)
 
 		// D. Classement STRICT (Absolu)
-		_ = redis.ZAdd(ctx, "rank:likes:strict", likeCount, p.ID)
-		_ = redis.ZRemRangeByRank(ctx, "rank:likes:strict", 0, -(variables.MaxRankElements + 1))
+		_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankLikesStrict, likeCount, p.ID, variables.MaxRankElements)
 	}
 
 	log.Println("✅ Seeding terminé : synchronisation complète L1, L2 et MOST Cache.")

@@ -22,8 +22,51 @@ const (
 
 const MaxTags = 10
 
+// ---------------------------------------------------------
+// REDIS KEYS - RECOMMANDATION & TENDANCES (ZSETS)
+// ---------------------------------------------------------
+const (
+	// Mode Strict (Valeurs absolues pures)
+	RedisKeyRankLikesStrict  = "rank:likes:strict"
+	RedisKeyRankViewsStrict  = "rank:views:strict"
+	RedisKeyRankRecentStrict = "rank:recent:strict"
+
+	// Mode Global (Algorithme de Time-Decay avec ou sans boosts)
+	RedisKeyRankGlobal         = "rank:global"
+	RedisKeyRankLikesGlobal    = "rank:likes:global"
+	RedisKeyRankCommentsGlobal = "rank:comments:global"
+	RedisKeyRankRecentGlobal   = "rank:recent:global"
+
+	// Tags & Perso
+	RedisKeyRankTag       = "idx:tag:%s"     // %s = slug du tag canonique
+	RedisKeyContentVector = "content:vec:%d" // %d = post_id
+)
+
+// ---------------------------------------------------------
+// RECOMMANDATION - MULTIPLICATEURS (BOOSTS)
+// ---------------------------------------------------------
+const (
+	BoostRecent   = 1.8 // Réduit la gravité temporelle pour favoriser la fraîcheur
+	BoostLikes    = 1.5 // Augmente le poids des likes de 50%
+	BoostComments = 1.5 // Augmente le poids des commentaires de 50%
+)
+
+// ---------------------------------------------------------
+// REDIS KEYS - HASHTAGS & CANONICALISATION
+// ---------------------------------------------------------
+const (
+	RedisKeyHashtagCanonMap = "hashtag:canon:map" // HASH: Mot-clé (faute) -> Slug officiel
+	RedisKeyActiveTagsSet   = "tags:active:set"   // SET: Liste de tous les tags communautaires
+)
+
 // Configuration temporelle OBJECT Cache
 const (
-	StandardTTL  = 7 * 24 * time.Hour // TTL STANDARD : 7 Jours (Pragmatique, évite la saturation).
-	HotBufferTTL = 24 * time.Hour     // TTL HOT BUFFER : 24 Heures (Priorité extrêmement minimale pour la messagerie).
+	StandardTTL = 7 * 24 * time.Hour // TTL STANDARD : 7 Jours (Pragmatique, évite la saturation).
+)
+
+// Limites de cache pour les flux "Most" (Top) et les posts d'un utilisateur
+const (
+	MaxTagElements       = 5000 // On ne garde que les 5000 posts les plus hauts par tag
+	MaxRankElements      = 5000 // On ne garde que le top 5000 (Likes, Vues, Global, Recent)
+	MaxUserPostsElements = 100  // On ne garde que les 100 derniers posts d'un utilisateur en RAM
 )

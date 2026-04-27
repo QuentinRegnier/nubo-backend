@@ -15,7 +15,7 @@ type Location struct {
 	Long float64 `json:"long"`
 }
 type UserRequest struct { // CreateUser
-	ID               int64     `bson:"id" json:"id"` // Attention: défini comme Int dans ton schéma
+	ID               int64     `bson:"id" json:"id"` // Attention : défini comme Int dans ton schéma
 	Username         string    `bson:"username" json:"username"`
 	Email            string    `bson:"email" json:"email"`
 	EmailVerified    bool      `bson:"email_verified" json:"email_verified"`
@@ -24,7 +24,7 @@ type UserRequest struct { // CreateUser
 	PasswordHash     string    `bson:"password_hash" json:"password_hash"`
 	FirstName        string    `bson:"first_name" json:"first_name"`
 	LastName         string    `bson:"last_name" json:"last_name"`
-	Birthdate        time.Time `bson:"birthdate" json:"birthdate"` // reflect.Struct correspond souvent à time.Time
+	Birthdate        time.Time `bson:"birthdate" json:"birthdate"` // time.Time
 	Sex              int       `bson:"sex" json:"sex"`
 	Bio              string    `bson:"bio" json:"bio"`
 	ProfilePictureID int64     `bson:"profile_picture_id" json:"profile_picture_id"`
@@ -65,19 +65,20 @@ type MediaRequest struct {
 }
 
 type PostRequest struct {
-	ID          int64     `bson:"id" json:"id"`
-	UserID      int64     `bson:"user_id" json:"user_id"`
-	Content     string    `bson:"content" json:"content"`
-	Hashtags    []string  `bson:"hashtags" json:"hashtags"`
-	Identifiers []int64   `bson:"identifiers" json:"identifiers"`
-	MediaIDs    []int64   `bson:"media_ids" json:"media_ids"`
-	Visibility  int       `bson:"visibility" json:"visibility"`
-	Location    string    `bson:"location" json:"location"`
-	CreatedAt   time.Time `bson:"created_at" json:"created_at"`
-	UpdatedAt   time.Time `bson:"updated_at" json:"updated_at"`
-	// TODO implémenter les champs de comptage (likes, vues) et les champs de recommandation (score, classement)
-	LikeCount int `json:"like_count"` // <-- À AJOUTER
-	ViewCount int `json:"view_count"` // <-- À AJOUTER
+	ID           int64     `bson:"id" json:"id"`
+	UserID       int64     `bson:"user_id" json:"user_id"`
+	Content      string    `bson:"content" json:"content"`
+	Hashtags     []string  `bson:"hashtags" json:"hashtags"`
+	Identifiers  []int64   `bson:"identifiers" json:"identifiers"`
+	MediaIDs     []int64   `bson:"media_ids" json:"media_ids"`
+	Visibility   int       `bson:"visibility" json:"visibility"`
+	Location     string    `bson:"location" json:"location"`
+	CreatedAt    time.Time `bson:"created_at" json:"created_at"`
+	UpdatedAt    time.Time `bson:"updated_at" json:"updated_at"`
+	LikeCount    int       `bson:"like_count" json:"like_count"`
+	CommentCount int       `bson:"comment_count" json:"comment_count"`
+	ViewCount    int       `bson:"view_count" json:"view_count"`
+	HasMedia     bool      `bson:"has_media" json:"has_media"`
 }
 
 // ********************************************************

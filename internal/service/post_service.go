@@ -3,10 +3,11 @@ package service
 import (
 	"context"
 	"database/sql"
-	"github.com/vmihailenco/msgpack/v5"
 	"log"
 	"mime/multipart"
 	"time"
+
+	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
@@ -36,16 +37,20 @@ func CreatePost(userID int64, input domain.CreatePostInput, files []*multipart.F
 
 	// 2. Création Objet
 	post := domain.PostRequest{
-		ID:          postID,
-		UserID:      userID,
-		Content:     pkg.CleanStr(input.Content),
-		Hashtags:    input.Hashtags,
-		Identifiers: input.Identifiers,
-		MediaIDs:    mediaIDs,
-		Visibility:  input.Visibility,
-		Location:    input.Location,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:           postID,
+		UserID:       userID,
+		Content:      pkg.CleanStr(input.Content),
+		Hashtags:     input.Hashtags,
+		Identifiers:  input.Identifiers,
+		MediaIDs:     mediaIDs,
+		Visibility:   input.Visibility,
+		Location:     input.Location,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		LikeCount:    0,
+		CommentCount: 0,
+		ViewCount:    0,
+		HasMedia:     len(mediaIDs) > 0,
 	}
 
 	// 3. Cache Redis (LFU Init)
@@ -58,7 +63,7 @@ func CreatePost(userID int64, input domain.CreatePostInput, files []*multipart.F
 	return postID, err
 }
 
-// GetPostsView : Le Pipeline d'Hydratation Optimisé (L1 Redis -> L2 Mongo -> L3 Postgres)
+// GetPostsView : Le Pipeline d'Hydratation Optimisé (L1 Redis → L2 Mongo → L3 Postgres)
 func GetPostsView(ids []int64) ([]domain.PostRequest, error) {
 	if len(ids) == 0 {
 		return []domain.PostRequest{}, nil
@@ -127,18 +132,21 @@ func GetPostsView(ids []int64) ([]domain.PostRequest, error) {
 	if len(stillMissingIDs) > 0 {
 		log.Printf("🛡️ Postgres Fallback déclenché pour %d posts manquants", len(stillMissingIDs))
 
-		// Remplacement par la fonction SQL pour appliquer les règles métier (ex: ignorer visibility = 2)
-		// ARRAY[0, 1]::smallint[] permet de ne charger que les posts publics (0) ou abonnés (1)
-		query := `SELECT id, user_id, content, hashtags, identifiers, media_ids, visibility, location, created_at, updated_at 
+		// On sélectionne TOUTES les colonnes, y compris les nouveaux compteurs matérialisés
+		query := `SELECT id, user_id, content, hashtags, identifiers, media_ids, visibility, location, created_at, updated_at, like_count, comment_count, view_count, has_media 
 				  FROM content.func_load_posts(NULL, $1, ARRAY[0, 1]::smallint[], 0)`
 
 		rows, err := postgres.PostgresDB.QueryContext(ctx, query, pq.Array(stillMissingIDs))
 		if err == nil {
-			defer rows.Close()
+			defer func(rows *sql.Rows) {
+				err := rows.Close()
+				if err != nil {
+					log.Printf("⚠️ Erreur fermeture rows Postgres: %v", err)
+				}
+			}(rows)
 			for rows.Next() {
 				var p domain.PostRequest
 				var location sql.NullString // Gestion du NULL en base
-				var likeCount int           // Variable poubelle/temporaire car la fonction SQL renvoie le like_count en plus
 
 				err := rows.Scan(
 					&p.ID,
@@ -151,7 +159,10 @@ func GetPostsView(ids []int64) ([]domain.PostRequest, error) {
 					&location,
 					&p.CreatedAt,
 					&p.UpdatedAt,
-					&likeCount, // On capte la dernière colonne renvoyée par func_load_posts
+					&p.LikeCount,
+					&p.CommentCount,
+					&p.ViewCount,
+					&p.HasMedia,
 				)
 
 				if err == nil {

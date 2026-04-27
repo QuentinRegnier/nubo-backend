@@ -168,71 +168,42 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 					service.UpdatePostRecommendationScore(ctx, post.ID, post.Hashtags)
 					// B. Chronologie Utilisateur (Grille Profil)
 					service.AddPostToUserProfile(ctx, post.UserID, post.ID)
+					// C. Vecteur de Contenu pour Recommandation Personnalisée (Pilier 3)
+					service.StoreContentVector(ctx, post)
 				}
 			}
 		}
 
-		// 2. SI C'EST UN NOUVEAU LIKE (ou un lot de likes agrégés)
-		if e.Type == redis.EntityLike && e.Action == redis.ActionCreate {
+		// 2. SI C'EST UNE INTERACTION (LIKE ou VUE agrégé)
+		if (e.Type == redis.EntityLike || e.Type == redis.EntityView) && e.Action == redis.ActionCreate {
 			jsonBytes, err := json.Marshal(e.Payload)
 			if err == nil {
-				// NOUVELLE STRUCTURE : Intègre le count et le drapeau d'idempotence
-				var likeEvent struct {
+				// STRUCTURE COMMUNE : Intègre le count et le drapeau d'idempotence
+				var interactionEvent struct {
 					TargetID              int64 `json:"target_id"`
 					Count                 int   `json:"count"`
 					AlreadyEvaluatedRedis bool  `json:"already_evaluated_redis"`
 				}
 
-				if err := json.Unmarshal(jsonBytes, &likeEvent); err == nil && likeEvent.TargetID != 0 {
+				if err := json.Unmarshal(jsonBytes, &interactionEvent); err == nil && interactionEvent.TargetID != 0 {
 
 					// ----------------------------------------------------------------
 					// A. MISE À JOUR BDD
-					// C'est ici (ou plus bas via flushPostgres) que tu fais le UPDATE SQL
-					// Il te faudra récupérer le vrai total et les hashtags renvoyés par Postgres
-					// Exemple conceptuel :
-					// totalLikes, hashtags := ...
+					// C'est ici (ou via flushPostgres) que tu fais le UPDATE SQL.
+					// Il te faudra récupérer le vrai total et les hashtags renvoyés par Postgres.
 					// ----------------------------------------------------------------
 
 					// B. CORRECTION DU CACHE REDIS (Si l'OBJECT Cache l'avait raté)
-					if !likeEvent.AlreadyEvaluatedRedis {
+					if !interactionEvent.AlreadyEvaluatedRedis {
 						// Le post était "froid" (pas en RAM), interaction_service n'a donc pas pu mettre à jour Redis.
 						// On force son entrée dans le MOST Cache avec la valeur absolue calculée par Postgres.
 
-						// TODO: Décommenter et utiliser les variables issues de ta BDD (totalLikes, hashtags)
-						// service.EvaluatePostAfterLike(ctx, likeEvent.TargetID, float64(totalLikes), hashtags)
-					}
-				}
-			}
-		}
-
-		// 3. SI C'EST UNE NOUVELLE VUE (ou un lot de vues agrégées)
-		if e.Type == redis.EntityView && e.Action == redis.ActionCreate {
-			jsonBytes, err := json.Marshal(e.Payload)
-			if err == nil {
-				// NOUVELLE STRUCTURE : Intègre le count et le drapeau d'idempotence
-				var viewEvent struct {
-					TargetID              int64 `json:"target_id"`
-					Count                 int   `json:"count"`
-					AlreadyEvaluatedRedis bool  `json:"already_evaluated_redis"`
-				}
-
-				if err := json.Unmarshal(jsonBytes, &viewEvent); err == nil && viewEvent.TargetID != 0 {
-
-					// ----------------------------------------------------------------
-					// A. MISE À JOUR BDD
-					// C'est ici (ou via flushPostgres) que tu fais le UPDATE SQL pour les vues.
-					// Tu récupères le vrai total et les hashtags renvoyés par Postgres.
-					// Exemple conceptuel :
-					// totalViews, hashtags := db.UpdatePostViews(viewEvent.TargetID, viewEvent.Count)
-					// ----------------------------------------------------------------
-
-					// B. CORRECTION DU CACHE REDIS (Si l'OBJECT Cache l'avait raté)
-					if !viewEvent.AlreadyEvaluatedRedis {
-						// Le post était "froid" (pas en RAM), interaction_service n'a donc pas pu mettre à jour Redis.
-						// On force son entrée dans le MOST Cache avec la valeur absolue calculée par Postgres.
-
-						// TODO: Décommenter et utiliser les variables issues de ta BDD (totalViews, hashtags)
-						// service.EvaluatePostAfterView(ctx, viewEvent.TargetID, float64(totalViews), hashtags)
+						// TODO: Décommenter et utiliser les variables issues de ta BDD (totalInteraction, hashtags)
+						// if e.Type == redis.EntityLike {
+						// 	service.EvaluatePostAfterLike(ctx, interactionEvent.TargetID, float64(totalInteraction), hashtags)
+						// } else if e.Type == redis.EntityView {
+						// 	service.EvaluatePostAfterView(ctx, interactionEvent.TargetID, float64(totalInteraction), hashtags)
+						// }
 					}
 				}
 			}
