@@ -59,7 +59,9 @@ func CreatePost(userID int64, input domain.CreatePostInput, files []*multipart.F
 	}
 
 	// 4. Persistance Async
-	err := redis.EnqueueDB(context.Background(), postID, userID, redis.EntityPost, redis.ActionCreate, post, redis.TargetAll)
+	// On passe 0 en partitionKey pour que le CRC32 se fasse sur postID.
+	// Les futurs Likes utiliseront ce postID pour tomber dans le même Shard !
+	err := redis.EnqueueDB(context.Background(), postID, 0, redis.EntityPost, redis.ActionCreate, post, redis.TargetAll)
 	return postID, err
 }
 

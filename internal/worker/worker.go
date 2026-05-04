@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
@@ -11,104 +13,71 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 )
 
-// --- CONFIGURATION DU CERVEAU ---
-const (
-	CriticalDelay       = 2 * time.Second
-	HighVolumeThreshold = 2000
-	MaxBatchSize        = 5000
+// --- CONFIGURATION DU CERVEAU (Modifiable via .env) ---
+var (
+	MaxBatchSize int64
+	MinBackoff   time.Duration
+	MaxBackoff   time.Duration
 )
 
-func runWorker(ctx context.Context, shardID int) {
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
+func init() {
+	// 1. Taille du Batch (Ex: 5000)
+	if val, err := strconv.ParseInt(os.Getenv("WORKER_MAX_BATCH_SIZE"), 10, 64); err == nil && val > 0 {
+		MaxBatchSize = val
+	} else {
+		MaxBatchSize = 5000 // Valeur par défaut
+	}
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
+	// 2. Backoff Minimum (Période d'hyperactivité, ex: 50ms)
+	if val, err := strconv.Atoi(os.Getenv("WORKER_MIN_BACKOFF_MS")); err == nil && val > 0 {
+		MinBackoff = time.Duration(val) * time.Millisecond
+	} else {
+		MinBackoff = 50 * time.Millisecond // Valeur par défaut
+	}
 
-		case <-ticker.C:
-			stats, err := redis.GetShardStats(ctx, shardID)
-			if err != nil {
-				log.Printf("⚠️ Worker %d: Impossible de lire les stats: %v", shardID, err)
-				continue
-			}
-
-			if len(stats) == 0 {
-				continue
-			}
-
-			selectedStats := decideNextBatch(stats)
-			if selectedStats == nil {
-				continue
-			}
-
-			batchSize := selectedStats.Count
-			if batchSize > MaxBatchSize {
-				batchSize = MaxBatchSize
-			}
-
-			events, err := redis.PopSmartBatch(
-				ctx,
-				shardID,
-				selectedStats.Type,
-				selectedStats.Action,
-				batchSize,
-			)
-
-			if err != nil {
-				log.Printf("⚠️ Worker %d: Erreur PopSmartBatch: %v", shardID, err)
-				continue
-			}
-
-			if len(events) > 0 {
-				processBatch(ctx, events)
-			}
-		}
+	// 3. Backoff Maximum (Sommeil profond, ex: 1000ms)
+	if val, err := strconv.Atoi(os.Getenv("WORKER_MAX_BACKOFF_MS")); err == nil && val > 0 {
+		MaxBackoff = time.Duration(val) * time.Millisecond
+	} else {
+		MaxBackoff = 1 * time.Second // Valeur par défaut
 	}
 }
 
-func decideNextBatch(stats []redis.QueueStats) *redis.QueueStats {
-	var bestCandidate *redis.QueueStats
-	var maxDelay time.Duration
+func runWorker(ctx context.Context, shardID int) {
+	currentBackoff := MinBackoff
 
-	for i := range stats {
-		s := &stats[i]
-		if s.Delay >= CriticalDelay {
-			if s.Delay > maxDelay {
-				maxDelay = s.Delay
-				bestCandidate = s
+	for {
+		// 1. Vérification de l'arrêt gracieux du serveur
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		// 2. Blocage absolu (0 CPU) via BLMPOP / BLPOP
+		// On limite la taille via MaxBatchSize (dynamique)
+		events, err := redis.PopSmartBatchBlocking(ctx, shardID, MaxBatchSize)
+
+		if err != nil {
+			log.Printf("⚠️ Worker %d: Erreur Redis: %v", shardID, err)
+			time.Sleep(1 * time.Second) // Protection anti-boucle infinie si Redis crashe
+			continue
+		}
+
+		// 3. Traitement dynamique
+		if len(events) > 0 {
+			processBatch(ctx, events)
+			// RESET DU SOMMEIL : on a trouvé du travail, on repasse à la vitesse max !
+			currentBackoff = MinBackoff
+		} else {
+			// SLEEP : la file était vide (malgré le blocage), on s'endort doucement
+			time.Sleep(currentBackoff)
+			currentBackoff *= 2
+			if currentBackoff > MaxBackoff {
+				currentBackoff = MaxBackoff
 			}
 		}
 	}
-
-	if bestCandidate != nil {
-		return bestCandidate
-	}
-
-	var maxCount int64
-	for i := range stats {
-		s := &stats[i]
-		if s.Count >= HighVolumeThreshold {
-			if s.Count > maxCount {
-				maxCount = s.Count
-				bestCandidate = s
-			}
-		}
-	}
-
-	if bestCandidate != nil {
-		return bestCandidate
-	}
-
-	for i := range stats {
-		s := &stats[i]
-		if bestCandidate == nil || s.Delay > bestCandidate.Delay {
-			bestCandidate = s
-		}
-	}
-
-	return bestCandidate
 }
 
 // processBatch trie les événements et les envoie aux bases ET au cache

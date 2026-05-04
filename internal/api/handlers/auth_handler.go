@@ -68,6 +68,13 @@ func SignUpHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Invalid JSON format in 'data': " + err.Error()})
 		return
 	}
+
+	// 🛡️ BOUCLIER STATIQUE : Validation O(1) des formats et longueurs
+	if err := pkg.ValidateStruct(&input); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Validation failed: " + err.Error()})
+		return
+	}
+
 	// --- B. MAPPING VERS STRUCTURE INTERNE ---
 	var req domain.UserRequest
 	req.ID = -1
@@ -96,6 +103,18 @@ func SignUpHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Invalid date format. Expected format: ddmmaaaa"})
 		return
 	}
+
+	// 🛡️ BOUCLIER STATIQUE : Vérification de l'âge (O(1))
+	age := time.Since(parsedBirthdate).Hours() / 24 / 365
+	if age < 13 {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "You must be at least 13 years old"})
+		return
+	}
+	if age > 120 {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Invalid birthdate"})
+		return
+	}
+
 	req.Birthdate = parsedBirthdate
 	if input.Gender != nil {
 		g := *input.Gender

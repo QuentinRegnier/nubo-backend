@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	mongogo "github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/QuentinRegnier/nubo-backend/internal/worker"
 	"github.com/gin-gonic/gin"
 )
@@ -68,8 +70,14 @@ func main() {
 	// NOUVEAU : Initialiser les collections du Repository Redis
 	redisgo.InitCacheDatabase()
 
-	// Nettoyage au démarrage
-	service.InitData()
+	// 🚨 SÉCURITÉ AOF : On ne vide la base au démarrage que si on l'exige explicitement !
+	// Sinon, on détruit toutes les requêtes en attente sauvées par l'AOF de Redis.
+	if os.Getenv("CLEAN_DB_ON_STARTUP") == "true" {
+		log.Println("⚠️ ATTENTION: Nettoyage total des bases de données activé (Mode DEV)")
+		service.InitData()
+	} else {
+		log.Println("💾 Démarrage classique : Conservation des données existantes (AOF Actif)")
+	}
 
 	// Initialiser le Hub et lancer sa boucle
 	//websocket.InitHub()
@@ -89,10 +97,18 @@ func main() {
 		log.Fatalf("❌ Impossible de charger la configuration des tags : %v", err)
 	}
 
-	// --- NOUVEAU : SEEDING DU MOST CACHE ---
-	// Construit les classements Redis à partir de la base de données
-	if err := service.SeedMostCache(); err != nil {
-		log.Printf("⚠️ Avertissement lors du seeding: %v", err)
+	// --- SMART SEEDING DU MOST CACHE ---
+	// On vérifie si le classement global contient déjà des posts.
+	// Si oui, on saute cette étape très lourde pour un démarrage en 1 seconde !
+	count, _ := redisgo.ZCard(context.Background(), variables.RedisKeyRankGlobal)
+
+	if count == 0 {
+		log.Println("⚠️ Cache Redis vide détecté : Lancement du Seeding massif...")
+		if err := service.SeedMostCache(); err != nil {
+			log.Printf("⚠️ Avertissement lors du seeding: %v", err)
+		}
+	} else {
+		log.Printf("✅ Cache Redis déjà peuplé (%d éléments). Seeding ignoré, démarrage éclair !", count)
 	}
 
 	// Lance le moteur V12
@@ -123,7 +139,7 @@ func main() {
 		IdleTimeout:  15 * time.Second, // Temps max de maintien d'une connexion keep-alive
 	}
 
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("❌ Erreur fatale du serveur HTTP: %v", err)
 	}
 }

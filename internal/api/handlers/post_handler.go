@@ -9,7 +9,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/gin-gonic/gin"
 )
 
@@ -67,9 +66,9 @@ func CreatePostHandler(c *gin.Context) {
 		return
 	}
 
-	// 1. Limiter la quantité (ex: max 10 tags)
-	if len(input.Identifiers) > variables.MaxTags && len(input.Hashtags) > variables.MaxTags {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Too many tags (max 10)"})
+	// 1. 🛡 BOUCLIER STATIQUE : Validation O(1) (Remplace tes IF manuels sur len(tags) !)
+	if err := pkg.ValidateStruct(&input); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Validation failed: " + err.Error()})
 		return
 	}
 
@@ -182,4 +181,27 @@ func GetUserPostsHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, posts)
+}
+
+type InteractionInput struct {
+	PostID int64 `json:"post_id" binding:"required"`
+}
+
+func LikeHandler(c *gin.Context) {
+	userID, err := pkg.GetUserIDFromContext(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Utilisateur non identifié"})
+		return
+	}
+
+	var input InteractionInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Format JSON invalide"})
+		return
+	}
+
+	// C'est ici que tu appelles ta fonction qui était "Unused" !
+	service.RegisterLike(userID, input.PostID)
+
+	c.JSON(http.StatusOK, gin.H{"message": "post liked"})
 }

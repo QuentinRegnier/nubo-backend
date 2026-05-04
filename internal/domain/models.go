@@ -86,18 +86,20 @@ type PostRequest struct {
 // ********************************************************
 
 type SignUpInput struct {
-	Username     string         `json:"username" binding:"required" example:"johndoe"`
-	Email        string         `json:"email" binding:"required,email" example:"john@nubo.com"`
-	Phone        string         `json:"phone" binding:"required" example:"+33612345678"`
-	PasswordHash string         `json:"password_hash" binding:"required" example:"secretPass123"`
-	FirstName    string         `json:"first_name" example:"John"`
-	LastName     string         `json:"last_name" example:"Doe"`
-	Birthdate    string         `json:"birthdate" binding:"required,len=8" example:"25121990"` // ddmmaaaa
-	Gender       *int           `json:"gender" example:"1"`                                    // 0, 1, 2
-	Bio          string         `json:"bio" example:"J'aime la tech"`
-	Location     string         `json:"location" example:"Paris"`
-	School       string         `json:"school" example:"42"`
-	Work         string         `json:"work" example:"Developer"`
+	// min=3, max=30, alphanum (pas d'espaces ou de caractères spéciaux)
+	Username string `json:"username" binding:"required,min=3,max=30,alphanum" example:"johndoe"`
+	Email    string `json:"email" binding:"required,email,max=100" example:"john@nubo.com"`
+	// e164 garantit le format international (+33612345678)
+	Phone        string         `json:"phone" binding:"required,e164" example:"+33612345678"`
+	PasswordHash string         `json:"password_hash" binding:"required,min=8" example:"secretPass123"`
+	FirstName    string         `json:"first_name" binding:"max=50" example:"John"`
+	LastName     string         `json:"last_name" binding:"max=50" example:"Doe"`
+	Birthdate    string         `json:"birthdate" binding:"required,len=8,numeric" example:"25121990"`
+	Gender       *int           `json:"gender" binding:"omitempty,oneof=0 1 2" example:"1"`
+	Bio          string         `json:"bio" binding:"max=500" example:"J'aime la tech"`
+	Location     string         `json:"location" binding:"max=100" example:"Paris"`
+	School       string         `json:"school" binding:"max=100" example:"42"`
+	Work         string         `json:"work" binding:"max=100" example:"Developer"`
 	DeviceInfo   map[string]any `json:"device_info" example:"{\"model\":\"iphone\",\"os\":\"ios15\"}"`
 	DeviceToken  string         `json:"device_token" binding:"required" example:"eyJhbGciOiJIUzI1Ni..."`
 }
@@ -162,11 +164,12 @@ type RefreshMasterResponse struct {
 }
 
 type CreatePostInput struct {
-	Content     string   `json:"content"`
-	Hashtags    []string `json:"hashtags"`
-	Identifiers []int64  `json:"identifiers"` // Liste d'utilisateurs tagués
-	Location    string   `json:"location"`
-	Visibility  int      `json:"visibility"`
+	Content string `json:"content" binding:"max=2200"`
+	// max=10 (pas plus de 10 tags), dive (applique la règle à chaque élément), alphanum (pas de # inclus), max=50
+	Hashtags    []string `json:"hashtags" binding:"max=10,dive,alphanum,max=50"`
+	Identifiers []int64  `json:"identifiers" binding:"max=10"`
+	Location    string   `json:"location" binding:"max=100"`
+	Visibility  int      `json:"visibility" binding:"oneof=0 1 2"`
 }
 type CreatePostResponse struct {
 	PostID int64 `json:"post_id"`

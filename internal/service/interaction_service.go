@@ -101,10 +101,29 @@ func processCacheUpdates(ctx context.Context, batch []Interaction) {
 	eventsToQueue = append(eventsToQueue, processMetricBatch(viewsToAdd, "view")...)
 
 	// 3. Envoi vers le REQUEST Cache
-	if len(eventsToQueue) > 0 {
-		// TODO: Implémenter l'envoi du tableau d'événements 'eventsToQueue' dans le REQUEST Cache
-		// (Le paramètre 'ctx' de la fonction parente sera utile ici !)
-		_ = eventsToQueue
+	for _, event := range eventsToQueue {
+		// On extrait proprement le target_id du payload (ex: ID du Post)
+		payloadMap, ok := event.Payload.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		targetID, ok := payloadMap["target_id"].(int64)
+		if !ok {
+			continue
+		}
+
+		// LE SECRET EST LÀ : partitionKey = targetID.
+		// Le Like tombera dans le Shard de son Post parent.
+		_ = redis.EnqueueDB(
+			ctx,
+			event.ID, // Auto-généré ou vide si c'est un compteur
+			targetID, // partitionKey
+			event.Type,
+			event.Action,
+			event.Payload,
+			redis.TargetPostgres,
+		)
 	}
 }
 

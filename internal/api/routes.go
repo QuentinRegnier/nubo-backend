@@ -77,19 +77,19 @@ func SetupRoutes(r *gin.Engine) {
 	secured.Use(middleware.HMACMiddleware()) // 2. Est-ce authentique ? (Check Signature with Redis Secret)
 
 	// --- Posts ---
-	secured.GET("/feed", LoadFeedHandler)             // ℹ️❌
-	secured.GET("/feed/more", LoadMoreFeedHandler)    // ℹ️❌
-	secured.GET("/posts", GetPostsHandler)            // ℹ️❌
-	secured.POST("/post", handlers.CreatePostHandler) // ℹ️❌
-	secured.PATCH("/post", ModifyPostHandler)         // ℹ️❌
-	secured.DELETE("/post", DeletePost)               // ℹ️❌
-	secured.POST("/views/batch", handlers.RegisterBatchViewsHandler)
+	secured.GET("/feed", LoadFeedHandler)                            // ℹ️❌
+	secured.GET("/feed/more", LoadMoreFeedHandler)                   // ℹ️❌
+	secured.GET("/posts", GetPostsHandler)                           // ℹ️❌
+	secured.POST("/post", handlers.CreatePostHandler)                // ℹ️❌ à vérifier
+	secured.PATCH("/post", ModifyPostHandler)                        // ℹ️❌
+	secured.DELETE("/post", DeletePost)                              // ℹ️❌
+	secured.POST("/views/batch", handlers.RegisterBatchViewsHandler) // ℹ️❌ à vérifier
 
 	// --- Profils / Utilisateurs ---
 	secured.GET("/users/:id/posts", handlers.GetUserPostsHandler)
 
 	// --- Actions Sociales ---
-	secured.POST("/like", LikeHandler)            // ℹ️❌
+	secured.POST("/like", handlers.LikeHandler)   // ℹ️❌ à vérifier
 	secured.DELETE("/like", UnLikeHandler)        // ℹ️❌
 	secured.POST("/comment", CommentHandler)      // ℹ️❌
 	secured.DELETE("/comment", UnCommentHandler)  // ℹ️❌
@@ -190,11 +190,6 @@ func ModifyPostHandler(c *gin.Context) {
 func DeletePost(c *gin.Context) {
 	// TODO: supprimer post de la base
 	c.JSON(http.StatusOK, gin.H{"message": "post deleted"})
-}
-
-func LikeHandler(c *gin.Context) {
-	// TODO: ajouter un like à un post
-	c.JSON(http.StatusOK, gin.H{"message": "post liked"})
 }
 
 func UnLikeHandler(c *gin.Context) {

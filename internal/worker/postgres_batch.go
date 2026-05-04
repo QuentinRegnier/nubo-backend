@@ -3,19 +3,20 @@ package worker
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/lib/pq"
 )
 
 // GenerateCopyQuery crée une requête COPY qui respecte les schémas (ex: auth.users)
 func GenerateCopyQuery(fullTableName string, columns []string) string {
-	// On sépare le schéma de la table si un point est présent
 	quotedTableName := ""
 	if strings.Contains(fullTableName, ".") {
 		parts := strings.SplitN(fullTableName, ".", 2)
@@ -24,7 +25,6 @@ func GenerateCopyQuery(fullTableName string, columns []string) string {
 		quotedTableName = pq.QuoteIdentifier(fullTableName)
 	}
 
-	// On quote les colonnes
 	quotedColumns := make([]string, len(columns))
 	for i, col := range columns {
 		quotedColumns[i] = pq.QuoteIdentifier(col)
@@ -39,37 +39,36 @@ func flushPostgres(ctx context.Context, events []redis.AsyncEvent) {
 		grouped[e.Type] = append(grouped[e.Type], e)
 	}
 
-	// On définit l'ordre de priorité pour respecter les Clés Étrangères
+	// L'ordre d'exécution topologique garantit que les parents sont insérés avant les enfants.
 	executionOrder := []redis.EntityType{
-		redis.EntityUser,         // 1. Les Parents d'abord
-		redis.EntityUserSettings, // 2. Les paramètres utilisateur
-		redis.EntitySession,      // 3. Les sessions (dépendent du User)
-		redis.EntityRelation,     // 4. Les relations entre utilisateurs
-		redis.EntityPost,         // 5. Le contenu
-		redis.EntityComment,      // 6. Les commentaires
-		redis.EntityLike,         // 7. Les likes
-		redis.EntityMedia,        // 8. Les médias
-		redis.EntityConversation, // 9. Les conversations
-		redis.EntityMembers,      // 10. Les membres de conversation
-		redis.EntityMessage,      // 11. Les messages
-		// ... les autres ...
+		redis.EntityUser,
+		redis.EntityUserSettings,
+		redis.EntitySession,
+		redis.EntityRelation,
+		redis.EntityPost,
+		redis.EntityComment,
+		redis.EntityLike,
+		redis.EntityMedia,
+		redis.EntityConversation,
+		redis.EntityMembers,
+		redis.EntityMessage,
 	}
 
 	// 1. Exécution ordonnée
 	for _, entityType := range executionOrder {
 		if evts, exists := grouped[entityType]; exists {
 			processEntityEvents(ctx, entityType, evts)
-			delete(grouped, entityType) // On retire pour ne pas le refaire
+			delete(grouped, entityType)
 		}
 	}
 
-	// 2. Exécution du reste (ce qui n'est pas dans la liste prioritaire)
+	// 2. Exécution du reste
 	for entityType, evts := range grouped {
 		processEntityEvents(ctx, entityType, evts)
 	}
 }
 
-// processEntityEvents : Fonction helper pour éviter de dupliquer le code dans les boucles
+// processEntityEvents gère le Fast Path et déclenche le Slow Path en cas d'erreur.
 func processEntityEvents(ctx context.Context, entityType redis.EntityType, evts []redis.AsyncEvent) {
 	var inserts, updates, deletes []redis.AsyncEvent
 
@@ -85,175 +84,211 @@ func processEntityEvents(ctx context.Context, entityType redis.EntityType, evts 
 	}
 
 	if len(inserts) > 0 {
-		bulkInsertPostgres(ctx, entityType, inserts)
+		if err := bulkInsertPostgres(ctx, entityType, inserts); err != nil {
+			log.Printf("⚠️ Fast Path Insert failed pour %s: %v. Déclenchement Dichotomie...", entityType, err)
+			slowPathDichotomy(ctx, entityType, redis.ActionCreate, inserts)
+		}
 	}
 	if len(updates) > 0 {
-		bulkUpdatePostgres(ctx, entityType, updates)
+		if err := bulkUpdatePostgres(ctx, entityType, updates); err != nil {
+			log.Printf("⚠️ Fast Path Update failed pour %s: %v. Déclenchement Dichotomie...", entityType, err)
+			slowPathDichotomy(ctx, entityType, redis.ActionUpdate, updates)
+		}
 	}
 	if len(deletes) > 0 {
-		bulkDeletePostgres(ctx, entityType, deletes)
+		if err := bulkDeletePostgres(ctx, entityType, deletes); err != nil {
+			log.Printf("⚠️ Fast Path Delete failed pour %s: %v. Déclenchement Dichotomie...", entityType, err)
+			slowPathDichotomy(ctx, entityType, redis.ActionDelete, deletes)
+		}
 	}
 }
 
-// --- 1. BULK INSERT (Via lib/pq CopyIn) ---
-func bulkInsertPostgres(ctx context.Context, entity redis.EntityType, events []redis.AsyncEvent) {
-	mapper := GetMapper(entity)
-	if mapper == nil {
-		log.Printf("❌ Pas de mapper Postgres pour %s", entity)
+// ============================================================================
+// RÉSILIENCE : DICHOTOMIE & DLQ
+// ============================================================================
+
+// slowPathDichotomy divise récursivement un batch en échec pour isoler la requête corrompue.
+func slowPathDichotomy(ctx context.Context, entity redis.EntityType, action redis.ActionType, events []redis.AsyncEvent) {
+	if len(events) == 0 {
 		return
 	}
 
-	// On utilise une transaction pour le COPY
+	// 1. Tenter d'exécuter ce sous-lot
+	var err error
+	switch action {
+	case redis.ActionCreate:
+		err = bulkInsertPostgres(ctx, entity, events)
+	case redis.ActionUpdate:
+		err = bulkUpdatePostgres(ctx, entity, events)
+	case redis.ActionDelete:
+		err = bulkDeletePostgres(ctx, entity, events)
+	}
+
+	// 2. Si ça passe, on a sauvé ce sous-lot, on arrête ici.
+	if err == nil {
+		return
+	}
+
+	// 3. Si on échoue et qu'il n'y a qu'UN SEUL élément, c'est le coupable !
+	if len(events) == 1 {
+		sendToDLQ(ctx, entity, action, events[0], err)
+		return
+	}
+
+	// 4. Si on échoue avec plusieurs éléments, on coupe en deux et on relance.
+	mid := len(events) / 2
+	slowPathDichotomy(ctx, entity, action, events[:mid])
+	slowPathDichotomy(ctx, entity, action, events[mid:])
+}
+
+// sendToDLQ envoie la requête empoisonnée dans une file de quarantaine sur Redis.
+func sendToDLQ(ctx context.Context, entity redis.EntityType, action redis.ActionType, event redis.AsyncEvent, dbErr error) {
+	dlqPayload := map[string]any{
+		"error":  dbErr.Error(),
+		"time":   time.Now().Format(time.RFC3339),
+		"entity": entity,
+		"action": action,
+		"event":  event,
+	}
+
+	bytes, err := json.Marshal(dlqPayload)
+	if err == nil {
+		redisgo.Rdb.LPush(ctx, "dlq:postgres_errors", bytes)
+		log.Printf("🚨 [DLQ] Événement isolé et mis en quarantaine : %s %s (ID: %d)", entity, action, event.ID)
+	}
+}
+
+// ============================================================================
+// 1. BULK INSERT (Via lib/pq CopyIn)
+// ============================================================================
+func bulkInsertPostgres(ctx context.Context, entity redis.EntityType, events []redis.AsyncEvent) error {
+	mapper := GetMapper(entity)
+	if mapper == nil {
+		return fmt.Errorf("pas de mapper Postgres pour %s", entity)
+	}
+
 	tx, err := postgres.PostgresDB.BeginTx(ctx, nil)
 	if err != nil {
-		log.Printf("❌ Erreur BeginTx Insert: %v", err)
-		return
+		return fmt.Errorf("BeginTx Insert: %w", err)
 	}
 
 	committed := false
 	defer func() {
 		if !committed {
-			err := tx.Rollback()
-			if err != nil && err != sql.ErrTxDone {
-				log.Printf("⚠️ Erreur lors du Rollback: %v", err)
-			}
+			_ = tx.Rollback()
 		}
 	}()
 
-	// CORRECTION ICI : On n'utilise plus pq.CopyIn directement car il gère mal les schémas "auth.users"
 	copyQuery := GenerateCopyQuery(mapper.TableName(), mapper.Columns())
 
-	// Préparation du COPY
 	stmt, err := tx.Prepare(copyQuery)
 	if err != nil {
-		log.Printf("❌ Erreur Prepare CopyIn: %v", err)
-		return
+		return fmt.Errorf("prepare CopyIn: %w", err)
 	}
-
-	defer func() {
-		if err := stmt.Close(); err != nil {
-			log.Printf("Error closing file: %v", err)
+	defer func(stmt *sql.Stmt) {
+		err := stmt.Close()
+		if err != nil {
+			log.Printf("⚠️ Erreur fermeture statement CopyIn: %v", err)
 		}
-	}()
+	}(stmt) // Gère la fermeture proprement.
 
-	// On pousse les données
 	for _, e := range events {
 		row, err := mapper.ToRow(e.Payload)
 		if err != nil {
-			log.Printf("❌ Erreur mapping payload: %v", err)
-			continue // On passe à l'événement suivant
+			return fmt.Errorf("mapping payload: %w", err)
 		}
-		_, err = stmt.Exec(row...)
-		if err != nil {
-			log.Printf("❌ Erreur Exec CopyIn: %v", err)
-			return
+		if _, err = stmt.Exec(row...); err != nil {
+			return fmt.Errorf("exec CopyIn: %w", err)
 		}
 	}
 
-	// On ferme le statement pour flusher les données
+	// Flush du COPY
 	if _, err := stmt.Exec(); err != nil {
-		log.Printf("❌ Erreur Flush CopyIn: %v", err)
-		_ = stmt.Close() // On ferme quand même
-		return
-	}
-
-	if err := stmt.Close(); err != nil {
-		log.Printf("❌ Erreur closing statement: %v", err)
-		return
+		return fmt.Errorf("flush CopyIn: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		log.Printf("❌ Erreur Commit Insert: %v", err)
+		return fmt.Errorf("commit Insert: %w", err)
 	}
 
 	committed = true
+	return nil
 }
 
-// --- 2. BULK UPDATE (Temp Table + COPY) ---
-func bulkUpdatePostgres(ctx context.Context, entity redis.EntityType, events []redis.AsyncEvent) {
+// ============================================================================
+// 2. BULK UPDATE (Temp Table + COPY)
+// ============================================================================
+func bulkUpdatePostgres(ctx context.Context, entity redis.EntityType, events []redis.AsyncEvent) error {
 	mapper := GetMapper(entity)
 	if mapper == nil {
-		return
+		return fmt.Errorf("pas de mapper Postgres pour %s", entity)
 	}
 
 	tx, err := postgres.PostgresDB.BeginTx(ctx, nil)
 	if err != nil {
-		log.Printf("❌ Erreur BeginTx Update: %v", err)
-		return
+		return fmt.Errorf("BeginTx Update: %w", err)
 	}
 
 	committed := false
 	defer func() {
 		if !committed {
-			err := tx.Rollback()
-			if err != nil && err != sql.ErrTxDone {
-				log.Printf("⚠️ Erreur lors du Rollback: %v", err)
-			}
+			_ = tx.Rollback()
 		}
 	}()
 
-	// A. Création table temporaire (copie structure)
-	// On utilise time.Now().UnixNano() pour un nom unique par batch
 	safeTableName := strings.ReplaceAll(mapper.TableName(), ".", "_")
 	tempTable := fmt.Sprintf("tmp_%s_%d", safeTableName, time.Now().UnixNano())
 
-	// Note: ON COMMIT DROP assure que la table disparait à la fin de la transaction
 	queryCreateTable := fmt.Sprintf("CREATE TEMP TABLE %s (LIKE %s INCLUDING ALL) ON COMMIT DROP", tempTable, mapper.TableName())
 	if _, err := tx.ExecContext(ctx, queryCreateTable); err != nil {
-		log.Printf("❌ Erreur création Temp Table (%s): %v", tempTable, err)
-		return
+		return fmt.Errorf("création Temp Table: %w", err)
 	}
 
-	// B. Remplissage table temporaire (COPY)
 	stmt, err := tx.Prepare(pq.CopyIn(tempTable, mapper.Columns()...))
 	if err != nil {
-		log.Printf("❌ Erreur Prepare CopyIn Temp: %v", err)
-		return
+		return fmt.Errorf("prepare CopyIn Temp: %w", err)
 	}
+	defer func(stmt *sql.Stmt) {
+		err := stmt.Close()
+		if err != nil {
+			log.Printf("⚠️ Erreur fermeture statement CopyIn Temp: %v", err)
+		}
+	}(stmt)
 
 	for _, e := range events {
 		row, err := mapper.ToRow(e.Payload)
 		if err != nil {
-			log.Printf("❌ Erreur mapping payload pour update: %v", err)
-			continue
+			return fmt.Errorf("mapping payload update: %w", err)
 		}
 		if _, err := stmt.Exec(row...); err != nil {
-			log.Printf("❌ Erreur Exec CopyIn Temp: %v", err)
-			_ = stmt.Close()
-			return
+			return fmt.Errorf("exec CopyIn Temp: %w", err)
 		}
 	}
 
 	if _, err := stmt.Exec(); err != nil {
-		log.Printf("❌ Erreur Flush CopyIn Temp: %v", err)
-		_ = stmt.Close() // On ignore ici car on gère déjà l'erreur Exec
-		return
+		return fmt.Errorf("flush CopyIn Temp: %w", err)
 	}
 
-	if err := stmt.Close(); err != nil {
-		log.Printf("❌ Erreur closing statement temp: %v", err)
-		return
-	}
-
-	// C. Merge (UPDATE FROM)
 	queryUpdate := mapper.BuildUpdateQuery(tempTable)
 	if _, err := tx.ExecContext(ctx, queryUpdate); err != nil {
-		log.Printf("❌ Erreur Merge Update: %v", err)
-		return
+		return fmt.Errorf("merge Update: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		log.Printf("❌ Erreur Commit Update: %v", err)
+		return fmt.Errorf("commit Update: %w", err)
 	}
 
 	committed = true
+	return nil
 }
 
-// --- 3. BULK DELETE (WHERE ID = ANY(...)) ---
-func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []redis.AsyncEvent) {
+// ============================================================================
+// 3. BULK DELETE (WHERE ID = ANY(...))
+// ============================================================================
+func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []redis.AsyncEvent) error {
 	mapper := GetMapper(entity)
 	if mapper == nil {
-		return
+		return fmt.Errorf("pas de mapper Postgres pour %s", entity)
 	}
 
 	ids := make([]int64, len(events))
@@ -261,11 +296,12 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 		ids[i] = e.ID
 	}
 
-	// Utilisation de pq.Array pour passer la liste d'IDs proprement
 	query := fmt.Sprintf("DELETE FROM %s WHERE id = ANY($1)", mapper.TableName())
 
 	_, err := postgres.PostgresDB.ExecContext(ctx, query, pq.Array(ids))
 	if err != nil {
-		log.Printf("❌ Erreur Bulk Delete: %v", err)
+		return fmt.Errorf("erreur Bulk Delete: %w", err)
 	}
+
+	return nil
 }

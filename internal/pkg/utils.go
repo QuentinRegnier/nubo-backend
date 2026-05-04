@@ -11,11 +11,22 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
+	"github.com/go-playground/validator/v10"
 	"github.com/golang-jwt/jwt/v5"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
 // Ce fichier contient les fonctions utilitaires pures (sans état, helpers)
+
+// ValidateStruct permet de valider manuellement une structure
+// en utilisant le moteur de Gin (et les tags `binding`).
+func ValidateStruct(obj any) error {
+	if v, ok := binding.Validator.Engine().(*validator.Validate); ok {
+		return v.Struct(obj)
+	}
+	return fmt.Errorf("impossible de charger le validateur")
+}
 
 // cleanStr : Nettoyage anti-XSS et SQL simple
 func CleanStr(input string) string {
