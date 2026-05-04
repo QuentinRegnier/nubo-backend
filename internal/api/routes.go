@@ -85,6 +85,9 @@ func SetupRoutes(r *gin.Engine) {
 	secured.DELETE("/post", DeletePost)               // ℹ️❌
 	secured.POST("/views/batch", handlers.RegisterBatchViewsHandler)
 
+	// --- Profils / Utilisateurs ---
+	secured.GET("/users/:id/posts", handlers.GetUserPostsHandler)
+
 	// --- Actions Sociales ---
 	secured.POST("/like", LikeHandler)            // ℹ️❌
 	secured.DELETE("/like", UnLikeHandler)        // ℹ️❌

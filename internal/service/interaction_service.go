@@ -2,10 +2,8 @@ package service
 
 import (
 	"context"
-	"sync"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
@@ -17,8 +15,9 @@ type Interaction struct {
 }
 
 var (
-	interMutex        sync.Mutex
-	interactionBuffer []Interaction
+	// Canal asynchrone bufferisé (50 000 emplacements).
+	// Amortit les Thundering Herds (pics soudains de trafic) sans bloquer les workers HTTP.
+	interactionChan = make(chan Interaction, 50000)
 )
 
 func init() {
@@ -26,45 +25,59 @@ func init() {
 }
 
 func RegisterLike(actorID, postID int64) {
-	interMutex.Lock()
-	defer interMutex.Unlock()
-
-	interactionBuffer = append(interactionBuffer, Interaction{
+	select {
+	case interactionChan <- Interaction{
 		ActorID:   actorID,
 		TargetID:  postID,
 		Type:      "like",
 		Timestamp: time.Now().Unix(),
-	})
+	}:
+	default:
+		// BACKPRESSURE : Si le buffer est saturé, on lâche l'interaction.
+		// Règle d'or : Mieux vaut perdre un "Like" statistique que de crasher un nœud API.
+	}
 }
 
 func RegisterView(actorID, postID int64) {
-	interMutex.Lock()
-	defer interMutex.Unlock()
-
-	interactionBuffer = append(interactionBuffer, Interaction{
+	select {
+	case interactionChan <- Interaction{
 		ActorID:   actorID,
 		TargetID:  postID,
 		Type:      "view",
 		Timestamp: time.Now().Unix(),
-	})
+	}:
+	default:
+		// BACKPRESSURE
+	}
 }
 
 func flushInteractionsPeriodically() {
 	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop() // Bonne pratique pour libérer le timer
 	ctx := context.Background()
 
-	for range ticker.C {
-		interMutex.Lock()
-		if len(interactionBuffer) == 0 {
-			interMutex.Unlock()
-			continue
+	// On pré-alloue le batch pour soulager le Garbage Collector
+	batch := make([]Interaction, 0, 5000)
+
+	for {
+		select {
+		case interaction := <-interactionChan:
+			batch = append(batch, interaction)
+
+			// Si le batch devient très gros (ex: viralité), on vide immédiatement
+			// sans attendre le tick de 5 secondes.
+			if len(batch) >= 5000 {
+				processCacheUpdates(ctx, batch)
+				batch = make([]Interaction, 0, 5000)
+			}
+
+		case <-ticker.C:
+			// Toutes les 5 secondes, on vide ce qu'on a, même s'il n'y en a que 2.
+			if len(batch) > 0 {
+				processCacheUpdates(ctx, batch)
+				batch = make([]Interaction, 0, 5000)
+			}
 		}
-
-		batchToProcess := interactionBuffer
-		interactionBuffer = make([]Interaction, 0)
-		interMutex.Unlock()
-
-		processCacheUpdates(ctx, batchToProcess)
 	}
 }
 
@@ -84,43 +97,27 @@ func processCacheUpdates(ctx context.Context, batch []Interaction) {
 	var eventsToQueue []redis.AsyncEvent
 
 	// 2. Traitement mutualisé pour éviter la duplication de code
-	eventsToQueue = append(eventsToQueue, processMetricBatch(ctx, likesToAdd, "like")...)
-	eventsToQueue = append(eventsToQueue, processMetricBatch(ctx, viewsToAdd, "view")...)
+	eventsToQueue = append(eventsToQueue, processMetricBatch(likesToAdd, "like")...)
+	eventsToQueue = append(eventsToQueue, processMetricBatch(viewsToAdd, "view")...)
 
 	// 3. Envoi vers le REQUEST Cache
 	if len(eventsToQueue) > 0 {
 		// TODO: Implémenter l'envoi du tableau d'événements 'eventsToQueue' dans le REQUEST Cache
+		// (Le paramètre 'ctx' de la fonction parente sera utile ici !)
 		_ = eventsToQueue
 	}
 }
 
 // processMetricBatch mutualise la logique de mise à jour pour les likes, vues, etc.
-func processMetricBatch(ctx context.Context, items map[int64]int, metricType string) []redis.AsyncEvent {
+// Le contexte n'est plus nécessaire car cette fonction est désormais pure (sans I/O).
+func processMetricBatch(items map[int64]int, metricType string) []redis.AsyncEvent {
 	var events []redis.AsyncEvent
 
 	for postID, count := range items {
-		alreadyEvaluated := false
-		var postObj domain.PostRequest
+		// LA SÉCURITÉ ARCHITECTURALE : Plus aucune modification de l'OBJECT Cache ici.
+		// On délègue la responsabilité absolue de la mise à jour (L1 + ZSET) au Worker
+		// pour éviter les "Race Conditions" (Read-Modify-Write) entre les instances de l'API.
 
-		// Si l'objet est en RAM, on met à jour l'OBJECT Cache et le MOST Cache instantanément
-		if err := redis.Posts.GetObject(ctx, postID, &postObj); err == nil && postObj.ID != 0 {
-			var newTotal float64
-
-			if metricType == "like" {
-				postObj.LikeCount += count
-				newTotal = float64(postObj.LikeCount)
-				EvaluatePostAfterLike(ctx, postID, newTotal, postObj.Hashtags)
-			} else if metricType == "view" {
-				postObj.ViewCount += count
-				newTotal = float64(postObj.ViewCount)
-				EvaluatePostAfterView(ctx, postID, newTotal, postObj.Hashtags)
-			}
-
-			_ = redis.Posts.SetObject(ctx, postID, postObj)
-			alreadyEvaluated = true
-		}
-
-		// Détermination du type d'entité pour le Worker (Postgres/Mongo)
 		var entityType redis.EntityType
 		if metricType == "like" {
 			entityType = redis.EntityLike
@@ -133,9 +130,10 @@ func processMetricBatch(ctx context.Context, items map[int64]int, metricType str
 			Type:   entityType,
 			Action: redis.ActionCreate,
 			Payload: map[string]interface{}{
-				"target_id":               postID,
-				"count":                   count,
-				"already_evaluated_redis": alreadyEvaluated,
+				"target_id": postID,
+				"count":     count,
+				// On flag toujours à false, forçant le Worker à appliquer la valeur exacte BDD
+				"already_evaluated_redis": false,
 			},
 		})
 	}

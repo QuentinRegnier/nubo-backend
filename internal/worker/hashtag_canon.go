@@ -5,8 +5,10 @@ import (
 	"log"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/lib/pq"
 )
 
 // StartHashtagCanonCron lance un worker qui calcule les similarités (Levenshtein)
@@ -31,8 +33,15 @@ func StartHashtagCanonCron(ctx context.Context) {
 func processHashtagCanonicalization(ctx context.Context) {
 	// 1. Récupération de tous les tags communautaires actifs
 	tags, err := redisgo.Rdb.SMembers(ctx, variables.RedisKeyActiveTagsSet).Result()
-	if err != nil || len(tags) < 2 {
+	if err != nil || len(tags) == 0 {
 		return
+	}
+
+	// 1.5 PERSISTANCE SQL (Option B : Immortalisation des tags)
+	persistCommunityTags(ctx, tags)
+
+	if len(tags) < 2 {
+		return // Pas assez de tags pour faire un calcul de distance
 	}
 
 	log.Printf("🔍 Canonicalisation de %d tags communautaires en cours...", len(tags))
@@ -106,4 +115,28 @@ func levenshtein(s1, s2 string) int {
 		row[lenS1] = prev
 	}
 	return row[lenS1]
+}
+
+// persistCommunityTags sauvegarde les tags communautaires dans PostgreSQL.
+// Utilise UNNEST pour exécuter l'insertion de masse en 1 seul RTT réseau (O(1) côté Go).
+func persistCommunityTags(ctx context.Context, tags []string) {
+	if len(tags) == 0 {
+		return
+	}
+
+	// L'instruction ON CONFLICT DO NOTHING garantit que si le tag a déjà été
+	// inséré lors de la nuit précédente, PostgreSQL l'ignore sans crasher.
+	query := `
+		INSERT INTO content.tags (slug, is_community) 
+		SELECT unnest($1::text[]), true 
+		ON CONFLICT (slug) DO NOTHING
+	`
+
+	// Exécution atomique
+	_, err := postgres.PostgresDB.ExecContext(ctx, query, pq.Array(tags))
+	if err != nil {
+		log.Printf("⚠️ Erreur lors de la persistance SQL des tags : %v", err)
+	} else {
+		log.Printf("💾 Persistance SQL : vérification/insertion de %d tags communautaires terminée.", len(tags))
+	}
 }

@@ -8,13 +8,24 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
+	"github.com/lib/pq"
 )
+
+// ScoreJob contient les métriques pré-calculées par SQL pour éviter l'hydratation N+1
+type ScoreJob struct {
+	PostID       int64
+	LikeCount    int
+	CommentCount int
+	HasMedia     bool
+	CreatedAt    time.Time
+	Hashtags     []string
+}
 
 // StartScoreUpdaterCron initialise le Worker Pool basé sur le nombre de threads CPU
 // et lance les tickers étagés pour actualiser le Time-Decay de l'algorithme.
 func StartScoreUpdaterCron(ctx context.Context) {
-	// File d'attente (Buffer) des posts à recalculer
-	jobs := make(chan int64, 10000)
+	// File d'attente contenant directement les métriques (Buffer 10000)
+	jobs := make(chan ScoreJob, 10000)
 
 	// Limite de concurrence matérielle stricte
 	numWorkers := runtime.GOMAXPROCS(0)
@@ -26,9 +37,13 @@ func StartScoreUpdaterCron(ctx context.Context) {
 				select {
 				case <-ctx.Done():
 					return
-				case postID := <-jobs:
-					// On appelle la fonction de service qui fait les maths et met à jour Redis
-					service.UpdatePostRecommendationScore(ctx, postID, nil)
+				case job := <-jobs:
+					mediaCount := 0
+					if job.HasMedia {
+						mediaCount = 1
+					}
+					// Appel du moteur mathématique pur. BDD = 0, Redis = Max
+					service.UpdateScoreWithMetrics(ctx, job.PostID, job.LikeCount, job.CommentCount, mediaCount, job.CreatedAt, job.Hashtags)
 				}
 			}
 		}()
@@ -45,13 +60,14 @@ func StartScoreUpdaterCron(ctx context.Context) {
 	go runTierCron(ctx, jobs, 6*time.Hour, "72 hours", "30 days")
 }
 
-func runTierCron(ctx context.Context, jobs chan<- int64, interval time.Duration, minAge, maxAge string) {
+func runTierCron(ctx context.Context, jobs chan<- ScoreJob, interval time.Duration, minAge, maxAge string) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	// Requête SQL optimisée : on ne sélectionne que l'ID des posts visibles
+	// Requête SQL enrichie : on récupère toutes les variables d'ajustement du TDD
 	query := `
-		SELECT id FROM content.posts 
+		SELECT id, like_count, comment_count, has_media, created_at, hashtags
+		FROM content.posts 
 		WHERE created_at <= NOW() - $1::interval 
 		AND created_at > NOW() - $2::interval 
 		AND visibility != 2
@@ -69,10 +85,12 @@ func runTierCron(ctx context.Context, jobs chan<- int64, interval time.Duration,
 			}
 
 			for rows.Next() {
-				var id int64
-				if err := rows.Scan(&id); err == nil {
-					// Pousse le travail dans le channel pour les workers CPU
-					jobs <- id
+				var job ScoreJob
+				// Scan incluant le tableau de Strings spécifique à Postgres
+				if err := rows.Scan(&job.PostID, &job.LikeCount, &job.CommentCount, &job.HasMedia, &job.CreatedAt, pq.Array(&job.Hashtags)); err == nil {
+					jobs <- job
+				} else {
+					log.Printf("⚠️ Erreur Scan ScoreJob : %v", err)
 				}
 			}
 			if err := rows.Close(); err != nil {

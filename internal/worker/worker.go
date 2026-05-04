@@ -125,7 +125,7 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 		}
 	}
 
-	// Exécution Parallèle : Mongo, Postgres ET Mise à jour du MOST Cache
+	// Étape 1 : Exécution Parallèle des bases de données (Mongo & Postgres)
 	done := make(chan bool)
 
 	go func() {
@@ -142,16 +142,14 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 		done <- true
 	}()
 
-	go func() {
-		// Mise à jour de l'index de découverte (MOST Cache)
-		updateMostCache(ctx, events)
-		done <- true
-	}()
+	// On DOIT attendre que la BDD ait validé les transactions sur le disque
+	// avant de mettre à jour le cache, sinon on lira des valeurs périmées.
+	<-done
+	<-done
 
-	// On attend que les 3 Goroutines aient terminé
-	<-done
-	<-done
-	<-done
+	// Étape 2 : Mise à jour de l'index de découverte (MOST Cache)
+	// S'exécute de manière asynchrone mais séquencée APRÈS la BDD.
+	updateMostCache(ctx, events)
 }
 
 // updateMostCache intercepte les événements pour alimenter les ZSETs (Tags, Profils, Classements)
@@ -166,15 +164,29 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 				if err := json.Unmarshal(jsonBytes, &post); err == nil {
 					// A. Algorithme de Recommandation (Tags, Global, Recent)
 					service.UpdatePostRecommendationScore(ctx, post.ID, post.Hashtags)
-					// B. Chronologie Utilisateur (Grille Profil)
-					service.AddPostToUserProfile(ctx, post.UserID, post.ID)
+					// B. Chronologie Utilisateur (Grille Profil) avec précision temporelle stricte
+					service.AddPostToUserProfile(ctx, post.UserID, post.ID, post.CreatedAt.UnixMilli())
 					// C. Vecteur de Contenu pour Recommandation Personnalisée (Pilier 3)
 					service.StoreContentVector(ctx, post)
 				}
 			}
 		}
 
-		// 2. SI C'EST UNE INTERACTION (LIKE ou VUE agrégé)
+		// 2. SI C'EST UNE SUPPRESSION DE POST (Cache Busting)
+		if e.Type == redis.EntityPost && e.Action == redis.ActionDelete {
+			jsonBytes, err := json.Marshal(e.Payload)
+			if err == nil {
+				var post domain.PostRequest
+				// On s'assure d'avoir bien pu extraire le UserID du payload de suppression
+				if err := json.Unmarshal(jsonBytes, &post); err == nil && post.UserID != 0 {
+					// Invalidation radicale : on détruit le ZSET de l'utilisateur.
+					// Zéro dérive d'état garantie.
+					service.InvalidateUserProfileCache(ctx, post.UserID)
+				}
+			}
+		}
+
+		// 3. SI C'EST UNE INTERACTION (LIKE ou VUE agrégé)
 		if (e.Type == redis.EntityLike || e.Type == redis.EntityView) && e.Action == redis.ActionCreate {
 			jsonBytes, err := json.Marshal(e.Payload)
 			if err == nil {
@@ -187,23 +199,25 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 
 				if err := json.Unmarshal(jsonBytes, &interactionEvent); err == nil && interactionEvent.TargetID != 0 {
 
-					// ----------------------------------------------------------------
-					// A. MISE À JOUR BDD
-					// C'est ici (ou via flushPostgres) que tu fais le UPDATE SQL.
-					// Il te faudra récupérer le vrai total et les hashtags renvoyés par Postgres.
-					// ----------------------------------------------------------------
+					// À ce stade, flushPostgres a déjà écrit les nouveaux compteurs en base.
+					// 1. On détruit le cache L1 obsolète pour forcer un rafraîchissement
+					// (L'interaction n'a pas mis à jour le cache local pour éviter les Race Conditions)
+					_ = redis.Posts.DeleteObject(ctx, interactionEvent.TargetID)
 
-					// B. CORRECTION DU CACHE REDIS (Si l'OBJECT Cache l'avait raté)
-					if !interactionEvent.AlreadyEvaluatedRedis {
-						// Le post était "froid" (pas en RAM), interaction_service n'a donc pas pu mettre à jour Redis.
-						// On force son entrée dans le MOST Cache avec la valeur absolue calculée par Postgres.
+					// 2. On utilise notre pipeline Dataloader (L3 Postgres -> L1 Redis)
+					// pour récupérer l'entité avec ses valeurs parfaitement exactes et la remettre en RAM
+					posts, err := service.GetPostsView([]int64{interactionEvent.TargetID})
+					if err == nil && len(posts) > 0 {
+						p := posts[0]
 
-						// TODO: Décommenter et utiliser les variables issues de ta BDD (totalInteraction, hashtags)
-						// if e.Type == redis.EntityLike {
-						// 	service.EvaluatePostAfterLike(ctx, interactionEvent.TargetID, float64(totalInteraction), hashtags)
-						// } else if e.Type == redis.EntityView {
-						// 	service.EvaluatePostAfterView(ctx, interactionEvent.TargetID, float64(totalInteraction), hashtags)
-						// }
+						// 3. On route vers les fonctions strictes qui vont :
+						//    - Mettre à jour les classements absolus (rank:likes:strict)
+						//    - Appeler le moteur de Time-Decay avec les nouveaux compteurs
+						if e.Type == redis.EntityLike {
+							service.EvaluatePostAfterLike(ctx, p.ID, float64(p.LikeCount), p.Hashtags)
+						} else if e.Type == redis.EntityView {
+							service.EvaluatePostAfterView(ctx, p.ID, float64(p.ViewCount), p.Hashtags)
+						}
 					}
 				}
 			}

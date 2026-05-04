@@ -22,12 +22,10 @@ import (
 // 1. MOTEUR DE RECOMMANDATION ET CLASSEMENTS
 // ============================================================================
 
-// UpdatePostRecommendationScore recalcule le score et actualise les canaux globaux et tags.
+// UpdatePostRecommendationScore recalcule le score en chargeant l'entité (utilisé par les interactions en temps réel).
 func UpdatePostRecommendationScore(ctx context.Context, postID int64, hashtags []string) {
-	// 1. Récupération des données brutes du post (Indispensable pour l'algorithme)
 	var p domain.PostRequest
 	if err := redis.Posts.GetObject(ctx, postID, &p); err != nil {
-		// Fallback L2/L3 si le post n'est pas dans le cache L1
 		posts, err := GetPostsView([]int64{postID})
 		if err != nil || len(posts) == 0 {
 			log.Printf("⚠️ Impossible de scorer le post %d : Introuvable", postID)
@@ -36,24 +34,29 @@ func UpdatePostRecommendationScore(ctx context.Context, postID int64, hashtags [
 		p = posts[0]
 	}
 
-	// Si les hashtags n'ont pas été fournis dans l'événement, on utilise ceux de l'entité
 	if len(hashtags) == 0 && len(p.Hashtags) > 0 {
 		hashtags = p.Hashtags
 	}
 
-	// 2. Construction de la base algorithmique
-	ageSeconds := time.Since(p.CreatedAt).Seconds()
-	mediaCount := len(p.MediaIDs)
-
-	baseOpts := ScoreOptions{
-		LikesCount:    p.LikeCount,
-		CommentsCount: p.CommentCount,
-		MediaCount:    mediaCount,
-		AgeSeconds:    ageSeconds,
-		// L'AuthorGrade et AuthorPostsInWindow pourront être hydratés ici plus tard
+	mediaCount := 0
+	if p.HasMedia || len(p.MediaIDs) > 0 {
+		mediaCount = 1
 	}
 
-	// 3. Calcul des différents flux
+	UpdateScoreWithMetrics(ctx, postID, p.LikeCount, p.CommentCount, mediaCount, p.CreatedAt, hashtags)
+}
+
+// UpdateScoreWithMetrics est le moteur mathématique et Redis pur (utilisé par le Cron pour éviter les requêtes BDD).
+func UpdateScoreWithMetrics(ctx context.Context, postID int64, likes, comments, mediaCount int, createdAt time.Time, hashtags []string) {
+	ageSeconds := time.Since(createdAt).Seconds()
+
+	baseOpts := ScoreOptions{
+		LikesCount:    likes,
+		CommentsCount: comments,
+		MediaCount:    mediaCount,
+		AgeSeconds:    ageSeconds,
+	}
+
 	optsRecent := baseOpts
 	optsRecent.BoostRecent = variables.BoostRecent
 
@@ -68,17 +71,14 @@ func UpdatePostRecommendationScore(ctx context.Context, postID int64, hashtags [
 	scoreBoostLikes := CalculateRecommendationScore(postID, optsLikes)
 	scoreBoostComments := CalculateRecommendationScore(postID, optsComments)
 
-	// Tri chronologique strict : on utilise le timestamp pour figer sa position
-	scoreStrictRecent := float64(p.CreatedAt.UnixMilli())
+	scoreStrictRecent := float64(createdAt.UnixMilli())
 
-	// 4. Mise à jour des ZSETs globaux (Via Script Lua Atomique)
 	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankGlobal, scoreGlobal, postID, variables.MaxRankElements)
 	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankRecentGlobal, scoreBoostRecent, postID, variables.MaxRankElements)
 	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankLikesGlobal, scoreBoostLikes, postID, variables.MaxRankElements)
 	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankCommentsGlobal, scoreBoostComments, postID, variables.MaxRankElements)
 	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankRecentStrict, scoreStrictRecent, postID, variables.MaxRankElements)
 
-	// 5. Mise à jour des canaux par Tag
 	if len(hashtags) > 0 {
 		officialTags := make(map[string]bool)
 		for _, hashtag := range hashtags {
@@ -131,22 +131,7 @@ func StoreContentVector(ctx context.Context, post domain.PostRequest) {
 }
 
 // ============================================================================
-// 2. PROFILS UTILISATEURS
-// ============================================================================
-
-// AddPostToUserProfile ajoute un post à la grille chronologique d'un profil.
-func AddPostToUserProfile(ctx context.Context, userID int64, postID int64) {
-	key := fmt.Sprintf("user:posts:%d", userID)
-	score := float64(time.Now().UnixMilli())
-
-	if err := redis.ZAdd(ctx, key, score, postID); err != nil {
-		return
-	}
-	_ = redis.ZRemRangeByRank(ctx, key, 0, -(variables.MaxUserPostsElements + 1))
-}
-
-// ============================================================================
-// 3. LECTURE ET FALLBACKS (L1 -> L2 -> L3)
+// 2. LECTURE ET FALLBACKS (L1 -> L2 -> L3)
 // ============================================================================
 
 func GetUserProfilePosts(ctx context.Context, userID int64, offset int64, limit int64) ([]domain.PostRequest, error) {
@@ -229,7 +214,7 @@ func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([
 }
 
 // ============================================================================
-// 4. ROUTINES PRIVÉES D'ACCÈS AUX DONNÉES
+// 3. ROUTINES PRIVÉES D'ACCÈS AUX DONNÉES
 // ============================================================================
 
 func fetchAndHydrateFromZSET(ctx context.Context, key string, offset int64, limit int64) ([]domain.PostRequest, error) {
@@ -319,36 +304,74 @@ func getPostsFromPostgresPaginated(ctx context.Context, rankType string, offset 
 }
 
 // ============================================================================
-// 5. AMORÇAGE (SEEDING)
+// 4. AMORÇAGE (SEEDING)
 // ============================================================================
 
 // SeedMostCache lit l'intégralité de Postgres pour populer le L1 (RAM), L2 (Mongo) et le MOST Cache.
 func SeedMostCache() error {
 	ctx := context.Background()
 
-	// TODO: Traiter le seeding par lots (Batch) pour éviter une surcharge RAM lors du scan complet de la base
+	// ---------------------------------------------------------
+	// PHASE 1 : RESTAURATION DU SYSTÈME DE TAGS
+	// ---------------------------------------------------------
+	log.Println("♻️ Restauration des tags communautaires depuis SQL...")
+	tagRows, err := postgres.PostgresDB.QueryContext(ctx, "SELECT slug FROM content.tags")
+	if err == nil {
+		var tagsToSync []string
+		for tagRows.Next() {
+			var slug string
+			if err := tagRows.Scan(&slug); err == nil {
+				tagsToSync = append(tagsToSync, slug)
+			}
+		}
+		err := tagRows.Close()
+		if err != nil {
+			return err
+		}
+
+		if len(tagsToSync) > 0 {
+			// On utilise SAdd pour restaurer le SET Redis (Source pour le Cron Canoniseur)
+			// On convertit en []interface{} pour le driver Redis
+			args := make([]interface{}, len(tagsToSync))
+			for i, v := range tagsToSync {
+				args[i] = v
+			}
+			_ = redisgo.Rdb.SAdd(ctx, variables.RedisKeyActiveTagsSet, args...).Err()
+		}
+	}
+
+	// ---------------------------------------------------------
+	// PHASE 2 : HYDRATATION DES POSTS ET CLASSEMENTS
+	// ---------------------------------------------------------
+	log.Println("♻️ Hydratation du MOST Cache depuis les colonnes matérialisées SQL...")
+
+	// Utilisation des colonnes like_count, comment_count etc. (Optimisation O(1))
 	query := `
 		SELECT 
 			id, user_id, content, hashtags, identifiers, media_ids, visibility, location, created_at, updated_at,
-			(SELECT COUNT(*) FROM content.likes l WHERE l.target_id = p.id AND l.target_type = 0) AS like_count
-		FROM content.posts p
+			like_count, comment_count, view_count, has_media
+		FROM content.posts
 		WHERE visibility != 2
 	`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("erreur requête seeding: %w", err)
 	}
-	defer rows.Close()
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			log.Printf("⚠️ Erreur fermeture rows seeding: %v", err)
+		}
+	}(rows)
 
 	for rows.Next() {
 		var p domain.PostRequest
 		var location sql.NullString
-		var likeCount float64
 
 		err := rows.Scan(
 			&p.ID, &p.UserID, &p.Content, pq.Array(&p.Hashtags), pq.Array(&p.Identifiers),
 			pq.Array(&p.MediaIDs), &p.Visibility, &location, &p.CreatedAt, &p.UpdatedAt,
-			&likeCount,
+			&p.LikeCount, &p.CommentCount, &p.ViewCount, &p.HasMedia,
 		)
 		if err != nil {
 			continue
@@ -371,9 +394,14 @@ func SeedMostCache() error {
 		UpdatePostRecommendationScore(ctx, p.ID, p.Hashtags)
 
 		// D. Classement STRICT (Absolu)
-		_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankLikesStrict, likeCount, p.ID, variables.MaxRankElements)
+		// On utilise p.LikeCount directement casté en float64
+		_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankLikesStrict, float64(p.LikeCount), p.ID, variables.MaxRankElements)
+
+		// E. Hydratation USER Cache (Profil utilisateur)
+		// Reconstruction de la grille chronologique avec plafonnement automatique
+		AddPostToUserProfile(ctx, p.UserID, p.ID, p.CreatedAt.UnixMilli())
 	}
 
-	log.Println("✅ Seeding terminé : synchronisation complète L1, L2 et MOST Cache.")
+	log.Println("✅ Seeding terminé : synchronisation complète L1, L2, USER Cache et MOST Cache.")
 	return nil
 }
