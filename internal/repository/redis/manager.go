@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/vmihailenco/msgpack/v5"
 	"log"
 	"time"
+
+	"github.com/vmihailenco/msgpack/v5"
 
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	variables "github.com/QuentinRegnier/nubo-backend/internal/variables"
@@ -23,12 +24,17 @@ var (
 	Posts        *Collection
 	Comments     *Collection
 	Likes        *Collection
-	// Media Note : Likes peut être géré différemment (compteurs), mais on garde l'objet pour l'instant
+	// Media Note : Likes peut être géré différemment (compteurs), mais on garde l'objet pour l'instant
 	Media         *Collection
 	Conversations *Collection
 	Members       *Collection
 	Messages      *Collection
 	Relations     *Collection
+
+	// --- SPEED Cache Collections ---
+	UsersLite   *Collection
+	ConvMeta    *Collection
+	ConvMembers *Collection
 )
 
 // InitCacheDatabase initialise les collections Redis avec la stratégie OBJECT (LFU)
@@ -51,6 +57,11 @@ func InitCacheDatabase() {
 	Conversations = NewCollection("conv", variables.StandardTTL)
 	Members = NewCollection("member", variables.StandardTTL)
 	Relations = NewCollection("rel", variables.StandardTTL)
+
+	// --- SPEED Cache (Lite Objects) ---
+	UsersLite = NewCollection("user_lite", variables.StandardTTL)
+	ConvMeta = NewCollection("conv_meta", variables.StandardTTL)
+	ConvMembers = NewCollection("conv_members", variables.StandardTTL)
 
 	log.Println("✅ Structure Redis (Object Store LFU) initialisée")
 }

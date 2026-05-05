@@ -86,6 +86,7 @@ func SetupRoutes(r *gin.Engine) {
 	secured.POST("/views/batch", handlers.RegisterBatchViewsHandler) // ℹ️❌ à vérifier
 
 	// --- Profils / Utilisateurs ---
+	secured.GET("/search/users/quick", handlers.UserSearchHandler) // <--- SPEED Cache: Auto-complétion
 	secured.GET("/users/:id/posts", handlers.GetUserPostsHandler)
 
 	// --- Actions Sociales ---
@@ -130,6 +131,7 @@ func SetupRoutes(r *gin.Engine) {
 	secured.GET("/information-message", LoadAdminInformationMessageHandler)     // ℹ️❌
 
 	// --- Messagerie / Groupes ---
+	secured.GET("/inbox", handlers.InboxHandler)                       // <--- SPEED Cache: Démarrage Inbox
 	secured.POST("/conversation", ConversationHandler)                 // ℹ️❌
 	secured.DELETE("/conversation", DeleteConversationHandler)         // ℹ️❌
 	secured.PATCH("/conversation", ModifyConversationHandler)          // ℹ️❌

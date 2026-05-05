@@ -91,3 +91,33 @@ const zaddCapScript = `
 func ZAddWithCap(ctx context.Context, key string, score float64, member interface{}, maxSize int) error {
 	return redisgo.Rdb.Eval(ctx, zaddCapScript, []string{key}, score, member, maxSize).Err()
 }
+
+// ============================================================================
+// PRIMITIVES LEXICOGRAPHIQUES - Pour la recherche / Auto-complétion
+// ============================================================================
+
+// ZAddLex ajoute un élément avec un score absolu de 0.
+// Indispensable pour que Redis trie uniquement sur la valeur de la chaîne (alphabétique).
+func ZAddLex(ctx context.Context, key string, member interface{}) error {
+	return redisgo.Rdb.ZAdd(ctx, key, &redis.Z{
+		Score:  0,
+		Member: member,
+	}).Err()
+}
+
+// ZRangeByLex cherche des éléments par préfixe (Auto-complétion).
+// Le préfixe "quent" cherchera de "[quent" jusqu'à "[quent\xff" (le caractère max).
+func ZRangeByLex(ctx context.Context, key string, prefix string, limit int64) ([]string, error) {
+	if prefix == "" {
+		return []string{}, nil
+	}
+
+	// Configuration de la recherche lexicographique pour Go-Redis
+	opt := &redis.ZRangeBy{
+		Min:   "[" + prefix,
+		Max:   "[" + prefix + "\xff",
+		Count: limit,
+	}
+
+	return redisgo.Rdb.ZRangeByLex(ctx, key, opt).Result()
+}

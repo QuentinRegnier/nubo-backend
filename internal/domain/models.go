@@ -82,6 +82,35 @@ type PostRequest struct {
 }
 
 // ********************************************************
+// ****           Speed Cache Types (Lite)             ****
+// ********************************************************
+
+type UserLiteRequest struct {
+	ID               int64    `bson:"id" json:"id"`
+	Username         string   `bson:"username" json:"username"`
+	FirstName        string   `bson:"first_name" json:"first_name"`
+	LastName         string   `bson:"last_name" json:"last_name"`
+	ProfilePictureID int64    `bson:"profile_picture_id" json:"profile_picture_id"`
+	Bio              string   `bson:"bio" json:"bio"`
+	Grade            int      `bson:"grade" json:"grade"`
+	Badges           []string `bson:"badges" json:"badges"`
+}
+
+type ConvLiteRequest struct {
+	ID            int64  `bson:"id" json:"id"`
+	Type          int    `bson:"type" json:"type"`
+	Title         string `bson:"title" json:"title"`
+	LastMessageID int64  `bson:"last_message_id" json:"last_message_id"`
+}
+
+type MemberLiteRequest struct {
+	ConversationID int64 `bson:"conversation_id" json:"conversation_id"`
+	UserID         int64 `bson:"user_id" json:"user_id"`
+	UnreadCount    int   `bson:"unread_count" json:"unread_count"`
+	Role           int   `bson:"role" json:"role"`
+}
+
+// ********************************************************
 // ****                Routes Types                    ****
 // ********************************************************
 

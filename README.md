@@ -1,3280 +1,464 @@
-# NuboBackend
-## ✅ Objectif final
+# ☁️ Nubo Backend - Architecture Core & Technical Documentation
 
-Un backend nommé `nubo-backend` avec :
-
-- API REST (auth, CRUD de posts/messages, etc.)
-- WebSocket (temps réel)
-- Redis (cache/session)
-- PostgreSQL (stockage permanent)
-- MongoDB (stockage temporaire 30 jours)
-- Docker (zéro installation locale, sauf Docker)
+> **Périmètre du document** : Ce document détaille l'architecture backend, les algorithmes mathématiques et l'infrastructure de données du réseau social Nubo. Conçu en Go, ce système hybride et hautement asynchrone est taillé pour des performances extrêmes et une scalabilité massive.
 
 ---
 
-## 🧱 PRÉREQUIS (macOS)
+## 📋 Table des Matières
 
-Avant tout, installe :
-
-- [Docker Desktop pour Mac](https://www.docker.com/products/docker-desktop/)
-  - Ouvre-le une fois installé
-- Go (Golang) *(facultatif si tu build tout dans Docker, mais conseillé pour dev local)*  
-  `brew install go`
-- Git *(souvent déjà présent)*  
-  `git --version`
-- (Optionnel) Un bon éditeur :
-  - [VS Code](https://code.visualstudio.com/)
-    - Extensions recommandées : **Go**, **Docker**, **GitLens**
-
----
-
-## 🗂️ STRUCTURE DU PROJET
-
-```
-nubo-backend/
-├── docker-compose.yml
-├── Dockerfile
-├── .env
-├── go.mod
-├── cmd/
-│   └── main.go
-├── internal/
-│   ├── api/         ← Handlers REST
-│   ├── websocket/   ← Serveur WebSocket
-│   ├── db/          ← Connexion PostgreSQL & Mongo
-│   ├── cache/       ← Connexion Redis
-│   └── models/      ← Structs & logique métier
-└── README.md
-```
+1.  **[🚀 Introduction et Philosophie Architecturale](#1--introduction-et-philosophie-architecturale)**
+    *   1.1. Présentation du projet Nubo
+    *   1.2. Paradigme "Write-Behind" & "Edge Computing"
+    *   1.3. L'Écosystème à 3 Niveaux (L1 / L2 / L3)
+2.  **[🗄️ Le Moteur de Données : Stratégies et Organisation des Caches](#)** *(À venir)*
+3.  **[🧠 Moteur de Recommandation et Profilage (TDD Mathématique)](#)** *(À venir)*
+4.  **[🔐 Sécurité Cryptographique et Authentification](#)** *(À venir)*
+5.  **[⚡ Réseau Temps Réel et Messagerie (WebSockets & Pub/Sub)](#)** *(À venir)*
+6.  **[💾 Schéma Relationnel et Structuration (PostgreSQL)](#)** *(À venir)*
+7.  **[🛠️ Stack Technique, Composants et Déploiement](#)** *(À venir)*
 
 ---
 
-## I. 🔨 ÉTAPES DE DÉVELOPPEMENT GO/DOCKER
+## 1. 🚀 Introduction et Philosophie Architecturale
 
-### 1. Initialiser ton projet Go
+L'architecture du backend Nubo a été pensée pour répondre à des exigences critiques de très faible latence, de haute disponibilité, et de préservation des ressources matérielles. Plutôt que d'adopter une architecture monolithique classique en requête-réponse directe vers une base SQL, le système agit comme un "cerveau" asynchrone qui délègue le calcul et absorbe les chocs de trafic.
 
-```bash
-mkdir nubo-backend && cd nubo-backend
-go mod init github.com/tonuser/nubo-backend
-```
+### 1.1. Présentation du projet Nubo : Réseau social premium et performant
 
-> Remplace `tonuser` par ton pseudo GitHub
+Nubo se positionne comme un réseau social naturiste premium. Ce positionnement implique une expérience utilisateur (UX) parfaite, sans aucun temps de chargement perceptible. Les défis techniques inhérents à un réseau social moderne sont majeurs :
+*   **Volumétrie massive des interactions :** Les likes, commentaires, vues et partages génèrent un flux continu de données qui peut facilement saturer une base relationnelle standard.
+*   **Flux en temps réel :** Messagerie instantanée, notifications et mises à jour de flux nécessitent une infrastructure réseau (TCP/WebSockets) optimisée.
+*   **Personnalisation poussée :** Servir des flux de contenus ("Feeds") basés sur des affinités sémantiques et comportementales demande des calculs mathématiques lourds.
 
----
+Pour relever ces défis, le backend (écrit en Go 1.22+) ne se comporte pas comme un simple CRUD, mais comme un routeur de flux de données ultra-rapide.
 
-### 2. Créer les fichiers essentiels
+### 1.2. Paradigme "Write-Behind" & "Edge Computing"
 
-```bash
-touch Dockerfile docker-compose.yml .env README.md
-mkdir -p cmd internal/{api,websocket,db,cache,models}
-touch cmd/main.go
-```
+Pour garantir des temps de réponse de l'ordre de la milliseconde, Nubo s'appuie sur deux concepts d'ingénierie fondamentaux :
 
----
+#### A. Le calcul déporté (Edge Computing)
+Le calcul du profil comportemental de l'utilisateur (ses préférences, ses habitudes de scroll, son affinité sociale) n'est **pas** réalisé par nos serveurs.
+*   Le client (l'application mobile ou web) enregistre les signaux implicites (temps passé sur un post, vitesse de défilement) et explicites (likes, commentaires).
+*   Il calcule localement une moyenne mobile exponentielle (EMA) pour mettre à jour un vecteur dense $\mathbf{u} \in \mathbb{R}^{224}$.
+*   Ce vecteur est ensuite envoyé au serveur (endpoint `/v1/profile/sync`) de façon périodique.
+*   **Bénéfice :** Le serveur Go est totalement libéré de ces calculs lourds. Il se contente de valider l'intégrité du vecteur (via HMAC) et d'exécuter de simples produits scalaires optimisés (SIMD) pour générer les recommandations.
 
-### 3. Ajouter les dépendances Go
+#### B. La persistance asynchrone (Write-Behind)
+Une base relationnelle comme PostgreSQL est excellente pour la cohérence (ACID), mais souffre sous un déluge d'écritures simultanées.
+*   **L'absorption en RAM :** Lorsqu'un utilisateur effectue une action (ex: un Like), l'API met à jour le cache Redis instantanément et place un événement dans une file d'attente asynchrone (`REQUEST Cache`). Le client reçoit un statut HTTP `200 OK` en quelques millisecondes.
+*   **Le traitement par les Workers :** Un pool de workers en arrière-plan dépile ces événements. Ils regroupent les opérations par lots massifs (Batching) et les trient par ordre topologique pour respecter les contraintes de clés étrangères (ex: d'abord insérer l'utilisateur, puis son post, puis ses likes).
+*   **L'insertion bulk :** Les écritures en base se font via des commandes de copie de masse (`pq.CopyIn` sur PostgreSQL), réduisant considérablement la charge IOPS sur les disques.
 
-Installe les libs de base avec :
+### 1.3. L'Écosystème à 3 Niveaux (L1 / L2 / L3)
 
-```bash
-go get github.com/gin-gonic/gin              # REST API
-go get github.com/go-redis/redis/v8          # Redis
-go get go.mongodb.org/mongo-driver/mongo     # MongoDB
-go get github.com/jackc/pgx/v5               # PostgreSQL
-go get github.com/gorilla/websocket          # WebSocket
-```
+Pour concilier la vitesse exigée par le frontend et la pérennité requise pour les données utilisateurs, Nubo déploie une stratégie de rétention hybride en trois couches (Tiers).
 
----
+#### Pourquoi cette architecture hybride ?
+La RAM est extrêmement rapide mais coûteuse et limitée. Le disque SSD est capacitif mais lent. Plutôt que de tout stocker en cache ou de tout lire sur disque, le système navigue intelligemment entre les couches via un **Pipeline d'Hydratation**. Lorsqu'une donnée est demandée, le système interroge L1. S'il y a un *Cache Miss*, il descend en L2. Si L2 échoue, il consulte L3. À chaque remontée, la donnée "réchauffe" les caches supérieurs (Promotion).
 
-### 4. Écrire ton `main.go`
+#### 🥇 Niveau 1 (L1) : Redis - Vitesse pure et structures avancées en RAM
+Redis n'est pas utilisé comme un simple magasin clé-valeur. C'est le cœur névralgique de l'application.
+*   **Mécanisme d'éviction intelligent :** Redis est configuré avec la politique `volatile-lfu` (Least Frequently Used). Il fonctionne proche de 100% de sa capacité et évince mathématiquement les objets les moins consultés pour protéger les données "chaudes".
+*   **Stockage Binaire :** Les objets (Posts, Users) sont sérialisés en `MsgPack` (format binaire ultra-compact) plutôt qu'en JSON pour maximiser l'économie de RAM.
+*   **Structures Complexes :** Utilisation massive des `ZSET` (Sorted Sets) pour classer les tendances (MOST Cache) et trier les boîtes de réception (SPEED Cache), ainsi que des listes `FIFO` pour les fils d'actualité.
+*   **Temps réel :** Exploitation du paradigme `Pub/Sub` volatil pour distribuer les messages WebSocket instantanément entre les nœuds du cluster.
 
-```go
-package main
+#### 🥈 Niveau 2 (L2) : MongoDB - Filet de sécurité documentaire
+MongoDB agit comme la couche de stockage intermédiaire ("Warm Storage").
+*   **Rôle principal :** Absorber les "Cache Misses" de Redis sans perturber PostgreSQL.
+*   **Dénormalisation :** Il stocke les documents complets (ex: un Post avec ses méta-données prêtes à l'emploi).
+*   **Fallback rapide :** Si la RAM Redis est saturée et expulse un vieux post, la requête HTTP viendra piocher ce document dans MongoDB en quelques millisecondes, évitant ainsi des requêtes SQL complexes et coûteuses en L3.
 
-import (
-	"github.com/gin-gonic/gin"
-)
-
-func main() {
-	r := gin.Default()
-
-	r.GET("/ping", func(c *gin.Context) {
-		c.JSON(200, gin.H{"message": "pong"})
-	})
-
-	r.Run(":8080")
-}
-```
-
----
-
-### 5. Créer le `Dockerfile`
-
-```Dockerfile
-FROM golang:1.24.5
-
-WORKDIR /app
-
-COPY go.mod ./
-COPY go.sum ./
-RUN go mod download
-
-COPY . .
-
-RUN go build -o nubo cmd/main.go
-
-EXPOSE 8080
-
-CMD ["./nubo"]
-```
+#### 🥉 Niveau 3 (L3) : PostgreSQL - Source de vérité absolue (ACID)
+PostgreSQL 16 est la fondation indéboulonnable du système.
+*   **Intégrité :** Il garantit l'intégrité relationnelle via un schéma hautement normalisé divisé en espaces logiques (`auth`, `content`, `messaging`, `moderation`).
+*   **Jobs Asynchrones :** C'est sur PostgreSQL que tournent les calculs de nuit (ex: recalcul des scores algorithmiques de "Time-Decay", canonicalisation des hashtags fautifs) qui ne nécessitent pas une latence instantanée.
+*   **Sécurité ultime :** En cas de crash total des couches de cache (L1 et L2), le backend est capable d'utiliser Postgres comme ultime recours (Fallback absolu) pour auto-réparer et "réhydrater" tout le système de manière transparente.
 
 ---
 
-### 6. Créer le `docker-compose.yml`
+## 2. 🗄️ Le Moteur de Données : Stratégies et Organisation des Caches (Redis & Mongo)
 
-```yaml
-services:
-  api:
-    build: .
-    container_name: nubo_api
-    ports:
-      - "8080:8080"
-    env_file:
-      - .env
-    depends_on:
-      - redis
-      - postgres
-      - mongo
-    restart: always
+Le socle de performance de Nubo repose sur une architecture de cache hautement spécialisée. Redis n'y est pas un simple magasin clé-valeur de passage, mais un agrégat de structures de données sophistiquées divisées en sous-systèmes logiques.
 
-  redis:
-    image: redis:7
-    container_name: nubo_redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
+### 2.1. OBJECT Cache (Le Stockage Principal LFU)
 
-  postgres:
-    image: postgres:15
-    container_name: nubo_postgres
-    environment:
-      POSTGRES_USER: nubo
-      POSTGRES_PASSWORD: nubo
-      POSTGRES_DB: nubo
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+C'est le système de stockage de niveau 1 (L1) responsable de conserver les entités lourdes complètes (Users, Posts, Comments).
 
-  mongo:
-    image: mongo:7
-    container_name: nubo_mongo
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
+*   **Sérialisation binaire via MsgPack :** Plutôt que de stocker du JSON brut, les structures Go sont sérialisées en `MsgPack`. Ce format binaire est ultra-compact en RAM et extrêmement rapide à dé/sérialiser côté serveur.
+*   **Politique `volatile-lfu` et TTL élastique :** Le cluster Redis tourne avec la politique d'éviction *Least Frequently Used*. Les objets sont insérés avec un *Time-To-Live* par défaut (ex: 7 jours). Si la mémoire sature, Redis évince mathématiquement les objets les moins consultés avant leur expiration. Le TTL devient donc "élastique" et s'adapte à la pression du trafic.
+*   **Le Pipeline d'Hydratation :** Lorsqu'un flux de données est demandé (ex: 50 IDs de posts), le système applique un workflow de réconciliation automatique :
+    1.  **Rafale L1 (Redis Multi-Get) :** L'API lance une seule commande `MGET` pour récupérer les 50 objets en un seul aller-retour réseau.
+    2.  **Mongo Fallback (L2) :** Les IDs non trouvés dans le cache (Cache Miss) sont isolés et demandés à MongoDB via une requête optimisée (`$in`).
+    3.  **Postgres Fallback (L3) :** Si des données manquent encore (ex: après un crash L2), une requête SQL est exécutée en ultime recours sur PostgreSQL.
+    4.  **Promotion (Auto-guérison) :** Les données récupérées en L2 ou L3 sont immédiatement réinsérées dans Redis (Promotion L1) pour réparer le cache à la volée.
 
-volumes:
-  redis_data:
-  postgres_data:
-  mongo_data:
-```
+### 2.2. MOST Cache (Recherche, Trending & Tags)
 
----
+Ce cache gère l'algorithmique de découverte. Il fournit des listes pré-triées de manière quasi instantanée.
 
-### 7. Lancer ton environnement
+*   **Utilisation des ZSET Redis :** Le classement repose sur les *Sorted Sets* de Redis. La clé représente le canal (ex: un hashtag), le membre est l'ID Snowflake du post, et le score détermine son classement.
+*   **Mode Strict vs Mode Global :**
+    *   *Mode Strict :* Les ZSETs comme `rank:likes:strict` classent les contenus par leur métrique pure et absolue (le score = le nombre total exact de likes).
+    *   *Mode Global :* Les ZSETs comme `rank:global` utilisent les scores algorithmiques de "Time-Decay" (chaleur temporelle) générés par le moteur de recommandation.
+*   **Le Capping automatique (Guillotine mathématique) :** Pour empêcher les ZSETs de croître à l'infini, un script Lua garantit l'atomicité de l'insertion et du nettoyage : on ne garde que les 5000 meilleurs éléments. Tout score qui dépasse ce rang déclenche un `ZREMRANGEBYRANK key 0 -5001` (Guillotine).
+*   **Le Seeding :** Au démarrage (Cold Start), l'API scanne PostgreSQL, calcule les scores de tous les posts existants et amorce les ZSETs Redis. Le cache est instantanément "chaud".
 
-```bash
-docker-compose up --build
-```
+### 2.3. USER Cache (Le Profil Rapide)
 
-Puis va sur [http://localhost:8080/ping](http://localhost:8080/ping) → tu dois voir :
+Ce cache sert à afficher la grille de publications d'un utilisateur instantanément sans joindre la base relationnelle.
 
-```json
-{ "message": "pong" }
-```
+*   **Structure ZSET chronologique :** Les posts d'un utilisateur sont stockés dans un ZSET (ex: `user:posts:<user_id>`) où le score est le Timestamp de création (Unix Epoch), garantissant un tri chronologique parfait (du plus récent au plus ancien).
+*   **La "Règle des 100" (Smart Fallback) :** Statistiquement, 95% des visiteurs ne dépassent jamais les 100 premières publications d'un profil. Ce ZSET est donc strictement plafonné à 100 IDs par utilisateur. Si un visiteur défile au-delà (offset > 100), le backend le détecte et contourne Redis pour effectuer une requête paginée sur MongoDB.
+
+### 2.4. FEED Cache (Fil d'Actualité)
+
+Gère la génération des "Timelines" des utilisateurs.
+
+*   **Structure en liste FIFO :** Utilisation des clés `LIST` dans Redis (`feed:user:<user_id>`).
+*   **Mécanique de Fan-out on Write :** Nubo utilise un modèle de "Push" asynchrone. Lorsqu'un utilisateur crée un post, l'API ne fige pas la réponse. Un travailleur de l'ombre (Worker) récupère la liste de ses abonnés et effectue un `LPUSH` massif de l'ID du post dans les feeds des abonnés actifs. La lecture du feed se résume ainsi à un simple `LRANGE` temporel ultrarapide (complexité O(1)).
+
+### 2.5. REQUEST Cache (L'Entonnoir de Persistance Asynchrone)
+
+Afin d'encaisser des pics d'écriture violents ("Write-Heavy") sans perturber l'expérience utilisateur et l'intégrité de PostgreSQL, Nubo implémente une file de messagerie avancée maison.
+
+*   **Le Shard Unifié et le partitionnement (CRC32) :** Les écritures ne tapent pas directement la BDD. Elles sont envoyées sous forme de messages `AsyncEvent` vers l'une des 64 files Redis (ex: `q:14`). L'ID de l'entité (ou de son parent) est haché via CRC32 pour assigner un shard (`Partition Key`), ce qui garantit qu'un Like atterrira systématiquement dans le même shard et chronologiquement *après* le Post auquel il se rattache.
+*   **Le Worker Intelligent :** 64 workers (Goroutines) dépilent les shards de façon bloquante (via `BLPOP`). Ils récupèrent des lots massifs (Batching), puis effectuent un **Tri Topologique** en RAM pour séparer et ordonner les entités selon la hiérarchie SQL (Users d'abord, puis Posts, puis Likes, etc.). Les données sont ensuite fusionnées en tables temporaires et poussées en une seule transaction via la commande `COPY` (`pq.CopyIn`), ce qui est la méthode d'insertion SQL la plus rapide existante.
+*   **La Résilience (Dichotomie & DLQ) :** Si un lot de `COPY` échoue en raison d'une donnée corrompue (ex: violation d'intégrité), le worker effectue un *Rollback*, puis divise le lot de manière récursive (Dichotomie) pour isoler la requête empoisonnée. Cette ligne est envoyée en quarantaine dans la *Dead Letter Queue* (`dlq:postgres_errors`) sur Redis, pendant que le reste des données saines est validé avec succès.
+
+### 2.6. SPEED Cache (Inbox & Métadonnées Instantanées)
+
+Le SPEED Cache est un modèle hybride de pointe, conçu pour des réponses à latence "Zero" lors d'opérations UX critiques (messagerie, recherche IRL).
+
+*   **Dénormalisation extrême :** Les données publiques et récurrentes sont aplaties dans des modèles ultra-légers (`UserLite`, `ConvLite`, `MemberLite`). On y stocke uniquement l'essentiel : ID, Pseudos, compteurs non lus, Rôles.
+*   **Index lexicographique à score zéro :** Pour l'auto-complétion (barre de recherche), les pseudos sont indexés via `ZADD` avec un score absolu de `0` (clé `users:search:lex`). Redis trie alors naturellement sur la valeur de la chaîne (alphabétique), ce qui permet d'utiliser `ZRANGEBYLEX` pour renvoyer des correspondances exactes en O(log(N)) millisecondes.
+*   **Estimations d'empreinte mémoire :** Du fait de l'ultra-dénormalisation et du format binaire MsgPack, l'empreinte de ce cache est microscopique. Par exemple, pour supporter **1 million d'utilisateurs hyperactifs** (avec leurs index, les ZSET Inbox, et les métadonnées Lite), la charge réseau et mémoire ne consommera qu'environ **$< 8\text{ Go}$ de RAM**.
 
 ---
 
-## II. 🌐 Création du repo GitHub
+## 3. 🧠 Moteur de Recommandation et Profilage (TDD Mathématique)
 
-- Créer un repo vide (sur github.com) :
-- Nom : nubo-backend
-- Visibilité : Privé ou Public, à toi de voir
-- Puis en terminal :
-```bash
-git init
-git remote add origin https://github.com/TON_USER/nubo-backend.git
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git push -u origin main
-```
+Le système de recommandation de Nubo est divisé en trois piliers interdépendants. Il a été conçu pour allier performances extrêmes et pertinence algorithmique, en évitant les biais cognitifs classiques (comme la bulle de filtre) tout en préservant l'infrastructure matérielle.
 
----
+### 3.1. Pilier 1 : Profilage Utilisateur (Edge Computing)
 
-## III. 🛠️ Plan d’action clair (prochaine phase go)
+Pour libérer les ressources du serveur, le calcul du profil comportemental est déporté directement sur le client (application mobile/web).
 
-✅ Étape 1 — Ajouter les routes REST : Login, Signup, Post
-✅ Étape 2 — Ajouter le WebSocket en Go
-✅ Étape 3 — Brancher PostgreSQL, MongoDB, Redis
-✅ Étape 4 — Ajouter l’authentification JWT
-✅ Étape 5 — Déployer sur un serveur Linux (Docker Compose + .env)
-✅ ÉTAPE 1 — Créer les routes REST de base
+*   **Le Vecteur Dense $\mathbf{u}$ :** Le profil de l'utilisateur est représenté par un vecteur dense normalisé $\mathbf{u} \in \mathbb{R}^{224}$. Ce vecteur est la concaténation de quatre blocs sémantiques distincts :
+    $$ \mathbf{u} = \left[\mathbf{u}^{(\text{cat})} \;\Big|\; \mathbf{u}^{(\text{temp})} \;\Big|\; \mathbf{u}^{(\text{eng})} \;\Big|\; \mathbf{u}^{(\text{soc})}\right] \in \mathbb{R}^{224} $$
+    *   *Catégoriel* ($\mathbb{R}^{128}$) : Affinité calculée via une décomposition en valeurs singulières (SVD tronquée) de la matrice de co-occurrence des hashtags.
+    *   *Temporel* ($\mathbb{R}^{24}$) : Encodage de l'activité sur les 24 heures de la journée.
+    *   *Engagement* ($\mathbb{R}^{8}$) : Statistiques globales telles que le ratio de likes, commentaires, et la durée moyenne de session.
+    *   *Social* ($\mathbb{R}^{64}$) : Embedding du graphe social de l'utilisateur.
+*   **Traitement des signaux implicites :** Le système capte l'attention réelle de l'utilisateur via le *Dwell Time effectif* $\tau_{\text{eff}}(p)$. Celui-je intègre une fonction d'atténuation gaussienne de la vitesse de défilement ($v$) pour filtrer le bruit :
+    $$ f_{\text{scroll}}(v) = \exp\left(-\frac{v^{2}}{2\cdot\sigma_{v}^{2}}\right) $$
+*   **Règle de mise à jour par Moyenne Mobile Exponentielle (EMA) :** À chaque interaction, le vecteur est mis à jour incrémentalement pour s'adapter aux nouveaux comportements, via un taux d'apprentissage $\alpha$ adaptatif :
+    $$ \mathbf{u}_{t+1} = \frac{(1 - \alpha)\cdot\mathbf{u}_{t} + \alpha\cdot\Delta\mathbf{u}(p, s)}{\left\|(1 - \alpha)\cdot\mathbf{u}_{t} + \alpha\cdot\Delta\mathbf{u}(p, s)\right\|_{2}} $$
+*   **Mécanisme d'oubli temporel :** Lors de chaque synchronisation, un facteur d'oubli exponentiel est appliqué pour dévaluer les préférences passées inactives (avec une demi-vie de 21 jours) :
+    $$ \mathbf{u}^{(\text{aged})} = \mathbf{u}\cdot\exp\left(-\mu\cdot\Delta t_{\text{sync}}\right) $$
 
----
+### 3.2. Pilier 2 : Algorithme Global (Tendances et Gravité)
 
-### 🎯 Objectif
-**Créer des routes :**
+L'algorithme de tendance calcule la "chaleur" globale d'un contenu. Il est exécuté par des *Workers* asynchrones pour mettre à jour les ZSETs Redis.
 
-- `POST /signup` → créer un utilisateur
-- `POST /login` → connecter (renvoyer JWT, à faire en Étape 4)
-- `GET /posts` → récupérer les posts
-- `POST /posts` → créer un post
+*   **Formule de déclin temporel composite :** Pour éviter qu'un contenu très populaire ne monopolise indéfiniment le flux, le score $S(p, t)$ fusionne une loi de puissance (score de base) et un déclin exponentiel au-delà d'une période de grâce de 72 heures.
+*   **Formule complète du score :**
+    $$ S(p, t) = \frac{\left(\displaystyle\sum_{s \in \mathcal{S}} w_{s}\cdot n_{s}(p)\right)^{0.85}}{\left(\frac{\Delta t}{3600} + 1.8\right)^{1.6}}\cdot\exp\left(-0.04\cdot\max\left(0,\; \frac{\Delta t}{3600} - 72\right)\right)\cdot\Phi(p)\cdot V(p) $$
+    Où $\Phi(p)$ est un facteur de qualité (boost média, grade de l'auteur) et $V(p)$ un facteur de diversité pour pénaliser les auteurs trop prolifiques dans une même fenêtre.
+*   **Contrôle de l'explosion des hashtags :**
+    *   *Normalisation lexicale :* Exécutée en Go à la création (`lower(trim(transliterate(hashtag_raw)))`).
+    *   *Canonicalisation floue :* Un job asynchrone recalcule les alias via la distance de Levenshtein normalisée ($d_{\text{Lev}}(h_{i}, h_{j}) \leq 0.15$) pour regrouper les fautes de frappe vers le hashtag canonique.
 
-### 📁 Organisation recommandée
-Fichier : `internal/api/routes.go`
-```go
-package api
+### 3.3. Pilier 3 : Recommandation Personnalisée
 
-import (
-	"github.com/gin-gonic/gin"
-	"net/http"
-)
+Ce pilier marie les tendances globales avec l'affinité individuelle de l'utilisateur.
 
-func SetupRoutes(r *gin.Engine) {
-	r.POST("/signup", SignUpHandler)
-	r.POST("/login", LoginHandler)
-
-	r.GET("/posts", GetPostsHandler)
-	r.POST("/posts", CreatePostHandler)
-}
-
-func SignUpHandler(c *gin.Context) {
-	// TODO: lire JSON, enregistrer utilisateur
-	c.JSON(http.StatusOK, gin.H{"message": "signup ok"})
-}
-
-func LoginHandler(c *gin.Context) {
-	// TODO: vérifier identifiants, renvoyer JWT
-	c.JSON(http.StatusOK, gin.H{"message": "login ok"})
-}
-
-func GetPostsHandler(c *gin.Context) {
-	// TODO: récupérer les posts depuis la base
-	c.JSON(http.StatusOK, gin.H{"posts": []string{"post 1", "post 2"}})
-}
-
-func CreatePostHandler(c *gin.Context) {
-	// TODO: ajouter post à la base
-	c.JSON(http.StatusCreated, gin.H{"message": "post created"})
-}
-```
-
-Ensuite, dans `cmd/main.go` :
-```go
-package main
-
-import (
-	"github.com/gin-gonic/gin"
-	"github.com/QuentinRegnier/nubo-backend/internal/api"
-)
-
-func main() {
-	r := gin.Default()
-	api.SetupRoutes(r)
-	r.Run(":8080")
-}
-```
-
-Tu peux tester les endpoints avec curl ou Postman :
-```bash
-curl -X POST http://localhost:8080/signup
-```
-→ tu dois voir :
-```json
-{"message":"signup ok"}
-```
+*   **Vectorisation du contenu côté serveur :** Chaque post $p$ génère un vecteur $\mathbf{c}_{p} \in \mathbb{R}^{224}$ à sa création, stocké en cache avec un TTL de 7 jours.
+*   **Ranking par Produit Scalaire :** Le score d'affinité mathématique repose sur la similarité cosinus (équivalente au produit scalaire pour des vecteurs normalisés) combinée avec la tendance globale $S(p, t)$ :
+    $$ \langle\hat{\mathbf{u}}, \hat{\mathbf{c}}_{p}\rangle = \displaystyle\sum_{k=1}^{224} u_{k}\cdot c_{p,k} $$
+    Une Corrélation de Pearson est également appliquée sur les blocs d'engagement pour pondérer l'affinité de comportement.
+*   **Prévention de la Bulle de Filtre (MMR) :** Pour éviter de proposer un flux redondant, l'algorithme *Maximal Marginal Relevance* (MMR) sélectionne itérativement les contenus en pénalisant ceux trop similaires aux posts déjà sélectionnés :
+    $$ p_{i}^{*} = \arg\max_{p \in \mathcal{C} \setminus \mathcal{S}_{i}}\left[\lambda_{d}\cdot R(u, p) - (1 - \lambda_{d})\cdot\max_{p' \in \mathcal{S}_{i}} \langle\hat{\mathbf{c}}_{p}, \hat{\mathbf{c}}_{p'}\rangle\right] $$
+*   **Sérendipité :** 8% du flux ($p_{\text{serendip}} = 0.08$) est injecté aléatoirement à partir du Top 10000 global pour forcer la découverte de nouveaux sujets.
+*   **Approximation par Localité (LSH - Random Projections) :** Pour les gros volumes, un pré-filtrage par *Locality-Sensitive Hashing* (SimHash sur 32 bits, $b=32$) réduit la complexité de $O(1000 \times 224)$ à environ $O(200 \times 224)$ opérations SIMD, divisant le temps de calcul par cinq.
 
 ---
 
-## IV. 🚀 Étape WebSocket : créer un serveur WebSocket basique en Go avec Gin + Gorilla WebSocket
-### 1. Créer un handler WebSocket
+## 4. 🔐 Sécurité Cryptographique et Authentification
 
-Fichier : `internal/websocket/handler.go`
-```go
-package websocket
+La sécurité de Nubo ne repose pas sur de simples jetons porteurs (Bearer tokens) statiques. Pour prévenir le vol de session, le rejeu de requêtes (Replay Attacks) et les falsifications de données en vol (Man-in-the-Middle), l'API déploie une cryptographie dynamique inspirée des protocoles de messagerie sécurisée de bout en bout.
 
-import (
-	"net/http"
-	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
-	"log"
-)
+### 4.1. L'Algorithme Ratchet (Rotation des Secrets)
 
-// Configure le Upgrader (permet de passer du HTTP au WS)
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		// TODO : en prod, tu peux vérifier l'origine ici
-		return true
-	},
-}
+Le cœur de l'intégrité du système repose sur une rotation perpétuelle des clés de signature entre le client et le serveur. À chaque renouvellement de jeton, un nouveau secret est dérivé cryptographiquement de l'état précédent.
 
-func WSHandler(c *gin.Context) {
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-	if err != nil {
-		log.Println("Erreur d'upgrade websocket:", err)
-		return
-	}
-	defer conn.Close()
+*   **Initialisation :** Lors de la connexion (`/login`) ou de l'inscription (`/signup`), le système initialise le cycle des secrets ainsi :
+    *   $\displaystyle \text{Secret}_{0} = \text{MasterToken}$
+    *   $\displaystyle \text{Secret}_{1} = \text{DeviceToken}$
+*   **Fonction de Dérivation :** À chaque appel à la route `/renew-jwt`, le client et le serveur calculent indépendamment le secret suivant ($N+2$) en hachant l'historique récent :
+    $$ \displaystyle \text{Secret}_{N+2} = \text{SHA256}(\text{Secret}_{N+1} \parallel \text{Secret}_{N} \parallel \text{MasterToken} \parallel \text{DeviceToken}) $$
+*   **Implémentation Go :** Cette logique est codée dans `security.DeriveNextSecret` en utilisant `crypto/sha256` et `encoding/hex`.
+*   **Avantage :** Ce mécanisme offre une "Forward Secrecy" partielle. Si un attaquant intercepte un $\text{Secret}_{N}$, il ne peut pas forger les requêtes futures sans connaître le `MasterToken` et le `DeviceToken` de l'appareil légitime.
 
-	log.Println("Client connecté via WebSocket")
+### 4.2. Séparation des Privilèges (Tokens)
 
-	for {
-		// Lecture message du client
-		_, msg, err := conn.ReadMessage()
-		if err != nil {
-			log.Println("Erreur lecture message:", err)
-			break
-		}
+Nubo sépare strictement l'autorisation éphémère du stockage à long terme pour limiter la surface d'attaque.
 
-		log.Printf("Message reçu: %s\n", msg)
+*   **Le `JWT` (Autorisation Court Terme) :** C'est le ticket d'entrée standard pour les requêtes API.
+    *   Il possède un TTL très court de $\displaystyle 900\text{ s}$ (15 minutes).
+    *   Il contient l'ID utilisateur (`sub`) et le `DeviceToken` (`dev`) pour lier la session à un appareil physique.
+*   **Le `MasterToken` (Stockage Long Terme) :** Stocké de manière ultra-sécurisée côté client, il possède un TTL de $\displaystyle 2592000\text{ s}$ (1 mois). Il n'est **jamais** envoyé dans les requêtes API standards, et sert uniquement à générer de nouveaux secrets ou à récupérer l'accès.
+*   **Le Processus de "Hard Refresh" (`/refresh-master`) :** Si le client et le serveur se désynchronisent (le Ratchet est cassé), le client utilise ce point de terminaison de la dernière chance.
+    *   Il envoie une requête signée via HMAC avec l'ancien `MasterToken`.
+    *   Le serveur valide la demande, génère un nouveau `MasterToken`, un nouveau `JWT`, et réinitialise le cycle Ratchet complet.
+    *   **Auto-Guérison (Cascade Fallback) :** Pour trouver la session lors de ce *refresh*, le système tente d'abord de lire le cache Redis. En cas d'échec (crash cache), il s'auto-guérit en cherchant dans MongoDB, puis finalement dans PostgreSQL, reconstruisant les couches supérieures à la volée.
 
-		// Envoi d’un message de retour (écho)
-		err = conn.WriteMessage(websocket.TextMessage, []byte("Echo: "+string(msg)))
-		if err != nil {
-			log.Println("Erreur écriture message:", err)
-			break
-		}
-	}
-}
-```
+### 4.3. Intégrité des Requêtes (HMAC)
+
+La validité d'un JWT ne suffit pas. Le middleware `HMACMiddleware` garantit que le contenu même de la requête n'a pas été altéré.
+
+*   **Signature du Payload :** Chaque requête HTTP porte une signature générée par le client (`X-Signature`). La chaîne signée (`StringToSign`) est construite en concaténant de manière rigide : `Method | Path | Timestamp | Body`.
+    *   *Multipart :* Si la requête contient des fichiers (ex: upload d'image), le système extrait intelligemment le champ texte `data` du form-data pour ne signer que les instructions JSON, évitant de hacher des mégaoctets de binaires.
+*   **Protection Anti-Rejeu (Timestamps) :** Chaque requête inclut un en-tête `X-Timestamp`. Le serveur compare ce temps à son horloge UTC interne. Si $\displaystyle \text{Current-Timestamp} - \text{X-Timestamp} > 300\text{ s}$ (5 minutes), la requête est immédiatement rejetée.
+*   **Signature des Réponses :** Le serveur signe également ses propres réponses (`X-Signature` et `X-Timestamp` en en-tête de retour) avec le même `Current-Secret` de session, permettant au client d'authentifier la provenance des données.
+
+### 4.4. Boucliers Applicatifs (Middlewares Gin)
+
+Avant même d'atteindre la couche de logique métier ou de base de données, l'API déploie des middlewares de protection au niveau du réseau :
+
+*   **Le `RateLimiter` (Anti-DDoS) :** Bloque les attaques volumétriques. Basé sur l'adresse IP du client, il utilise `INCR` dans Redis pour limiter le trafic à $\displaystyle 50\text{ requêtes}$ par fenêtre de $\displaystyle 10\text{ s}$. Il inclut un mécanisme "Fail-Open" : si Redis est indisponible, le trafic passe pour ne pas paralyser le réseau légitime.
+*   **Le `MaxBodySize` (Guillotine RAM) :** Empêche l'épuisement de la mémoire (OOM) en limitant drastiquement la taille des corps de requêtes via `http.MaxBytesReader`. Il coupe physiquement la connexion TCP si le payload dépasse $\displaystyle 2\text{ Mo}$ pour le JSON, ou $\displaystyle 15\text{ Mo}$ pour les requêtes multi-parties (images).
 
 ---
 
-### 2. Brancher le WebSocket dans Gin
+## 5. ⚡ Réseau Temps Réel et Messagerie (WebSockets & Pub/Sub)
 
-Dans `internal/api/routes.go`, ajoute :
-```go
-package api
+La gestion du temps réel dans une architecture distribuée pose un défi fondamental : les API HTTP sont *stateless* (sans état), tandis que les WebSockets sont *stateful* (avec état). Pour qu'un nœud du cluster puisse envoyer un message à un utilisateur connecté sur un autre nœud, Nubo déploie une infrastructure réseau en "Autoroute" basée sur **Redis Pub/Sub** couplé à la librairie `gorilla/websocket`.
 
-import (
-	"github.com/gin-gonic/gin"
-	"github.com/QuentinRegnier/nubo-backend/internal/websocket"
-)
+Afin de contourner les limites de taille de payload du Pub/Sub classique et d'éviter d'engorger le bus Redis, le système implémente le motif de conception **Claim Check** : le message lourd est d'abord écrit en RAM avec un TTL court (`fluxmsg:<message_id>`), puis seul son ID de 16 caractères hexadécimaux est publié sur le canal réseau. Les nœuds abonnés captent l'ID, récupèrent le payload complet, puis le distribuent.
 
-func SetupRoutes(r *gin.Engine) {
-	// Routes REST...
-	r.POST("/signup", SignUpHandler)
-	r.POST("/login", LoginHandler)
-	r.GET("/posts", GetPostsHandler)
-	r.POST("/posts", CreatePostHandler)
+### 5.1. Canal PRIVATE & GROUP : Routage dynamique instantané sans registre central
 
-	// WebSocket
-	r.GET("/ws", websocket.WSHandler)
-}
-```
+Dans une architecture classique, maintenir un "registre central" indiquant quel utilisateur est connecté à quel serveur (ex: `User A -> Node 3`) devient rapidement un goulot d'étranglement mortel à haute échelle. Nubo contourne ce problème par une approche de routage dynamique et agnostique.
 
----
+*   **Mécanique d'Abonnement (Subscribe) :** Dès qu'un utilisateur établit une connexion TCP/WebSocket avec n'importe quel nœud de la flotte, ce serveur s'abonne silencieusement à un canal dédié : `channel:user:<user_id>`.
+*   **Mécanique d'Émission (Publish) :** Lorsqu'Alice envoie un message privé à Bob, la requête HTTP frappe l'API. Le backend ne perd aucun cycle CPU à chercher où se trouve Bob. Il se contente de publier l'événement sur `channel:user:<bob_id>`.
+    *   Si Bob est en ligne, le serveur qui détient sa socket TCP capte l'événement au vol et pousse la trame binaire.
+    *   S'il est connecté sur plusieurs appareils simultanément (téléphone, ordinateur), les différents serveurs capteront le message et le distribueront en parallèle (Multi-Device Sync naturel).
+*   **Sécurité et Persistance (Fire and Forget) :** Le protocole Pub/Sub est volatil. Si la cible est hors-ligne, la trame réseau s'évanouit. Pour pallier cela, le backend effectue **systématiquement une sauvegarde parallèle** (Write-Behind) dans MongoDB et PostgreSQL. À sa reconnexion, le client resynchronise son historique via l'API REST classique, garantissant aucune perte de message (Zero Data Loss).
 
-### 3. Tester ton WebSocket localement
-```bash
-websocat ws://localhost:8080/ws
-```
-Tape un message, tu dois recevoir un `Echo: ton_message`.
+### 5.2. Canal COMMUNITY : Stratégie de Fan-Out Local (Mode Twitch) pour préserver la bande passante lors d'événements massifs
 
----
+Si la méthode *Private* était utilisée pour diffuser un message dans une "Communauté" (salon public de 50 000 personnes), le nœud expéditeur devrait publier 50 000 fois l'événement sur Redis, provoquant un pic CPU (Thundering Herd) et un écroulement de la bande passante interne.
 
-### 4. Étapes suivantes recommandées après ce test
+*   **Le problème du O(N) réseau :** Envoyer un message de $1\text{ Ko}$ à 50 000 utilisateurs individuellement via Redis saturerait immédiatement l'interface réseau avec un pic de $50\text{ Mo}$ par message.
+*   **La solution du Fan-Out Local :** L'architecture utilise un canal unique par espace : `channel:community:<name>`.
+    *   Si un serveur WebSocket (Node 1) héberge 500 utilisateurs regardant tous le même salon, ce serveur ne s'abonne qu'**une seule fois** à ce canal Redis.
+    *   Redis ne transmet qu'**un seul paquet réseau** au Node 1.
+    *   C'est le Node 1 lui-même qui, dans sa propre RAM locale, effectue une boucle (`for client := range hub.clients`) pour dupliquer et pousser la trame binaire dans les 500 sockets TCP de ses clients.
+*   **Gain mathématique :** La complexité réseau sur le bus Redis passe de $O(U)$ (où $U$ est le nombre d'utilisateurs totaux) à $O(S)$ (où $S$ est le nombre de serveurs WebSocket physiques). C'est l'architecture reine pour le streaming de flux massifs.
 
-- Ajouter un gestionnaire de connexions multiples (pool clients broadcast)
-- Intégrer Redis Pub/Sub pour scaler (via un canal central)
-- Connecter le WebSocket à la base (exemple : notifications)
-- Protéger le WS avec JWT (authentification)
-- Gérer la reconnexion automatique côté client
+### 5.3. Canal ADMIN : Control Plane global pour l'exécution d'ordres critiques (ex: Kick, Ban direct) en latence zéro
+
+Pour gérer l'infrastructure, l'administration a besoin d'une ligne d'urgence ("God Mode") capable d'outrepasser les flux standards.
+
+*   **Un Abonnement Bas Niveau :** Contrairement aux canaux *Private* ou *Community* qui sont liés au cycle de vie de l'utilisateur, le canal `channel:admin:broadcast` est rattaché au cycle de vie du processus Go (le Node lui-même). Absolument tous les serveurs de la flotte s'y abonnent dès leur démarrage, avant même d'accepter des connexions externes.
+*   **L'Exécution Distribuée en Latence Zéro :** Si un modérateur déclenche l'exclusion d'un individu malveillant, l'API publie un ordre formel, par exemple : `{"action": "KICK", "target_id": "12345"}`.
+*   **Fermeture Brutale :** La propagation est instantanée (quelques microsecondes). Chaque serveur scrute l'ordre. Si l'un des nœuds découvre qu'il héberge la socket TCP de l'utilisateur `12345`, il applique la sentence **immédiatement en local** :
+    1.  Destruction du cache de la session locale en RAM.
+    2.  Fermeture brutale (`conn.Close()`) de la connexion TCP/WebSocket de l'attaquant.
+    3.  L'opération est effective **avant même** que l'état de bannissement ne soit répliqué et validé (ACID) dans la base PostgreSQL, garantissant une coupure chirurgicale et immédiate.
 
 ---
 
-### 5. Gestionnaire de connexions multiples + broadcast
-### Objectif
-
-Garder en mémoire tous les clients connectés, pouvoir diffuser un message à tous en même temps (broadcast).
-
-### 6. Code à ajouter `internal/websocket/hub.go`
-```go
-package websocket
-
-import (
-	"log"
-	"sync"
-
-	"github.com/gorilla/websocket"
-)
-
-type Client struct {
-	conn *websocket.Conn
-	send chan []byte
-}
-
-type Hub struct {
-	clients    map[*Client]bool
-	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
-	mu         sync.Mutex
-}
-
-func NewHub() *Hub {
-	return &Hub{
-		clients:    make(map[*Client]bool),
-		broadcast:  make(chan []byte),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-	}
-}
-
-func (h *Hub) Run() {
-	for {
-		select {
-		case client := <-h.register:
-			h.mu.Lock()
-			h.clients[client] = true
-			h.mu.Unlock()
-			log.Println("Client registered")
-
-		case client := <-h.unregister:
-			h.mu.Lock()
-			if _, ok := h.clients[client]; ok {
-				delete(h.clients, client)
-				close(client.send)
-				log.Println("Client unregistered")
-			}
-			h.mu.Unlock()
-
-		case message := <-h.broadcast:
-			h.mu.Lock()
-			for client := range h.clients {
-				select {
-				case client.send <- message:
-				default:
-					close(client.send)
-					delete(h.clients, client)
-				}
-			}
-			h.mu.Unlock()
-		}
-	}
-}
-
-func (c *Client) ReadPump(hub *Hub) {
-	defer func() {
-		hub.unregister <- c
-		c.conn.Close()
-	}()
-	for {
-		_, msg, err := c.conn.ReadMessage()
-		if err != nil {
-			log.Println("Read error:", err)
-			break
-		}
-		// On envoie le message reçu à tout le monde
-		hub.broadcast <- msg
-	}
-}
-
-func (c *Client) WritePump() {
-	for msg := range c.send {
-		err := c.conn.WriteMessage(websocket.TextMessage, msg)
-		if err != nil {
-			log.Println("Write error:", err)
-			break
-		}
-	}
-	c.conn.Close()
-}
-```
-
-### 7. Modifier le handler WebSocket `internal/websocket/handler.go`
-```go
-package websocket
-
-import (
-	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
-	"log"
-	"net/http"
-)
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
-
-var hub = NewHub()
-
-func InitHub() {
-	go hub.Run()
-}
-
-func WSHandler(c *gin.Context) {
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-	if err != nil {
-		log.Println("Upgrade error:", err)
-		return
-	}
-
-	client := &Client{
-		conn: conn,
-		send: make(chan []byte, 256),
-	}
-
-	hub.register <- client
-
-	go client.WritePump()
-	client.ReadPump(hub)
-}
-```
-
-### Initialiser le hub dans `cmd/main.go`
-```go
-package main
-
-import (
-	"github.com/gin-gonic/gin"
-	"nubo-backend/internal/api"
-	"nubo-backend/internal/websocket"
-)
-
-func main() {
-	r := gin.Default()
-
-	websocket.InitHub()
-
-	api.SetupRoutes(r)
-
-	r.Run(":8080")
-}
-```
-
-### 8. Test :
-- Lance l’API
-- Connecte plusieurs clients au /ws
-- Envoie un message d’un client → Tous les clients reçoivent le message
-
----
-
-## V. Intégration Redis Pub/Sub
-
-Pourquoi ?
-
-Pour permettre à plusieurs instances de ton backend (scalées horizontalement) de communiquer, diffuser les messages WS entre elles.
-
-### 1. Ajouter Redis Pub/Sub dans le hub
-
-Installer Redis client déjà fait avec `go-redis/redis/v8`
-
-### 2. Ajouter un fichier `internal/cache/redis.go`
-```go
-package cache
-
-import (
-	"context"
-	"os"
-
-	"github.com/go-redis/redis/v8"
-)
-
-var Ctx = context.Background()
-var Rdb *redis.Client
-
-func InitRedis() {
-	Rdb = redis.NewClient(&redis.Options{
-		Addr:     os.Getenv("REDIS_ADDR"), // exemple : "localhost:6379"
-		Password: "",                      // pas de mot de passe par défaut
-		DB:       0,
-	})
-}
-```
-
-### 3. Modifie `cmd/main.go` pour initialiser Redis
-```go
-package main
-
-import (
-	"github.com/gin-gonic/gin"
-	"nubo-backend/internal/api"
-	"nubo-backend/internal/cache"
-	"nubo-backend/internal/websocket"
-	"log"
-	"os"
-)
-
-func main() {
-	// Initialiser Redis
-	cache.InitRedis()
-
-	// Initialiser Hub WS (modifié pour Redis)
-	websocket.InitHub()
-
-	r := gin.Default()
-	api.SetupRoutes(r)
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-	log.Printf("Server listening on %s", port)
-	r.Run(":" + port)
-}
-```
-
-### 4. Modifier le hub pour utiliser Redis Pub/Sub
-
-Dans `internal/websocket/hub.go` :
-
-Ajoute en haut :
-```go
-import (
-    "context"
-    "log"
-    "sync"
-
-    "github.com/go-redis/redis/v8"
-    "github.com/gorilla/websocket"
-    "github.com/QuentinRegnier/nubo-backend/internal/cache"
-)
-```
-Ajoute dans Hub :
-```go
-pubsub *redis.PubSub
-channel string
-Dans NewHub() :
-
-h := &Hub{
-	clients:    make(map[*Client]bool),
-	broadcast:  make(chan []byte),
-	register:   make(chan *Client),
-	unregister: make(chan *Client),
-	channel:    "nubo-websocket",
-}
-h.pubsub = cache.Rdb.Subscribe(context.Background(), h.channel)
-go h.listenPubSub()
-return h
-```
-Ajoute cette méthode :
-```go
-func (h *Hub) listenPubSub() {
-	ch := h.pubsub.Channel()
-	for msg := range ch {
-		h.mu.Lock()
-		for client := range h.clients {
-			select {
-			case client.send <- []byte(msg.Payload):
-			default:
-				close(client.send)
-				delete(h.clients, client)
-			}
-		}
-		h.mu.Unlock()
-	}
-}
-```
-Modifie la boucle case message := <-h.broadcast dans Run() :
-```go
-case message := <-h.broadcast:
-	// Publie sur Redis
-	err := cache.Rdb.Publish(context.Background(), h.channel, message).Err()
-	if err != nil {
-		log.Println("Redis publish error:", err)
-	}
-```
-
----
-
-## VI. Connecter le WebSocket à la base (exemple notifications)
-
-### 1. Exemple rapide
-
-Dans Client.ReadPump(), à chaque message reçu, tu peux enregistrer ou traiter en DB.
-
-### 2. Exemple dans `internal/websocket/hub.go` ReadPump :
-```go
-func (c *Client) ReadPump(hub *Hub) {
-	defer func() {
-		hub.unregister <- c
-		c.conn.Close()
-	}()
-	for {
-		_, msg, err := c.conn.ReadMessage()
-		if err != nil {
-			log.Println("Read error:", err)
-			break
-		}
-
-		// TODO: sauvegarder msg en base (Postgres/Mongo)
-
-		// Envoie le message aux autres clients
-		hub.broadcast <- msg
-	}
-}
-```
-
----
-
-## VII. Protéger le WS avec JWT
-
-### 1. Ajouter middleware d’authentification JWT
-Télécharger avant :
-```bash
-go get github.com/golang-jwt/jwt/v5
-```
-
-Dans `internal/api/middleware.go` :
-```go
-package api
-
-import (
-	"net/http"
-	"strings"
-
-	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
-)
-
-var jwtSecret = []byte("ta-cle-secrete") // à sécuriser via .env
-
-func JWTMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header manquant"})
-			return
-		}
-
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			return jwtSecret, nil
-		})
-
-		if err != nil || !token.Valid {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token invalide"})
-			return
-		}
-
-		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Claims invalides"})
-			return
-		}
-
-		// Stocke l’ID utilisateur dans le contexte
-		c.Set("userID", claims["sub"])
-
-		c.Next()
-	}
-}
-```
-
-### 2. Protéger la route WebSocket
-
-Dans `internal/api/routes.go` :
-```go
-r.GET("/ws", JWTMiddleware(), websocket.WSHandler)
-```
-Dans `internal/websocket/handler.go`, récupérer l’ID utilisateur (exemple)
-```go
-func WSHandler(c *gin.Context) {
-	userID := c.GetString("userID")
-	log.Println("Utilisateur connecté (userID):", userID)
-
-	// … reste inchangé
-}
-```
-
----
-
-### 3. ✅ PRÉREQUIS AVANT DE TESTER
-
-- Redis tourne bien (docker-compose up)
-- Ton backend Go est lancé (go run cmd/main.go)
-Tu as un JWT valide (car le WS est protégé maintenant) — on en génère un dans l'étape 1 👇
-
----
-
-### 4. 🧪 Générer un JWT de test
-
-**Ajoute un petit endpoint temporaire dans internal/api/routes.go juste pour tester :**
-```go
-import "github.com/golang-jwt/jwt/v5"
-
-func SetupRoutes(r *gin.Engine) {
-	r.GET("/token", func(c *gin.Context) {
-		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-			"sub": "user123", // ID utilisateur
-		})
-		tokenString, _ := token.SignedString([]byte("ta-cle-secrete"))
-		c.JSON(200, gin.H{"token": tokenString})
-	})
-
-	r.GET("/ws", JWTMiddleware(), websocket.WSHandler)
-}
-```
-
-Lance ton API puis exécute :
-```bash
-curl http://localhost:8080/token
-```
-Tu obtiens une réponse comme :
-```json
-{"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6Ikp..."}
-```
-
----
-
-### 5. 🧪 Se connecter avec websocat + JWT
-
-**Copie le token et lance cette commande dans le terminal :**
-```bash
-websocat ws://localhost:8081/ws -H 'Authorization: Bearer Remplace TON_JWT_ICI'
-```
-Remplace TON_JWT_ICI par le vrai token.
-
-**✅ Tu dois voir dans les logs :**
-```bash
-Utilisateur connecté (userID): user123
-Client registered
-```
-
----
-
-### 6. 🧪 Tester le broadcast
-
-- Ouvre deux terminaux avec cette même commande websocat (et le même token).
-- Tape un message dans l’un. Tu dois le recevoir dans les deux.
-
-**💬 Exemple :**
-```bash
-> Salut à tous !
-```
-
-🟢 Les deux clients doivent afficher Salut à tous !.
-
----
-
-### 7. 🧪 Tester le Redis Pub/Sub (scalabilité)
-
-**Étapes :**
-- Lance une deuxième instance de ton backend (dans un autre terminal) :
-```bash
-go run cmd/main.go
-```
-- Connecte websocat à chaque instance :
-Instance 1 : port `8080`
-Instance 2 : change à la volée : `r.Run(":8081")`, connecte à `ws://localhost:8081/ws`
-- Envoie un message sur une instance, il doit apparaître sur toutes → preuve que Redis propulse les messages entre les processus backend.
-
----
-
-### 8. 🧪 Vérifie le JWT en cas d'erreur
-
-Si tu connectes sans Authorization, tu dois recevoir :
-```bash
-{"error":"Authorization header manquant"}
-```
-Ou :
-```bash
-{"error":"Token invalide"}
-```
-## VIII. PostgreSQL & MongoDB
-### 1. Mise en place de PostgreSQL avec pgAdmin
-**Créer la structure Docker pour PostgreSQL + pgAdmin**
-Dans `docker-compose.yml`, ajoute la section PostgreSQL + pgAdmin :
-```yaml
-version: '3.8'
-
-services:
-  postgres:
-    image: postgres:16
-    container_name: nubo_postgres
-    environment:
-      POSTGRES_USER: nubo_user
-      POSTGRES_PASSWORD: nubo_password
-      POSTGRES_DB: nubo_db
-    ports:
-      - "5432:5432"
-    volumes:
-      - ./postgres-data:/var/lib/postgresql/data
-
-  pgadmin:
-    image: dpage/pgadmin4
-    container_name: nubo_pgadmin
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@nubo.com
-      PGADMIN_DEFAULT_PASSWORD: admin
-    ports:
-      - "8082:80"
-```
-**Démarre les services :**
-`docker-compose -f docker-compose.yml up -d`
-**Résultat attendu :**
-PostgreSQL accessible sur `localhost:5432`
-pgAdmin accessible sur http://localhost:8082
-Tu peux connecter pgAdmin à PostgreSQL avec nubo_user / nubo_password
-**Créer les dossiers pour les scripts SQL**
-Arborescence suggérée :
-```bash
-Nubo/
-├─ docker/
-│  └─ docker-compose.yml
-├─ sql/
-│  ├─ init/       # Scripts de création de tables de base
-│  ├─ functions/  # Procédures stockées, triggers
-│  └─ views/      # Vues SQL
-```
-Place tes fichiers `.sql` dans ces dossiers selon leur rôle.
-
----
-
-### 2. Mise en place de MongoDB avec mongo-express
-**Ajouter MongoDB à Docker**
-Toujours dans `docker-compose.yml`, ajoute :
-```yaml
-  mongo:
-    image: mongo:7
-    container_name: nubo_mongo
-    ports:
-      - "27017:27017"
-    volumes:
-      - ./mongo-data:/data/db
-
-  mongo-express:
-    image: mongo-express:1.0.0
-    container_name: nubo_mongo_express
-    environment:
-      ME_CONFIG_MONGODB_ADMINUSERNAME: root
-      ME_CONFIG_MONGODB_ADMINPASSWORD: example
-      ME_CONFIG_MONGODB_SERVER: mongo
-    ports:
-      - "8083:8081"
-```
-**Démarre le service :**
-`docker-compose -f docker-compose.yml up -d`
-MongoDB accessible sur `localhost:27017`
-mongo-express accessible sur http://localhost:8083
-**Arborescence pour les scripts Mongo**
-```bash
-Nubo/
-├─ mongo/
-│  ├─ init/          # Création des collections, index, sharding
-│  ├─ scripts/       # Inserts, indexes, TTL commands
-│  └─ workers/       # Workers pour traitement asynchrone
-```
-
----
-
-## IX. Écriture dans les bases
-### 1. Règle d’or (rappel rapide)
-- **PostgreSQL** = système de vérité, intégrité, contraintes, requêtes relationnelles (users, follow, paramètres, archival à vie).
-- **MongoDB** = charge volatile/haut-volume, accès par documents, données massives / flexibles / dernière période (cache, messages récents, logs).
-- Redis = stockage en mémoire pour sessions / liste d’utilisateurs en ligne / counters / pubsub (déjà en place).
-
-### 2. Arborescence globale (haute niveau)
-```bash
-PostgreSQL
-├─ users
-│  ├─ user_settings
-│  ├─ sessions (refresh tokens / audit)
-├─ follows
-├─ blocks
-├─ posts
-│  ├─ comments
-│  ├─ likes
-├─ media (metadata minimal + pointer vers stockage objet)
-├─ conversations_meta
-│  ├─ conversation_members
-│  ├─ message_index (résumé/offset pour messages dans Mongo)
-├─ reports
-├─ admin_actions
-└─ audit_logs
-
-MongoDB
-├─ messages                      (messages complets / growth)
-├─ posts_documents               (post + media metadata volumineux / versions)
-├─ comments_documents            (ou embedded in posts if small)
-├─ notifications                 (push & in-app notifications)
-├─ feed_cache                    (pré-calculé, TTL)
-├─ user_activity_logs            (clicks, views, events)
-├─ media_metadata                (vision/thumbnail/ai-tags)
-└─ search_index / embeddings     (opti. pour recommandations)
-```
-
-### 3. PostgreSQL : Tables clefs (schéma résumé)
-
-> Utiliser UUID (uuid_generate_v4()) pour tous les id en production. Datetime en timestamptz.
-
-**PostgreSQL :**
-
-**users**
-- `id uuid PRIMARY KEY`
-- `username text UNIQUE NOT NULL`
-- `email text UNIQUE NOT NULL`
-- `password_hash text NOT NULL`
-- `salt text NULL` (si tu utilises scrypt/bcrypt, pas nécessaire)
-- `display_name text`
-- `bio text`
-- `birthdate date`
-- `phone text UNIQUE NULL`
-- `profile_picture_id uuid NULL` (référence dans media)
-- `state smallint NOT NULL DEFAULT 1` (1=active, 0=deleted, 2=banned)
-- `created_at timestamptz DEFAULT now()`
-- `updated_at timestamptz`
-**Index** : `ON users (username)`, `ON users (email)`.
-```sql
-CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique de l'utilisateur
-    username TEXT UNIQUE NOT NULL, -- nom d'utilisateur unique
-    email TEXT UNIQUE NOT NULL, -- email unique
-    email_verified BOOLEAN DEFAULT FALSE, -- email vérifié
-    phone TEXT UNIQUE, -- numéro de téléphone unique
-    phone_verified BOOLEAN DEFAULT FALSE, -- numéro de téléphone vérifié
-    password_hash TEXT NOT NULL, -- mot de passe haché
-    first_name TEXT NOT NULL, -- prénom
-    last_name TEXT NOT NULL, -- nom de famille
-    birthdate DATE, -- date de naissance
-    sex SMALLINT, -- sexe
-    bio TEXT, -- biographie
-    profile_picture_id UUID, -- id de l'image de profil
-    grade SMALLINT NOT NULL DEFAULT 1, -- grade de l'utilisateur
-    location TEXT, -- localisation de l'utilisateur
-    school TEXT, -- école
-    works TEXT, -- emplois
-    badges TEXT[], -- badges
-    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
-    updated_at TIMESTAMPTZ DEFAULT now() -- date de mise à jour
-);
-
-CREATE INDEX idx_users_username ON users(username);
-CREATE INDEX idx_users_email ON users(email);
-```
-
----
-
-**user_settings**
-- `id uuid PRIMARY KEY`
-- `user_id uuid REFERENCES users(id) UNIQUE ON DELETE CASCADE`
-- `privacy jsonb` (ex: {"posts":"public","messages":"friends"})
-- `notifications jsonb` (per-type on/off)
-- `language text`
-- `theme text`
-**Index** : `ON user_settings (user_id)`.
-```sql
-CREATE TABLE IF NOT EXISTS user_settings (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique des paramètres utilisateur
-    user_id UUID UNIQUE REFERENCES users(id) ON DELETE CASCADE, -- id unique de l'utilisateur
-    privacy JSONB, -- paramètres de confidentialité
-    notifications JSONB, -- paramètres de notification
-    language TEXT, -- langue
-    theme SMALLINT NOT NULL DEFAULT 0 -- thème clair/sombre
-);
-
-CREATE INDEX idx_user_settings_user_id ON user_settings(user_id);
-```
----
-
-**sessions (refresh tokens / audit)**
-- `id uuid PRIMARY KEY`
-- `user_id uuid REFERENCES users(id)`
-- `refresh_token text`
-- `device_info jsonb`
-- `ip inet`
-- `created_at timestamptz`
-- `expires_at timestamptz`
-- `revoked boolean DEFAULT false`
-**Index** : `ON sessions (user_id, revoked)`.
-```sql
-CREATE TABLE IF NOT EXISTS sessions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique de la session
-    user_id UUID REFERENCES users(id), -- id de l'utilisateur
-    refresh_token TEXT, -- token de rafraîchissement
-    device_info JSONB, -- informations sur l'/les appareil(s)
-    ip INET[], -- adresse IP
-    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
-    expires_at TIMESTAMPTZ, -- date d'expiration
-    revoked BOOLEAN DEFAULT FALSE -- session révoquée
-);
-
-CREATE INDEX idx_sessions_user_id_revoked ON sessions(user_id, revoked);
-```
----
-
-**follows**
-- `id uuid PRIMARY KEY`
-- `follower_id uuid REFERENCES users(id)`
-- `followed_id uuid REFERENCES users(id)`
-- `state smallint DEFAULT 1 (1=ok, 0=pending, 2=blocked)`
-- `created_at timestamptz`
-**Unique constraint** : `(follower_id, followed_id)`.
-**Index** : `ON follows (followed_id)` pour feed queries.
-```sql
-CREATE TABLE IF NOT EXISTS follows (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique du suivi
-    followed_id UUID REFERENCES users(id), -- id de l'utilisateur suivi
-    state SMALLINT DEFAULT 1, -- état du suivi (2 = amis, 1 = suivi, 0 = inactif, -1 = bloqué)
-    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
-    UNIQUE(follower_id, followed_id)
-);
-
-CREATE INDEX idx_follows_followed_id ON follows(followed_id);
-```
----
-
-**posts**
-- `id uuid PRIMARY KEY`
-- `user_id uuid REFERENCES users(id) NOT NULL`
-- `content text` (short textual content)
-- `media_ids uuid[]` (pointeurs vers table media ou Mongo)
-- `meta jsonb` (mentions, hashtags, extra props)
-- `visibility smallint` (0=private,1=friends,2=public)
-- `created_at timestamptz`
-- `updated_at timestamptz`
-**Index** : `ON posts (user_id, created_at DESC)` ; `GIN index ON posts (meta jsonb)` pour recherches.
-```sql
-CREATE TABLE IF NOT EXISTS posts (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique du post
-    user_id UUID REFERENCES users(id) NOT NULL, -- id de l'utilisateur
-    content TEXT, -- contenu du post
-    media_ids UUID[], -- ids des médias associés
-    meta JSONB, -- métadonnées
-    visibility SMALLINT DEFAULT 0, -- visibilité (1 = amis, 0 = public)
-    location TEXT, -- localisation
-    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
-    updated_at TIMESTAMPTZ DEFAULT now() -- date de mise à jour
-);
-
-CREATE INDEX idx_posts_user_created ON posts(user_id, created_at DESC);
-CREATE INDEX idx_posts_meta ON posts USING GIN(meta);
-```
----
-
-**comments**
-- `id uuid PRIMARY KEY`
-- `post_id uuid REFERENCES posts(id) ON DELETE CASCADE`
-- `user_id uuid REFERENCES users(id)`
-- `content text`
-- `created_at timestamptz`
-**Index:** `ON comments (post_id, created_at DESC)`.
-```sql
-CREATE TABLE IF NOT EXISTS comments (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique du commentaire
-    post_id UUID REFERENCES posts(id) ON DELETE CASCADE, -- id du post
-    user_id UUID REFERENCES users(id), -- id de l'utilisateur
-    content TEXT, -- contenu du commentaire
-    created_at TIMESTAMPTZ DEFAULT now() -- date de création
-);
-
-CREATE INDEX idx_comments_post_created ON comments(post_id, created_at DESC);
-```
----
-
-**likes**
-- `id uuid PRIMARY KEY`
-- `target_type text (post/comment)`
-- `target_id uuid`
-- `user_id uuid REFERENCES users(id)`
-- `created_at timestamptz`
-**Unique** `(target_type, target_id, user_id)`.
-**Index** : `ON likes (target_type, target_id)`.
-```sql
-CREATE TABLE IF NOT EXISTS likes (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique du like
-    target_type SMALLINT NOT NULL, -- type de la cible (0 = post, 1 = message, 2 = commentaire)
-    target_id UUID NOT NULL, -- id de la cible
-    user_id UUID REFERENCES users(id), -- id de l'utilisateur
-    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
-    UNIQUE(target_type, target_id, user_id)
-);
-
-CREATE INDEX idx_likes_target ON likes(target_type, target_id);
-```
----
-
-**conversations_meta**
-- `id uuid PRIMARY KEY`
-- `type smallint` (1=direct,2=group)
-- `title text NULL`
-- `last_message_text text NULL`
-- `last_message_time timestamptz NULL`
-- `created_at timestamptz`
-**Index** : `ON conversations_meta (last_message_time DESC)`.
-```sql
-CREATE TABLE IF NOT EXISTS conversations_meta (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique de la conversation
-    type SMALLINT, -- type de la conversation (0 = message privée, 1 = groupe, 2 = communauté, 3 = annonce)
-    title TEXT, -- titre de la conversation
-    last_message_id UUID UNIQUE, -- id du dernier message
-    state SMALLINT DEFAULT 0, -- état de la conversation (0 = active, 1 = archivée, 2 = supprimée)
-    created_at TIMESTAMPTZ DEFAULT now() -- date de création
-);
-
-CREATE INDEX idx_conversations_last_message ON conversations_meta(last_message_id);
-```
----
-
-**conversation_members**
-- `id uuid PRIMARY KEY`
-- `conversation_id uuid REFERENCES conversations_meta(id)`
-- `user_id uuid REFERENCES users(id)`
-- `role smallint` (admin/member)
-- `joined_at timestamptz`
-- `unread_count int DEFAULT 0`
-
-**Unique** `(conversation_id, user_id)`.
-```sql
-CREATE TABLE IF NOT EXISTS conversation_members (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique du membre
-    conversation_id UUID REFERENCES conversations_meta(id), -- id de la conversation
-    user_id UUID REFERENCES users(id), -- id de l'utilisateur
-    role SMALLINT DEFAULT 0, -- rôle du membre (0 = membre, 1 = admin, 2 = créateur)
-    joined_at TIMESTAMPTZ DEFAULT now(), -- date d'adhésion
-    unread_count INT DEFAULT 0, -- nombre de messages non lus
-    UNIQUE(conversation_id, user_id)
-);
-```
----
-
-**message_index (résumé pour accès rapide)**
-- `id uuid PRIMARY KEY` (same as Mongo message id or index)
-- `conversation_id uuid REFERENCES conversations_meta(id)`
-- `message_id text` (id in Mongo or pointer)
-- `sender_id uuid`
-- `created_at timestamptz`
-- `snippet text` (first X chars)
-**Index**: `ON message_index (conversation_id, created_at DESC)`.
-**Pattern** : on écrit le message complet dans MongoDB (champ texte, medias), et on écrit une ligne d’index/minimale en Postgres (message_index) pour permettre recherche pagination rapide, jointures, quotas, unread counters, etc.
-```sql
-CREATE TABLE IF NOT EXISTS message_index (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique du message
-    conversation_id UUID REFERENCES conversations_meta(id), -- id de la conversation
-    sender_id UUID NOT NULL, -- id de l'expéditeur
-    message_type SMALLINT NOT NULL DEFAULT 0, -- 0=text, 1=image, 2=publication, 3=vocal, 4=vidéo
-    content TEXT, -- contenu du message
-    attachments JSONB, -- pointeurs vers fichiers S3 / metadata
-    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
-);
-
-
-CREATE INDEX idx_message_index_conv_created ON message_index(conversation_id, created_at DESC);
-```
----
-
-**media (minimum metadata)**
-- `id uuid PRIMARY KEY`
-- `owner_id uuid`
-- `storage_path text` (S3 path)
-- `mime text`
-- `size bigint`
-- `width int, height int`
-- `created_at timestamptz`
-- `processing_state smallint` (0=pending,1=done)
-**Index** : `ON media (owner_id)`.
-```sql
-CREATE TABLE IF NOT EXISTS media (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique du média
-    owner_id UUID REFERENCES users(id), -- id du propriétaire
-    storage_path TEXT, -- chemin de stockage
-    created_at TIMESTAMPTZ DEFAULT now(), -- date de création
-);
-
-CREATE INDEX idx_media_owner ON media(owner_id);
-CREATE INDEX idx_media_created ON media(created_at);
-```
----
-
-**reports**
-```sql
-CREATE TABLE IF NOT EXISTS reports (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- id unique du rapport
-    actor_id UUID REFERENCES users(id), -- id de l'utilisateur ayant signalé
-    target_type SMALLINT NOT NULL, -- type de la cible (user/post/comment/etc)
-    target_id UUID NOT NULL, -- id de la cible
-    reason TEXT, -- raison du signalement
-    state SMALLINT DEFAULT 0, -- état du rapport (0=pending, 1=reviewed, 2=resolved)
-    created_at TIMESTAMPTZ DEFAULT now() -- date de création
-);
-
-CREATE INDEX idx_reports_actor ON reports(actor_id);
-CREATE INDEX idx_reports_created ON reports(created_at);
-```
-
-### 4. PosgreSQL : Schéma
-```bash
-📂 database/
- ├── 📂 schemas/
- │    ├── auth/          → utilisateurs, sessions, relations
- │    ├── content/       → posts, comments, likes, media
- │    ├── messaging/     → conversations, messages
- │    ├── moderation/    → reports
- │    ├── logic/         → fonctions + procédures
- │    ├── views/         → vues matérialisées ou non
-```
-
----
-
-### 5. MongoDB
-> Principe : stocker documents volumineux, formats libres, TTL sur ce qui est éphémère.
-**MongoExpress**
-- Créer une nouvelle base `nubo_recent`
-**Terminal**
-1. Mets ton Homebrew à jour :
-```bash
-brew update
-```
-2. Installe mongosh :
-```bash
-brew install mongosh
-```
-3. Vérifie que ça marche :
-```bash
-mongosh --version
-```
-**Se connecter à ton serveur Mongo**
-Une fois installé, tu pourras te connecter à ton serveur MongoDB (celui où Mongo Express est branché).
-En général, si c’est en local :
-```bash
-mongosh "mongodb://root:example@localhost:27017"
-```
-Tu choisis la base (si ce n’est pas encore fait) :
-```javascript
-use nubo_recent
-```
-Ensuite tu colles ton script complet :
-(voir collection)
----
-
-**messages (collection)**
-```javascript
-// ---------------------- USERS ----------------------
-db.createCollection("users_recent");
-db.users_recent.createIndex({ username: 1 }, { unique: true });
-db.users_recent.createIndex({ email: 1 }, { unique: true });
-
-// Exemple d’insertion complète pour users_recent
-db.users_recent.insertOne({
-    _id: UUID(),
-    username: "",
-    email: "",
-    email_verified: false,
-    phone: null,
-    phone_verified: false,
-    password_hash: "",
-    first_name: "",
-    last_name: "",
-    birthdate: null,
-    sex: null,
-    bio: "",
-    profile_picture_id: null,
-    grade: 1,
-    location: "",
-    school: "",
-    work: "",
-    badges: [],
-    created_at: new Date(),
-    updated_at: new Date(),
-    connected: false
-});
-
-// ---------------------- USER SETTINGS ----------------------
-db.createCollection("user_settings_recent");
-db.user_settings_recent.createIndex({ user_id: 1 }, { unique: true });
-
-db.user_settings_recent.insertOne({
-    _id: UUID(),
-    user_id: UUID(),
-    privacy: {},
-    notifications: {},
-    language: "",
-    theme: 0,
-    created_at: new Date(),
-    updated_at: new Date()
-});
-
-// ---------------------- SESSIONS ----------------------
-db.createCollection("sessions_recent");
-db.sessions_recent.createIndex({ user_id: 1, revoked: 1 });
-
-db.sessions_recent.insertOne({
-    _id: UUID(),
-    user_id: UUID(),
-    refresh_token: "",
-    device_info: {},
-    ip: [],
-    created_at: new Date(),
-    expires_at: null,
-    revoked: false
-});
-
-// ---------------------- RELATIONS ----------------------
-db.createCollection("relations_recent");
-db.relations_recent.createIndex({ primary_id: 1 });
-db.relations_recent.createIndex({ secondary_id: 1 });
-db.relations_recent.createIndex({ secondary_id: 1, primary_id: 1 }, { unique: true });
-
-db.relations_recent.insertOne({
-    _id: UUID(),
-    primary_id: UUID(),
-    secondary_id: UUID(),
-    state: 1,
-    created_at: new Date()
-});
-
-// ---------------------- POSTS ----------------------
-db.createCollection("posts_recent");
-db.posts_recent.createIndex({ user_id: 1, created_at: -1 });
-
-db.posts_recent.insertOne({
-    _id: UUID(),
-    user_id: UUID(),
-    content: "",
-    media_ids: [],
-    visibility: 0,
-    location: "",
-    created_at: new Date(),
-    updated_at: new Date()
-});
-
-// ---------------------- COMMENTS ----------------------
-db.createCollection("comments_recent");
-db.comments_recent.createIndex({ post_id: 1, created_at: -1 });
-
-db.comments_recent.insertOne({
-    _id: UUID(),
-    post_id: UUID(),
-    user_id: UUID(),
-    content: "",
-    created_at: new Date()
-});
-
-// ---------------------- LIKES ----------------------
-db.createCollection("likes_recent");
-db.likes_recent.createIndex({ target_type: 1, target_id: 1 });
-db.likes_recent.createIndex({ target_type: 1, target_id: 1, user_id: 1 }, { unique: true });
-
-db.likes_recent.insertOne({
-    _id: UUID(),
-    target_type: 0,
-    target_id: UUID(),
-    user_id: UUID(),
-    created_at: new Date()
-});
-
-// ---------------------- MEDIA ----------------------
-db.createCollection("media_recent");
-db.media_recent.createIndex({ owner_id: 1 });
-db.media_recent.createIndex({ created_at: 1 });
-
-db.media_recent.insertOne({
-    _id: UUID(),
-    owner_id: UUID(),
-    storage_path: "",
-    created_at: new Date()
-});
-
-// ---------------------- CONVERSATIONS META ----------------------
-db.createCollection("conversations_recent");
-db.conversations_recent.createIndex({ last_message_id: 1 });
-
-db.conversations_recent.insertOne({
-    _id: UUID(),
-    type: 0,
-    title: "",
-    last_message_id: null,
-    state: 0,
-    created_at: new Date()
-});
-
-// ---------------------- CONVERSATION MEMBERS ----------------------
-db.createCollection("conversation_members_recent");
-db.conversation_members_recent.createIndex({ conversation_id: 1, user_id: 1 }, { unique: true });
-
-db.conversation_members_recent.insertOne({
-    _id: UUID(),
-    conversation_id: UUID(),
-    user_id: UUID(),
-    role: 0,
-    joined_at: new Date(),
-    unread_count: 0
-});
-
-// ---------------------- MESSAGES ----------------------
-db.createCollection("messages_recent");
-db.messages_recent.createIndex({ conversation_id: 1, created_at: -1 });
-
-db.messages_recent.insertOne({
-    _id: UUID(),
-    conversation_id: UUID(),
-    sender_id: UUID(),
-    message_type: 0,
-    state: 0,
-    content: "",
-    attachments: {},
-    created_at: new Date()
-});
-
-// ---------------------- FEED CACHE ----------------------
-db.createCollection("feed_cache");
-db.feed_cache.createIndex({ user_id: 1, created_at: -1 });
-
-db.feed_cache.insertOne({
-    _id: UUID(),
-    user_id: UUID(),
-    items: [],
-    created_at: new Date()
-});
-```
-
----
-
-## X. Stratégie de requêtes des données :
-
-### 1. Stratégie MongoDB réajustée
-1. Répliquer uniquement les données “interactives” du dernier mois :
-- Interactions = lecture, écriture, modification, likes, commentaires, etc.
-- MongoDB ne reçoit que ce sous-ensemble des tables concernées (`users`, `sessions`, `posts`, `comments`, `likes`, `media`, `messages`, `conversations_meta`, `conversation_members`, `relations`).
-- On ne fait pas de réplication totale. C’est donc bien un filtrage côté Go, pas PostgreSQL.
-2. Feed pré-calculé
-- Continu pour les utilisateurs connectés.
-- Occasionnel pour les utilisateurs non connectés, selon la charge serveur.
-3. Décision de répliquer / stocker les données :
-- Exclusivement côté Go, qui connaît la logique métier et peut filtrer les données “récentes ou actives”.
-- PostgreSQL n’est utilisé que comme source de vérité pour les données anciennes ou massives.
-4. Lecture multi-couche :
-```text
-Go cherche un message/post :
--> Redis (cache ultra rapide)
--> Mongo (données récentes ou lourdes)
--> PostgreSQL (historique ou requêtes complexes)
-```
-- On peut sauter des étapes si on sait déjà que la donnée est ancienne ou que le filtre limite à moins d’un mois.
-5. Écriture / suppression :
-- Écriture triple : Redis + Mongo + PostgreSQL.
-- Suppression / update : idem, pour garder la cohérence.
-
----
-
-### 2. Optimisation de la fil d’attente et des écritures massives
-**PostgreSQL**
-- Batch insertions : plutôt que d’écrire 50 000 lignes une par une, grouper les inserts dans une seule requête `INSERT ... VALUES (...), (...), (...)`.
-- Transactions groupées : encapsuler plusieurs opérations dans une seule transaction réduit les commits, ce qui accélère les écritures et limite la fragmentation.
-- COPY : pour des gros volumes, `COPY FROM` est beaucoup plus rapide qu’un `INSERT` classique.
-- Prepared statements : si on fait beaucoup d’inserts similaires, préparer la requête et l’exécuter en boucle réduit l’overhead.
-- Indexes : désactiver temporairement certains indexes pendant un bulk insert massif puis les reconstruire peut être plus rapide.
-**MongoDB**
-- insertMany : Mongo gère très bien les insertions en masse via `insertMany`.
-- Ordered=false : permet de continuer l’insertion même si certains documents échouent, utile pour les très gros batchs.
-- Bulk API : `bulkWrite` permet de combiner insert, update, delete dans une seule opération, très efficace pour la réplication / traitement de flux.
-- Sharding : si le dataset devient massif, sharder sur une clé qui répartit uniformément la charge d’écriture (ex : `conversation_id` pour messages).
-- Write concern : ajuster le write concern (`w=1` pour rapide, `w=majority` pour sûr) selon le besoin.
-**Général**
-- Parallelisation côté Go :
-	- Regrouper les écritures par type et table.
-	- Faire plusieurs goroutines pour envoyer les batchs en parallèle.
-	- Redis est naturellement rapide pour des mises à jour concurrentes.
-
----
-
-### 3. Schéma conceptuel clair du flux multi-couche
-```pgsql
-                        ┌───────────────────────┐
-                        │       Utilisateur     │
-                        │   (Mobile / Web)      │
-                        └───────────┬───────────┘
-                                    │
-                                    ▼
-                           ┌─────────────────┐
-                           │       Go        │
-                           │  Orchestrateur  │
-                           │   logique métier│
-                           └───────┬─────────┘
-                                   │
-      ┌────────────────────────────┼────────────────────────────┐
-      │                            │                            │
-      ▼                            ▼                            ▼
-┌───────────────┐           ┌─────────────────┐         ┌─────────────────┐
-│     Redis     │           │     MongoDB     │         │  PostgreSQL     │
-│  Cache rapide │           │ Données récentes│         │ Source de vérité│
-│  - unread     │           │ < 1 mois /      │         │ historique      │
-│    counters   │           │ interactions    │         │ - toutes tables │
-│  - sessions   │           │ - messages      │         │ - contraintes   │
-│  - pub/sub    │           │ - posts volum.  │         │   d’intégrité   │
-│  - feed cache │           │ - conversations │         │ - requêtes      │
-└───────────────┘           │   récentes      │         │   complexes     │
-                            │ - medias récents│         └─────────────────┘
-                            └───────┬─────────┘
-                                    │
-                       ┌────────────┴──────────────┐
-                       │   Batch / Bulk insertions │
-                       │   insertMany / COPY       │
-                       │   Parallelisation Go      │
-                       └───────────────────────────┘
-```
-
----
-
-**Explications du flux**
-1. Utilisateur interagit → envoie une requête à Go.
-2. Go décide :
-	- Lire → Redis → MongoDB → PostgreSQL si nécessaire.
-	- Écrire → Redis + MongoDB + PostgreSQL.
-	- Supprimer → Redis + MongoDB + PostgreSQL.
-3. MongoDB contient uniquement les données récentes ou utilisées activement (moins d’un mois, interactions récentes).
-4. Redis sert pour :
-	- compteur de messages non lus,
-	- sessions actives,
-	- pub/sub temps réel,
-	- feed cache temporaire.
-5. PostgreSQL reste la source de vérité complète, historique, contraintes d’intégrité, et requêtes complexes (rapports, exports, analytics).
-
----
-
-**Optimisation / charge serveur**
-- Go peut batcher les insertions :
-	- Messages, posts, commentaires → insertMany pour Mongo, COPY ou multi-row insert pour PostgreSQL.
-- Feed pré-calculé :
-	- Pour les utilisateurs connectés → continu.
-	- Pour les non-connectés → seulement quand charge CPU/RAM le permet (heures creuses).
-- Lecture / filtre :
-	- Pré-filtrer par moins d’un mois → MongoDB.
-	- Si besoin historique → PostgreSQL.
-
-## XI. Travail sur Go
-### 1. Initialisation de Redis et Mongo :
-__**Objectif :**__
-- Forcer à la supprésion toutes les lignes ayant été utilisé il y a plus d'un mois dans les collections de MongoDB dans la base `nubo_recent`
-- Nettoyer totalement Redis
-
-**Création de `init.go` et insertion de la directive dans `main.go`**
-```go
-package initdata
-
-import (
-    "context"
-    "log"
-    "time"
-
-    "github.com/QuentinRegnier/nubo-backend/internal/cache"
-    "github.com/QuentinRegnier/nubo-backend/internal/db"
-    "go.mongodb.org/mongo-driver/bson"
-)
-
-func CleanMongo() {
-    ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-    defer cancel()
-
-    dbRecent := db.MongoClient.Database("nubo_recent")
-
-    // Récupère toutes les collections de la DB
-    collections, err := dbRecent.ListCollectionNames(ctx, bson.D{})
-    if err != nil {
-        log.Printf("❌ Erreur récupération collections Mongo: %v", err)
-        return
+## 6. 💾 Schéma Relationnel et Structuration (PostgreSQL)
+
+PostgreSQL 16 est la clé de voûte de l'architecture Nubo (Niveau 3 - L3). Bien que l'application s'appuie massivement sur des caches NoSQL pour la lecture et des files asynchrones pour l'écriture, PostgreSQL reste la **source de vérité absolue** garantissant l'intégrité relationnelle et les propriétés ACID.
+
+Pour refléter les principes du *Domain-Driven Design* (DDD) et isoler les contextes fonctionnels, la base de données ne déverse pas toutes ses tables dans le schéma `public`. Elle est rigoureusement segmentée en 5 schémas logiques distincts : `auth`, `content`, `messaging`, `moderation` et `views`.
+
+### 6.1. Diagramme Entité-Association (ERD)
+
+Le diagramme suivant modélise les relations fondamentales de la base de données. Les IDs primaires sont des entiers signés 64-bits générés en amont par l'algorithme distribué Snowflake (évitant ainsi les goulots d'étranglement de l'auto-incrémentation SQL).
+
+```mermaid
+erDiagram
+    %% --- SCHEMA AUTH ---
+    USERS {
+        bigint id PK
+        text username
+        text email
+        text phone
+        text password_hash
+        smallint grade
+        boolean desactivated
+        boolean banned
     }
 
-    // Date limite : 30 jours
-    threshold := time.Now().AddDate(0, 0, -30)
-
-    for _, collName := range collections {
-        coll := dbRecent.Collection(collName)
-
-        // Supprime les documents dont last_use < threshold
-        filter := bson.M{
-            "last_use": bson.M{
-                "$lt": threshold,
-            },
-        }
-
-        res, err := coll.DeleteMany(ctx, filter)
-        if err != nil {
-            log.Printf("❌ Erreur suppression dans %s: %v", collName, err)
-            continue
-        }
-
-        log.Printf("🧹 Nettoyage Mongo [%s] → %d documents supprimés", collName, res.DeletedCount)
+    RELATIONS {
+        bigint id PK
+        bigint primary_id FK
+        bigint secondary_id FK
+        smallint state
     }
-}
 
-func CleanRedis() {
-    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-    defer cancel()
-
-    err := cache.Rdb.FlushDB(ctx).Err()
-    if err != nil {
-        log.Printf("❌ Erreur flush Redis: %v", err)
-        return
+    SESSIONS {
+        bigint id PK
+        bigint user_id FK
+        text master_token
+        text device_token
+        jsonb device_info
+        inet_array ip_history
     }
-    log.Println("🧹 Redis vidé avec succès ✅")
-}
 
-func InitData() {
-    log.Println("=== Initialisation: Nettoyage Mongo + Redis ===")
-    CleanMongo()
-    CleanRedis()
-    log.Println("=== Initialisation terminée ✅ ===")
-}
-```
-```go
-// Nettoyage au démarrage
-    initdata.InitData()
-```
-
----
-
-### 2. Sécurisation par JWT 
-- mise en place d'une expiration dans le token
-- mise en place de la connexion du JWT_SCRET dans celui dans `.env`
-```go 
-package api
-
-import (
-	"fmt"
-	"net/http"
-	"os"
-	"time"
-
-	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
-)
-
-func JWTMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		tokenString := c.GetHeader("Authorization")
-		if tokenString == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header manquant"})
-			return
-		}
-
-		// Retirer "Bearer " si présent
-		if len(tokenString) > 7 && tokenString[:7] == "Bearer " {
-			tokenString = tokenString[7:]
-		}
-
-		keyFunc := func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("algorithme JWT invalide")
-			}
-			return []byte(os.Getenv("JWT_SECRET")), nil
-		}
-
-		token, err := jwt.Parse(tokenString, keyFunc)
-		if err != nil || !token.Valid {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token invalide"})
-			return
-		}
-
-		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok || !token.Valid {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Claims invalides"})
-			return
-		}
-
-		// Vérification expiration
-		if exp, ok := claims["exp"].(float64); ok {
-			if time.Now().After(time.Unix(int64(exp), 0)) {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token expiré"})
-				return
-			}
-		}
-
-		// Mettre l’ID utilisateur dans le contexte
-		c.Set("userID", claims["sub"])
-
-		c.Next()
-	}
-}
-```
-
----
-
-### 3. Dynamisation de la gestion de la RAM pour REDIS et création de type de noeud
-- type **flux** : permet d'envoyer des données à d'autre WS, durée de vie des données 1s
-- type **cache** : permet de stocker des données pour soulager MongoDB et PostgreSQL ainsi que pour augmenter la vitesse, durée de vie des données infini ou presque
-- gestion intélligente de la RAM avec une marge laissé vide à ne pas dépasser sinon le programme purge les données les moins utilisé de REDIS, ce sont bien les données qui sont purger et pas les noeuds entier
-```go
-// internal/cache/strategy_redis.go
-package cache
-
-import (
-	"context"
-	"log"
-	"runtime"
-	"sync"
-	"time"
-
-	"github.com/go-redis/redis/v8"
-)
-
-// ---------------- Types ----------------
-
-// Type d’un noeud Redis
-type NodeType int
-
-const (
-	NodeFlux NodeType = iota
-	NodeCache
-)
-
-// Un élément dans la LRU globale
-type CacheElement struct {
-	NodeName  string // nom du noeud (ex: "messages")
-	ElementID string // ex: "392"
-	prev      *CacheElement
-	next      *CacheElement
-}
-
-// LRU globale pour les éléments de type cache
-type LRUCache struct {
-	elements map[string]*CacheElement // clé = nodeName:elementID
-	head     *CacheElement
-	tail     *CacheElement
-	mu       sync.Mutex
-	rdb      *redis.Client
-}
-
-// ---------------- Initialisation ----------------
-
-// NewLRUCache initialise un cache LRU global
-func NewLRUCache(rdb *redis.Client) *LRUCache {
-	return &LRUCache{
-		elements: make(map[string]*CacheElement),
-		rdb:      rdb,
-	}
-}
-
-// ---------------- Gestion usage ----------------
-
-// MarkUsed marque un élément comme utilisé (move to tail)
-func (lru *LRUCache) MarkUsed(nodeName, elementID string) {
-	lru.mu.Lock()
-	defer lru.mu.Unlock()
-
-	key := nodeName + ":" + elementID
-	elem, exists := lru.elements[key]
-	if exists {
-		lru.moveToTail(elem)
-		return
-	}
-
-	elem = &CacheElement{NodeName: nodeName, ElementID: elementID}
-	lru.elements[key] = elem
-	lru.append(elem)
-}
-
-func (lru *LRUCache) moveToTail(elem *CacheElement) {
-	if elem == lru.tail {
-		return
-	}
-	lru.remove(elem)
-	lru.append(elem)
-}
-
-func (lru *LRUCache) append(elem *CacheElement) {
-	if lru.tail != nil {
-		lru.tail.next = elem
-		elem.prev = lru.tail
-		elem.next = nil
-		lru.tail = elem
-	} else {
-		lru.head = elem
-		lru.tail = elem
-	}
-}
-
-func (lru *LRUCache) remove(elem *CacheElement) {
-	if elem.prev != nil {
-		elem.prev.next = elem.next
-	} else {
-		lru.head = elem.next
-	}
-	if elem.next != nil {
-		elem.next.prev = elem.prev
-	} else {
-		lru.tail = elem.prev
-	}
-	elem.prev = nil
-	elem.next = nil
-}
-
-func (lru *LRUCache) purgeOldest() {
-	if lru.head == nil {
-		return
-	}
-	old := lru.head
-	log.Printf("Purging Redis cache element (LRU): node=%s, id=%s\n", old.NodeName, old.ElementID)
-	lru.remove(old)
-	delete(lru.elements, old.NodeName+":"+old.ElementID)
-
-	// suppression dans Redis
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	key := "cache:" + old.NodeName
-	if err := lru.rdb.HDel(ctx, key, old.ElementID).Err(); err != nil {
-		log.Printf("Erreur suppression Redis: %v\n", err)
-	}
-}
-
-// ---------------- Mémoire ----------------
-
-// StartMemoryWatcher surveille la RAM
-func (lru *LRUCache) StartMemoryWatcher(maxRAM uint64, marge uint64, interval time.Duration) {
-	go func() {
-		for {
-			var m runtime.MemStats
-			runtime.ReadMemStats(&m)
-			used := m.Alloc
-			if maxRAM == 0 {
-				maxRAM = getTotalRAM()
-			}
-			if used > maxRAM-marge {
-				log.Printf("RAM utilisée=%d, dépassement seuil=%d, purge LRU...\n", used, maxRAM-marge)
-				lru.mu.Lock()
-				lru.purgeOldest()
-				lru.mu.Unlock()
-			}
-			time.Sleep(interval)
-		}
-	}()
-}
-
-func getTotalRAM() uint64 {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-	return m.Sys
-}
-
-// ---------------- Flux ----------------
-
-// DefaultFluxTTL est le temps de vie par défaut d'un message de flux
-const DefaultFluxTTL = 1 * time.Second
-
-// PushFluxWithTTL publie un message sur un flux et crée un TTL individuel
-func PushFluxWithTTL(rdb *redis.Client, nodeName string, messageID string, message []byte, ttl time.Duration) error {
-	ctx := context.Background()
-
-	// Stocke le message temporairement avec TTL individuel
-	key := "fluxmsg:" + messageID
-	if err := rdb.Set(ctx, key, message, ttl).Err(); err != nil {
-		return err
-	}
-
-	// Publie sur le canal pour diffusion immédiate
-	channel := "flux:" + nodeName
-	if err := rdb.Publish(ctx, channel, messageID).Err(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// SubscribeFlux s'abonne à un flux et renvoie les messages via un channel Go
-func SubscribeFlux(rdb *redis.Client, nodeName string) (<-chan []byte, context.CancelFunc) {
-	channel := "flux:" + nodeName
-	ctx, cancel := context.WithCancel(context.Background())
-
-	pubsub := rdb.Subscribe(ctx, channel)
-	ch := make(chan []byte, 100) // buffer côté Go
-
-	go func() {
-		defer pubsub.Close()
-		for msg := range pubsub.Channel() {
-			messageID := msg.Payload
-			// Récupère le message stocké temporairement
-			data, err := rdb.Get(ctx, "fluxmsg:"+messageID).Bytes()
-			if err == redis.Nil {
-				continue // TTL déjà expiré
-			} else if err != nil {
-				log.Println("Erreur récupération flux message:", err)
-				continue
-			}
-			ch <- data
-		}
-		close(ch)
-	}()
-
-	return ch, cancel
-}
-
-// ---------------- Cache ----------------
-
-// SetCache ajoute un élément au cache
-func (lru *LRUCache) SetCache(ctx context.Context, nodeName, elementID string, value []byte) error {
-	key := "cache:" + nodeName
-	if err := lru.rdb.HSet(ctx, key, elementID, value).Err(); err != nil {
-		return err
-	}
-	lru.MarkUsed(nodeName, elementID)
-	return nil
-}
-
-// GetCache lit un élément du cache
-func (lru *LRUCache) GetCache(ctx context.Context, nodeName, elementID string) ([]byte, error) {
-	key := "cache:" + nodeName
-	val, err := lru.rdb.HGet(ctx, key, elementID).Bytes()
-	if err == redis.Nil {
-		return nil, nil
-	}
-	if err == nil {
-		lru.MarkUsed(nodeName, elementID)
-	}
-	return val, err
-}
-
-// ---------------- Global ----------------
-
-// GlobalStrategy est l’instance globale de stratégie LRU utilisée par toute l’app
-var GlobalStrategy *LRUCache
-```
-et dapatation du nouveau système dans le `hub.go` :
-```go 
-package websocket
-
-import (
-	"crypto/rand"
-	"encoding/hex"
-	"log"
-	"sync"
-
-	"github.com/QuentinRegnier/nubo-backend/internal/cache"
-	"github.com/gorilla/websocket"
-)
-
-// generateMessageID crée un ID unique pour chaque message
-func generateMessageID() string {
-	b := make([]byte, 8) // 8 octets → 16 caractères hex
-	if _, err := rand.Read(b); err != nil {
-		return "msg-fallback" // fallback si erreur improbable
-	}
-	return hex.EncodeToString(b)
-}
-
-// ---------------- Clients ----------------
-
-type Client struct {
-	conn *websocket.Conn
-	send chan []byte
-}
-
-// ---------------- Hub ----------------
-
-type Hub struct {
-	clients    map[*Client]bool
-	register   chan *Client
-	unregister chan *Client
-	broadcast  chan []byte
-	mu         sync.Mutex
-
-	channel string
-}
-
-// NewHub crée un nouveau Hub et lance l'écoute du flux Redis
-func NewHub() *Hub {
-	h := &Hub{
-		clients:    make(map[*Client]bool),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-		broadcast:  make(chan []byte),
-		channel:    "nubo-websocket",
-	}
-
-	// Utilise la fonction SubscribeFlux pour recevoir les messages
-	go h.listenFlux()
-	return h
-}
-
-// listenFlux s'abonne au flux Redis et distribue les messages aux clients
-func (h *Hub) listenFlux() {
-	ch, cancel := cache.SubscribeFlux(cache.Rdb, h.channel)
-	defer cancel()
-
-	for msg := range ch {
-		h.mu.Lock()
-		for client := range h.clients {
-			select {
-			case client.send <- msg:
-			default:
-				close(client.send)
-				delete(h.clients, client)
-			}
-		}
-		h.mu.Unlock()
-	}
-}
-
-// Run démarre la boucle principale du hub pour gérer l'inscription/désinscription et la diffusion
-func (h *Hub) Run() {
-	for {
-		select {
-		case client := <-h.register:
-			h.mu.Lock()
-			h.clients[client] = true
-			h.mu.Unlock()
-			log.Println("Client registered")
-
-		case client := <-h.unregister:
-			h.mu.Lock()
-			if _, ok := h.clients[client]; ok {
-				delete(h.clients, client)
-				close(client.send)
-				log.Println("Client unregistered")
-			}
-			h.mu.Unlock()
-
-		case message := <-h.broadcast:
-			// Publie le message sur le flux Redis avec TTL individuel (ex: 1s)
-			messageID := generateMessageID() // fonction pour créer un ID unique
-			err := cache.PushFluxWithTTL(cache.Rdb, h.channel, messageID, message, cache.DefaultFluxTTL)
-			if err != nil {
-				log.Println("Erreur PushFluxWithTTL:", err)
-			}
-		}
-	}
-}
-
-// ---------------- Clients WS ----------------
-
-// ReadPump lit les messages d’un client et les envoie au hub
-func (c *Client) ReadPump(hub *Hub) {
-	defer func() {
-		hub.unregister <- c
-		c.conn.Close()
-	}()
-
-	for {
-		_, msg, err := c.conn.ReadMessage()
-		if err != nil {
-			log.Println("Read error:", err)
-			break
-		}
-
-		// TODO: sauvegarder msg en base (Postgres/Mongo)
-
-		// Envoie le message aux autres clients via le hub
-		hub.broadcast <- msg
-	}
-}
-
-// WritePump envoie les messages du hub au client
-func (c *Client) WritePump() {
-	for msg := range c.send {
-		err := c.conn.WriteMessage(websocket.TextMessage, msg)
-		if err != nil {
-			log.Println("Write error:", err)
-			break
-		}
-	}
-	c.conn.Close()
-}
-```
-ajout également de la déclaration de l'observation de la RAM dans `main.go` :
-```go
-// ⚡ Initialiser la stratégie Redis
-<cache.GlobalStrategy = cache.NewLRUCache(cache.Rdb)
-
-// ⚡ Démarrer le watcher mémoire
-// maxRAM = 0 => autodétection
-// marge = 200 Mo de marge de sécurité
-// interval = toutes les 2 secondes
-cache.GlobalStrategy.StartMemoryWatcher(0, 200*1024*1024, 2*time.Second)
-```
-
----
-
-### 4. Dupliquer le WS pour faire des test de REDIS plus simplement :
-```yaml
-api1:
-  build: .
-  container_name: nubo_api1
-  ports:
-    - "8080:8080"
-  env_file:
-    - .env
-  depends_on:
-    - redis
-    - postgres
-    - mongo
-  restart: always
-
-api2:
-  build: .
-  container_name: nubo_api2
-  ports:
-    - "8081:8080" # même port interne, mais exposé sur un port différent
-  env_file:
-    - .env
-  depends_on:
-    - redis
-    - postgres
-    - mongo
-  restart: always
-```
-
----
-
-### 5.  Gérer et nouvelle architechture des caches + créations des collections
-1. `redis_collections.go` :
-Création d'un shéma pour cahcun des base sql :
-```go
-// MessagesCache
-var MessagesSchema = map[string]reflect.Kind{
-	"id":              reflect.String,
-	"conversation_id": reflect.String,
-	"sender_id":       reflect.String,
-	"message_type":    reflect.Int,
-	"state":           reflect.Int,
-	"content":         reflect.String,
-	"attachments":     reflect.Map, // JSONB
-	"created_at":      reflect.String,
-}
-```
-2. `redis_caches.go` :
-- Création d'un système de collections qui servira à partir des shemas à valider la structure des données envoyer à la fonction Set mais aussi intéragir avec la collections dans le canal cache de REDIS de cette collections.
-```go
-// ---------------- Collection et schéma ----------------
-
-type Collection struct {
-	Name       string                  // ex: "messages"
-	Schema     map[string]reflect.Kind // ex: {"id": reflect.Int, "content": reflect.String}
-	Redis      *redis.Client
-	LRU        *LRUCache     // pour mettre à jour la LRU si cache
-	Expiration time.Duration // TTL par défaut pour chaque élément, facultatif
-}
-
-// NewCollection crée une collection avec un schéma et LRU optionnel
-func NewCollection(name string, schema map[string]reflect.Kind, rdb *redis.Client, lru *LRUCache) *Collection {
-	_, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	// Initialiser les indexs pour chaque champ du schéma
-	for field := range schema {
-		if field == "id" {
-			continue
-		}
-		// on ne crée pas les valeurs ici (elles seront ajoutées au fur et à mesure)
-		// mais on garde la structure logique
-		log.Printf("Index initialisé pour collection=%s, champ=%s", name, field)
-	}
-
-	return &Collection{
-		Name:   name,
-		Schema: schema,
-		Redis:  rdb,
-		LRU:    lru,
-	}
-}
-
-// ---------------- Validation ----------------
-
-func (c *Collection) validate(obj map[string]any) error {
-	for field, kind := range c.Schema {
-		val, ok := obj[field]
-		if !ok {
-			return fmt.Errorf("champ manquant: %s", field)
-		}
-		if reflect.TypeOf(val).Kind() != kind {
-			return fmt.Errorf("champ %s doit être de type %s", field, kind.String())
-		}
-	}
-	return nil
-}
-```
-- Cette fonction `NewCollection` introduit surtout une nouvelle façon de penser et d'organiser les données dans le cache :
-Ancienne structure cache "messages":
-```markdown
-┌─────────────────────────────┐
-│         Redis Cache         │
-│        messages (hash)      │
-│                             │
-│  id → {full message object} │
-│  392 → {id:392, content...} │
-│  77  → {id:77, content...}  │
-└──────────────┬──────────────┘
-               │
-               ▼
-         Collection LRU
-         ┌───────────┐
-         │ id usage  │
-         │ 392, 77   │
-         └───────────┘
-Notes:
-- Recherche par id uniquement.
-- Pour trouver par conversation_id ou sender_id, il faut parcourir tous les objets.
-- Peu d’index → lente recherche sur critères.
-
------------------------------------------------------
-
-Nouvelle structure cache "messages":
-┌─────────────────────────────────────────┐                       ┌──────────────────────────┐
-│               Redis Cache         	  │                       │  Index Redis par champ   │
-│             messages (hash)             │                       │                          │
-│                                         │                       │ state:3 → {392}          │
-│  392 → {id:392, conversation_id:49, ...}│           +           │ conv_id:49 → {392, 77}   │
-│  77  → {id:77, conversation_id:49, ...} │                       │ conv_id:50 → {283}       │
-│  283 → {id:283, conversation_id:50, ...}│                       │ sender_id:462 → {392}    │
-└─────────────────────┬───────────────────┘                       └──────────────────────────┘      
-                      │
-                      ▼
-               Collection LRU
-              ┌───────────────────┐
-              │ id usage per node │
-              │ 392 → tail        │
-              │ 77  → middle      │
-              │ 283 → head        │
-              └───────────────────┘
-Notes:
-- Recherche rapide par n’importe quel champ indexé.
-- Les objets restent dans le hash principal, seul l’index est consulté.
-- LRU gère la mémoire en supprimant uniquement les éléments les moins utilisés.
-- Plus scalable pour filtres complexes comme conversation_id, state, sender_id, etc.
-```
-- Création de la méthode `Set` qui permet d'ajouter un élément dans un collection à condition qu'il respecte la structure de la collection à laquelle il compte appartenir. De plus on ajoute cette élément avec son Id dans la liste LRU d'usage des données de façon à avoir un système de suppréssion d'élément dans redis cohérent et continue tous au long de nos interraction avec redis.
-```go
-// ---------------- Set ----------------
-
-// Set ajoute un élément dans la collection
-func (c *Collection) Set(ctx context.Context, obj map[string]any) error {
-	if err := c.validate(obj); err != nil {
-		log.Println("Validation échouée:", err)
-		return err
-	}
-
-	id := fmt.Sprintf("%v", obj["id"])
-	objKey := "cache:" + c.Name + ":" + id
-
-	// Sauvegarde complète dans Redis Hash
-	if err := c.Redis.HMSet(ctx, objKey, obj).Err(); err != nil {
-		return err
-	}
-
-	// Mettre à jour les indexs
-	for field := range c.Schema {
-		if field == "id" {
-			continue
-		}
-		if val, ok := obj[field]; ok {
-			valStr := fmt.Sprintf("%v", val)
-			idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr)
-			if err := c.Redis.SAdd(ctx, idxKey, id).Err(); err != nil {
-				log.Printf("Erreur mise à jour index %s: %v", idxKey, err)
-			}
-		}
-	}
-
-	// Mise à jour LRU
-	if c.LRU != nil {
-		c.LRU.MarkUsed(c.Name, id)
-	}
-
-	return nil
-}
-```
-Et elle s'utilise ainsi :
-```go
-ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-defer cancel()
-
-// Ajouter un message
-messages := NewCollection("messages", schemaMessages, rdb, lru)
-
-messages.Set(map[string]interface{}{
-	"id": 382, "conversation_id": 49, "sender_id": 462,
-	"message_type": 0, "state": 3, "content": "my message",
-	"attachements": nil, "create_at": "12:34-10-03-2007",
-})
-```
-- Création de la méthode `Get` qui consite en la recherche d'un élément dans la collection redis, tous l'ambition de cette fonction c'est qu'elle peut accepter un codage de filtre grace à la fonction `matchFilter` qui nous permet de décrypter le codage qui se base sur un MongoDB-like afin de simplifier l'encodage. La fonction bénéficie aussi de la nouvelle structure du cache redis avec l'ajout d'index lui permettant de chercher baucoup plus vite les précieux id.
-```go
-// ---------------- Get ----------------
-
-// Get retourne tous les éléments correspondant au filtre (MongoDB-like)
-func (c *Collection) Get(ctx context.Context, filter map[string]any) ([]map[string]any, error) {
-	// 1. Récupérer l’ensemble des IDs possibles via evalTree
-	candidateSet, _, err := evalTree(ctx, c.Redis, c.Name, filter, "")
-	if err != nil {
-		return nil, err
-	}
-
-	// 2. Charger les objets correspondants
-	results := []map[string]any{}
-	for id := range candidateSet {
-		objKey := "cache:" + c.Name + ":" + id
-		data, err := c.Redis.HGetAll(ctx, objKey).Result()
-		if err != nil || len(data) == 0 {
-			continue
-		}
-
-		obj := make(map[string]any)
-		for k, v := range data {
-			obj[k] = v
-		}
-
-		results = append(results, obj)
-
-		if c.LRU != nil {
-			c.LRU.MarkUsed(c.Name, id)
-		}
-	}
-
-	return results, nil
-}
-```
-Et elle s'utilise ainsi :
-```go
-ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-defer cancel()
-
-// Rechercher tous les éléments ayant conversation_id == 49
-messages := NewCollection("messages", schemaMessages, rdb, lru)
-
-// Rechercher
-results, _ := messages.Get(map[string]interface{}{
-	"conversation_id": map[string]interface{}{"$eq": 49},
-})
-```
-- La fonction `fetchIDsForCondition` a pour objectif de traduire une instruction de filtre json en un véritable filtre utilisable dans la fonction `Get` et `Delete` et `Update`.
-Exemple :
-```json
-{
-  "$and": [
-    { "status": { "$eq": "active" } },               // égal à "active"
-    { "age": { "$gt": 18 } },                        // supérieur à 18
-    { "score": { "$gte": 50 } },                     // supérieur ou égal à 50
-    { "level": { "$lt": 10 } },                      // inférieur à 10
-    { "rank": { "$lte": 5 } },                       // inférieur ou égal à 5
-    { "category": { "$ne": "banned" } },            // différent de "banned"
-    { "tags": { "$in": ["go", "json"] } },          // contient au moins "go" ou "json"
-    { "priority": { "$nin": [0, 1] } },             // ne contient pas 0 ou 1
-    { 
-      "$or": [                                       // au moins une condition vraie
-        { "vip": true },
-        { "score": { "$gt": 90 } }
-      ]
-    },
-    {
-      "$not": { "region": { "$eq": "EU" } }         // region ≠ EU
-    },
-    {
-      "$nor": [                                      // aucune de ces conditions
-        { "blocked": true },
-        { "deleted": true }
-      ]
+    USER_SETTINGS {
+        bigint id PK
+        bigint user_id FK
+        jsonb privacy
+        jsonb notifications
     }
-  ]
-}
+
+    %% --- SCHEMA CONTENT ---
+    POSTS {
+        bigint id PK
+        bigint user_id FK
+        text content
+        bigint_array media_ids
+        int like_count
+        int comment_count
+    }
+
+    COMMENTS {
+        bigint id PK
+        bigint post_id FK
+        bigint user_id FK
+        text content
+    }
+
+    LIKES {
+        bigint id PK
+        smallint target_type
+        bigint target_id
+        bigint user_id FK
+    }
+
+    MEDIA {
+        bigint id PK
+        bigint owner_id FK
+        text storage_path
+    }
+
+    %% --- SCHEMA MESSAGING ---
+    CONVERSATIONS {
+        bigint id PK
+        smallint type
+        text title
+        bigint last_message_id
+    }
+
+    MEMBERS {
+        bigint id PK
+        bigint conversation_id FK
+        bigint user_id FK
+        int unread_count
+    }
+
+    MESSAGES {
+        bigint id PK
+        bigint conversation_id FK
+        bigint sender_id
+        text content
+    }
+
+    %% --- RELATIONS ---
+    USERS ||--o| USER_SETTINGS : "a"
+    USERS ||--o{ SESSIONS : "possede"
+    USERS ||--o{ RELATIONS : "initie"
+    USERS ||--o{ RELATIONS : "recoit"
+
+    USERS ||--o{ POSTS : "ecrit"
+    USERS ||--o{ COMMENTS : "commente"
+    USERS ||--o{ LIKES : "aime"
+    USERS ||--o{ MEDIA : "detient"
+
+    POSTS ||--o{ COMMENTS : "contient"
+
+    USERS ||--o{ MEMBERS : "est_membre"
+    CONVERSATIONS ||--o{ MEMBERS : "comprend"
+    CONVERSATIONS ||--o{ MESSAGES : "contient"
 ```
-⛔️ Pour le moment n'est pas pris en charge :
-- `$nor`
-- `$ne`
-- `$nin`
-- `$not`
-```go
-// fetchIDsForCondition : récupère les IDs directement depuis Redis pour une condition simple.
-func fetchIDsForCondition(ctx context.Context, redis *redis.Client, collName, field, op string, val any) ([]string, error) {
-	key := fmt.Sprintf("index:%s:%s", collName, field)
 
-	switch op {
-	case "$eq":
-		if field == "id" {
-			idStr := fmt.Sprintf("%v", val)
-			objKey := fmt.Sprintf("cache:%s:%s", collName, idStr)
-			exists, err := redis.Exists(ctx, objKey).Result()
-			if err != nil {
-				return nil, err
-			}
-			if exists == 1 {
-				return []string{idStr}, nil
-			}
-			return []string{}, nil
-		}
-		member := fmt.Sprintf("%v", val)
-		ids, err := redis.SMembers(ctx, key+":"+member).Result()
-		if err != nil {
-			return nil, err
-		}
-		return ids, nil
+### 6.2. Les Schémas Logiques (Domain-Driven Design)
 
-	case "$in":
-		if field == "id" {
-			vals, _ := val.([]any)
-			var existing []string
-			for _, v := range vals {
-				idStr := fmt.Sprintf("%v", v)
-				objKey := fmt.Sprintf("cache:%s:%s", collName, idStr)
-				exists, err := redis.Exists(ctx, objKey).Result()
-				if err != nil {
-					return nil, err
-				}
-				if exists == 1 {
-					existing = append(existing, idStr)
-				}
-			}
-			return existing, nil
-		}
-		vals, _ := val.([]any)
-		var all []string
-		for _, v := range vals {
-			member := fmt.Sprintf("%v", v)
-			ids, err := redis.SMembers(ctx, key+":"+member).Result()
-			if err != nil {
-				return nil, err
-			}
-			all = append(all, ids...)
-		}
-		return all, nil
+L'approche multi-schémas permet non seulement une clarté structurelle, mais offre aussi une compartimentation de la sécurité et des sauvegardes.
 
-	case "$gt", "$gte", "$lt", "$lte":
-		if field == "id" {
-			switch op {
-			case "$gt":
-				f, err := toInt64(val)
-				if err != nil {
-					return []string{}, nil
-				}
-				start := int64(f)
-				var ids []string
-				for i := start + 1; ; i++ {
-					objKey := fmt.Sprintf("cache:%s:%d", collName, i)
-					exists, err := redis.Exists(ctx, objKey).Result()
-					if err != nil {
-						return nil, err
-					}
-					if exists == 0 {
-						break
-					}
-					ids = append(ids, strconv.FormatInt(i, 10))
-				}
-				return ids, nil
-			case "$gte":
-				f, err := toInt64(val)
-				if err != nil {
-					return []string{}, nil
-				}
-				start := int64(f)
-				var ids []string
-				for i := start; ; i++ {
-					objKey := fmt.Sprintf("cache:%s:%d", collName, i)
-					exists, err := redis.Exists(ctx, objKey).Result()
-					if err != nil {
-						return nil, err
-					}
-					if exists == 0 {
-						break
-					}
-					ids = append(ids, strconv.FormatInt(i, 10))
-				}
-				return ids, nil
-			case "$lt":
-				f, err := toInt64(val)
-				if err != nil {
-					return []string{}, nil
-				}
-				end := int64(f)
-				var ids []string
-				for i := int64(0); i < end; i++ {
-					objKey := fmt.Sprintf("cache:%s:%d", collName, i)
-					exists, err := redis.Exists(ctx, objKey).Result()
-					if err != nil {
-						return nil, err
-					}
-					if exists == 0 {
-						break
-					}
-					ids = append(ids, strconv.FormatInt(i, 10))
-				}
-				return ids, nil
-			case "$lte":
-				f, err := toInt64(val)
-				if err != nil {
-					return []string{}, nil
-				}
-				end := int64(f)
-				var ids []string
-				for i := int64(0); i <= end; i++ {
-					objKey := fmt.Sprintf("cache:%s:%d", collName, i)
-					exists, err := redis.Exists(ctx, objKey).Result()
-					if err != nil {
-						return nil, err
-					}
-					if exists == 0 {
-						break
-					}
-					ids = append(ids, strconv.FormatInt(i, 10))
-				}
-				return ids, nil
+#### 🛡️ Schéma `auth` (Gestion des Identités et des Accès)
+Ce schéma gère le cycle de vie des utilisateurs et la sécurité des connexions.
+*   **`auth.users` :** C'est la table centrale. Elle intègre des contraintes `UNIQUE` matérielles sur l'email, le téléphone et le pseudo. Elle abrite l'état du compte (`banned`, `desactivated`, `grade`).
+*   **`auth.sessions` :** Stocke les tokens de l'algorithme Ratchet (`master_token`, `device_token`, `current_secret`, `last_secret`). Elle utilise des types avancés PostgreSQL comme `jsonb` pour le `device_info` et `inet[]` pour retracer de manière immuable l'historique des adresses IP.
+*   **`auth.relations` :** Modélise le graphe social (abonnements, blocages) via un duo de clés étrangères (`primary_id`, `secondary_id`) couplé à une machine à états (`state`).
 
-			default:
-				return []string{}, nil
-			}
-		}
-		if field == "created_at" || field == "updated_at" || field == "joined_at" || field == "expires_at" {
-			switch op {
-			case "$gt":
-				tRef, err := parseToTime(val)
-				if err != nil {
-					return []string{}, nil
-				}
-				ids := []string{}
-				start := tRef.Add(24 * time.Hour)
-				for t := start; t.Before(time.Now().UTC()); t = t.Add(24 * time.Hour) {
-					member := fmt.Sprintf("%v", t)
-					memberIDs, err := redis.SMembers(ctx, key+":"+member).Result()
-					if err != nil {
-						return nil, err
-					}
-					ids = append(ids, memberIDs...)
-				}
-				return ids, nil
-			case "$gte":
-				tRef, err := parseToTime(val)
-				if err != nil {
-					return []string{}, nil
-				}
-				ids := []string{}
-				start := tRef
-				for t := start; t.Before(time.Now().UTC()); t = t.Add(24 * time.Hour) {
-					member := fmt.Sprintf("%v", t)
-					memberIDs, err := redis.SMembers(ctx, key+":"+member).Result()
-					if err != nil {
-						return nil, err
-					}
-					ids = append(ids, memberIDs...)
-				}
-				return ids, nil
-			case "$lt":
-				tRef, err := parseToTime(val)
-				if err != nil {
-					return []string{}, nil
-				}
-				ids := []string{}
-				start := time.Date(2025, time.September, 14, 0, 0, 0, 0, time.UTC)
-				for t := start; t.Before(tRef); t = t.Add(24 * time.Hour) {
-					member := fmt.Sprintf("%v", t)
-					memberIDs, err := redis.SMembers(ctx, key+":"+member).Result()
-					if err != nil {
-						return nil, err
-					}
-					ids = append(ids, memberIDs...)
-				}
-				return ids, nil
-			case "$lte":
-				tRef, err := parseToTime(val)
-				if err != nil {
-					return []string{}, nil
-				}
-				ids := []string{}
-				start := time.Date(2025, time.September, 14, 0, 0, 0, 0, time.UTC)
-				for t := start; !t.After(tRef); t = t.Add(24 * time.Hour) {
-					member := fmt.Sprintf("%v", t)
-					memberIDs, err := redis.SMembers(ctx, key+":"+member).Result()
-					if err != nil {
-						return nil, err
-					}
-					ids = append(ids, memberIDs...)
-				}
-				return ids, nil
-			case "$in":
+#### 📝 Schéma `content` (Contenus et Interactions)
+Héberge toute la création de valeur de la plateforme.
+*   **`content.posts` :** Inclut le texte, la visibilité, mais surtout des structures dénormalisées natives : les `hashtags`, `identifiers` (mentions) et `media_ids` y sont stockés sous forme d'arrays natifs PostgreSQL (`text[]`, `bigint[]`) indexés via un index inversé **GIN** pour des recherches à une vitesse fulgurante. Pour l'amorçage ultra-rapide des caches au démarrage (Seeding), la table inclut des compteurs pré-matérialisés (`like_count`, `comment_count`).
+*   **`content.tags` :** La source de vérité des hashtags (slug en clé primaire). C'est cette table qui sert de référentiel au *worker* asynchrone pour la canonicalisation nocturne.
+*   **`content.likes` & `content.comments` :** Tables transactionnelles traçant l'engagement. Les relations utilisent massivement `ON DELETE CASCADE` pour éviter les données orphelines.
 
-			default:
-				return []string{}, nil
-			}
-		}
-		// Pas de condition sur les dates
-		return []string{}, nil
+#### 💬 Schéma `messaging` (Architecture Temps Réel)
+Structure optimisée pour le chargement instantané de l'Inbox (SPEED Cache).
+*   **`messaging.conversations` :** Centralise les métadonnées du salon (type, lois, titre) et stocke un pointeur critique : `last_message_id`. Ce pointeur est le moteur du tri chronologique de l'Inbox côté Redis.
+*   **`messaging.members` :** Table de liaison gérant la participation. Elle contient le `unread_count` (la pastille rouge) et le `role` (membre, admin). L'unicité est garantie par une contrainte composite (`conversation_id`, `user_id`).
+*   **`messaging.messages` :** Stocke le payload (texte, type de média en `jsonb`) et la visibilité (pour les rétractations de messages).
 
-	default:
-		// Pas d'index → laisse le filtrage final (matchFilter) s'en occuper
-		return []string{}, nil
-	}
-}
+#### ⚖️ Schéma `moderation` (Back-office)
+*   **`moderation.reports` :** Trace immuable des signalements. Contient `actor_id` (plaignant), la cible (`target_type`, `target_id`), la raison brute fournie par l'utilisateur et le `rationale` (compte-rendu d'intervention du modérateur) couplé à une machine à états d'investigation.
 
-// deleteIDsFromCondition : supprime les IDs correspondant à une condition simple. exemple : deleteIDsFromCondition("id", {"$lte": 2}, {1,2,3,4,5}) = {3,4,5} pas de redis donc il faut gérer $eq, $in, $gt, $lt, $gte, $lte on envoie un pointeur vers le slice d'ids pour le modifier en place en supprimant avec des for
-func deleteIDsFromCondition(cond map[string]any, ids *[]string) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Println("Panic dans deleteIDsFromCondition:", r)
-		}
-	}()
-
-	for op, val := range cond {
-		switch op {
-		case "$eq":
-			valStr := fmt.Sprintf("%v", val)
-			newIDs := []string{}
-			for _, id := range *ids {
-				if id != valStr {
-					newIDs = append(newIDs, id)
-				}
-			}
-			*ids = newIDs
-
-		case "$in":
-			vals, _ := val.([]any)
-			valSet := make(map[string]struct{})
-			for _, v := range vals {
-				valSet[fmt.Sprintf("%v", v)] = struct{}{}
-			}
-			newIDs := []string{}
-			for _, id := range *ids {
-				if _, found := valSet[id]; !found {
-					newIDs = append(newIDs, id)
-				}
-			}
-			*ids = newIDs
-
-		case "$gt", "$gte", "$lt", "$lte":
-			valInt, err := toInt64(val)
-			if err != nil {
-				log.Println("Erreur conversion valeur numérique dans deleteIDsFromCondition:", err)
-				continue
-			}
-			newIDs := []string{}
-			for _, id := range *ids {
-				idInt, err := strconv.ParseInt(id, 10, 64)
-				if err != nil {
-					continue
-				}
-
-				switch op {
-				case "$gt":
-					if idInt > valInt {
-						newIDs = append(newIDs, id)
-					}
-				case "$gte":
-					if idInt >= valInt {
-						newIDs = append(newIDs, id)
-					}
-				case "$lt":
-					if idInt < valInt {
-						newIDs = append(newIDs, id)
-					}
-				case "$lte":
-					if idInt <= valInt {
-						newIDs = append(newIDs, id)
-					}
-				}
-			}
-			*ids = newIDs
-
-		default:
-			log.Println("Opérateur non supporté dans deleteIDsFromCondition:", op)
-		}
-	}
-}
-
-// toInt64 convertit une valeur en int64 si possible
-func toInt64(val any) (int64, error) {
-	switch v := val.(type) {
-	case int:
-		return int64(v), nil
-	case int8:
-		return int64(v), nil
-	case int16:
-		return int64(v), nil
-	case int32:
-		return int64(v), nil
-	case int64:
-		return v, nil
-	case uint:
-		return int64(v), nil
-	case uint8:
-		return int64(v), nil
-	case uint16:
-		return int64(v), nil
-	case uint32:
-		return int64(v), nil
-	case uint64:
-		return int64(v), nil
-	case float32:
-		return int64(v), nil
-	case float64:
-		return int64(v), nil
-	case string:
-		parsed, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("erreur conversion string en int64: %v", err)
-		}
-		return parsed, nil
-	default:
-		return 0, fmt.Errorf("type non convertible en int64: %T", val)
-	}
-}
-
-func parseToTime(val any) (time.Time, error) {
-	switch v := val.(type) {
-	case time.Time:
-		return v.UTC(), nil
-	case *time.Time:
-		if v == nil {
-			return time.Time{}, fmt.Errorf("nil *time.Time")
-		}
-		return v.UTC(), nil
-	case int, int8, int16, int32, int64:
-		n, _ := toInt64(v)
-		// Heuristic: treat >= 1e12 as milliseconds
-		if n > 1e12 {
-			sec := n / 1000
-			ms := n % 1000
-			return time.Unix(sec, ms*1e6).UTC(), nil
-		}
-		return time.Unix(n, 0).UTC(), nil
-	case uint, uint8, uint16, uint32, uint64:
-		n, _ := toInt64(v)
-		if n > 1e12 {
-			sec := n / 1000
-			ms := n % 1000
-			return time.Unix(sec, ms*1e6).UTC(), nil
-		}
-		return time.Unix(n, 0).UTC(), nil
-	case float32:
-		sec := int64(v)
-		nsec := int64((v - float32(sec)) * 1e9)
-		return time.Unix(sec, nsec).UTC(), nil
-	case float64:
-		sec := int64(v)
-		nsec := int64((v - float64(sec)) * 1e9)
-		return time.Unix(sec, nsec).UTC(), nil
-	case string:
-		s := v
-		if s == "" {
-			return time.Time{}, fmt.Errorf("empty time string")
-		}
-		// Try numeric first
-		if num, err := strconv.ParseInt(s, 10, 64); err == nil {
-			if num > 1e12 {
-				sec := num / 1000
-				ms := num % 1000
-				return time.Unix(sec, ms*1e6).UTC(), nil
-			}
-			return time.Unix(num, 0).UTC(), nil
-		}
-		layouts := []string{
-			time.RFC3339Nano,
-			time.RFC3339,
-			"2006-01-02 15:04:05.999999999",
-			"2006-01-02 15:04:05",
-			"2006-01-02",
-			time.RFC1123Z,
-			time.RFC1123,
-			time.RFC850,
-			time.ANSIC,
-		}
-		for _, layout := range layouts {
-			if t, err := time.Parse(layout, s); err == nil {
-				return t.UTC(), nil
-			}
-		}
-		return time.Time{}, fmt.Errorf("unsupported time format: %s", s)
-	default:
-		return time.Time{}, fmt.Errorf("unsupported time type: %T", val)
-	}
-}
-```
-- Création de la méthode `Delete` permettant de supprimer un élément d'une collections redis, pour cela elle utilise la même technologie de filtrage que dans `Get`. La fonction a un défis qui est de supprimer également toutes les occurences de l'id dans l'index.
-```go
-// Delete supprime les éléments correspondant au filtre et nettoie les index vides
-func (c *Collection) Delete(ctx context.Context, filter map[string]any) error {
-
-	// Récupérer les objets via Get (filtrage complet)
-	objs, err := c.Get(ctx, filter)
-	if err != nil {
-		return err
-	}
-
-	pipe := c.Redis.TxPipeline()
-	// Stocker les paires idxKey -> id pour vérifier après
-	type idxCheck struct {
-		idxKey string
-	}
-	var checks []idxCheck
-
-	for _, obj := range objs {
-		id := fmt.Sprintf("%v", obj["id"])
-		objKey := "cache:" + c.Name + ":" + id
-
-		// Supprimer le hash principal
-		pipe.Del(ctx, objKey)
-
-		// Supprimer l’ID de tous les indexs
-		for field := range c.Schema {
-			if field == "id" {
-				continue
-			}
-			if val, ok := obj[field]; ok {
-				valStr := fmt.Sprintf("%v", val)
-				idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, valStr)
-				pipe.SRem(ctx, idxKey, id)
-				checks = append(checks, idxCheck{idxKey: idxKey})
-			}
-		}
-
-		// Nettoyer la LRU
-		if c.LRU != nil {
-			c.LRU.mu.Lock()
-			delete(c.LRU.elements, c.Name+":"+id)
-			c.LRU.mu.Unlock()
-		}
-	}
-
-	// Exécuter le pipeline
-	if _, err := pipe.Exec(ctx); err != nil {
-		log.Printf("Erreur exécution pipeline delete: %v", err)
-		return err
-	}
-
-	// Vérifier et supprimer les index vides
-	for _, chk := range checks {
-		count, err := c.Redis.SCard(ctx, chk.idxKey).Result()
-		if err != nil {
-			log.Printf("Erreur lecture index %s: %v", chk.idxKey, err)
-			continue
-		}
-		if count == 0 {
-			if err := c.Redis.Del(ctx, chk.idxKey).Err(); err != nil {
-				log.Printf("Erreur suppression index vide %s: %v", chk.idxKey, err)
-			} else {
-				log.Printf("Index vide supprimé: %s", chk.idxKey)
-			}
-		}
-	}
-
-	return nil
-}
-```
-Et elle s'utilise ainsi :
-```go
-ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-defer cancel()
-
-// Supprimer tous les éléments ayant conversation_id == 49
-messages := NewCollection("messages", schemaMessages, rdb, lru)
-
-// Supprimer
-messages.Delete(map[string]interface{}{
-	"conversation_id": map[string]interface{}{"$eq": 49},
-})
-```
-- Création de la méthode `Update` dans le même style que `Delete` ou `Get` avec des filtres mais on ajoute également un catégorie update qui permet de préciser ce que l'on veut changer. Il ya aussi un gros enjeux sur les indexs avec cette fonctions car elle doit tous les actualisers. Comme elle doit actualiser aussi la liste LRU comme d'habitude.
-```go
-// Update met à jour les éléments correspondant au filtre avec les nouvelles valeurs fournies dans update
-func (c *Collection) Update(ctx context.Context, filter map[string]interface{}, update map[string]interface{}) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	// Récupérer les objets correspondant au filtre
-	objs, err := c.Get(ctx, filter)
-	if err != nil {
-		return err
-	}
-
-	pipe := c.Redis.TxPipeline()
-
-	for _, obj := range objs {
-		id := fmt.Sprintf("%v", obj["id"])
-		objKey := "cache:" + c.Name + ":" + id
-
-		// Mettre à jour l'objet avec les nouvelles valeurs
-		for field, val := range update {
-			obj[field] = val
-		}
-
-		// Sérialiser et stocker dans Redis
-		data, _ := json.Marshal(obj)
-		pipe.Set(ctx, objKey, data, 0)
-
-		// Mettre à jour la LRU si nécessaire
-		if c.LRU != nil {
-			c.LRU.MarkUsed(c.Name, id)
-		}
-
-		// Mettre à jour les index
-		for field := range c.Schema {
-			if field == "id" {
-				continue
-			}
-			// Supprimer l'ancien index si la valeur a changé
-			if oldVal, ok := obj[field]; ok {
-				oldValStr := fmt.Sprintf("%v", oldVal)
-				idxKey := fmt.Sprintf("idx:%s:%s:%s", c.Name, field, oldValStr)
-				pipe.SAdd(ctx, idxKey, id) // ajouter au nouvel index (SRem est déjà géré dans Delete si on le souhaite)
-			}
-		}
-	}
-
-	_, err = pipe.Exec(ctx)
-	if err != nil {
-		log.Printf("Erreur execution pipeline Modify: %v", err)
-		return err
-	}
-
-	return nil
-}
-```
-Et elle s'utilise ainsi :
-```go
-ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-defer cancel()
-
-// Modifier tous les messages de conversation 49 pour changer le state à 5
-messages := NewCollection("messages", schemaMessages, rdb, lru)
-
-filter := map[string]interface{}{
-	"conversation_id": map[string]interface{}{"$eq": 49},
-}
-
-update := map[string]interface{}{
-	"state": 5,
-}
-
-if err := cacheName.Update(filter, update); err != nil {
-	log.Println("Erreur modification:", err)
-}
-```
-- Création de la fonction `InitCacheDatabase` qui consiste à lancer la création des collections en cache redis. Cette fonction est utilisé dès le main. Les variables globale dont ensuite alimenté pour etre le stockage des paramètres de leur collection qui est associé.
-```go
-// ---------------- Initialisation ----------------
-// declarations globales
-var (
-	Users               *Collection
-	UserSettings        *Collection
-	Sessions            *Collection
-	Relations           *Collection
-	Posts               *Collection
-	Comments            *Collection
-	Likes               *Collection
-	Media               *Collection
-	ConversationsMeta   *Collection
-	ConversationMembers *Collection
-	Messages            *Collection
-)
-
-// InitCacheDatabase initialise la structure logique de Redis pour les caches
-func InitCacheDatabase() {
-	// Initialiser les collections
-
-	schemaUsers := UsersSchema
-	schemaUserSettings := UserSettingsSchema
-	schemaSessions := SessionsSchema
-	schemaRelations := RelationsSchema
-	schemaPosts := PostsSchema
-	schemaComments := CommentsSchema
-	schemaLikes := LikesSchema
-	schemaMedia := MediaSchema
-	schemaConversationsMeta := ConversationsMetaSchema
-	schemaConversationMembers := ConversationMembersSchema
-	schemaMessages := MessagesSchema
-
-	// variables globales
-	Users = NewCollection("users", schemaUsers, Rdb, GlobalStrategy)
-	UserSettings = NewCollection("user_settings", schemaUserSettings, Rdb, GlobalStrategy)
-	Sessions = NewCollection("sessions", schemaSessions, Rdb, GlobalStrategy)
-	Relations = NewCollection("relations", schemaRelations, Rdb, GlobalStrategy)
-	Posts = NewCollection("posts", schemaPosts, Rdb, GlobalStrategy)
-	Comments = NewCollection("comments", schemaComments, Rdb, GlobalStrategy)
-	Likes = NewCollection("likes", schemaLikes, Rdb, GlobalStrategy)
-	Media = NewCollection("media", schemaMedia, Rdb, GlobalStrategy)
-	ConversationsMeta = NewCollection("conversations_meta", schemaConversationsMeta, Rdb, GlobalStrategy)
-	ConversationMembers = NewCollection("conversation_members", schemaConversationMembers, Rdb, GlobalStrategy)
-	Messages = NewCollection("messages", schemaMessages, Rdb, GlobalStrategy)
-
-	log.Println("Structure Redis (caches) initialisée")
-}}
-```
-3. `redis_stategy.go` :
-Il y a eu également une modification de la fonction `purgeOldest` afin de conformer à la nouvelle forme de cache redis :
-```go
-func (lru *LRUCache) purgeOldest() {
-	if lru.head == nil {
-		return
-	}
-	old := lru.head
-	log.Printf("Purging Redis cache element (LRU): node=%s, id=%s\n", old.NodeName, old.ElementID)
-	lru.remove(old)
-	delete(lru.elements, old.NodeName+":"+old.ElementID)
-
-	// suppression via Collection.Delete
-	collection := &Collection{
-		Name:  old.NodeName,
-		Redis: lru.rdb,
-		LRU:   lru,
-	}
-	filter := map[string]interface{}{"id": old.ElementID}
-	if err := collection.Delete(filter); err != nil {
-		log.Printf("Erreur suppression via Collection.Delete: %v\n", err)
-	}
-}
-```
+#### 👁️ Schéma `views` (Rapports et Vues Matérialisées)
+Afin d'éviter de surcharger le backend Go avec de la logique ORM et des jointures complexes, le système déporte la composition de la donnée directement au niveau du moteur SQL via des *Views* et des Fonctions Stockées Pl/PgSQL (`func_load_*`).
+*   Ces fonctions compilées (ex: `func_load_user`, `func_load_conversation_summary`) exécutent des requêtes multi-jointures (ex: récupération d'une conversation + l'avatar du dernier expéditeur + statut de lecture) en un seul *Round-Trip* réseau, accélérant massivement le fallback L3 lorsque les caches L1/L2 sont vides.
 
 ---
 
-### 6. Gérer mongoDB
-1. Normalisation des collections en les mettants dans le package `tools`
-2. `mongo_manage.go` :
-- Création de collections similaire à Redis mais pour Mongo
-```go
-// ---------------- Initialisation ----------------
-// declarations globales
-var (
-	Users               *MongoCollection
-	UserSettings        *MongoCollection
-	Sessions            *MongoCollection
-	Relations           *MongoCollection
-	Posts               *MongoCollection
-	Comments            *MongoCollection
-	Likes               *MongoCollection
-	Media               *MongoCollection
-	ConversationsMeta   *MongoCollection
-	ConversationMembers *MongoCollection
-	Messages            *MongoCollection
-)
+## 7. 🛠️ Stack Technique, Composants et Déploiement
 
-// InitCacheDatabase initialise la structure logique de Redis pour les caches
-func InitCacheDatabase() {
-	// Initialiser les collections
+Le système Nubo s'appuie sur une stack logicielle de pointe et une infrastructure conteneurisée pensée pour l'élasticité et la haute disponibilité.
 
-	schemaUsers := tools.UsersSchema
-	schemaUserSettings := tools.UserSettingsSchema
-	schemaSessions := tools.SessionsSchema
-	schemaRelations := tools.RelationsSchema
-	schemaPosts := tools.PostsSchema
-	schemaComments := tools.CommentsSchema
-	schemaLikes := tools.LikesSchema
-	schemaMedia := tools.MediaSchema
-	schemaConversationsMeta := tools.ConversationsMetaSchema
-	schemaConversationMembers := tools.ConversationMembersSchema
-	schemaMessages := tools.MessagesSchema
+### 7.1. Génération d'ID Distribuée : Algorithme Snowflake
 
-	// variables globales
-	Users = NewMongoCollection("nubo_db", "users", schemaUsers)
-	UserSettings = NewMongoCollection("nubo_db", "user_settings", schemaUserSettings)
-	Sessions = NewMongoCollection("nubo_db", "sessions", schemaSessions)
-	Relations = NewMongoCollection("nubo_db", "relations", schemaRelations)
-	Posts = NewMongoCollection("nubo_db", "posts", schemaPosts)
-	Comments = NewMongoCollection("nubo_db", "comments", schemaComments)
-	Likes = NewMongoCollection("nubo_db", "likes", schemaLikes)
-	Media = NewMongoCollection("nubo_db", "media", schemaMedia)
-	ConversationsMeta = NewMongoCollection("nubo_db", "conversations_meta", schemaConversationsMeta)
-	ConversationMembers = NewMongoCollection("nubo_db", "conversation_members", schemaConversationMembers)
-	Messages = NewMongoCollection("nubo_db", "messages", schemaMessages)
+Pour éviter les verrous (locks) et les goulots d'étranglement inhérents à l'auto-incrémentation des bases de données relationnelles, Nubo utilise un générateur d'identifiants distribué inspiré du **Twitter Snowflake**.
 
-	log.Println("Structure MongoDB initialisée")
-}
+*   **Structure sur 64 bits (`int64`) :**
+    *   **Timestamp (41 bits) :** Temps écoulé en millisecondes depuis une *Epoch* personnalisée fixée au 1er Janvier 2024 (`1704067200000`). Cela garantit ~69 ans de longévité.
+    *   **Node ID (10 bits) :** Identifiant unique du serveur générant l'ID, permettant de déployer jusqu'à 1024 instances de l'API simultanément sans risque de collision.
+    *   **Sequence / Step (12 bits) :** Un compteur incrémental réinitialisé à chaque milliseconde, permettant à un seul nœud de générer jusqu'à 4096 IDs par milliseconde.
+*   **Opération binaire (Bitwise) :** La construction de l'ID final est extrêmement rapide, exécutée en CPU via des décalages de bits (Bitwise OR / Shift) : `((now - Epoch) << 22) | (nodeID << 12) | step`.
+*   **Gestion du recul d'horloge (NTP Drift) :** Si l'horloge système du serveur recule (désynchronisation NTP), la fonction `Generate()` intègre un mécanisme de protection bloquant (spin-lock) qui attend que l'horloge rattrape le dernier *timestamp* connu avant de générer un nouvel ID, empêchant ainsi la création de doublons.
 
-// ---------------- Collection et schéma ----------------
+### 7.2. Traitement d'Images : WebP, Redimensionnement et MinIO (S3)
 
-type MongoCollection struct {
-	Name   string
-	Schema map[string]reflect.Kind
-	DB     *mongo.Database
-}
+Le pipeline de gestion des médias a été conçu pour minimiser drastiquement l'empreinte de stockage et la bande passante servie aux clients, tout en conservant une qualité perçue "Premium".
 
-// NewMongoCollection crée une collection Mongo avec un schéma
-func NewMongoCollection(dbName, name string, schema map[string]reflect.Kind) *MongoCollection {
-	return &MongoCollection{
-		Name:   name,
-		Schema: schema,
-		DB:     MongoClient.Database(dbName),
-	}
-}
-```
-dont l'initialisation est faite dans le `main.go`. Ce code va permettre de vérifier la structure des requête faite avec les fonctions qui vont suivre avec la fonction de validation suivante :
-```go
-// validate vérifie qu'un objet correspond au schéma de la collection
-func (c *MongoCollection) validate(obj map[string]any) error {
-	for field, kind := range c.Schema {
-		val, ok := obj[field]
-		if !ok {
-			return fmt.Errorf("champ manquant: %s", field)
-		}
-		if reflect.TypeOf(val).Kind() != kind {
-			return fmt.Errorf("type invalide pour %s: attendu %s, reçu %s",
-				field, kind, reflect.TypeOf(val).Kind())
-		}
-	}
-	return nil
-}
-```
-- Création d'une fonction `Set` dont le fonctionne est similaire à Redis :
-```go
-// Set insère ou met à jour un objet dans la collection
-func (c *MongoCollection) Set(obj map[string]any) error {
-	if err := c.validate(obj); err != nil {
-		return err
-	}
+*   **Pipeline de traitement CPU-bound :**
+    *   **Validation :** Les images entrantes sont vérifiées pour ne pas excéder une charge matricielle de 4 Mégapixels (`2000 * 2000`).
+    *   **Redimensionnement intelligent :** Si la largeur dépasse `1920px`, l'image est redimensionnée en conservant le ratio via l'algorithme de rééchantillonnage de haute précision **Lanczos** (`imaging.Lanczos`).
+    *   **Encodage WebP :** L'image est transcodée à la volée au format `WebP` (avec une qualité `Q=80` et `Lossless=false`) via la librairie `chai2010/webp`, réduisant la taille du fichier de 30% à 70% par rapport au JPEG standard sans perte visuelle notable.
+*   **Upload S3-Compatible (IO-bound) :** Le flux d'octets de l'image est streamé vers un cluster **MinIO** privé via le client officiel `minio-go/v7`. Le fichier est nommé via un UUID `V4` (ex: `uuid.webp`) et stocké dans le bucket défini par `MINIO_BUCKET_NAME`.
+*   **Asynchronisme :** L'encodage et le transfert S3 étant bloquants, l'API encapsule ce pipeline dans une **Goroutine** dédiée (`go func() { UploadMedia(...) }()`) pour répondre instantanément au client HTTP pendant que le traitement se termine en arrière-plan.
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+### 7.3. Infrastructure Docker : Load Balancing et Proxies Nginx
 
-	collection := c.DB.Collection(c.Name)
+L'écosystème entier (Base de données, Caches, Stockage, API) tourne au sein d'une infrastructure Docker orchestrée.
 
-	// upsert (si id existe déjà, on remplace)
-	filter := bson.M{"id": obj["id"]}
-	update := bson.M{"$set": obj}
-	opts := options.Update().SetUpsert(true)
+*   **Topologie Multi-Nœuds :** L'API Go est instanciée plusieurs fois (ex: `api1`, `api2`) dans le `docker-compose.yml`, chacune recevant dynamiquement son propre `NODE_ID` via l'injection des variables d'environnement (`.env`).
+*   **Load Balancer Nginx :** Placé en frontal (ports `80` et `443`), Nginx agit comme *Reverse Proxy* et répartit la charge (`upstream backend_api`) en Round-Robin entre les instances Go.
+*   **Terminaison SSL :** Nginx assure le chiffrement HTTPS via des certificats montés depuis l'hôte (`/etc/nginx/certs`), avec une redirection automatique (HTTP 301) de tout le trafic en clair vers le port 443.
+*   **Upgrade WebSocket :** Nginx est spécifiquement configuré sur la route `/ws` pour intercepter et autoriser l'élévation de protocole HTTP/1.1 vers WebSocket (`proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "Upgrade";`). Sans cette directive, les connexions persistantes temps réel seraient systématiquement rejetées.
+*   **Route Interne MinIO :** Le flux S3 interne est masqué derrière Nginx avec la directive `internal;` et une réécriture de chemin (rewrite `^/internal_minio/(.*) /$1 break;`), empêchant tout accès direct illégitime au bucket depuis l'extérieur.
 
-	_, err := collection.UpdateOne(ctx, filter, update, opts)
-	return err
-}
-```
-- Création d'une fonction `Get` dont le fonctionnement diffère quelque peut de Redis étant donné que le fait qu'on ai choisi d'utiliser la structure de filtre de mongo nous n'avons donc pas besoin de fonction de transfert
-```go
-// Get récupère les objets correspondant au filtre avec une projection optionnelle
-func (c *MongoCollection) Get(filter map[string]any, projection map[string]any) ([]map[string]any, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+### 7.4. Utilisation du Script `launch.sh` et Intégration Continue (CI)
 
-	collection := c.DB.Collection(c.Name)
+Pour fluidifier l'expérience développeur (DX) et standardiser les déploiements, un script bash orchestrateur `launch.sh` a été implémenté.
 
-	opts := options.Find()
-	if projection != nil {
-		opts.SetProjection(projection)
-	}
-
-	cur, err := collection.Find(ctx, filter, opts)
-	if err != nil {
-		return nil, err
-	}
-	defer cur.Close(ctx)
-
-	var results []map[string]any
-	if err := cur.All(ctx, &results); err != nil {
-		return nil, err
-	}
-
-	return results, nil
-}
-```
-- Création d'une fonction `Delete` dont le fonctionnement diffère quelque peut de Redis. En effet avec Redis on passait par la fonction `Get` dans `Delete` afin de récupérer les ids pour pouvoir les supprimer dans la liste des utilisations. Étant donné que nous n'avons pas de liste d'utilisation avec Mongo il est inutile de faire 2 requête au lieu d'une.
-```go
-// Delete supprime les objets correspondant au filtre
-func (c *MongoCollection) Delete(filter map[string]any) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	collection := c.DB.Collection(c.Name)
-	_, err := collection.DeleteMany(ctx, filter)
-	return err
-}
-```
-- Création d'une fonction `Update` dont le fonctionnement diffère quelque peut de Redis (expliqué plus haut).
-```go
-// Update met à jour les éléments correspondant au filtre avec les nouvelles valeurs fournies dans update
-func (c *MongoCollection) Update(filter map[string]any, update map[string]any) error {
-	if err := c.validate(update); err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	collection := c.DB.Collection(c.Name)
-	_, err := collection.UpdateMany(ctx, filter, bson.M{"$set": update})
-	return err
-}
-```
+*   **Exécution Paramétrée :** Le script accepte les modes `DEV` ou `PROD` en argument (ou via un menu interactif `select` si aucun argument n'est fourni).
+*   **Génération de Documentation Automatique (Swagger) :** En mode DEV, le script exécute systématiquement `swag init` en pointant vers l'entrypoint `cmd/main.go` avec l'analyse des dépendances (`--parseDependency --parseInternal`). Cela permet à la route Swagger de toujours refléter la dernière structure de l'API sans maintenance manuelle.
+*   **Orchestration Docker :** Il déploie ensuite la flotte via `docker compose -f docker-compose.[ENV].yml up -d --build --remove-orphans`, s'assurant que les binaires Go soient recompilés (via le conteneur multi-stage) et nettoyant les conteneurs orphelins des précédentes sessions de développement.
