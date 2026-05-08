@@ -176,6 +176,10 @@ type LoginResponse struct {
 	Message       string    `json:"message" example:"Login successful"`
 }
 
+// ********************************************************
+// ****                  Security                      ****
+// ********************************************************
+
 type RenewJWTResponse struct {
 	Token   string `json:"token"`
 	Message string `json:"message"`
@@ -191,6 +195,10 @@ type RefreshMasterResponse struct {
 	Token       string `json:"token"` // Le nouveau JWT
 	Message     string `json:"message"`
 }
+
+// ********************************************************
+// ****                  Post                          ****
+// ********************************************************
 
 type CreatePostInput struct {
 	Content string `json:"content" binding:"max=2200"`

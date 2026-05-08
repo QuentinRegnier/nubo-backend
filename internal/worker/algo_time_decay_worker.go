@@ -19,6 +19,7 @@ type ScoreJob struct {
 	HasMedia     bool
 	CreatedAt    time.Time
 	Hashtags     []string
+	Visibility   int // <-- AJOUT
 }
 
 // StartScoreUpdaterCron initialise le Worker Pool basé sur le nombre de threads CPU
@@ -43,7 +44,8 @@ func StartScoreUpdaterCron(ctx context.Context) {
 						mediaCount = 1
 					}
 					// Appel du moteur mathématique pur. BDD = 0, Redis = Max
-					service.UpdateScoreWithMetrics(ctx, job.PostID, job.LikeCount, job.CommentCount, mediaCount, job.CreatedAt, job.Hashtags)
+					// TODO rendre dynamique isFlagged
+					service.UpdateScoreWithMetrics(ctx, job.PostID, job.LikeCount, job.CommentCount, mediaCount, job.CreatedAt, job.Hashtags, job.Visibility, 0)
 				}
 			}
 		}()

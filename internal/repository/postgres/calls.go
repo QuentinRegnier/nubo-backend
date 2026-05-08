@@ -3,6 +3,7 @@ package postgres
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -13,7 +14,6 @@ import (
 
 func FuncLoadUser(ID int64, Username string, Email string, Phone string) (domain.UserRequest, error) {
 	fmt.Println("FuncLoadUser called with:", ID, Username, Email, Phone)
-	const functionID = 2
 
 	// Args...
 	args := make([]any, 4)
@@ -80,7 +80,7 @@ func FuncLoadUser(ID int64, Username string, Email string, Phone string) (domain
 
 	if err != nil {
 		// Si l'erreur est "no rows in result set", c'est que la BDD a renvoyé 0 ligne.
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			fmt.Println("🐘 POSTGRES : Aucune ligne trouvée (sql.ErrNoRows).")
 			return domain.UserRequest{}, nil // On renvoie vide, pas d'erreur technique
 		}
@@ -192,7 +192,7 @@ func FuncLoadSession(ID int64, UserId int64, DeviceToken string, MasterToken str
 
 	if err != nil {
 		// --- CORRECTION : Gérer le cas où aucune session n'est trouvée ---
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			// Ce n'est pas une erreur technique, juste qu'il n'y a pas de session.
 			// On renvoie une structure vide et "pas d'erreur".
 			return domain.SessionsRequest{}, nil
@@ -212,4 +212,122 @@ func FuncLoadSession(ID int64, UserId int64, DeviceToken string, MasterToken str
 	}
 
 	return res, nil
+}
+
+func FuncLoadPosts(postIDs []int64, limit int, offset int) ([]domain.PostRequest, error) {
+	fmt.Println("FuncLoadPosts called with IDs count:", len(postIDs), "Limit:", limit, "Offset:", offset)
+
+	// 1. Préparation de l'argument des IDs
+	var pPostIDs any
+	if len(postIDs) > 0 {
+		pPostIDs = pq.Array(postIDs)
+	} else {
+		// Très important : si le tableau est vide, on passe nil.
+		// Postgres recevra NULL, ce qui validera la condition "p_post_ids IS NULL" de ta fonction SQL.
+		pPostIDs = nil
+	}
+
+	// 2. Requête SQL alignée sur ta fonction :
+	// func_load_posts(p_user_id, p_post_ids, p_visibility, p_order_mode)
+	// On gère la pagination avec LIMIT et OFFSET à l'extérieur de la fonction SQL
+	sqlStatement := `
+		SELECT * FROM content.func_load_posts(
+			NULL,  -- p_user_id (NULL = tous les utilisateurs)
+			$1,    -- p_post_ids (NULL ou tableau d'IDs)
+			NULL,  -- p_visibility (NULL = déclenche le DEFAULT ARRAY[0, 1] du SQL)
+			0      -- p_order_mode (0 = plus récents)
+		)
+		LIMIT $2 OFFSET $3
+	`
+
+	// 3. Exécution de la requête
+	rows, err := postgres.PostgresDB.Query(sqlStatement, pPostIDs, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("erreur lors de l'exécution de FuncLoadPosts: %w", err)
+	}
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			fmt.Println("⚠️ Erreur lors de la fermeture des rows dans FuncLoadPosts:", err)
+		}
+	}(rows)
+
+	var posts []domain.PostRequest
+
+	// 4. Boucle sur les résultats avec le Scan unique
+	for rows.Next() {
+		var p domain.PostRequest
+		var location sql.NullString
+
+		err := rows.Scan(
+			&p.ID,
+			&p.UserID,
+			&p.Content,
+			pq.Array(&p.Hashtags),
+			pq.Array(&p.Identifiers),
+			pq.Array(&p.MediaIDs),
+			&p.Visibility,
+			&location,
+			&p.CreatedAt,
+			&p.UpdatedAt,
+			&p.LikeCount,
+			&p.CommentCount,
+			&p.ViewCount,
+			&p.HasMedia,
+		)
+
+		if err != nil {
+			fmt.Printf("⚠️ Erreur lors du scan d'un post : %v\n", err)
+			continue // On ignore la ligne corrompue et on passe à la suivante
+		}
+
+		// Traitement de la localisation (NULL -> String)
+		if location.Valid {
+			p.Location = location.String
+		}
+
+		posts = append(posts, p)
+	}
+
+	// Vérification finale des erreurs d'itération
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("erreur pendant l'itération de FuncLoadPosts: %w", err)
+	}
+
+	return posts, nil
+}
+
+// FuncLoadAllTags récupère tous les slugs actifs depuis la base de données.
+func FuncLoadAllTags() ([]string, error) {
+	fmt.Println("FuncLoadAllTags called")
+
+	sqlStatement := `SELECT slug FROM content.func_load_all_tags()`
+
+	rows, err := postgres.PostgresDB.Query(sqlStatement)
+	if err != nil {
+		return nil, fmt.Errorf("erreur lors de l'exécution de FuncLoadAllTags: %w", err)
+	}
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			fmt.Println("⚠️ Erreur lors de la fermeture des rows dans FuncLoadAllTags:", err)
+		}
+	}(rows)
+
+	var tags []string
+
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err == nil {
+			tags = append(tags, slug)
+		} else {
+			fmt.Printf("⚠️ Erreur lors du scan d'un tag : %v\n", err)
+		}
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("erreur pendant l'itération de FuncLoadAllTags: %w", err)
+	}
+
+	return tags, nil
 }

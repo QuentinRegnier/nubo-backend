@@ -100,7 +100,7 @@ func CreateUser(
 
 		// On récupère l'ID entier de la BDD
 		go func() {
-			err = UploadMedia(file, "profile_"+req.Username, userID, mediaID)
+			err = UploadMedia(file, userID, mediaID)
 			if err != nil {
 				log.Printf("internal error (image upload): %v", err)
 				return

@@ -70,11 +70,11 @@ const (
 
 	// QueueBasePrefix est le préfixe utilisé pour séparer les files par Type et Action.
 	// Format de la liste : q:{shardID}:{Type}:{Action}
-	QueueBasePrefix = "q:"
+	QueueBasePrefix = "request_cache:q:"
 
 	// StatsBasePrefix est le préfixe utilisé pour les métriques du Dashboard.
 	// Format : h:stats:{shardID}
-	StatsBasePrefix = "h:stats:"
+	StatsBasePrefix = "request_cache:stats:"
 )
 
 // EnqueueDB : Ajout du paramètre partitionKey (int64)

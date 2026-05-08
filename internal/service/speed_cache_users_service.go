@@ -2,45 +2,18 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/vmihailenco/msgpack/v5"
 )
-
-// AddPostToUserProfile ajoute un post au ZSET de l'utilisateur avec un score chronologique précis.
-// Le score est le timestamp Unix (ms) de création du post.
-func AddPostToUserProfile(ctx context.Context, userID int64, postID int64, createdAt int64) {
-	key := fmt.Sprintf("user:posts:%d", userID)
-	score := float64(createdAt)
-
-	// Ajouter au ZSET via ton wrapper de repository
-	if err := redis.ZAdd(ctx, key, score, postID); err != nil {
-		return
-	}
-
-	// Éviction : on ne garde que les X derniers
-	_ = redis.ZRemRangeByRank(ctx, key, 0, -(variables.MaxUserPostsElements + 1))
-}
-
-// InvalidateUserProfileCache détruit le ZSET d'un utilisateur pour forcer une réhydratation
-// complète depuis PostgreSQL au prochain appel (Cache Busting).
-func InvalidateUserProfileCache(ctx context.Context, userID int64) {
-	key := fmt.Sprintf("user:posts:%d", userID)
-
-	// Utilisation directe du client de l'infrastructure pour un DEL massif en O(1)
-	_ = redisgo.Rdb.Del(ctx, key).Err()
-}
 
 // SearchUserByPrefix recherche des utilisateurs via l'auto-complétion (SPEED Cache)
 func SearchUserByPrefix(ctx context.Context, prefix string, limit int64) ([]domain.UserLiteRequest, error) {
 	// 1. Recherche ultra-rapide dans l'index lexicographique (O(log(N)))
-	lexResults, err := redis.ZRangeByLex(ctx, "users:search:lex", strings.ToLower(prefix), limit)
+	lexResults, err := redis.ZRangeByLex(ctx, "speed_cache:search:lex", strings.ToLower(prefix), limit)
 	if err != nil {
 		return nil, err
 	}

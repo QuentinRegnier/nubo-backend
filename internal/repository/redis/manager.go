@@ -37,33 +37,26 @@ var (
 	ConvMembers *Collection
 )
 
-// InitCacheDatabase initialise les collections Redis avec la stratégie OBJECT (LFU)
 func InitCacheDatabase() {
-	// Données Critiques (Sessions/Users)
-	Users = NewCollection("user", variables.StandardTTL)
-	UserSettings = NewCollection("user_settings", variables.StandardTTL)
-	Sessions = NewCollection("session", variables.StandardTTL)
+	// --- OBJECT Cache ---
+	Users = NewCollection("object_cache:user", variables.StandardTTL)
+	UserSettings = NewCollection("object_cache:user_settings", variables.StandardTTL)
+	Sessions = NewCollection("object_cache:session", variables.StandardTTL)
 
-	// Contenu (Posts, Media...)
-	Posts = NewCollection("post", variables.StandardTTL)
-	Comments = NewCollection("comment", variables.StandardTTL)
-	Media = NewCollection("media", variables.StandardTTL)
+	Posts = NewCollection("object_cache:post", variables.StandardTTL)
+	Comments = NewCollection("object_cache:comment", variables.StandardTTL)
+	Media = NewCollection("object_cache:media", variables.StandardTTL)
+	Messages = NewCollection("object_cache:msg", variables.StandardTTL)
 
-	// 🔴 Messages : Priorité minimale (Hot Buffer). Seront évincés en premier si besoin.
-	Messages = NewCollection("msg", variables.StandardTTL)
-
-	// Relations & Meta
-	Likes = NewCollection("like", variables.StandardTTL)
-	Conversations = NewCollection("conv", variables.StandardTTL)
-	Members = NewCollection("member", variables.StandardTTL)
-	Relations = NewCollection("rel", variables.StandardTTL)
+	Likes = NewCollection("object_cache:like", variables.StandardTTL)
+	Conversations = NewCollection("object_cache:conv", variables.StandardTTL)
+	Members = NewCollection("object_cache:member", variables.StandardTTL)
+	Relations = NewCollection("object_cache:rel", variables.StandardTTL)
 
 	// --- SPEED Cache (Lite Objects) ---
-	UsersLite = NewCollection("user_lite", variables.StandardTTL)
-	ConvMeta = NewCollection("conv_meta", variables.StandardTTL)
-	ConvMembers = NewCollection("conv_members", variables.StandardTTL)
-
-	log.Println("✅ Structure Redis (Object Store LFU) initialisée")
+	UsersLite = NewCollection("speed_cache:user_lite", variables.StandardTTL)
+	ConvMeta = NewCollection("speed_cache:conv_meta", variables.StandardTTL)
+	ConvMembers = NewCollection("speed_cache:conv_members", variables.StandardTTL)
 }
 
 // ---------------- Collection ----------------

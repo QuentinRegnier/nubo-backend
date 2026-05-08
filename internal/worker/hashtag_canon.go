@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/lib/pq"
 )
@@ -59,17 +60,11 @@ func processHashtagCanonicalization(ctx context.Context) {
 				continue
 			}
 
-			// Calcul de la distance d'édition
-			dist := levenshtein(t1, t2)
+			// Utilisation du Levenshtein normalisé de Claude (Gère le Français et les Runes)
+			distNorm := NormalizedLevenshtein(t1, t2)
 
-			// Tolérance : 1 erreur si longueur < 7, 2 erreurs si >= 7
-			maxDist := 1
-			if len(t1) >= 7 || len(t2) >= 7 {
-				maxDist = 2
-			}
-
-			if dist <= maxDist {
-				// Le plus court/ancien devient le canonique (stratégie basique)
+			// Critère TDD : Distance <= 0.15 ET même racine morphologique
+			if distNorm <= 0.15 && service.StemHashtag(t1) == service.StemHashtag(t2) {
 				canon, typo := t1, t2
 				if len(t2) < len(t1) {
 					canon, typo = t2, t1
@@ -92,29 +87,73 @@ func processHashtagCanonicalization(ctx context.Context) {
 	}
 }
 
-// levenshtein calcule la distance d'édition minimum entre deux chaînes (CPU intensive).
-func levenshtein(s1, s2 string) int {
-	lenS1 := len(s1)
-	lenS2 := len(s2)
-	row := make([]int, lenS1+1)
+// NormalizedLevenshtein calcule la distance de Levenshtein normalisée.
+//
+// TDD §3.3 — Formule:
+//
+//	d_Lev(h_i, h_j) = Lev(h_i, h_j) / max(|h_i|, |h_j|)
+//
+// Retourne une valeur dans [0.0, 1.0]:
+//
+//	0.0 = chaînes identiques,  1.0 = chaînes totalement différentes.
+func NormalizedLevenshtein(a, b string) float64 {
+	ra, rb := []rune(a), []rune(b)
+	la, lb := len(ra), len(rb)
+	maxLen := la
+	if lb > maxLen {
+		maxLen = lb
+	}
+	if maxLen == 0 {
+		return 0.0
+	}
+	return float64(levenshteinRunes(ra, rb)) / float64(maxLen)
+}
 
-	for i := 0; i <= lenS1; i++ {
-		row[i] = i
+// levenshteinRunes calcule la distance d'édition de Levenshtein entre deux slices de runes.
+// Implémentation optimisée en espace O(min(|a|,|b|)) via deux rangées glissantes.
+func levenshteinRunes(a, b []rune) int {
+	la, lb := len(a), len(b)
+	// Optimisation: garantir |a| ≤ |b| pour minimiser l'allocation mémoire.
+	if la > lb {
+		a, b = b, a
+		la, lb = lb, la
 	}
 
-	for i := 1; i <= lenS2; i++ {
-		prev := i
-		for j := 1; j <= lenS1; j++ {
-			current := row[j-1]
-			if s2[i-1] != s1[j-1] {
-				current = min(min(row[j-1]+1, prev+1), row[j]+1)
+	// Deux rangées de la matrice DP (espace O(la) au lieu de O(la·lb)).
+	prev := make([]int, la+1)
+	curr := make([]int, la+1)
+
+	// Initialisation: prev[j] = j (coût de suppression des j premiers chars de a).
+	for j := 0; j <= la; j++ {
+		prev[j] = j
+	}
+
+	for i := 1; i <= lb; i++ {
+		curr[0] = i
+		for j := 1; j <= la; j++ {
+			cost := 1
+			if b[i-1] == a[j-1] {
+				cost = 0
 			}
-			row[j-1] = prev
-			prev = current
+			// min(insertion, suppression, substitution)
+			curr[j] = min3Int(curr[j-1]+1, prev[j]+1, prev[j-1]+cost)
 		}
-		row[lenS1] = prev
+		prev, curr = curr, prev
 	}
-	return row[lenS1]
+	return prev[la]
+}
+
+func min3Int(a, b, c int) int {
+	if a < b {
+		if a < c {
+			return a
+		}
+		return c
+	}
+	if b < c {
+		return b
+	}
+	return c
 }
 
 // persistCommunityTags sauvegarde les tags communautaires dans PostgreSQL.

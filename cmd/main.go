@@ -91,12 +91,6 @@ func main() {
 	// Initialiser le Cuckoo Filter
 	cuckoo.InitCuckooFilter()
 
-	// --- NOUVEAU : CHARGEMENT DU CERVEAU DES TAGS ---
-	err = service.LoadTagsConfig("assets/tags_config.json")
-	if err != nil {
-		log.Fatalf("❌ Impossible de charger la configuration des tags : %v", err)
-	}
-
 	// --- SMART SEEDING DU MOST CACHE ---
 	// On vérifie si le classement global contient déjà des posts.
 	// Si oui, on saute cette étape très lourde pour un démarrage en 1 seconde !
