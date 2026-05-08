@@ -57,7 +57,9 @@ func GetBodyToSign(req *http.Request, bodyBytes []byte) string {
 			// Si on trouve le champ "data", on lit son contenu et on le retourne
 			if part.FormName() == "data" {
 				buf := new(bytes.Buffer)
-				buf.ReadFrom(part)
+				if _, err := buf.ReadFrom(part); err != nil {
+					return ""
+				}
 				return buf.String()
 			}
 		}
@@ -67,4 +69,23 @@ func GetBodyToSign(req *http.Request, bodyBytes []byte) string {
 
 	// Sinon (JSON raw), on retourne tout le body
 	return string(bodyBytes)
+}
+
+// =========================================================================
+// ⚠️ ATTENTION : FONCTION DE SIGNATURE INTERNE (MICRO-SERVICES / URLS)
+// =========================================================================
+// Cette fonction sert EXCLUSIVEMENT à générer des signatures statiques
+// pour des communications internes (ex: URL signée S3 vers le micro-service
+// de tatouage/Watermark).
+//
+// Elle NE DOIT PAS être confondue ou utilisée avec la logique de sécurité
+// dynamique (Ratchet / Sessions / WebSockets) de l'API publique qui est
+// gérée spécifiquement dans "api/middleware/hmac.go".
+// =========================================================================
+
+// GenerateHMAC crée une signature SHA256 standardisée pour un payload donné.
+func GenerateHMAC(payload string, secret string) string {
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(payload))
+	return hex.EncodeToString(h.Sum(nil))
 }

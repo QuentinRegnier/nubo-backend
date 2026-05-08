@@ -61,6 +61,25 @@ services:
       - mongo
     restart: always
 
+  # --- NOUVEAU SERVICE : TATOUAGE (Simulation Serverless) ---
+  watermark:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    container_name: nubo_watermark
+    command: sh -c "go run cmd/watermark/main.go" # On lance le second main
+    volumes:
+      - ./:/app
+    env_file:
+      - .env
+    networks:
+      - internal
+    # On l'expose sur un port différent (ex: 8083) pour que ton navigateur/mobile puisse l'atteindre
+    ports:
+      - "8083:8080"
+    restart: always
+
   # --- 3. STOCKAGE MINIO ---
   minio:
     image: minio/minio

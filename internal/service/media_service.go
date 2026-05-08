@@ -12,11 +12,12 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-
-	"github.com/chai2010/webp"
-	"github.com/disintegration/imaging"
 	"github.com/google/uuid"
+
+	"github.com/disintegration/imaging"
+	"github.com/gen2brain/avif"
 	miniogo "github.com/minio/minio-go/v7"
 )
 
@@ -26,9 +27,7 @@ const (
 	MaxWidth  = 1920
 )
 
-func SetMinioClient(client *miniogo.Client) { minio.MinioClient = client }
-
-func UploadMedia(file io.ReadSeeker, originalFilename string, ownerID int64, mediaID int64) error {
+func UploadMedia(file io.ReadSeeker, ownerID int64, mediaID int64) error {
 
 	// --- 1. ANALYSE & OPTIMISATION IMAGE (CPU Heavy) ---
 	config, _, err := image.DecodeConfig(file)
@@ -40,7 +39,11 @@ func UploadMedia(file io.ReadSeeker, originalFilename string, ownerID int64, med
 		return fmt.Errorf("image trop grande")
 	}
 
-	file.Seek(0, 0)
+	// ✅ CORRECTION SEEK : Gestion de l'erreur
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("erreur lors de la réinitialisation du flux: %v", err)
+	}
+
 	img, _, err := image.Decode(file)
 	if err != nil {
 		return fmt.Errorf("erreur decode: %v", err)
@@ -51,18 +54,31 @@ func UploadMedia(file io.ReadSeeker, originalFilename string, ownerID int64, med
 	}
 
 	var buf bytes.Buffer
-	if err := webp.Encode(&buf, img, &webp.Options{Lossless: false, Quality: 80}); err != nil {
-		return fmt.Errorf("erreur encodage webp: %v", err)
+	// ✅ CORRECTION AVIF : Retrait du '&'
+	if err := avif.Encode(&buf, img, avif.Options{Quality: 65, Speed: 5}); err != nil {
+		return fmt.Errorf("erreur encodage avif: %v", err)
 	}
 
-	// --- 2. UPLOAD MINIO (IO Network) ---
-	objectName := fmt.Sprintf("%s.webp", uuid.New().String())
+	// --- 2. UPLOAD VERS LE S3 (IO Network) ---
+	// Nous utilisons désormais l'extension .avif
+	objectName := fmt.Sprintf("%s.avif", uuid.New().String())
 	bucketName := os.Getenv("MINIO_BUCKET_NAME")
-	storagePath := objectName // On stocke juste le nom ou "media/nom.webp" selon ta stratégie
+	storagePath := objectName
 
-	_, err = minio.MinioClient.PutObject(context.Background(), bucketName, objectName, &buf, int64(buf.Len()), miniogo.PutObjectOptions{ContentType: "image/webp"})
+	// Configuration indispensable du ContentType en "image/avif" pour Scaleway/MinIO
+	_, err = minio.MinioClient.PutObject(
+		context.Background(),
+		bucketName,
+		objectName,
+		&buf,
+		int64(buf.Len()),
+		miniogo.PutObjectOptions{
+			ContentType: "image/avif",
+			// Optionnel : On peut ajouter des métadonnées personnalisées ici si besoin
+		},
+	)
 	if err != nil {
-		return fmt.Errorf("erreur minio: %v", err)
+		return fmt.Errorf("erreur lors de l'envoi vers le stockage S3: %v", err)
 	}
 
 	// --- 3. CRÉATION DE L'OBJET & ID SNOWFLAKE (Go Authority) ---
@@ -110,4 +126,33 @@ func UploadMedia(file io.ReadSeeker, originalFilename string, ownerID int64, med
 
 	log.Printf("✅ Media %d uploadé et mis en file d'attente (Owner: %d)", mediaID, ownerID)
 	return nil
+}
+
+// GenerateWatermarkedURL crée une URL signée unique pour un seul média.
+func GenerateWatermarkedURL(mediaKey string, authorID, postID, readerID int64) string {
+	baseURL := os.Getenv("WATERMARK_API_URL")
+	secret := os.Getenv("WATERMARK_SECRET_KEY")
+	timestamp := time.Now().Unix()
+
+	// Construction de la chaîne à signer
+	// L'ordre des paramètres doit être le même ici et dans le micro-service !
+	payload := fmt.Sprintf("key=%s&author=%d&post=%d&reader=%d&ts=%d",
+		mediaKey, authorID, postID, readerID, timestamp)
+
+	// Génération de la signature via ton package security
+	sig := security.GenerateHMAC(payload, secret)
+
+	return fmt.Sprintf("%s/process?%s&sig=%s", baseURL, payload, sig)
+}
+
+// FormatMediaURLs est la fonction outil qui transforme une liste de médias en liste d'URLs signées.
+func FormatMediaURLs(mediaList []domain.MediaRequest, authorID, postID, readerID int64) []string {
+	urls := make([]string, len(mediaList))
+
+	for i, m := range mediaList {
+		// On utilise la clé de stockage (ex: "uuid.avif") pour générer l'URL
+		urls[i] = GenerateWatermarkedURL(m.StoragePath, authorID, postID, readerID)
+	}
+
+	return urls
 }
