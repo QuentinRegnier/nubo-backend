@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
@@ -88,7 +87,7 @@ func ComputeHashtagTrendScore(postScores map[int64]float64, postAges map[int64]f
 //   - 6–24h: toutes les 15 min
 //   - 24–72h: toutes les 60 min
 //   - > 72h: toutes les 6h
-func UpdateTrendZSETs(ctx context.Context, postID int64, score float64, hashtags []string, date, hour string) error {
+funcUpdateTrendZSETs(ctx context.Context, postID int64, score float64, hashtags []string, date, hour string) error {
 	// ZADD + plafonnement atomique pour le bucket horaire
 	// TDD §3.4: trend:global:hourly:{YYYYMMDDHH}
 	hourlyKey := fmt.Sprintf(variables.RedisKeyTrendGlobalHourly, hour)

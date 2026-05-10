@@ -14,6 +14,19 @@ func getCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 2*time.Second)
 }
 
+// Exists vérifie rapidement si une clé brute est présente dans le cache Redis (O(1))
+// Renvoie true si la clé existe, false sinon.
+func Exists(ctx context.Context, key string) (bool, error) {
+	// La commande EXISTS de Redis renvoie le nombre de clés trouvées correspondant au nom.
+	// Comme on cherche une clé unique, ça renverra 1 si elle existe, 0 sinon.
+	count, err := redisgo.Rdb.Exists(ctx, key).Result()
+	if err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
 // ---------------- USER ----------------
 
 // RedisCreateUser sauvegarde l'utilisateur et crée des index légers (Pointeurs)

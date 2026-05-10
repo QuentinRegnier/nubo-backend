@@ -1,12 +1,14 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"log"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
 // IsUnique vérifie l'unicité d'une valeur (0 = existe déjà, 1 = unique)
@@ -32,8 +34,21 @@ func IsUnique(collection *mongo.MongoCollection, field string, value any) int {
 	// ---------------------------------------------------------
 	// 1. REDIS (Cache Layer)
 	// ---------------------------------------------------------
-	// TODO: Faire un GET sur la clé "table:field:value"
-	// Si hit -> return 0
+	// Construction de la clé : "table:field:value"
+	redisKey := fmt.Sprintf("%s:%s", collection.Name, key)
+
+	// Utilisation d'un contexte vide (à adapter si tu passes le context.Context dans IsUnique à l'avenir)
+	ctx := context.Background()
+
+	// On vérifie l'existence dans le SPEED Cache
+	// (Assure-toi d'utiliser la méthode Exists ou Get adaptée à ton package redis/calls.go)
+	exists, err := redis.Exists(ctx, redisKey)
+	if err != nil {
+		log.Printf("Erreur IsUnique (Redis) : %v", err)
+		// En cas d'erreur Redis, on ne bloque pas, on laisse Mongo/Postgres faire le travail
+	} else if exists {
+		return 0 // Existe déjà (Hit confirmé)
+	}
 
 	// ---------------------------------------------------------
 	// 2. MONGODB
