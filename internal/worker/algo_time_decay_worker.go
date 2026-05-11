@@ -16,10 +16,11 @@ type ScoreJob struct {
 	PostID       int64
 	LikeCount    int
 	CommentCount int
+	ViewCount    int // NOUVEAU : Indispensable pour ne pas perdre les vues au recalcul
 	HasMedia     bool
 	CreatedAt    time.Time
 	Hashtags     []string
-	Visibility   int // <-- AJOUT
+	Visibility   int
 }
 
 // StartScoreUpdaterCron initialise le Worker Pool basé sur le nombre de threads CPU
@@ -45,7 +46,18 @@ func StartScoreUpdaterCron(ctx context.Context) {
 					}
 					// Appel du moteur mathématique pur. BDD = 0, Redis = Max
 					// TODO rendre dynamique isFlagged
-					service.UpdateScoreWithMetrics(ctx, job.PostID, job.LikeCount, job.CommentCount, mediaCount, job.CreatedAt, job.Hashtags, job.Visibility, 0)
+					service.UpdateScoreWithMetrics(
+						ctx,
+						job.PostID,
+						job.LikeCount,
+						job.CommentCount,
+						job.ViewCount, // NOUVEAU : Transmission du view_count
+						mediaCount,
+						job.CreatedAt,
+						job.Hashtags,
+						job.Visibility,
+						0,
+					)
 				}
 			}
 		}()
@@ -66,9 +78,9 @@ func runTierCron(ctx context.Context, jobs chan<- ScoreJob, interval time.Durati
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	// Requête SQL enrichie : on récupère toutes les variables d'ajustement du TDD
+	// CORRECTION SQL : Ajout de view_count et visibility dans le SELECT
 	query := `
-		SELECT id, like_count, comment_count, has_media, created_at, hashtags
+		SELECT id, like_count, comment_count, view_count, has_media, created_at, hashtags, visibility
 		FROM content.posts 
 		WHERE created_at <= NOW() - $1::interval 
 		AND created_at > NOW() - $2::interval 
@@ -88,12 +100,22 @@ func runTierCron(ctx context.Context, jobs chan<- ScoreJob, interval time.Durati
 
 			for rows.Next() {
 				var job ScoreJob
-				// Scan incluant le tableau de Strings spécifique à Postgres
-				if err := rows.Scan(&job.PostID, &job.LikeCount, &job.CommentCount, &job.HasMedia, &job.CreatedAt, pq.Array(&job.Hashtags)); err == nil {
-					jobs <- job
-				} else {
-					log.Printf("⚠️ Erreur Scan ScoreJob : %v", err)
+				// CORRECTION DU SCAN : On map toutes les colonnes dans l'ordre du SELECT
+				err := rows.Scan(
+					&job.PostID,
+					&job.LikeCount,
+					&job.CommentCount,
+					&job.ViewCount,
+					&job.HasMedia,
+					&job.CreatedAt,
+					pq.Array(&job.Hashtags),
+					&job.Visibility,
+				)
+				if err != nil {
+					log.Printf("⚠️ Erreur de scan dans runTierCron: %v", err)
+					continue
 				}
+				jobs <- job
 			}
 			if err := rows.Close(); err != nil {
 				log.Printf("⚠️ Erreur fermeture rows Cron Tier (%s-%s) : %v", minAge, maxAge, err)

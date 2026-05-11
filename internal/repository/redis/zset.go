@@ -73,6 +73,7 @@ func ZCard(ctx context.Context, key string) (int64, error) {
 }
 
 // zaddCapScript garantit l'atomicité de l'insertion et du nettoyage à X éléments.
+// TDD §3.3 : Utilise un script Lua pour éviter toute race condition.
 const zaddCapScript = `
 	local key = KEYS[1]
 	local score = tonumber(ARGV[1])
@@ -80,15 +81,17 @@ const zaddCapScript = `
 	local max_size = tonumber(ARGV[3])
 
 	redis.call('ZADD', key, score, member)
+	
 	local current_size = redis.call('ZCARD', key)
 	if current_size > max_size then
-		redis.call('ZREMRANGEBYRANK', key, 0, current_size - max_size - 1)
+	   redis.call('ZREMRANGEBYRANK', key, 0, current_size - max_size - 1)
 	end
-	return 1
+	
+	return redis.call('ZSCORE', key, member)
 `
 
 // ZAddWithCap insère un élément et plafonne le ZSET en une seule passe atomique via Lua.
-func ZAddWithCap(ctx context.Context, key string, score float64, member interface{}, maxSize int) error {
+func ZAddWithCap(ctx context.Context, key string, score float64, member any, maxSize int) error {
 	return redisgo.Rdb.Eval(ctx, zaddCapScript, []string{key}, score, member, maxSize).Err()
 }
 

@@ -19,22 +19,8 @@ import (
 // 1. MOTEUR DE RECOMMANDATION ET CLASSEMENTS
 // ============================================================================
 
-// UpdatePostRecommendationScore recalcule le score en chargeant l'entité (utilisé par les interactions en temps réel).
-func UpdatePostRecommendationScore(ctx context.Context, postID int64, hashtags []string) {
-	var p domain.PostRequest
-	if err := redis.Posts.GetObject(ctx, postID, &p); err != nil {
-		posts, err := GetPostsView([]int64{postID})
-		if err != nil || len(posts) == 0 {
-			log.Printf("⚠️ Impossible de scorer le post %d : Introuvable", postID)
-			return
-		}
-		p = posts[0]
-	}
-
-	if len(hashtags) == 0 && len(p.Hashtags) > 0 {
-		hashtags = p.Hashtags
-	}
-
+// UpdatePostRecommendationScore recalcule le score à partir de l'entité déjà chargée en RAM.
+func UpdatePostRecommendationScore(ctx context.Context, p domain.PostRequest) {
 	mediaCount := 0
 	if p.HasMedia || len(p.MediaIDs) > 0 {
 		mediaCount = 1
@@ -42,19 +28,19 @@ func UpdatePostRecommendationScore(ctx context.Context, postID int64, hashtags [
 
 	// AJOUT : p.Visibility et 0 (pour isFlagged)
 	// TODO rendre dynamique isFlagged
-	UpdateScoreWithMetrics(ctx, postID, p.LikeCount, p.CommentCount, mediaCount, p.CreatedAt, hashtags, p.Visibility, 0)
+	UpdateScoreWithMetrics(ctx, p.ID, p.LikeCount, p.CommentCount, p.ViewCount, mediaCount, p.CreatedAt, p.Hashtags, p.Visibility, 0)
 }
 
-// EvaluatePostAfterLike force l'insertion du post avec sa valeur absolue post-sauvegarde BDD.
-func EvaluatePostAfterLike(ctx context.Context, postID int64, totalLikes float64, hashtags []string) {
-	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankLikesStrict, totalLikes, postID, variables.MaxRankElements)
-	UpdatePostRecommendationScore(ctx, postID, hashtags)
+// EvaluatePostAfterLike force l'insertion du post avec sa valeur absolue dans les classements stricts.
+func EvaluatePostAfterLike(ctx context.Context, p domain.PostRequest) {
+	_ = redis.ZAddWithCap(ctx, variables.RedisKeyStrictLikes, float64(p.LikeCount), p.ID, variables.MaxStrictElements)
+	UpdatePostRecommendationScore(ctx, p)
 }
 
-// EvaluatePostAfterView force l'insertion du post avec sa valeur absolue post-sauvegarde BDD.
-func EvaluatePostAfterView(ctx context.Context, postID int64, totalViews float64, hashtags []string) {
-	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankViewsStrict, totalViews, postID, variables.MaxRankElements)
-	UpdatePostRecommendationScore(ctx, postID, hashtags)
+// EvaluatePostAfterView force l'insertion du post avec sa valeur absolue dans les classements stricts.
+func EvaluatePostAfterView(ctx context.Context, p domain.PostRequest) {
+	_ = redis.ZAddWithCap(ctx, variables.RedisKeyStrictViews, float64(p.ViewCount), p.ID, variables.MaxStrictElements)
+	UpdatePostRecommendationScore(ctx, p)
 }
 
 // ============================================================================
@@ -62,19 +48,20 @@ func EvaluatePostAfterView(ctx context.Context, postID int64, totalViews float64
 // ============================================================================
 
 func GetRankedPosts(ctx context.Context, rankType string, offset int64, limit int64) ([]domain.PostRequest, error) {
-	if offset >= variables.MaxRankElements {
+	// Note: On utilise MaxStrictElements comme seuil de sécurité global pour le fallback
+	if offset >= variables.MaxStrictElements {
 		filter := map[string]any{}
 		var sort map[string]any
 
 		switch rankType {
-		case "likes:strict", "likes:global":
+		case "strict:likes":
 			sort = map[string]any{"like_count": -1, "created_at": -1}
-		case "views:strict", "views:global":
+		case "strict:views":
 			sort = map[string]any{"view_count": -1, "created_at": -1}
-		case "global", "recent:global", "recent:strict":
+		case "strict:recent":
 			sort = map[string]any{"created_at": -1}
 		default:
-			sort = map[string]any{"created_at": -1}
+			sort = map[string]any{"created_at": -1} // Fallback par défaut pour les trends si nécessaire
 		}
 
 		// L2 (MongoDB)
@@ -94,10 +81,10 @@ func GetRankedPosts(ctx context.Context, rankType string, offset int64, limit in
 		return posts, nil
 	}
 
-	key := fmt.Sprintf("most_cache:rank:%s", rankType)
+	// NOUVEAU : La clé est générée dynamiquement avec la nomenclature stricte ou algorithmique
+	key := fmt.Sprintf("most_cache:%s", rankType)
 	return fetchAndHydrateFromZSET(ctx, key, offset, limit)
 }
-
 func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([]domain.PostRequest, error) {
 	if offset >= variables.MaxTagElements {
 		posts, err := getPostsFromMongoPaginated("hashtags", slug, offset, limit)
@@ -131,41 +118,22 @@ func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([
 	return fetchAndHydrateFromZSET(ctx, key, offset, limit)
 }
 
-// UpdateScoreWithMetrics est le moteur mathématique et Redis pur (utilisé par le Cron pour éviter les requêtes BDD).
-func UpdateScoreWithMetrics(ctx context.Context, postID int64, likes, comments, mediaCount int, createdAt time.Time, hashtags []string, visibility int, isFlagged int) {
-	ageSeconds := time.Since(createdAt).Seconds()
-
-	baseOpts := ScoreOptions{
-		LikesCount:    likes,
-		CommentsCount: comments,
-		MediaCount:    mediaCount,
-		AgeSeconds:    ageSeconds,
-		IsDeleted:     visibility == 0,
-		IsReported:    isFlagged == 0,
+// UpdateTrendZSETs distribue le score de tendance global dans les différents rayons (buckets) Redis.
+// C'est le bras armé de la persistance algorithmique (TDD §3.4).
+func UpdateTrendZSETs(ctx context.Context, postID int64, score float64, hashtags []string, date, hour, week string) error {
+	// 1. Bucket Horaire Global
+	hourlyKey := fmt.Sprintf(variables.RedisKeyTrendGlobalHourly, hour)
+	if err := redis.ZAddWithCap(ctx, hourlyKey, score, postID, variables.TDDMaxZSET); err != nil {
+		return fmt.Errorf("zadd hourly: %w", err)
 	}
 
-	optsRecent := baseOpts
-	optsRecent.BoostRecent = variables.BoostRecent
+	// 2. Bucket Journalier Global
+	dailyKey := fmt.Sprintf(variables.RedisKeyTrendGlobalDaily, date)
+	if err := redis.ZAddWithCap(ctx, dailyKey, score, postID, variables.TDDMaxZSET); err != nil {
+		return fmt.Errorf("zadd daily: %w", err)
+	}
 
-	optsLikes := baseOpts
-	optsLikes.BoostLikes = variables.BoostLikes
-
-	optsComments := baseOpts
-	optsComments.BoostComments = variables.BoostComments
-
-	scoreGlobal := CalculateRecommendationScore(postID, baseOpts)
-	scoreBoostRecent := CalculateRecommendationScore(postID, optsRecent)
-	scoreBoostLikes := CalculateRecommendationScore(postID, optsLikes)
-	scoreBoostComments := CalculateRecommendationScore(postID, optsComments)
-
-	scoreStrictRecent := float64(createdAt.UnixMilli())
-
-	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankGlobal, scoreGlobal, postID, variables.MaxRankElements)
-	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankRecentGlobal, scoreBoostRecent, postID, variables.MaxRankElements)
-	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankLikesGlobal, scoreBoostLikes, postID, variables.MaxRankElements)
-	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankCommentsGlobal, scoreBoostComments, postID, variables.MaxRankElements)
-	_ = redis.ZAddWithCap(ctx, variables.RedisKeyRankRecentStrict, scoreStrictRecent, postID, variables.MaxRankElements)
-
+	// 3. Buckets par Tags Canoniques & Leaderboard
 	if len(hashtags) > 0 {
 		officialTags := make(map[string]bool)
 		for _, hashtag := range hashtags {
@@ -175,8 +143,44 @@ func UpdateScoreWithMetrics(ctx context.Context, postID int64, likes, comments, 
 		}
 
 		for slug := range officialTags {
-			tagKey := fmt.Sprintf(variables.RedisKeyRankTag, slug)
-			_ = redis.ZAddWithCap(ctx, tagKey, scoreGlobal, postID, variables.MaxTagElements)
+			// Bucket Journalier du Tag (Injection de slug + date)
+			tagDailyKey := fmt.Sprintf(variables.RedisKeyTrendTagDaily, slug, date)
+			_ = redis.ZAddWithCap(ctx, tagDailyKey, score, postID, variables.TDDMaxZSET)
+
+			// Bucket Hebdomadaire du Tag (Injection de slug + week)
+			tagWeeklyKey := fmt.Sprintf(variables.RedisKeyTrendTagWeekly, slug, week)
+			_ = redis.ZAddWithCap(ctx, tagWeeklyKey, score, postID, variables.TDDMaxZSET)
+
+			// Leaderboard Global des Hashtags (Le slug est le membre, le score pousse le hashtag)
+			_ = redis.ZAddWithCap(ctx, variables.RedisKeyHashtagLeaderboard, score, slug, variables.TDDMaxZSET)
 		}
 	}
+
+	return nil
+}
+
+// UpdateScoreWithMetrics orchestre le calcul et la distribution des scores.
+func UpdateScoreWithMetrics(ctx context.Context, postID int64, likes, comments, views, mediaCount int, createdAt time.Time, hashtags []string, visibility int, isFlagged int) {
+	ageSeconds := time.Since(createdAt).Seconds()
+
+	baseOpts := ScoreOptions{
+		LikesCount:    likes,
+		CommentsCount: comments,
+		ViewCount:     views,
+		MediaCount:    mediaCount,
+		AgeSeconds:    ageSeconds,
+		IsDeleted:     visibility == 0,
+		IsReported:    isFlagged == 0,
+	}
+	scoreGlobal := CalculateRecommendationScore(postID, baseOpts)
+
+	scoreStrictRecent := float64(createdAt.UnixMilli())
+	_ = redis.ZAddWithCap(ctx, variables.RedisKeyStrictRecent, scoreStrictRecent, postID, variables.MaxStrictElements)
+
+	now := time.Now().UTC()
+	year, isoweek := now.ISOWeek()
+	weekStr := fmt.Sprintf("%d-W%02d", year, isoweek) // Ex: "2026-W20"
+
+	// Appel modifié pour transmettre weekStr
+	_ = UpdateTrendZSETs(ctx, postID, scoreGlobal, hashtags, now.Format("20060102"), now.Format("2006010215"), weekStr)
 }

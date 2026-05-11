@@ -214,6 +214,53 @@ func FuncLoadSession(ID int64, UserId int64, DeviceToken string, MasterToken str
 	return res, nil
 }
 
+// scanPosts mutualise la logique d'itération et de scan des lignes (DRY).
+// Elle lit les 16 colonnes (incluant view_count et vector) pour construire les PostRequests.
+func scanPosts(rows *sql.Rows) ([]domain.PostRequest, error) {
+	var posts []domain.PostRequest
+
+	for rows.Next() {
+		var p domain.PostRequest
+		var location sql.NullString
+
+		err := rows.Scan(
+			&p.ID,
+			&p.UserID,
+			&p.Content,
+			pq.Array(&p.Hashtags),
+			pq.Array(&p.Identifiers),
+			pq.Array(&p.MediaIDs),
+			&p.Visibility,
+			&location,
+			&p.CreatedAt,
+			&p.UpdatedAt,
+			&p.LikeCount,
+			&p.CommentCount,
+			&p.ViewCount,
+			&p.HasMedia,
+			pq.Array(&p.Vector),
+			&p.VectorVersion,
+		)
+
+		if err != nil {
+			fmt.Printf("⚠️ Erreur lors du scan d'un post : %v\n", err)
+			continue // On ignore la ligne corrompue et on passe à la suivante
+		}
+
+		if location.Valid {
+			p.Location = location.String
+		}
+
+		posts = append(posts, p)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("erreur pendant l'itération des posts : %w", err)
+	}
+
+	return posts, nil
+}
+
 func FuncLoadPosts(postIDs []int64, limit int, offset int) ([]domain.PostRequest, error) {
 	fmt.Println("FuncLoadPosts called with IDs count:", len(postIDs), "Limit:", limit, "Offset:", offset)
 
@@ -252,49 +299,8 @@ func FuncLoadPosts(postIDs []int64, limit int, offset int) ([]domain.PostRequest
 		}
 	}(rows)
 
-	var posts []domain.PostRequest
-
-	// 4. Boucle sur les résultats avec le Scan unique
-	for rows.Next() {
-		var p domain.PostRequest
-		var location sql.NullString
-
-		err := rows.Scan(
-			&p.ID,
-			&p.UserID,
-			&p.Content,
-			pq.Array(&p.Hashtags),
-			pq.Array(&p.Identifiers),
-			pq.Array(&p.MediaIDs),
-			&p.Visibility,
-			&location,
-			&p.CreatedAt,
-			&p.UpdatedAt,
-			&p.LikeCount,
-			&p.CommentCount,
-			&p.ViewCount,
-			&p.HasMedia,
-		)
-
-		if err != nil {
-			fmt.Printf("⚠️ Erreur lors du scan d'un post : %v\n", err)
-			continue // On ignore la ligne corrompue et on passe à la suivante
-		}
-
-		// Traitement de la localisation (NULL -> String)
-		if location.Valid {
-			p.Location = location.String
-		}
-
-		posts = append(posts, p)
-	}
-
-	// Vérification finale des erreurs d'itération
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("erreur pendant l'itération de FuncLoadPosts: %w", err)
-	}
-
-	return posts, nil
+	// NOUVEAU : Un seul appel remplace toute la boucle
+	return scanPosts(rows)
 }
 
 // FuncLoadAllTags récupère tous les slugs actifs depuis la base de données.
@@ -330,4 +336,62 @@ func FuncLoadAllTags() ([]string, error) {
 	}
 
 	return tags, nil
+}
+
+// FuncLoadPostsPaginated récupère les posts par lots pour le démarrage à froid (Seeding).
+// Cela empêche la saturation de la RAM lors de l'hydratation du cache.
+func FuncLoadPostsPaginated(limit int, offset int) ([]domain.PostRequest, error) {
+	query := `
+		SELECT 
+			p.id, p.user_id, p.content, p.hashtags, p.identifiers, p.media_ids, 
+			p.visibility, p.location, p.created_at, p.updated_at, p.like_count, 
+			p.comment_count, p.view_count, p.has_media, p.vector, p.vector_version
+		FROM content.posts p
+		WHERE p.visibility != 2
+		ORDER BY p.created_at DESC
+		LIMIT $1 OFFSET $2
+	`
+
+	rows, err := postgres.PostgresDB.Query(query, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("erreur lors de FuncLoadPostsPaginated: %w", err)
+	}
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			fmt.Println("⚠️ Erreur lors de la fermeture des rows dans FuncLoadPostsPaginated:", err)
+		}
+	}(rows)
+
+	// NOUVEAU
+	return scanPosts(rows)
+}
+
+// FuncLoadRecentPosts récupère les posts créés dans l'intervalle de jours spécifié.
+// Utilisé pour la synchronisation L2 (MongoDB) lors du démarrage à froid.
+func FuncLoadRecentPosts(days int) ([]domain.PostRequest, error) {
+	query := `
+		SELECT 
+			p.id, p.user_id, p.content, p.hashtags, p.identifiers, p.media_ids, 
+			p.visibility, p.location, p.created_at, p.updated_at, p.like_count, 
+			p.comment_count, p.view_count, p.has_media, p.vector, p.vector_version
+		FROM content.posts p
+		WHERE p.visibility != 2
+		AND p.created_at >= NOW() - ($1 || ' days')::interval
+		ORDER BY p.created_at DESC
+	`
+
+	rows, err := postgres.PostgresDB.Query(query, days)
+	if err != nil {
+		return nil, fmt.Errorf("erreur FuncLoadRecentPosts: %w", err)
+	}
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			fmt.Println("⚠️ Erreur lors de la fermeture des rows dans FuncLoadRecentPosts:", err)
+		}
+	}(rows)
+
+	// NOUVEAU
+	return scanPosts(rows)
 }

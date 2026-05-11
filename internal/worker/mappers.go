@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -168,30 +167,15 @@ func (m *SessionMapper) BuildUpdateQuery(tempTable string) string {
 type PostMapper struct{}
 
 func (m *PostMapper) TableName() string { return "content.posts" }
-
 func (m *PostMapper) Columns() []string {
-	// Correspondance exacte avec votre schéma de table
-	return []string{"id", "user_id", "content", "hashtags", "identifiers", "media_ids", "visibility", "location", "created_at", "updated_at"}
+	return []string{"id", "user_id", "content", "hashtags", "identifiers", "media_ids", "visibility", "location", "created_at", "updated_at", "like_count", "comment_count", "view_count", "has_media", "vector", "vector_version"}
 }
-
 func (m *PostMapper) ToRow(data any) ([]any, error) {
-	// Conversion sécurisée des données venant de Redis
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
 		return nil, err
 	}
-	var p struct {
-		ID          int64     `json:"id"`
-		UserID      int64     `json:"user_id"`
-		Content     string    `json:"content"`
-		Hashtags    []string  `json:"hashtags"`
-		Identifiers []int64   `json:"identifiers"`
-		MediaIDs    []int64   `json:"media_ids"`
-		Visibility  int       `json:"visibility"`
-		Location    string    `json:"location"`
-		CreatedAt   time.Time `json:"created_at"`
-		UpdatedAt   time.Time `json:"updated_at"`
-	}
+	var p domain.PostRequest
 	if err := json.Unmarshal(jsonBytes, &p); err != nil {
 		return nil, err
 	}
@@ -200,13 +184,19 @@ func (m *PostMapper) ToRow(data any) ([]any, error) {
 		p.ID,
 		p.UserID,
 		p.Content,
-		pq.Array(p.Hashtags), // Utilisation de pq.Array pour les types array SQL
+		pq.Array(p.Hashtags),
 		pq.Array(p.Identifiers),
 		pq.Array(p.MediaIDs),
 		p.Visibility,
 		p.Location,
 		p.CreatedAt,
 		p.UpdatedAt,
+		p.LikeCount,
+		p.CommentCount,
+		p.ViewCount,
+		p.HasMedia,
+		pq.Array(p.Vector), // NOUVEAU : Conversion du []float32 pour Postgres
+		p.VectorVersion,    // NOUVEAU
 	}, nil
 }
 
