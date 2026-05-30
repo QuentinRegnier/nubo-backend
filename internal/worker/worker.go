@@ -81,6 +81,7 @@ func runWorker(ctx context.Context, shardID int) {
 func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 	var mongoEvents []redis.AsyncEvent
 	var pgEvents []redis.AsyncEvent
+	var workerEvents []redis.AsyncEvent // <-- NOUVEAU
 
 	for _, evt := range events {
 		if evt.Targets&redis.TargetMongo != 0 {
@@ -88,6 +89,9 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 		}
 		if evt.Targets&redis.TargetPostgres != 0 {
 			pgEvents = append(pgEvents, evt)
+		}
+		if evt.Targets&redis.TargetWorker != 0 { // <-- NOUVEAU
+			workerEvents = append(workerEvents, evt)
 		}
 	}
 
@@ -108,6 +112,13 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 		done <- true
 	}()
 
+	// Lancement des tâches internes (hors BDD) en parallèle
+	go func() {
+		if len(workerEvents) > 0 {
+			processInternalJobs(ctx, workerEvents)
+		}
+	}()
+
 	// On DOIT attendre que la BDD ait validé les transactions sur le disque
 	// avant de mettre à jour le cache, sinon on lira des valeurs périmées.
 	<-done
@@ -116,4 +127,8 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 	// Étape 2 : Mise à jour de l'index de découverte (MOST Cache)
 	// S'exécute de manière asynchrone mais séquencée APRÈS la BDD.
 	updateMostCache(ctx, events)
+
+	// Étape 3 : Fan-Out Social de masse (Distribution dans les boîtes aux lettres du Speed Cache)
+	// S'exécute de manière ultra-rapide en RAM juste après la validation BDD
+	handleSocialFanOut(ctx, events)
 }

@@ -7,7 +7,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/feed"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/lib/pq"
 )
@@ -64,7 +64,7 @@ func processHashtagCanonicalization(ctx context.Context) {
 			distNorm := NormalizedLevenshtein(t1, t2)
 
 			// Critère TDD : Distance <= 0.15 ET même racine morphologique
-			if distNorm <= 0.15 && service.StemHashtag(t1) == service.StemHashtag(t2) {
+			if distNorm <= 0.15 && feed.StemHashtag(t1) == feed.StemHashtag(t2) {
 				canon, typo := t1, t2
 				if len(t2) < len(t1) {
 					canon, typo = t2, t1

@@ -9,6 +9,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/feed"
 	"github.com/gin-gonic/gin"
 )
 
@@ -137,7 +139,7 @@ func RegisterBatchViewsHandler(c *gin.Context) {
 	for _, postID := range input.PostIDs {
 		// Nettoyage anti-doublon direct : s'assurer qu'un ID n'est pas à 0
 		if postID > 0 {
-			service.RegisterView(userID, postID)
+			feed.RegisterView(userID, postID)
 		}
 	}
 
@@ -169,7 +171,7 @@ func GetUserPostsHandler(c *gin.Context) {
 	}
 
 	// 3. Appel au service d'hydratation hybride
-	posts, err := service.GetUserProfilePosts(c.Request.Context(), targetUserID, offset, limit)
+	posts, err := cache.GetUserProfilePosts(c.Request.Context(), targetUserID, offset, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur lors de la récupération des posts"})
 		return
@@ -201,7 +203,7 @@ func LikeHandler(c *gin.Context) {
 	}
 
 	// C'est ici que tu appelles ta fonction qui était "Unused" !
-	service.RegisterLike(userID, input.PostID)
+	feed.RegisterLike(userID, input.PostID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "post liked"})
 }

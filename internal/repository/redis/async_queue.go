@@ -22,6 +22,7 @@ const (
 	ActionCreate ActionType = "ADD" // J'utilise tes termes "ADD"
 	ActionUpdate ActionType = "UPD"
 	ActionDelete ActionType = "DEL"
+	ActionBuild  ActionType = "BUILD"
 )
 
 // EntityType : Sur quoi on agit
@@ -40,6 +41,7 @@ const (
 	EntityMembers      EntityType = "Members"
 	EntityMessage      EntityType = "Messages"
 	EntityView         EntityType = "VIEW"
+	EntityFeed         EntityType = "Feeds"
 	// Ajoute les autres entités selon tes besoins
 )
 
@@ -47,8 +49,9 @@ const (
 type DBTarget int
 
 const (
-	TargetMongo    DBTarget = 1 << 0 // 1
-	TargetPostgres DBTarget = 1 << 1 // 2
+	TargetMongo    DBTarget = 1 << 0
+	TargetPostgres DBTarget = 1 << 1
+	TargetWorker   DBTarget = 1 << 2 // <-- NOUVEAU : Cible pour les tâches internes de calcul (hors BDD)
 	TargetAll               = TargetMongo | TargetPostgres
 )
 

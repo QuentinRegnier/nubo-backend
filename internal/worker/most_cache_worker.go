@@ -10,7 +10,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/feed"
 )
 
 // updateMostCache intercepte les événements pour alimenter les ZSETs (Tags, Profils, Classements)
@@ -24,11 +25,11 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 				var post domain.PostRequest
 				if err := json.Unmarshal(jsonBytes, &post); err == nil {
 					// A. Algorithme de Recommandation (Tags, Global, Recent)
-					service.UpdatePostRecommendationScore(ctx, post) // Passe l'objet complet
+					cache.UpdatePostRecommendationScore(ctx, post) // Passe l'objet complet
 					// B. Chronologie Utilisateur (Grille Profil) avec précision temporelle stricte
-					service.AddPostToUserProfile(ctx, post.UserID, post.ID, post.CreatedAt.UnixMilli())
+					cache.AddPostToUserProfile(ctx, post.UserID, post.ID, post.CreatedAt.UnixMilli())
 					// C. Vecteur de Contenu pour Recommandation Personnalisée (Pilier 3)
-					service.StoreContentVector(ctx, post)
+					feed.StoreContentVector(ctx, post)
 				}
 			}
 		}
@@ -42,7 +43,7 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 				if err := json.Unmarshal(jsonBytes, &post); err == nil && post.UserID != 0 {
 					// Invalidation radicale : on détruit le ZSET de l'utilisateur.
 					// Zéro dérive d'état garantie.
-					service.InvalidateUserProfileCache(ctx, post.UserID)
+					cache.InvalidateUserProfileCache(ctx, post.UserID)
 				}
 			}
 		}
@@ -72,13 +73,13 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 							_ = redis.Posts.SetObject(ctx, p.ID, p) // MAJ instantanée du cache L1
 
 							// 3. On route vers les fonctions strictes avec l'objet complet en RAM
-							service.EvaluatePostAfterLike(ctx, p)
+							cache.EvaluatePostAfterLike(ctx, p)
 						} else if e.Type == redis.EntityView {
 							p.ViewCount += interactionEvent.Count
 							_ = redis.Posts.SetObject(ctx, p.ID, p) // MAJ instantanée du cache L1
 
 							// 3. On route vers les fonctions strictes avec l'objet complet en RAM
-							service.EvaluatePostAfterView(ctx, p)
+							cache.EvaluatePostAfterView(ctx, p)
 						}
 					}
 				}

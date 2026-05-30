@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache"
 	"github.com/lib/pq"
 )
 
@@ -46,7 +46,7 @@ func StartScoreUpdaterCron(ctx context.Context) {
 					}
 					// Appel du moteur mathématique pur. BDD = 0, Redis = Max
 					// TODO rendre dynamique isFlagged
-					service.UpdateScoreWithMetrics(
+					cache.UpdateScoreWithMetrics(
 						ctx,
 						job.PostID,
 						job.LikeCount,

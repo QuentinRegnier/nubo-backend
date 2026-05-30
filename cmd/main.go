@@ -20,6 +20,7 @@ import (
 	mongogo "github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/QuentinRegnier/nubo-backend/internal/worker"
 	"github.com/gin-gonic/gin"
@@ -92,13 +93,11 @@ func main() {
 	cuckoo.InitCuckooFilter()
 
 	// --- SMART SEEDING DU MOST CACHE ---
-	// On vérifie si le classement global contient déjà des posts.
-	// Si oui, on saute cette étape très lourde pour un démarrage en 1 seconde !
-	count, _ := redisgo.ZCard(context.Background(), variables.RedisKeyRankGlobal)
+	count, _ := redisgo.ZCard(context.Background(), variables.RedisKeyStrictRecent)
 
 	if count == 0 {
 		log.Println("⚠️ Cache Redis vide détecté : Lancement du Seeding massif...")
-		if err := service.SeedMostCache(); err != nil {
+		if err := cache.SeedMostCache(); err != nil {
 			log.Printf("⚠️ Avertissement lors du seeding: %v", err)
 		}
 	} else {

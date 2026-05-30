@@ -1,4 +1,4 @@
-package service
+package cache
 
 import (
 	"context"
@@ -101,4 +101,55 @@ func getPostsFromPostgresPaginated(ctx context.Context, rankType string, offset 
 	}
 
 	return GetPostsView(ids)
+}
+
+// ============================================================================
+// 4. HYDRATATION FINALE DU FEED (Étape 5.3)
+// ============================================================================
+
+// HydrateFeed prend les IDs bruts d'une page de buffer (générée par le Distributeur)
+// et les transforme en objets complets prêts pour le frontend.
+// C'est ICI que l'on applique le filtrage de dernière minute (Visibility, Banned).
+func HydrateFeed(ctx context.Context, postIDs []int64) ([]domain.PostRequest, error) {
+	// Pré-allocation pour optimiser la mémoire
+	hydratedPosts := make([]domain.PostRequest, 0, len(postIDs))
+
+	for _, id := range postIDs {
+		var post domain.PostRequest
+
+		// 1. Tentative de récupération depuis le cache LFU (Object Cache Redis)
+		// C'est le même cache que tu initialises dans CreatePost.
+		err := redis.Posts.GetObject(ctx, id, &post)
+		if err != nil {
+			// FALLBACK : Si le post a été évincé du cache Redis, on va le chercher en base
+			// (En réutilisant ta méthode GetPostsView existante qui tape sur la BDD)
+			postsFromDB, errDB := GetPostsView([]int64{id})
+			if errDB == nil && len(postsFromDB) > 0 {
+				post = postsFromDB[0]
+				// Réhydratation silencieuse du cache LFU pour les prochains appels
+				_ = redis.Posts.SetObject(ctx, id, post)
+			} else {
+				continue // Post totalement introuvable (Hard Delete), on l'ignore
+			}
+		}
+
+		// ─────────────────────────────────────────────────────────────────────
+		// 2. ÉTAPE 5.3 : GESTION "A LA VOLÉE" DES ÉTATS CRITIQUES
+		// ─────────────────────────────────────────────────────────────────────
+		// Si le post a été modéré, ou l'auteur banni entre la création du buffer et la lecture.
+		// On s'aligne sur ta logique Postgres où la visibilité '2' équivaut à un post supprimé/masqué.
+		if post.Visibility == 2 {
+			// Le post est ignoré silencieusement côté backend.
+			// Le frontend ne le recevra même pas, ce qui économise de la bande passante
+			// et garantit qu'aucune donnée d'un utilisateur banni ne fuite.
+			continue
+		}
+
+		// (Optionnel) : Tu pourrais aussi vérifier le statut de l'auteur ici
+		// via un appel ultra-rapide au cache Utilisateur si nécessaire.
+
+		hydratedPosts = append(hydratedPosts, post)
+	}
+
+	return hydratedPosts, nil
 }

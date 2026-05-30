@@ -1,4 +1,4 @@
-package service
+package cache
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/feed"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
@@ -137,7 +138,7 @@ func UpdateTrendZSETs(ctx context.Context, postID int64, score float64, hashtags
 	if len(hashtags) > 0 {
 		officialTags := make(map[string]bool)
 		for _, hashtag := range hashtags {
-			if slug, found := GetTagFromKeyword(ctx, hashtag); found {
+			if slug, found := feed.GetTagFromKeyword(ctx, hashtag); found {
 				officialTags[slug] = true
 			}
 		}
@@ -163,7 +164,7 @@ func UpdateTrendZSETs(ctx context.Context, postID int64, score float64, hashtags
 func UpdateScoreWithMetrics(ctx context.Context, postID int64, likes, comments, views, mediaCount int, createdAt time.Time, hashtags []string, visibility int, isFlagged int) {
 	ageSeconds := time.Since(createdAt).Seconds()
 
-	baseOpts := ScoreOptions{
+	baseOpts := feed.ScoreOptions{
 		LikesCount:    likes,
 		CommentsCount: comments,
 		ViewCount:     views,
@@ -172,7 +173,7 @@ func UpdateScoreWithMetrics(ctx context.Context, postID int64, likes, comments, 
 		IsDeleted:     visibility == 0,
 		IsReported:    isFlagged == 0,
 	}
-	scoreGlobal := CalculateRecommendationScore(postID, baseOpts)
+	scoreGlobal := feed.CalculateRecommendationScore(postID, baseOpts)
 
 	scoreStrictRecent := float64(createdAt.UnixMilli())
 	_ = redis.ZAddWithCap(ctx, variables.RedisKeyStrictRecent, scoreStrictRecent, postID, variables.MaxStrictElements)
