@@ -43,7 +43,7 @@ func InitCacheDatabase() {
 	UserSettings = NewCollection("object_cache:user_settings", variables.StandardTTL)
 	Sessions = NewCollection("object_cache:session", variables.StandardTTL)
 
-	Posts = NewCollection("object_cache:post", variables.StandardTTL)
+	Posts = NewCollection("object_cache:post_service", variables.StandardTTL)
 	Comments = NewCollection("object_cache:comment", variables.StandardTTL)
 	Media = NewCollection("object_cache:media", variables.StandardTTL)
 	Messages = NewCollection("object_cache:msg", variables.StandardTTL)
@@ -62,7 +62,7 @@ func InitCacheDatabase() {
 // ---------------- Collection ----------------
 
 type Collection struct {
-	Prefix     string        // ex: "post" (donnera "post:123")
+	Prefix     string        // ex: "post_service" (donnera "post_service:123")
 	Client     *redis.Client // Client Redis
 	DefaultTTL time.Duration // Durée de vie par défaut (ex : 7 jours)
 }
@@ -110,7 +110,7 @@ func (c *Collection) GetObject(ctx context.Context, id any, dest any) error {
 	return msgpack.Unmarshal(val, dest)
 }
 
-// DeleteObject supprime un objet du cache.
+// DeleteObject supprime un objet du cache_service.
 func (c *Collection) DeleteObject(ctx context.Context, id any) error {
 	return c.Client.Del(ctx, c.Key(id)).Err()
 }

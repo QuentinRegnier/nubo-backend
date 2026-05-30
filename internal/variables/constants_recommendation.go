@@ -28,8 +28,8 @@ const (
 
 	// TDD §3.2 / §6 — Déclin exponentiel D_exp
 	// D_exp(p,t) = exp(-λ · max(0, Δt/3600 - T_grace))
-	// Demi-vie effective post-grâce: t_{1/2} = ln(2)/λ = 0.693/0.04 ≈ 17.3 h
-	TDDLambdaDecay = 0.04 // λ (h⁻¹) — taux de déclin exponentiel post-grâce
+	// Demi-vie effective post_service-grâce: t_{1/2} = ln(2)/λ = 0.693/0.04 ≈ 17.3 h
+	TDDLambdaDecay = 0.04 // λ (h⁻¹) — taux de déclin exponentiel post_service-grâce
 	TDDTGrace      = 72.0 // T_grace (h) — 72 heures de déclin purement polynomial
 
 	// TDD §3.2 / §6 — Facteurs de qualité Φ(p) = Φ_media(p) · Φ_author(p) · Φ_mod(p)

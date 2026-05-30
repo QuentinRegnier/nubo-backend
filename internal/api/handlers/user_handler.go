@@ -5,8 +5,9 @@ import (
 	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -53,7 +54,7 @@ func UserSearchHandler(c *gin.Context) {
 	}
 
 	// 4. Appel du service
-	users, err := cache.SearchUserByPrefix(c.Request.Context(), prefix, limit)
+	users, err := cache_service.SearchUserByPrefix(c.Request.Context(), prefix, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur lors de la recherche d'utilisateurs"})
 		return
@@ -61,7 +62,7 @@ func UserSearchHandler(c *gin.Context) {
 
 	// Garantie JSON tableau vide [] plutôt que 'null'
 	if users == nil {
-		users = []domain.UserLiteRequest{}
+		users = []models.UserLiteRequest{}
 	}
 
 	c.JSON(http.StatusOK, users)

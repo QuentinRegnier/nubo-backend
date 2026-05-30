@@ -24,7 +24,7 @@ const (
 	CuckooSeenTTL = 7 * 24 * time.Hour
 )
 
-// HasSeen vérifie dans le Cuckoo Filter Redis si l'utilisateur a déjà vu ce post.
+// HasSeen vérifie dans le Cuckoo Filter Redis si l'utilisateur a déjà vu ce post_service.
 // Complexité : O(1)
 func HasSeen(ctx context.Context, userID int64, postID int64) bool {
 	key := fmt.Sprintf(RedisKeyCuckooSeen, userID)
@@ -39,7 +39,7 @@ func HasSeen(ctx context.Context, userID int64, postID int64) bool {
 		// ---------------------------------------------------------
 		// Si le filtre n'existe pas, que le module RedisBloom n'est pas chargé,
 		// ou qu'il y a un timeout réseau : on retourne 'false'.
-		// Conséquence : Le post est accepté dans le panier. L'utilisateur
+		// Conséquence : Le post_service est accepté dans le panier. L'utilisateur
 		// risque de voir un doublon, mais l'application ne crashe pas.
 		return false
 	}
@@ -47,7 +47,7 @@ func HasSeen(ctx context.Context, userID int64, postID int64) bool {
 	return res
 }
 
-// MarkAsSeen insère le post dans le Cuckoo Filter Redis de l'utilisateur.
+// MarkAsSeen insère le post_service dans le Cuckoo Filter Redis de l'utilisateur.
 // Complexité : O(1)
 func MarkAsSeen(ctx context.Context, userID int64, postID int64) {
 	key := fmt.Sprintf(RedisKeyCuckooSeen, userID)
@@ -61,7 +61,7 @@ func MarkAsSeen(ctx context.Context, userID int64, postID int64) {
 		// Si le filtre est plein ("Cuckoo filter is full"), on ne bloque pas.
 		// On log l'erreur pour la supervision (Kibana/Grafana) afin d'indiquer
 		// qu'il faudra utiliser CF.RESERVE avec une plus grande capacité à l'avenir.
-		log.Printf("⚠️ [MarkAsSeen] Impossible d'ajouter au CF (user: %d, post: %d) : %v", userID, postID, err)
+		log.Printf("⚠️ [MarkAsSeen] Impossible d'ajouter au CF (user: %d, post_service: %d) : %v", userID, postID, err)
 		return
 	}
 

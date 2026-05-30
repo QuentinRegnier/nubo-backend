@@ -7,7 +7,7 @@ import (
 
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/feed"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 )
 
 // processInternalJobs traite les tâches de calcul asynchrones comme la génération du Feed.
@@ -25,8 +25,8 @@ func processInternalJobs(ctx context.Context, events []redis.AsyncEvent) {
 			log.Printf("🔄 [Worker] Lazy Loading enclenché pour l'utilisateur %d", userID)
 
 			// 2. Instancier le Magasinier avec des quotas standards
-			clerk := feed.NewProtoFeedBuilder()
-			quotas := feed.Quotas{
+			clerk := feed_service.NewProtoFeedBuilder()
+			quotas := feed_service.Quotas{
 				MaxCandidates: 1000,
 				SocialRatio:   0.3,
 				TagRatio:      0.5,
@@ -42,9 +42,9 @@ func processInternalJobs(ctx context.Context, events []redis.AsyncEvent) {
 
 			// 4. Appel de la Caissière (BuildPersonalizedFeed)
 			// La sauvegarde en RAM paginée sera faite automatiquement à l'Étape H par la caissière !
-			// ... (Appel à feed.BuildPersonalizedFeed avec les bonnes options) ...
+			// ... (Appel à feed_service.BuildPersonalizedFeed avec les bonnes options) ...
 
-			log.Printf("✅ [Worker] Nouveau buffer feed généré avec succès pour l'utilisateur %d", userID)
+			log.Printf("✅ [Worker] Nouveau buffer feed_service généré avec succès pour l'utilisateur %d", userID)
 		}
 	}
 }
@@ -90,9 +90,9 @@ func handleSocialFanOut(ctx context.Context, events []redis.AsyncEvent) {
 			pipe := redisgo.Rdb.Pipeline()
 			for _, followerStr := range followerStrings {
 				// Génération de la clé de la boîte aux lettres du flux social de l'abonné
-				feedUserKey := fmt.Sprintf("feed:user:%s", followerStr)
+				feedUserKey := fmt.Sprintf("feed_service:user:%s", followerStr)
 
-				// LPUSH met le nouveau post tout en haut de la file d'attente sociale
+				// LPUSH met le nouveau post_service tout en haut de la file d'attente sociale
 				pipe.LPush(ctx, feedUserKey, postID)
 
 				// LTRIM borne la boîte aux lettres à 1000 éléments.
@@ -103,7 +103,7 @@ func handleSocialFanOut(ctx context.Context, events []redis.AsyncEvent) {
 			// Exécution atomique du lot de distribution
 			_, err = pipe.Exec(ctx)
 			if err != nil {
-				log.Printf("❌ [FanOut] Échec de l'exécution du pipeline de distribution pour le post %d: %v", postID, err)
+				log.Printf("❌ [FanOut] Échec de l'exécution du pipeline de distribution pour le post_service %d: %v", postID, err)
 			}
 		}
 	}

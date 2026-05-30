@@ -16,8 +16,8 @@ const docTemplate = `{
     "basePath": "{{.BasePath}}",
     "paths": {
         "/auth/refresh-master": {
-            "post": {
-                "description": "Réinitialise toute la chaîne de sécurité (Ratchet, JWT, Secrets) en générant un nouveau MasterToken.\nCette route est l'ultime recours (\"Last Resort\") lorsque le Ratchet est désynchronisé ou que le JWT est expiré depuis trop longtemps.\n\n**Mécanisme de Résilience :**\n1. Recherche la session via le MasterToken dans **Redis**.\n2. Si introuvable (crash cache), cherche dans **MongoDB**.\n3. Si introuvable, cherche dans **PostgreSQL** (Source de vérité).\n4. Si trouvé, valide la signature HMAC et réinitialise tout.\n\n**Actions Serveur :**\n* Génération de ` + "`" + `NewMasterToken` + "`" + ` et ` + "`" + `NewJWT` + "`" + `.\n* Reset du Ratchet (Secret 0 = NewMaster, Secret 1 = DeviceToken).\n* Mise à jour asynchrone de Postgres et Mongo pour persister le nouveau MasterToken.\n",
+            "post_service": {
+                "description": "Réinitialise toute la chaîne de sécurité (Ratchet, JWT, Secrets) en générant un nouveau MasterToken.\nCette route est l'ultime recours (\"Last Resort\") lorsque le Ratchet est désynchronisé ou que le JWT est expiré depuis trop longtemps.\n\n**Mécanisme de Résilience :**\n1. Recherche la session via le MasterToken dans **Redis**.\n2. Si introuvable (crash cache_service), cherche dans **MongoDB**.\n3. Si introuvable, cherche dans **PostgreSQL** (Source de vérité).\n4. Si trouvé, valide la signature HMAC et réinitialise tout.\n\n**Actions Serveur :**\n* Génération de ` + "`" + `NewMasterToken` + "`" + ` et ` + "`" + `NewJWT` + "`" + `.\n* Reset du Ratchet (Secret 0 = NewMaster, Secret 1 = DeviceToken).\n* Mise à jour asynchrone de Postgres et Mongo pour persister le nouveau MasterToken.\n",
                 "consumes": [
                     "application/json"
                 ],
@@ -88,7 +88,7 @@ const docTemplate = `{
             }
         },
         "/login": {
-            "post": {
+            "post_service": {
                 "description": "Authentifie un utilisateur via email/password et renvoie son profil complet + token.\n\n**Règles \u0026 Erreurs :**\n\n🔴 **400 Bad Request :**\n* ` + "`" + `The 'data' field containing the JSON is required` + "`" + ` : Champ 'data' manquant.\n* ` + "`" + `Invalid JSON format in 'data'` + "`" + ` : Le JSON envoyé est mal formé.\n\n🟠 **401 Unauthorized :**\n* ` + "`" + `Invalid email or password` + "`" + ` : Identifiants incorrects ou utilisateur introuvable.\n\n⛔ **403 Forbidden :**\n* ` + "`" + `Account deactivated` + "`" + ` : Le compte a été désactivé.\n* ` + "`" + `Account banned` + "`" + ` : Le compte a été banni.\n\n⚫ **500 Internal Server Error :**\n* ` + "`" + `database error` + "`" + ` : Erreur technique interne.",
                 "consumes": [
                     "application/json",
@@ -151,9 +151,9 @@ const docTemplate = `{
                 }
             }
         },
-        "/post": {
-            "post": {
-                "description": "Crée un post avec du contenu texte, des hashtags, des mentions d'utilisateurs et entre 1 et 4 images.\nCette route nécessite une authentification par JWT et une signature HMAC valide.\n\n**Règles de validation \u0026 Erreurs :**\n\n🔴 **400 Bad Request (Erreurs client) :**\n* ` + "`" + `Field 'data' is required` + "`" + ` : Le champ texte 'data' contenant le JSON est manquant.\n* ` + "`" + `Invalid JSON: ...` + "`" + ` : Le format JSON dans le champ 'data' est incorrect.\n* ` + "`" + `Too many tags (max 10)` + "`" + ` : Le nombre de hashtags ou d'utilisateurs tagués dépasse 10.\n* ` + "`" + `Maximum 4 images allowed` + "`" + ` : Vous avez tenté d'envoyer plus de 4 fichiers média.\n\n🟠 **401 Unauthorized (Authentification) :**\n* ` + "`" + `Utilisateur non identifié` + "`" + ` : Le userID n'a pas pu être extrait du token JWT ou contexte manquant.\n* ` + "`" + `Signature HMAC invalide` + "`" + ` : (Géré par le middleware) La signature ne correspond pas au contenu.\n\n⚫ **500 Internal Server Error (Serveur) :**\n* ` + "`" + `Failed to create post: ...` + "`" + ` : Erreur lors de l'upload MinIO ou de l'insertion dans la file d'attente Redis (Queue).",
+        "/post_service": {
+            "post_service": {
+                "description": "Crée un post_service avec du contenu texte, des hashtags, des mentions d'utilisateurs et entre 1 et 4 images.\nCette route nécessite une authentification par JWT et une signature HMAC valide.\n\n**Règles de validation \u0026 Erreurs :**\n\n🔴 **400 Bad Request (Erreurs client) :**\n* ` + "`" + `Field 'data' is required` + "`" + ` : Le champ texte 'data' contenant le JSON est manquant.\n* ` + "`" + `Invalid JSON: ...` + "`" + ` : Le format JSON dans le champ 'data' est incorrect.\n* ` + "`" + `Too many tags (max 10)` + "`" + ` : Le nombre de hashtags ou d'utilisateurs tagués dépasse 10.\n* ` + "`" + `Maximum 4 images allowed` + "`" + ` : Vous avez tenté d'envoyer plus de 4 fichiers média.\n\n🟠 **401 Unauthorized (Authentification) :**\n* ` + "`" + `Utilisateur non identifié` + "`" + ` : Le userID n'a pas pu être extrait du token JWT ou contexte manquant.\n* ` + "`" + `Signature HMAC invalide` + "`" + ` : (Géré par le middleware) La signature ne correspond pas au contenu.\n\n⚫ **500 Internal Server Error (Serveur) :**\n* ` + "`" + `Failed to create post_service: ...` + "`" + ` : Erreur lors de l'upload MinIO ou de l'insertion dans la file d'attente Redis (Queue).",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -188,7 +188,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "file",
-                        "description": "Images du post (1 à 4 fichiers)",
+                        "description": "Images du post_service (1 à 4 fichiers)",
                         "name": "media",
                         "in": "formData"
                     },
@@ -229,7 +229,7 @@ const docTemplate = `{
             }
         },
         "/renew-jwt": {
-            "post": {
+            "post_service": {
                 "description": "Génère un nouveau JWT pour l'utilisateur et effectue une rotation de sécurité des secrets (Ratchet).\nCette route est critique et nécessite une signature HMAC valide basée sur le secret actuel de la session.\n\n**Mécanisme :**\n1. Vérifie la signature HMAC du body avec les headers de sécurité.\n2. Identifie la session via l'ID utilisateur et le ` + "`" + `X-Secret` + "`" + `.\n3. Calcule le prochain secret (N+1) et met à jour l'historique (Ratchet).\n4. Renvoie le nouveau JWT.\n\n**Règles \u0026 Erreurs :**\n\n🔴 **400 Bad Request :**\n* ` + "`" + `Erreur lecture body` + "`" + ` : Impossible de lire le corps de la requête.\n* ` + "`" + `Invalid JSON format` + "`" + ` : Le JSON envoyé est mal formé.\n* ` + "`" + `Headers de sécurité manquants` + "`" + ` : Il manque ` + "`" + `Authorization` + "`" + `, ` + "`" + `X-Secret` + "`" + `, ` + "`" + `X-Signature` + "`" + ` ou ` + "`" + `X-Timestamp` + "`" + `.\n\n🟠 **401 Unauthorized :**\n* ` + "`" + `Signature HMAC invalide` + "`" + ` : La signature ne correspond pas au contenu (tentative de falsification).\n* ` + "`" + `Session invalide ou Secret incorrect` + "`" + ` : Le secret fourni ne correspond à aucune session active pour cet utilisateur (ou désynchronisation Ratchet).\n\n⚫ **500 Internal Server Error :**\n* ` + "`" + `Erreur génération token` + "`" + ` : Échec de la création du JWT.\n* ` + "`" + `Erreur rotation secrets` + "`" + ` : Impossible de mettre à jour Redis (Ratchet bloqué).",
                 "consumes": [
                     "application/json"
@@ -300,7 +300,7 @@ const docTemplate = `{
             }
         },
         "/signup": {
-            "post": {
+            "post_service": {
                 "description": "Inscription complète avec upload d'avatar et données JSON.\n\n**Règles de validation \u0026 Erreurs :**\n\n🔴 **400 Bad Request (Erreurs client) :**\n* ` + "`" + `The 'data' field containing the JSON is required` + "`" + ` : Tu as oublié d'envoyer le champ texte 'data'.\n* ` + "`" + `Invalid JSON format in 'data': ...` + "`" + ` : Ton JSON est mal écrit (virgule manquante, accolade, etc).\n* ` + "`" + `Invalid date format. Expected format: ddmmaaaa` + "`" + ` : La date de naissance n'est pas bonne.\n* ` + "`" + `Gender must be 0, 1, 2, or null` + "`" + ` : Tu as envoyé un entier invalide pour le sexe.\n* ` + "`" + `Impossible to read image file` + "`" + ` : Le fichier image est corrompu ou illisible.\n\n🟠 **409 Conflict (Doublons) :**\n* ` + "`" + `This username is already taken` + "`" + ` : Le pseudo est déjà en base.\n\n⚫ **500 Internal Server Error (Problèmes serveur) :**\n* ` + "`" + `Internal error (image upload)` + "`" + ` : MinIO est down ou mal configuré.\n* ` + "`" + `Internal error (token generation)` + "`" + ` : Problème avec la signature JWT.\n* ` + "`" + `database error` + "`" + ` : Postgres ou Mongo ne répondent pas.",
                 "consumes": [
                     "multipart/form-data"

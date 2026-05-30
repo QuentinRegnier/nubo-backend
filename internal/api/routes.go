@@ -5,6 +5,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/auth_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/post_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/security_handlers"
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers"
@@ -35,13 +38,13 @@ func SetupRoutes(r *gin.Engine) {
 	// =========================================================================
 
 	// Authentification (Sécu interne spécifique)
-	r.POST("/signup", handlers.SignUpHandler)
-	r.POST("/login", handlers.LoginHandler)
+	r.POST("/signup", auth_handlers.SignUpHandler)
+	r.POST("/login", auth_handlers.LoginHandler)
 
 	// Renouvellement de Tokens (Ratchet / Master)
 	// Ces routes gèrent leur propre sécurité (HMAC spécial, checks BDD...)
-	r.POST("/renew-jwt", handlers.RenewJWT)
-	r.POST("/refresh-master", handlers.RefreshMaster)
+	r.POST("/renew-jwt", security_handlers.RenewJWT)
+	r.POST("/refresh-master", security_handlers.RefreshMaster)
 
 	// WebSocket
 	r.GET("/token", func(c *gin.Context) {
@@ -80,7 +83,7 @@ func SetupRoutes(r *gin.Engine) {
 	secured.GET("/feed", LoadFeedHandler)                            // ℹ️❌
 	secured.GET("/feed/more", LoadMoreFeedHandler)                   // ℹ️❌
 	secured.GET("/posts", GetPostsHandler)                           // ℹ️❌
-	secured.POST("/post", handlers.CreatePostHandler)                // ℹ️❌ à vérifier
+	secured.POST("/post", post_handlers.CreatePostHandler)           // ℹ️❌ à vérifier
 	secured.PATCH("/post", ModifyPostHandler)                        // ℹ️❌
 	secured.DELETE("/post", DeletePost)                              // ℹ️❌
 	secured.POST("/views/batch", handlers.RegisterBatchViewsHandler) // ℹ️❌ à vérifier
@@ -170,47 +173,47 @@ func SetupRoutes(r *gin.Engine) {
 }
 
 func LoadFeedHandler(c *gin.Context) {
-	// TODO: charger les posts du feed
-	c.JSON(http.StatusOK, gin.H{"posts": []string{"post 5", "post 6"}})
+	// TODO: charger les posts du feed_service
+	c.JSON(http.StatusOK, gin.H{"posts": []string{"post_service 5", "post_service 6"}})
 }
 
 func LoadMoreFeedHandler(c *gin.Context) {
 	// TODO: charger plus de posts depuis la base
-	c.JSON(http.StatusOK, gin.H{"posts": []string{"post 3", "post 4"}})
+	c.JSON(http.StatusOK, gin.H{"posts": []string{"post_service 3", "post_service 4"}})
 }
 
 func GetPostsHandler(c *gin.Context) {
 	// TODO: récupérer les posts depuis la base
-	c.JSON(http.StatusOK, gin.H{"posts": []string{"post 1", "post 2"}})
+	c.JSON(http.StatusOK, gin.H{"posts": []string{"post_service 1", "post_service 2"}})
 }
 
 func ModifyPostHandler(c *gin.Context) {
-	// TODO: modifier un post dans la base
-	c.JSON(http.StatusOK, gin.H{"message": "post modified"})
+	// TODO: modifier un post_service dans la base
+	c.JSON(http.StatusOK, gin.H{"message": "post_service modified"})
 }
 
 func DeletePost(c *gin.Context) {
-	// TODO: supprimer post de la base
-	c.JSON(http.StatusOK, gin.H{"message": "post deleted"})
+	// TODO: supprimer post_service de la base
+	c.JSON(http.StatusOK, gin.H{"message": "post_service deleted"})
 }
 
 func UnLikeHandler(c *gin.Context) {
-	// TODO: retirer un like à un post
-	c.JSON(http.StatusOK, gin.H{"message": "post unliked"})
+	// TODO: retirer un like à un post_service
+	c.JSON(http.StatusOK, gin.H{"message": "post_service unliked"})
 }
 
 func CommentHandler(c *gin.Context) {
-	// TODO: ajouter un commentaire à un post
-	c.JSON(http.StatusOK, gin.H{"message": "post commented"})
+	// TODO: ajouter un commentaire à un post_service
+	c.JSON(http.StatusOK, gin.H{"message": "post_service commented"})
 }
 
 func UnCommentHandler(c *gin.Context) {
-	// TODO: retirer un commentaire à un post
-	c.JSON(http.StatusOK, gin.H{"message": "post uncommented"})
+	// TODO: retirer un commentaire à un post_service
+	c.JSON(http.StatusOK, gin.H{"message": "post_service uncommented"})
 }
 
 func LoadCommentsHandler(c *gin.Context) {
-	// TODO: charger les commentaires d'un post depuis la base
+	// TODO: charger les commentaires d'un post_service depuis la base
 	c.JSON(http.StatusOK, gin.H{"comments": []string{"comment 1", "comment 2"}})
 }
 
@@ -256,22 +259,22 @@ func UnBlockHandler(c *gin.Context) {
 
 func ShareHandler(c *gin.Context) {
 	// TODO: retirer une relation d'amitié
-	c.JSON(http.StatusOK, gin.H{"message": "post shared"})
+	c.JSON(http.StatusOK, gin.H{"message": "post_service shared"})
 }
 
 func SaveHandler(c *gin.Context) {
 	// TODO: retirer une relation d'amitié
-	c.JSON(http.StatusOK, gin.H{"message": "post saved"})
+	c.JSON(http.StatusOK, gin.H{"message": "post_service saved"})
 }
 
 func UnSavedHandler(c *gin.Context) {
 	// TODO: retirer une relation d'amitié
-	c.JSON(http.StatusOK, gin.H{"message": "post saved deleted"})
+	c.JSON(http.StatusOK, gin.H{"message": "post_service saved deleted"})
 }
 
 func LoadSavedsHandler(c *gin.Context) {
 	// TODO: retirer une relation d'amitié
-	c.JSON(http.StatusOK, gin.H{"message": "post saved load"})
+	c.JSON(http.StatusOK, gin.H{"message": "post_service saved load"})
 }
 
 func UpdateProfileHangler(c *gin.Context) {
@@ -350,8 +353,8 @@ func LoadAdminInformationCommunityHandler(c *gin.Context) {
 }
 
 func LoadAdminInformationPostHandler(c *gin.Context) {
-	// TODO: charger les informations d'un post
-	c.JSON(http.StatusOK, gin.H{"message": "information post"})
+	// TODO: charger les informations d'un post_service
+	c.JSON(http.StatusOK, gin.H{"message": "information post_service"})
 }
 
 func LoadAdminInformationCommentHandler(c *gin.Context) {
@@ -465,8 +468,8 @@ func SearchUserHandler(c *gin.Context) {
 }
 
 func SearchPostHandler(c *gin.Context) {
-	// TODO: gérer la recherche d'un post
-	c.JSON(http.StatusOK, gin.H{"posts": []string{"post 1", "post 2"}})
+	// TODO: gérer la recherche d'un post_service
+	c.JSON(http.StatusOK, gin.H{"posts": []string{"post_service 1", "post_service 2"}})
 }
 
 func SearchCommunityHandler(c *gin.Context) {
@@ -496,7 +499,7 @@ func ReportUserHandler(c *gin.Context) {
 
 func ReportPostHandler(c *gin.Context) {
 	// TODO: gérer la création d'un rapport
-	c.JSON(http.StatusOK, gin.H{"message": "post reported"})
+	c.JSON(http.StatusOK, gin.H{"message": "post_service reported"})
 }
 
 func ReportCommentHandler(c *gin.Context) {

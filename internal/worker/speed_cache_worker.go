@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
@@ -18,10 +18,10 @@ func updateSpeedCache(ctx context.Context, e redis.AsyncEvent) {
 	if e.Type == redis.EntityUser && e.Action == redis.ActionCreate {
 		jsonBytes, err := json.Marshal(e.Payload)
 		if err == nil {
-			var user domain.UserRequest
+			var user models.UserRequest
 			if err := json.Unmarshal(jsonBytes, &user); err == nil {
 				// Action 1 : Créer le UserLite
-				userLite := domain.UserLiteRequest{
+				userLite := models.UserLiteRequest{
 					ID:               user.ID,
 					Username:         user.Username,
 					FirstName:        user.FirstName,
@@ -55,7 +55,7 @@ func updateSpeedCache(ctx context.Context, e redis.AsyncEvent) {
 			if err := json.Unmarshal(jsonBytes, &msg); err == nil && msg.ID != 0 {
 
 				// Action 1 : Mettre à jour last_message_id dans ConvMeta
-				var convLite domain.ConvLiteRequest
+				var convLite models.ConvLiteRequest
 				if err := redis.ConvMeta.GetObject(ctx, msg.ConversationID, &convLite); err == nil {
 					convLite.LastMessageID = msg.ID
 					_ = redis.ConvMeta.SetObject(ctx, convLite.ID, convLite)
@@ -71,7 +71,7 @@ func updateSpeedCache(ctx context.Context, e redis.AsyncEvent) {
 
 						// Action 2 : Incrémenter unread_count pour les destinataires (pas pour l'expéditeur)
 						if participantID != msg.SenderID {
-							var memberLite domain.MemberLiteRequest
+							var memberLite models.MemberLiteRequest
 							// Clé composite : ID_Conversation:ID_User
 							memberID := fmt.Sprintf("%d:%d", msg.ConversationID, participantID)
 
@@ -99,14 +99,14 @@ func updateSpeedCache(ctx context.Context, e redis.AsyncEvent) {
 	if e.Type == redis.EntityMembers && e.Action == redis.ActionCreate {
 		jsonBytes, err := json.Marshal(e.Payload)
 		if err == nil {
-			var member domain.MemberLiteRequest
+			var member models.MemberLiteRequest
 			if err := json.Unmarshal(jsonBytes, &member); err == nil && member.ConversationID != 0 {
 
 				// Action A : Ajouter l'ID au SET Redis des participants de cette conversation
 				participantsKey := fmt.Sprintf("conv:participants:%d", member.ConversationID)
 				_ = redisgo.Rdb.SAdd(ctx, participantsKey, member.UserID).Err()
 
-				// Action B : Initialiser son profil MemberLite dans le cache
+				// Action B : Initialiser son profil MemberLite dans le cache_service
 				memberID := fmt.Sprintf("%d:%d", member.ConversationID, member.UserID)
 				_ = redis.ConvMembers.SetObject(ctx, memberID, member)
 
@@ -131,7 +131,7 @@ func updateSpeedCache(ctx context.Context, e redis.AsyncEvent) {
 				participantsKey := fmt.Sprintf("conv:participants:%d", member.ConversationID)
 				_ = redisgo.Rdb.SRem(ctx, participantsKey, member.UserID).Err()
 
-				// Action B : Nettoyer son MemberLite du cache
+				// Action B : Nettoyer son MemberLite du cache_service
 				memberID := fmt.Sprintf("%d:%d", member.ConversationID, member.UserID)
 				_ = redis.ConvMembers.DeleteObject(ctx, memberID)
 

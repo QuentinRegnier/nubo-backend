@@ -151,7 +151,7 @@ func (c *Collection) Set(ctx context.Context, obj map[string]any) error {
 	pipe := c.Redis.TxPipeline()
 
 	id := fmt.Sprintf("%v", obj["id"])
-	objKey := "cache:" + c.Name + ":" + id
+	objKey := "cache_service:" + c.Name + ":" + id
 
 	// 1. Sauvegarde complète
 	if err := c.Redis.HMSet(ctx, objKey, obj).Err(); err != nil {
@@ -236,7 +236,7 @@ func (c *Collection) Get(ctx context.Context, filter map[string]any) ([]map[stri
 	results := []map[string]any{}
 	for id := range candidateSet {
 		// fmt.Printf("➡️ Chargement ID=%s\n", id) // (Optionnel: tu peux retirer les logs verbeux maintenant)
-		objKey := "cache:" + c.Name + ":" + id
+		objKey := "cache_service:" + c.Name + ":" + id
 
 		// HGetAll renvoie map[string]string ! Tout est string !
 		data, err := c.Redis.HGetAll(ctx, objKey).Result()
@@ -341,7 +341,7 @@ func (c *Collection) Delete(ctx context.Context, filter map[string]any) error {
 
 	for _, obj := range objs {
 		id := fmt.Sprintf("%v", obj["id"])
-		objKey := "cache:" + c.Name + ":" + id
+		objKey := "cache_service:" + c.Name + ":" + id
 
 		// Supprimer l'objet
 		pipe.Del(ctx, objKey)
@@ -408,7 +408,7 @@ func (c *Collection) Update(ctx context.Context, filter map[string]interface{}, 
 
 	for _, obj := range objs {
 		id := fmt.Sprintf("%v", obj["id"])
-		objKey := "cache:" + c.Name + ":" + id
+		objKey := "cache_service:" + c.Name + ":" + id
 
 		// 2. Itérer sur les champs à modifier
 		for field, newVal := range update {
@@ -625,7 +625,7 @@ func fetchIDsForCondition(ctx context.Context, rdb *redis.Client, collName, fiel
 	case "$eq":
 		if field == "id" {
 			idStr := fmt.Sprintf("%v", val)
-			objKey := fmt.Sprintf("cache:%s:%s", collName, idStr)
+			objKey := fmt.Sprintf("cache_service:%s:%s", collName, idStr)
 			exists, _ := rdb.Exists(ctx, objKey).Result()
 			if exists == 1 {
 				return []string{idStr}, nil

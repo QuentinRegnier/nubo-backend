@@ -6,8 +6,8 @@ FROM golang:1.25-alpine AS base
 
 # POURQUOI : On installe les outils C ici pour ne le faire qu'une seule fois.
 # C'est l'étape la plus longue (gcc, musl-dev, libwebp-dev).
-# Docker mettra cette étape en cache et ne la refera plus jamais tant que tu ne touches pas à cette ligne.
-RUN apk add --no-cache gcc musl-dev libwebp-dev
+# Docker mettra cette étape en cache_service et ne la refera plus jamais tant que tu ne touches pas à cette ligne.
+RUN apk add --no-cache_service gcc musl-dev libwebp-dev
 
 WORKDIR /app
 
@@ -16,7 +16,7 @@ WORKDIR /app
 RUN go install github.com/air-verse/air@latest
 
 # POURQUOI : On télécharge les dépendances Go (go.mod/sum).
-# En le faisant dans "base", le cache est partagé entre le mode Dev et le mode Prod.
+# En le faisant dans "base", le cache_service est partagé entre le mode Dev et le mode Prod.
 COPY go.mod go.sum ./
 RUN go mod download
 
@@ -52,7 +52,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o nubo cmd/main.go
 FROM alpine:latest AS prod
 
 # On réinstalle la lib d'exécution (nécessaire pour l'image finale minimaliste)
-RUN apk add --no-cache libwebp ca-certificates
+RUN apk add --no-cache_service libwebp ca-certificates
 
 WORKDIR /app
 

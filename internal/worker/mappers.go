@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/lib/pq"
 )
@@ -77,7 +77,7 @@ func (m *UserMapper) ToRow(data any) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var u domain.UserRequest
+	var u models.UserRequest
 	if err := json.Unmarshal(jsonBytes, &u); err != nil {
 		return nil, err
 	}
@@ -115,7 +115,7 @@ func (m *SessionMapper) ToRow(data any) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var s domain.SessionsRequest
+	var s models.SessionsRequest
 	if err := json.Unmarshal(jsonBytes, &s); err != nil {
 		return nil, err
 	}
@@ -175,7 +175,7 @@ func (m *PostMapper) ToRow(data any) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var p domain.PostRequest
+	var p models.PostRequest
 	if err := json.Unmarshal(jsonBytes, &p); err != nil {
 		return nil, err
 	}
@@ -218,7 +218,7 @@ func (m *MediaMapper) ToRow(data any) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var med domain.MediaRequest
+	var med models.MediaRequest
 	if err := json.Unmarshal(jsonBytes, &med); err != nil {
 		return nil, err
 	}

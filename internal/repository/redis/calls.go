@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 )
 
@@ -14,7 +14,7 @@ func getCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 2*time.Second)
 }
 
-// Exists vérifie rapidement si une clé brute est présente dans le cache Redis (O(1))
+// Exists vérifie rapidement si une clé brute est présente dans le cache_service Redis (O(1))
 // Renvoie true si la clé existe, false sinon.
 func Exists(ctx context.Context, key string) (bool, error) {
 	// La commande EXISTS de Redis renvoie le nombre de clés trouvées correspondant au nom.
@@ -30,7 +30,7 @@ func Exists(ctx context.Context, key string) (bool, error) {
 // ---------------- USER ----------------
 
 // RedisCreateUser sauvegarde l'utilisateur et crée des index légers (Pointeurs)
-func RedisCreateUser(u domain.UserRequest) error {
+func RedisCreateUser(u models.UserRequest) error {
 	ctx, cancel := getCtx()
 	defer cancel()
 
@@ -59,7 +59,7 @@ func RedisCreateUser(u domain.UserRequest) error {
 }
 
 // RedisLoadUser charge un utilisateur par ID, Username, Email ou Phone
-func RedisLoadUser(id int64, username string, email string, phone string) (domain.UserRequest, error) {
+func RedisLoadUser(id int64, username string, email string, phone string) (models.UserRequest, error) {
 	ctx, cancel := getCtx()
 	defer cancel()
 
@@ -75,21 +75,21 @@ func RedisLoadUser(id int64, username string, email string, phone string) (domai
 		} else if phone != "" {
 			key = fmt.Sprintf("idx:user:phone:%s", phone)
 		} else {
-			return domain.UserRequest{}, fmt.Errorf("aucun critère de recherche")
+			return models.UserRequest{}, fmt.Errorf("aucun critère de recherche")
 		}
 
 		// Récupération de l'ID depuis l'index
 		val, err := redisgo.Rdb.Get(ctx, key).Int64()
 		if err != nil {
-			return domain.UserRequest{}, fmt.Errorf("utilisateur introuvable dans redis (index miss)")
+			return models.UserRequest{}, fmt.Errorf("utilisateur introuvable dans redis (index miss)")
 		}
 		targetID = val
 	}
 
 	// 2. Récupération de l'objet complet
-	var u domain.UserRequest
+	var u models.UserRequest
 	if err := Users.GetObject(ctx, targetID, &u); err != nil {
-		return domain.UserRequest{}, err
+		return models.UserRequest{}, err
 	}
 
 	return u, nil
@@ -98,7 +98,7 @@ func RedisLoadUser(id int64, username string, email string, phone string) (domai
 // ---------------- SESSION ----------------
 
 // RedisCreateSession sauvegarde la session et son index de recherche
-func RedisCreateSession(s domain.SessionsRequest) error {
+func RedisCreateSession(s models.SessionsRequest) error {
 	ctx, cancel := getCtx()
 	defer cancel()
 
@@ -118,13 +118,13 @@ func RedisCreateSession(s domain.SessionsRequest) error {
 }
 
 // RedisUpdateSession est identique au Create dans un Object Store (Overwrite complet)
-func RedisUpdateSession(s domain.SessionsRequest) error {
+func RedisUpdateSession(s models.SessionsRequest) error {
 	return RedisCreateSession(s)
 }
 
 // RedisLoadSession charge une session.
 // Note : MasterToken et CurrentSecret ne sont plus indexés car rarement utilisés pour la recherche primaire.
-func RedisLoadSession(userID int64, deviceToken string, masterToken string, currentSecret string) (domain.SessionsRequest, error) {
+func RedisLoadSession(userID int64, deviceToken string, masterToken string, currentSecret string) (models.SessionsRequest, error) {
 	ctx, cancel := getCtx()
 	defer cancel()
 
@@ -143,18 +143,18 @@ func RedisLoadSession(userID int64, deviceToken string, masterToken string, curr
 	// Pour l'instant, on assume que le flux principal passe par UserID+DeviceToken.
 
 	if targetID == 0 {
-		return domain.SessionsRequest{}, fmt.Errorf("session introuvable dans redis (index miss)")
+		return models.SessionsRequest{}, fmt.Errorf("session introuvable dans redis (index miss)")
 	}
 
 	// 2. Chargement de l'objet
-	var s domain.SessionsRequest
+	var s models.SessionsRequest
 	if err := Sessions.GetObject(ctx, targetID, &s); err != nil {
-		return domain.SessionsRequest{}, err
+		return models.SessionsRequest{}, err
 	}
 
 	// Petit check de cohérence optionnel
 	if masterToken != "" && s.MasterToken != masterToken {
-		return domain.SessionsRequest{}, fmt.Errorf("master token mismatch")
+		return models.SessionsRequest{}, fmt.Errorf("master token mismatch")
 	}
 
 	return s, nil
@@ -162,13 +162,13 @@ func RedisLoadSession(userID int64, deviceToken string, masterToken string, curr
 
 // ---------------- CONTENU (Simple Key-Value) ----------------
 
-func RedisCreatePost(p domain.PostRequest) error {
+func RedisCreatePost(p models.PostRequest) error {
 	ctx, cancel := getCtx()
 	defer cancel()
 	return Posts.SetObject(ctx, p.ID, p)
 }
 
-func RedisCreateMedia(m domain.MediaRequest) error {
+func RedisCreateMedia(m models.MediaRequest) error {
 	ctx, cancel := getCtx()
 	defer cancel()
 	return Media.SetObject(ctx, m.ID, m)

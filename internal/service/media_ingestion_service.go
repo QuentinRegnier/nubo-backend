@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/google/uuid"
@@ -83,7 +83,7 @@ func UploadMedia(file io.ReadSeeker, ownerID int64, mediaID int64) error {
 	// --- 3. CRÉATION DE L'OBJET & ID SNOWFLAKE (Go Authority) ---
 	now := time.Now().UTC()
 
-	media := domain.MediaRequest{
+	media := models.MediaRequest{
 		ID:          mediaID,
 		OwnerID:     ownerID,
 		StoragePath: storagePath,
@@ -93,7 +93,7 @@ func UploadMedia(file io.ReadSeeker, ownerID int64, mediaID int64) error {
 	}
 
 	// --- 5. CACHE REDIS (Immédiat) ---
-	// On met en cache pour que l'UI puisse afficher l'image tout de suite si besoin
+	// On met en cache_service pour que l'UI puisse afficher l'image tout de suite si besoin
 	// Clé ex: "media:12345"
 
 	// On écrit directement dans Redis (Set avec expiration par exemple 24h)

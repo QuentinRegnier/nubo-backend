@@ -15,8 +15,8 @@ const (
 	TDDLambdaMMR   = 0.72 // λ_d — paramètre de diversité MMR
 	TDDSerendipity = 0.08 // p_serendip — probabilité injection sérendipité
 
-	TDDDeltaInvalid = 0.15 // δ_inval — seuil d'invalidation du cache feed
-	TDDFeedCacheTTL = 300  // TTL du cache feed (s) = 5 minutes
+	TDDDeltaInvalid = 0.15 // δ_inval — seuil d'invalidation du cache_service feed_service
+	TDDFeedCacheTTL = 300  // TTL du cache_service feed_service (s) = 5 minutes
 
 	TDDLSHBits = 32        // b — bits de projection aléatoire (SimHash)
 	TDDLSHSeed = int64(42) // Graine LSH

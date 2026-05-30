@@ -5,31 +5,31 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/feed"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 )
 
 // updateMostCache intercepte les événements pour alimenter les ZSETs (Tags, Profils, Classements)
 func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 	for _, e := range events {
 
-		// 1. SI C'EST UN NOUVEAU POST
-		if e.Type == redis.EntityPost && e.Action == redis.ActionCreate {
+		// 1. SI C'EST UN NOUVEAU POST OU UNE MISE À JOUR
+		if e.Type == redis.EntityPost && (e.Action == redis.ActionCreate || e.Action == redis.ActionUpdate) {
 			jsonBytes, err := json.Marshal(e.Payload)
 			if err == nil {
-				var post domain.PostRequest
+				var post models.PostRequest
 				if err := json.Unmarshal(jsonBytes, &post); err == nil {
 					// A. Algorithme de Recommandation (Tags, Global, Recent)
-					cache.UpdatePostRecommendationScore(ctx, post) // Passe l'objet complet
+					cache_service.UpdatePostRecommendationScore(ctx, post) // Passe l'objet complet
 					// B. Chronologie Utilisateur (Grille Profil) avec précision temporelle stricte
-					cache.AddPostToUserProfile(ctx, post.UserID, post.ID, post.CreatedAt.UnixMilli())
+					cache_service.AddPostToUserProfile(ctx, post.UserID, post.ID, post.CreatedAt.UnixMilli())
 					// C. Vecteur de Contenu pour Recommandation Personnalisée (Pilier 3)
-					feed.StoreContentVector(ctx, post)
+					feed_service.StoreContentVector(ctx, post)
 				}
 			}
 		}
@@ -38,12 +38,12 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 		if e.Type == redis.EntityPost && e.Action == redis.ActionDelete {
 			jsonBytes, err := json.Marshal(e.Payload)
 			if err == nil {
-				var post domain.PostRequest
+				var post models.PostRequest
 				// On s'assure d'avoir bien pu extraire le UserID du payload de suppression
 				if err := json.Unmarshal(jsonBytes, &post); err == nil && post.UserID != 0 {
 					// Invalidation radicale : on détruit le ZSET de l'utilisateur.
 					// Zéro dérive d'état garantie.
-					cache.InvalidateUserProfileCache(ctx, post.UserID)
+					cache_service.InvalidateUserProfileCache(ctx, post.UserID)
 				}
 			}
 		}
@@ -70,16 +70,16 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 						// et permet de recalculer le score immédiatement avec la nouvelle valeur.
 						if e.Type == redis.EntityLike {
 							p.LikeCount += interactionEvent.Count
-							_ = redis.Posts.SetObject(ctx, p.ID, p) // MAJ instantanée du cache L1
+							_ = redis.Posts.SetObject(ctx, p.ID, p) // MAJ instantanée du cache_service L1
 
 							// 3. On route vers les fonctions strictes avec l'objet complet en RAM
-							cache.EvaluatePostAfterLike(ctx, p)
+							cache_service.EvaluatePostAfterLike(ctx, p)
 						} else if e.Type == redis.EntityView {
 							p.ViewCount += interactionEvent.Count
-							_ = redis.Posts.SetObject(ctx, p.ID, p) // MAJ instantanée du cache L1
+							_ = redis.Posts.SetObject(ctx, p.ID, p) // MAJ instantanée du cache_service L1
 
 							// 3. On route vers les fonctions strictes avec l'objet complet en RAM
-							cache.EvaluatePostAfterView(ctx, p)
+							cache_service.EvaluatePostAfterView(ctx, p)
 						}
 					}
 				}
@@ -91,9 +91,9 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 }
 
 // getPostWithFallback implémente la chaîne de résolution L1 -> L2 -> L3
-// pour maximiser le taux de cache hit et protéger PostgreSQL lors du recalcul des scores.
-func getPostWithFallback(ctx context.Context, postID int64) (domain.PostRequest, error) {
-	var p domain.PostRequest
+// pour maximiser le taux de cache_service hit et protéger PostgreSQL lors du recalcul des scores.
+func getPostWithFallback(ctx context.Context, postID int64) (models.PostRequest, error) {
+	var p models.PostRequest
 
 	// Étape 1 : Cache L1 (Redis Object Cache)
 	if err := redis.Posts.GetObject(ctx, postID, &p); err == nil {
@@ -120,5 +120,5 @@ func getPostWithFallback(ctx context.Context, postID int64) (domain.PostRequest,
 		return p, nil
 	}
 
-	return domain.PostRequest{}, fmt.Errorf("post %d introuvable dans L1, L2 et L3", postID)
+	return models.PostRequest{}, fmt.Errorf("post_service %d introuvable dans L1, L2 et L3", postID)
 }

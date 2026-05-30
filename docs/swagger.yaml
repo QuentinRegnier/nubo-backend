@@ -262,7 +262,7 @@ paths:
     post:
       consumes:
       - multipart/form-data
-      description: "Crée un post avec du contenu texte, des hashtags, des mentions
+      description: "Crée un post_service avec du contenu texte, des hashtags, des mentions
         d'utilisateurs et entre 1 et 4 images.\nCette route nécessite une authentification
         par JWT et une signature HMAC valide.\n\n**Règles de validation & Erreurs
         :**\n\n\U0001F534 **400 Bad Request (Erreurs client) :**\n* `Field 'data'
@@ -274,7 +274,7 @@ paths:
         non identifié` : Le userID n'a pas pu être extrait du token JWT ou contexte
         manquant.\n* `Signature HMAC invalide` : (Géré par le middleware) La signature
         ne correspond pas au contenu.\n\n⚫ **500 Internal Server Error (Serveur) :**\n*
-        `Failed to create post: ...` : Erreur lors de l'upload MinIO ou de l'insertion
+        `Failed to create post_service: ...` : Erreur lors de l'upload MinIO ou de l'insertion
         dans la file d'attente Redis (Queue)."
       parameters:
       - description: Bearer <votre_jwt>
@@ -292,7 +292,7 @@ paths:
         name: X-Timestamp
         required: true
         type: string
-      - description: Images du post (1 à 4 fichiers)
+      - description: Images du post_service (1 à 4 fichiers)
         in: formData
         name: media
         type: file

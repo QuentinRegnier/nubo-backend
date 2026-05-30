@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -101,7 +102,7 @@ func HMACMiddleware() gin.HandlerFunc {
 		//	return
 		//}
 
-		var session domain.SessionsRequest
+		var session models.SessionsRequest
 		var sessionFound bool = false
 
 		// A. Essai Redis
@@ -221,6 +222,10 @@ func HMACMiddleware() gin.HandlerFunc {
 
 		// 6. Envoyer réellement les données au client
 		// Attention : on utilise w.ResponseWriter qui est l'original
-		w.ResponseWriter.Write(responseBody)
+		_, err = w.ResponseWriter.Write(responseBody)
+		if err != nil {
+			fmt.Printf("❌ Erreur en écrivant la réponse signée: %v\n", err)
+			return
+		}
 	}
 }

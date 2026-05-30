@@ -77,7 +77,7 @@ func runWorker(ctx context.Context, shardID int) {
 	}
 }
 
-// processBatch trie les événements et les envoie aux bases ET au cache
+// processBatch trie les événements et les envoie aux bases ET au cache_service
 func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 	var mongoEvents []redis.AsyncEvent
 	var pgEvents []redis.AsyncEvent
@@ -120,7 +120,7 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 	}()
 
 	// On DOIT attendre que la BDD ait validé les transactions sur le disque
-	// avant de mettre à jour le cache, sinon on lira des valeurs périmées.
+	// avant de mettre à jour le cache_service, sinon on lira des valeurs périmées.
 	<-done
 	<-done
 

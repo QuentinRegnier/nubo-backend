@@ -3,13 +3,13 @@ package mongo
 import (
 	"fmt"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 )
 
-func MongoLoadUser(ID int64, Username string, Email string, Phone string) (domain.UserRequest, error) {
+func MongoLoadUser(ID int64, Username string, Email string, Phone string) (models.UserRequest, error) {
 	fmt.Println("MongoLoadUser called with:", ID, Username, Email, Phone)
-	var u domain.UserRequest
+	var u models.UserRequest
 
 	// Construction du filtre de recherche
 	filter := make(map[string]interface{})
@@ -22,7 +22,7 @@ func MongoLoadUser(ID int64, Username string, Email string, Phone string) (domai
 	} else if Phone != "" {
 		filter["phone"] = Phone
 	} else {
-		return domain.UserRequest{}, fmt.Errorf("aucun critère de recherche mongo")
+		return models.UserRequest{}, fmt.Errorf("aucun critère de recherche mongo")
 	}
 
 	fmt.Println("MongoLoadUser filter:", filter)
@@ -48,9 +48,9 @@ func MongoLoadUser(ID int64, Username string, Email string, Phone string) (domai
 
 	return u, nil
 }
-func MongoLoadSession(ID int64, DeviceToken string, MasterToken string, CurrentSecret string) (domain.SessionsRequest, error) {
+func MongoLoadSession(ID int64, DeviceToken string, MasterToken string, CurrentSecret string) (models.SessionsRequest, error) {
 	fmt.Println("MongoLoadSession called with:", ID, DeviceToken, MasterToken, CurrentSecret)
-	var s domain.SessionsRequest
+	var s models.SessionsRequest
 
 	// Construction du filtre de recherche (uniquement les valeurs valides)
 	filter := make(map[string]any)
@@ -102,9 +102,9 @@ func MongoLoadSession(ID int64, DeviceToken string, MasterToken string, CurrentS
 }
 
 // MongoLoadPosts récupère une liste de posts en fonction de leurs IDs (Niveau 2 Fallback)
-func MongoLoadPosts(ids []int64) ([]domain.PostRequest, error) {
+func MongoLoadPosts(ids []int64) ([]models.PostRequest, error) {
 	if len(ids) == 0 {
-		return []domain.PostRequest{}, nil
+		return []models.PostRequest{}, nil
 	}
 
 	filter := map[string]any{
@@ -116,9 +116,9 @@ func MongoLoadPosts(ids []int64) ([]domain.PostRequest, error) {
 		return nil, err
 	}
 
-	var posts []domain.PostRequest
+	var posts []models.PostRequest
 	for _, doc := range docs {
-		var p domain.PostRequest
+		var p models.PostRequest
 		if err := pkg.ToStruct(doc, &p); err == nil {
 			posts = append(posts, p)
 		}
@@ -128,15 +128,15 @@ func MongoLoadPosts(ids []int64) ([]domain.PostRequest, error) {
 }
 
 // MongoLoadPostsPaginated récupère des posts avec filtres, tri et pagination (Cold Storage)
-func MongoLoadPostsPaginated(filter map[string]any, sort map[string]any, skip int64, limit int64) ([]domain.PostRequest, error) {
+func MongoLoadPostsPaginated(filter map[string]any, sort map[string]any, skip int64, limit int64) ([]models.PostRequest, error) {
 	docs, err := Posts.GetPaginated(filter, sort, skip, limit)
 	if err != nil {
 		return nil, err
 	}
 
-	var posts []domain.PostRequest
+	var posts []models.PostRequest
 	for _, doc := range docs {
-		var p domain.PostRequest
+		var p models.PostRequest
 		if err := pkg.ToStruct(doc, &p); err == nil {
 			posts = append(posts, p)
 		}

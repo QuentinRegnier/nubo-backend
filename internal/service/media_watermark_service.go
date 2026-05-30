@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 )
 
@@ -17,7 +17,7 @@ func GenerateWatermarkedURL(mediaKey string, authorID, postID, readerID int64) s
 
 	// Construction de la chaîne à signer
 	// L'ordre des paramètres doit être le même ici et dans le micro-service !
-	payload := fmt.Sprintf("key=%s&author=%d&post=%d&reader=%d&ts=%d",
+	payload := fmt.Sprintf("key=%s&author=%d&post_service=%d&reader=%d&ts=%d",
 		mediaKey, authorID, postID, readerID, timestamp)
 
 	// Génération de la signature via ton package security
@@ -27,7 +27,7 @@ func GenerateWatermarkedURL(mediaKey string, authorID, postID, readerID int64) s
 }
 
 // FormatMediaURLs est la fonction outil qui transforme une liste de médias en liste d'URLs signées.
-func FormatMediaURLs(mediaList []domain.MediaRequest, authorID, postID, readerID int64) []string {
+func FormatMediaURLs(mediaList []models.MediaRequest, authorID, postID, readerID int64) []string {
 	urls := make([]string, len(mediaList))
 
 	for i, m := range mediaList {

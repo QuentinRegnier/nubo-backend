@@ -56,7 +56,7 @@ func ZRemRangeByRank(ctx context.Context, key string, start, stop int64) error {
 }
 
 // ZScore récupère le score actuel d'un membre.
-// Utile pour vérifier si un post est déjà classé ou connaître son nombre de vues exact.
+// Utile pour vérifier si un post_service est déjà classé ou connaître son nombre de vues exact.
 func ZScore(ctx context.Context, key string, member interface{}) (float64, error) {
 	// fmt.Sprintf("%v") permet de gérer int64 ou string de façon transparente
 	return redisgo.Rdb.ZScore(ctx, key, fmt.Sprintf("%v", member)).Result()

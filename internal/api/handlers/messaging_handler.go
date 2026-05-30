@@ -5,7 +5,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -32,7 +32,7 @@ func InboxHandler(c *gin.Context) {
 	}
 
 	// 2. Appel du pipeline d'hydratation
-	inbox, err := cache.GetInboxView(c.Request.Context(), userID)
+	inbox, err := cache_service.GetInboxView(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur lors du chargement de l'inbox"})
 		return
@@ -40,7 +40,7 @@ func InboxHandler(c *gin.Context) {
 
 	// Garantie JSON tableau vide [] plutôt que 'null'
 	if inbox == nil {
-		inbox = []cache.InboxItemView{}
+		inbox = []cache_service.InboxItemView{}
 	}
 
 	c.JSON(http.StatusOK, inbox)

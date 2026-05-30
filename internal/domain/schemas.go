@@ -6,7 +6,7 @@ import (
 
 // ---------------- Schemas ----------------
 
-// UsersCache représente la structure du cache "users"
+// UsersCache représente la structure du cache_service "users"
 var UsersSchema = map[string]reflect.Kind{
 	"id":                 reflect.Int64, // UUID
 	"username":           reflect.String,
@@ -34,7 +34,7 @@ var UsersSchema = map[string]reflect.Kind{
 	"updated_at":         reflect.Struct,
 }
 
-// UserSettingsCache représente la structure du cache "user_settings"
+// UserSettingsCache représente la structure du cache_service "user_settings"
 var UserSettingsSchema = map[string]reflect.Kind{
 	"id":            reflect.Int64,
 	"user_id":       reflect.Int64,
