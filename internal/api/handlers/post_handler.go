@@ -101,22 +101,3 @@ func GetUserPostsHandler(c *gin.Context) {
 type InteractionInput struct {
 	PostID int64 `json:"post_id" binding:"required"`
 }
-
-func LikeHandler(c *gin.Context) {
-	userID, err := pkg.GetUserIDFromContext(c)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Utilisateur non identifié"})
-		return
-	}
-
-	var input InteractionInput
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Format JSON invalide"})
-		return
-	}
-
-	// C'est ici que tu appelles ta fonction qui était "Unused" !
-	feed_service.RegisterLike(userID, input.PostID)
-
-	c.JSON(http.StatusOK, gin.H{"message": "post_service liked"})
-}

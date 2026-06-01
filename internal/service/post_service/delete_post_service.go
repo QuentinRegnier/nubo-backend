@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -15,22 +16,22 @@ import (
 )
 
 // DeletePost gère la rétractation d'un post (Purge L1, Purge LSH, Soft Delete Workers).
-func DeletePost(ctx context.Context, callerUserID int64, postID int64) error {
+func DeletePost(ctx context.Context, input post_models.DeletePostInput) error {
 	var post models.PostRequest
 	var found bool
 
 	// ─────────────────────────────────────────────────────────────────────────
 	// 1. LECTURE CASCADE (On a besoin de l'objet pour les hashtags et la sécu)
 	// ─────────────────────────────────────────────────────────────────────────
-	if err := redis.Posts.GetObject(ctx, postID, &post); err == nil {
+	if err := redis.Posts.GetObject(ctx, input.PostID, &post); err == nil {
 		found = true
 	} else {
-		mongoPosts, errMongo := mongo.MongoLoadPosts([]int64{postID})
+		mongoPosts, errMongo := mongo.MongoLoadPosts([]int64{input.PostID})
 		if errMongo == nil && len(mongoPosts) > 0 {
 			post = mongoPosts[0]
 			found = true
 		} else {
-			pgPosts, errPg := postgres.FuncLoadPosts([]int64{postID}, 1, 0)
+			pgPosts, errPg := postgres.FuncLoadPosts([]int64{input.PostID}, 1, 0)
 			if errPg == nil && len(pgPosts) > 0 {
 				post = pgPosts[0]
 				found = true
@@ -43,7 +44,7 @@ func DeletePost(ctx context.Context, callerUserID int64, postID int64) error {
 	}
 
 	// 🛡 SÉCURITÉ : Vérification du propriétaire
-	if post.UserID != callerUserID {
+	if post.UserID != input.UserID {
 		return errors.New("unauthorized")
 	}
 
@@ -52,17 +53,17 @@ func DeletePost(ctx context.Context, callerUserID int64, postID int64) error {
 	// ─────────────────────────────────────────────────────────────────────────
 
 	// A. Suppression de l'Object Cache L1
-	keyL1 := fmt.Sprintf("object:post:%d", postID)
+	keyL1 := fmt.Sprintf("object:post:%d", input.PostID)
 	_ = redisgo.Rdb.Del(ctx, keyL1).Err() // Ignore l'erreur si la clé a déjà expiré
 
 	// B. Suppression du seau LSH et du Vecteur
 	// Il faut d'abord lire le vecteur pour récupérer le LSHHash, puis nettoyer le bucket
-	vecKey := fmt.Sprintf("content:vec:%d", postID)
+	vecKey := fmt.Sprintf("content:vec:%d", input.PostID)
 	if vecData, err := redisgo.Rdb.Get(ctx, vecKey).Bytes(); err == nil {
 		var payload feed_service.ContentVectorPayload
 		if err := json.Unmarshal(vecData, &payload); err == nil {
 			// On a le hash, on peut retirer le post de son bucket LSH
-			_ = feed_service.RemoveLSHBucket(ctx, postID, payload.LSHHash)
+			_ = feed_service.RemoveLSHBucket(ctx, input.PostID, payload.LSHHash)
 		}
 	}
 	// Purge définitive du vecteur d'engagement du post

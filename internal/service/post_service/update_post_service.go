@@ -14,7 +14,7 @@ import (
 )
 
 // UpdatePost gère la modification en récupérant l'objet complet pour nourrir le Bulk Update des workers.
-func UpdatePost(ctx context.Context, callerUserID int64, input post_models.UpdatePostInput) error {
+func UpdatePost(ctx context.Context, input post_models.UpdatePostInput) error {
 	var post models.PostRequest
 	var found bool
 
@@ -48,7 +48,7 @@ func UpdatePost(ctx context.Context, callerUserID int64, input post_models.Updat
 	// ─────────────────────────────────────────────────────────────────────────
 	// 2. CONTRÔLE D'AUTORISATION
 	// ─────────────────────────────────────────────────────────────────────────
-	if post.UserID != callerUserID {
+	if post.UserID != input.UserID {
 		return errors.New("unauthorized")
 	}
 

@@ -2,12 +2,14 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 )
 
 // --- CONFIGURATION DU CERVEAU (Modifiable via .env) ---
@@ -79,11 +81,16 @@ func runWorker(ctx context.Context, shardID int) {
 
 // processBatch trie les événements et les envoie aux bases ET au cache_service
 func processBatch(ctx context.Context, events []redis.AsyncEvent) {
+
+	// 🛡️ BOUCLIER DE SÉCURITÉ ASYNCHRONE
+	// On purge les événements illégaux AVANT de les distribuer aux BDD et aux Caches.
+	validEvents := purifyBatch(ctx, events)
+
 	var mongoEvents []redis.AsyncEvent
 	var pgEvents []redis.AsyncEvent
 	var workerEvents []redis.AsyncEvent // <-- NOUVEAU
 
-	for _, evt := range events {
+	for _, evt := range validEvents {
 		if evt.Targets&redis.TargetMongo != 0 {
 			mongoEvents = append(mongoEvents, evt)
 		}
@@ -126,9 +133,69 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 
 	// Étape 2 : Mise à jour de l'index de découverte (MOST Cache)
 	// S'exécute de manière asynchrone mais séquencée APRÈS la BDD.
-	updateMostCache(ctx, events)
+	updateMostCache(ctx, validEvents) // ✅ CORRIGÉ : On utilise le lot purifié
 
 	// Étape 3 : Fan-Out Social de masse (Distribution dans les boîtes aux lettres du Speed Cache)
 	// S'exécute de manière ultra-rapide en RAM juste après la validation BDD
-	handleSocialFanOut(ctx, events)
+	handleSocialFanOut(ctx, validEvents) // ✅ CORRIGÉ : On utilise le lot purifié
+}
+
+// purifyBatch agit comme un pare-feu asynchrone.
+// Il élimine les événements illégaux (ex: un Like sur un post privé) pour protéger
+// Postgres, Mongo, l'Object Cache et le Most Cache en un seul point de contrôle.
+func purifyBatch(ctx context.Context, events []redis.AsyncEvent) []redis.AsyncEvent {
+	validEvents := make([]redis.AsyncEvent, 0, len(events))
+
+	for _, e := range events {
+		// On inspecte uniquement les interactions (Likes, Vues)
+		if e.Type == redis.EntityLike || e.Type == redis.EntityView {
+			jsonBytes, err := json.Marshal(e.Payload)
+			if err != nil {
+				continue // Payload corrompu, on drop
+			}
+
+			var payload struct {
+				PostID   int64 `json:"post_id"`
+				TargetID int64 `json:"target_id"` // Historique
+				UserID   int64 `json:"user_id"`
+			}
+
+			if err := json.Unmarshal(jsonBytes, &payload); err == nil {
+				targetID := payload.TargetID
+				if payload.PostID != 0 {
+					targetID = payload.PostID
+				}
+
+				if targetID != 0 && payload.UserID != 0 {
+					// VÉRIFICATION DES DROITS (Cascade L1 -> L2 -> L3)
+					// (getPostWithFallback est déjà défini dans most_cache_worker.go et accessible ici)
+					p, err := getPostWithFallback(ctx, targetID)
+
+					// Règle 1 : Post supprimé ou introuvable
+					if err != nil || p.Visibility == -1 {
+						continue // Événement détruit
+					}
+
+					// Règle 2 : Matrice de Confidentialité
+					isAuthor := p.UserID == payload.UserID
+					if !isAuthor {
+						relationState := cache_service.RelationValue(ctx, p.UserID, payload.UserID)
+						if relationState == -1 {
+							continue // Hacker banni -> Événement détruit
+						}
+						if p.Visibility == 1 && relationState < 1 {
+							continue // Réservé Abonnés -> Événement détruit
+						}
+						if p.Visibility == 2 && relationState != 2 {
+							continue // Réservé Amis -> Événement détruit
+						}
+					}
+				}
+			}
+		}
+		// Si l'événement survit au pare-feu (ou si ce n'est pas une interaction), on l'accepte
+		validEvents = append(validEvents, e)
+	}
+
+	return validEvents
 }

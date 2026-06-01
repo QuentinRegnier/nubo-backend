@@ -59,37 +59,74 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 		}
 
 		// 3. SI C'EST UNE INTERACTION (LIKE ou VUE agrégé)
-		if (e.Type == redis.EntityLike || e.Type == redis.EntityView) && e.Action == redis.ActionCreate {
+		if (e.Type == redis.EntityLike || e.Type == redis.EntityView) && (e.Action == redis.ActionCreate || e.Action == redis.ActionDelete) {
 			jsonBytes, err := json.Marshal(e.Payload)
 			if err == nil {
-				// STRUCTURE COMMUNE : Intègre le count et le drapeau d'idempotence
+				// STRUCTURE COMMUNE : On inclut UserID pour pouvoir vérifier les droits
 				var interactionEvent struct {
-					TargetID              int64 `json:"target_id"`
-					Count                 int   `json:"count"`
-					AlreadyEvaluatedRedis bool  `json:"already_evaluated_redis"`
+					PostID   int64 `json:"post_id"`
+					TargetID int64 `json:"target_id"`
+					UserID   int64 `json:"user_id"` // <--- L'auteur de l'action
+					Count    int   `json:"count"`
 				}
 
-				if err := json.Unmarshal(jsonBytes, &interactionEvent); err == nil && interactionEvent.TargetID != 0 {
+				if err := json.Unmarshal(jsonBytes, &interactionEvent); err == nil {
+					targetID := interactionEvent.TargetID
+					if interactionEvent.PostID != 0 {
+						targetID = interactionEvent.PostID
+					}
 
-					// 1. Dataloader Fallback : On récupère l'entité en tapant le moins possible sur la BDD L3
-					p, err := getPostWithFallback(ctx, interactionEvent.TargetID)
-					if err == nil {
+					if targetID != 0 {
+						p, err := getPostWithFallback(ctx, targetID)
+						if err == nil && p.Visibility != -1 { // On rejette direct si Soft-Delete
 
-						// 2. On incrémente manuellement les compteurs en RAM.
-						// Cela nous évite d'attendre la synchronisation asynchrone de PostgreSQL,
-						// et permet de recalculer le score immédiatement avec la nouvelle valeur.
-						if e.Type == redis.EntityLike {
-							p.LikeCount += interactionEvent.Count
-							_ = redis.Posts.SetObject(ctx, p.ID, p) // MAJ instantanée du cache_service L1
+							// ─────────────────────────────────────────────────────────────
+							// 🛡️ VÉRIFICATION DES DROITS ASYNCHRONE
+							// ─────────────────────────────────────────────────────────────
+							if interactionEvent.UserID != 0 && p.UserID != interactionEvent.UserID {
+								relationState := cache_service.RelationValue(ctx, p.UserID, interactionEvent.UserID)
 
-							// 3. On route vers les fonctions strictes avec l'objet complet en RAM
-							cache_service.EvaluatePostAfterLike(ctx, p)
-						} else if e.Type == redis.EntityView {
-							p.ViewCount += interactionEvent.Count
-							_ = redis.Posts.SetObject(ctx, p.ID, p) // MAJ instantanée du cache_service L1
+								// Si l'utilisateur est banni ou n'a pas la relation requise,
+								// on abandonne l'incrémentation (Le Hacker perd son temps).
+								if relationState == -1 {
+									continue
+								}
+								if p.Visibility == 1 && relationState < 1 { // Réservé Abonnés
+									continue
+								}
+								if p.Visibility == 2 && relationState != 2 { // Réservé Amis
+									continue
+								}
+							}
 
-							// 3. On route vers les fonctions strictes avec l'objet complet en RAM
-							cache_service.EvaluatePostAfterView(ctx, p)
+							// ─────────────────────────────────────────────────────────────
+							// INCÉMENTATION ET MISE À JOUR DES ZSETS
+							// ─────────────────────────────────────────────────────────────
+							delta := 1
+							if e.Action == redis.ActionDelete {
+								delta = -1
+							} else if interactionEvent.Count != 0 {
+								delta = interactionEvent.Count
+							}
+
+							if e.Type == redis.EntityLike {
+								p.LikeCount += delta
+								if p.LikeCount < 0 {
+									p.LikeCount = 0
+								}
+
+								_ = redis.Posts.SetObject(ctx, p.ID, p)
+								cache_service.EvaluatePostAfterLike(ctx, p)
+
+							} else if e.Type == redis.EntityView {
+								p.ViewCount += delta
+								if p.ViewCount < 0 {
+									p.ViewCount = 0
+								}
+
+								_ = redis.Posts.SetObject(ctx, p.ID, p)
+								cache_service.EvaluatePostAfterView(ctx, p)
+							}
 						}
 					}
 				}

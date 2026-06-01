@@ -12,21 +12,21 @@ import (
 )
 
 // GetPosts orchestre la récupération d'une liste de posts et applique le filtrage de visibilité.
-func GetPosts(ctx context.Context, callerUserID int64, postIDs []int64) []post_models.PostFetchResult {
-	results := make([]post_models.PostFetchResult, 0, len(postIDs))
-	postsMap := fetchPostsCascade(ctx, postIDs)
+func GetPosts(ctx context.Context, input post_models.GetPostInput) []post_models.GetPostOutput {
+	results := make([]post_models.GetPostOutput, 0, len(input.PostIDs))
+	postsMap := fetchPostsCascade(ctx, input.PostIDs)
 
 	// 5. & 6. EMPAQUETAGE ET VÉRIFICATION DES DROITS
-	for _, id := range postIDs {
+	for _, id := range input.PostIDs {
 		post, found := postsMap[id]
 
 		if !found {
-			results = append(results, post_models.PostFetchResult{PostID: id, Error: "Post introuvable ou supprimé"})
+			results = append(results, post_models.GetPostOutput{PostID: id, Error: "Post introuvable ou supprimé"})
 			continue
 		}
 
 		// L'auteur a toujours accès à son propre post
-		isAuthor := post.UserID == callerUserID
+		isAuthor := post.UserID == input.UserID
 
 		// ─────────────────────────────────────────────────────────────────
 		// HYDRATATION DE L'ÉTAT DE RELATION EN O(1) CASCADE (L1->L2->L3)
@@ -34,12 +34,12 @@ func GetPosts(ctx context.Context, callerUserID int64, postIDs []int64) []post_m
 		// state: 0 = Rien, 1 = Follower, 2 = Ami, -1 = Banni
 		relationState := 0
 		if !isAuthor {
-			relationState = cache_service.RelationValue(ctx, post.UserID, callerUserID)
+			relationState = cache_service.RelationValue(ctx, post.UserID, input.UserID)
 		}
 
 		// Règle Z : Bannissement (Si l'auteur a bloqué le caller, ou inversement)
 		if relationState == -1 {
-			results = append(results, post_models.PostFetchResult{PostID: id, Error: "Post introuvable ou supprimé"})
+			results = append(results, post_models.GetPostOutput{PostID: id, Error: "Post introuvable ou supprimé"})
 			continue // Mode furtif : on lui fait croire que le post n'existe pas.
 		}
 
@@ -47,7 +47,7 @@ func GetPosts(ctx context.Context, callerUserID int64, postIDs []int64) []post_m
 		// Règle A : Soft Delete / Supprimé (Visibility = -1)
 		// ─────────────────────────────────────────────────────────────────
 		if post.Visibility == -1 {
-			results = append(results, post_models.PostFetchResult{PostID: id, Error: "Post introuvable ou supprimé"})
+			results = append(results, post_models.GetPostOutput{PostID: id, Error: "Post introuvable ou supprimé"})
 			continue
 		}
 
@@ -57,7 +57,7 @@ func GetPosts(ctx context.Context, callerUserID int64, postIDs []int64) []post_m
 		if post.Visibility == 1 && !isAuthor {
 			// Doit être au moins Abonné (1) ou Ami (2)
 			if relationState < 1 {
-				results = append(results, post_models.PostFetchResult{
+				results = append(results, post_models.GetPostOutput{
 					PostID: id,
 					Error:  "🔒 Ce post est privé et strictement réservé aux abonnés de l'auteur",
 				})
@@ -71,7 +71,7 @@ func GetPosts(ctx context.Context, callerUserID int64, postIDs []int64) []post_m
 		if post.Visibility == 2 && !isAuthor {
 			// Doit être strictement Ami (2)
 			if relationState != 2 {
-				results = append(results, post_models.PostFetchResult{
+				results = append(results, post_models.GetPostOutput{
 					PostID: id,
 					Error:  "🤝 Ce post est confidentiel et réservé au cercle d'amis de l'auteur",
 				})
@@ -82,7 +82,7 @@ func GetPosts(ctx context.Context, callerUserID int64, postIDs []int64) []post_m
 		// ─────────────────────────────────────────────────────────────────
 		// Règle D : Public (Visibility = 0) ou accès validé
 		// ─────────────────────────────────────────────────────────────────
-		results = append(results, post_models.PostFetchResult{PostID: id, Data: &post})
+		results = append(results, post_models.GetPostOutput{PostID: id, Data: &post})
 	}
 
 	return results

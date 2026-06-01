@@ -1,7 +1,8 @@
 package post_models
 
 type UpdatePostInput struct {
-	PostID      int64    `json:"post_id" binding:"required"` // Obligatoire dans le corps de la requête
+	UserID      int64    `json:"user_id"` // Écrasé par le JWT dans le handler
+	PostID      int64    `json:"post_id" binding:"required"`
 	Content     string   `json:"content" binding:"max=2200"`
 	Hashtags    []string `json:"hashtags" binding:"max=10,dive,alphanum,max=50"`
 	Identifiers []int64  `json:"identifiers" binding:"max=10"`

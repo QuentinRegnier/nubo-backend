@@ -60,13 +60,14 @@ func UpdatePostHandler(c *gin.Context) {
 		return
 	}
 
-	// 4. Nettoyage de la donnée
+	// 4. Nettoyage et sécurisation de la donnée
 	input.Identifiers = pkg.SliceUniqueInt64(input.Identifiers)
 	input.Hashtags = pkg.SliceUniqueStr(input.Hashtags)
 	input.Content = pkg.CleanStr(input.Content)
+	input.UserID = userID // Règle d'or : le JWT fait foi
 
-	// 5. Appel au service métier (Contrôle d'accès L1/L2/L3 et persistance)
-	err = post_service.UpdatePost(c.Request.Context(), userID, input)
+	// 5. Appel au service métier
+	err = post_service.UpdatePost(c.Request.Context(), input)
 	if err != nil {
 		// Tri sémantique des erreurs renvoyées par le service
 		if err.Error() == "unauthorized" {
