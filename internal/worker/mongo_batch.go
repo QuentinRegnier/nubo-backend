@@ -80,10 +80,10 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 
 			case redis.ActionDelete:
 				if entity == redis.EntityPost {
-					// SOFT DELETE pour les Posts : On passe la visibilité à 2
+					// SOFT DELETE pour les Posts : On passe la visibilité à -1
 					models = append(models, libMongo.NewUpdateOneModel().
 						SetFilter(bson.M{"_id": e.ID}).
-						SetUpdate(bson.M{"$set": bson.M{"visibility": 2}}))
+						SetUpdate(bson.M{"$set": bson.M{"visibility": -1}}))
 				} else {
 					// HARD DELETE pour le reste (ex: Likes, Relations)
 					models = append(models, libMongo.NewDeleteOneModel().

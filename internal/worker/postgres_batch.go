@@ -298,8 +298,8 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 
 	var query string
 	if entity == redis.EntityPost {
-		// SOFT DELETE spécifique aux posts (Mise à jour de la visibilité)
-		query = fmt.Sprintf("UPDATE %s SET visibility = 2 WHERE id = ANY($1)", mapper.TableName())
+		// SOFT DELETE spécifique aux posts (Mise à jour de la visibilité à -1)
+		query = fmt.Sprintf("UPDATE %s SET visibility = -1 WHERE id = ANY($1)", mapper.TableName())
 	} else {
 		// HARD DELETE standard
 		query = fmt.Sprintf("DELETE FROM %s WHERE id = ANY($1)", mapper.TableName())

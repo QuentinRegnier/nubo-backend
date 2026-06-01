@@ -1,0 +1,141 @@
+package post_service
+
+import (
+	"context"
+
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+)
+
+// GetPosts orchestre la récupération d'une liste de posts et applique le filtrage de visibilité.
+func GetPosts(ctx context.Context, callerUserID int64, postIDs []int64) []post_models.PostFetchResult {
+	results := make([]post_models.PostFetchResult, 0, len(postIDs))
+	postsMap := fetchPostsCascade(ctx, postIDs)
+
+	// 5. & 6. EMPAQUETAGE ET VÉRIFICATION DES DROITS
+	for _, id := range postIDs {
+		post, found := postsMap[id]
+
+		if !found {
+			results = append(results, post_models.PostFetchResult{PostID: id, Error: "Post introuvable ou supprimé"})
+			continue
+		}
+
+		// L'auteur a toujours accès à son propre post
+		isAuthor := post.UserID == callerUserID
+
+		// ─────────────────────────────────────────────────────────────────
+		// HYDRATATION DE L'ÉTAT DE RELATION EN O(1) CASCADE (L1->L2->L3)
+		// ─────────────────────────────────────────────────────────────────
+		// state: 0 = Rien, 1 = Follower, 2 = Ami, -1 = Banni
+		relationState := 0
+		if !isAuthor {
+			relationState = cache_service.RelationValue(ctx, post.UserID, callerUserID)
+		}
+
+		// Règle Z : Bannissement (Si l'auteur a bloqué le caller, ou inversement)
+		if relationState == -1 {
+			results = append(results, post_models.PostFetchResult{PostID: id, Error: "Post introuvable ou supprimé"})
+			continue // Mode furtif : on lui fait croire que le post n'existe pas.
+		}
+
+		// ─────────────────────────────────────────────────────────────────
+		// Règle A : Soft Delete / Supprimé (Visibility = -1)
+		// ─────────────────────────────────────────────────────────────────
+		if post.Visibility == -1 {
+			results = append(results, post_models.PostFetchResult{PostID: id, Error: "Post introuvable ou supprimé"})
+			continue
+		}
+
+		// ─────────────────────────────────────────────────────────────────
+		// Règle B : Réservé aux abonnés (Visibility = 1)
+		// ─────────────────────────────────────────────────────────────────
+		if post.Visibility == 1 && !isAuthor {
+			// Doit être au moins Abonné (1) ou Ami (2)
+			if relationState < 1 {
+				results = append(results, post_models.PostFetchResult{
+					PostID: id,
+					Error:  "🔒 Ce post est privé et strictement réservé aux abonnés de l'auteur",
+				})
+				continue
+			}
+		}
+
+		// ─────────────────────────────────────────────────────────────────
+		// Règle C : Réservé aux AMIS (Visibility = 2)
+		// ─────────────────────────────────────────────────────────────────
+		if post.Visibility == 2 && !isAuthor {
+			// Doit être strictement Ami (2)
+			if relationState != 2 {
+				results = append(results, post_models.PostFetchResult{
+					PostID: id,
+					Error:  "🤝 Ce post est confidentiel et réservé au cercle d'amis de l'auteur",
+				})
+				continue
+			}
+		}
+
+		// ─────────────────────────────────────────────────────────────────
+		// Règle D : Public (Visibility = 0) ou accès validé
+		// ─────────────────────────────────────────────────────────────────
+		results = append(results, post_models.PostFetchResult{PostID: id, Data: &post})
+	}
+
+	return results
+}
+
+// fetchPostsCascade gère la récupération L1 -> L2 -> L3 pour un batch d'IDs.
+func fetchPostsCascade(ctx context.Context, ids []int64) map[int64]models.PostRequest {
+	postsMap := make(map[int64]models.PostRequest)
+	var missingFromL1 []int64
+
+	// Étape 1 : Object Cache LFU (Redis)
+	for _, id := range ids {
+		var p models.PostRequest
+		if err := redis.Posts.GetObject(ctx, id, &p); err == nil {
+			postsMap[id] = p
+		} else {
+			missingFromL1 = append(missingFromL1, id)
+		}
+	}
+
+	if len(missingFromL1) == 0 {
+		return postsMap // Tous les posts étaient en RAM, retour instantané
+	}
+
+	// Étape 2 : Cold Storage (MongoDB)
+	var missingFromL2 []int64
+	mongoPosts, errMongo := mongo.MongoLoadPosts(missingFromL1)
+	if errMongo == nil {
+		for _, p := range mongoPosts {
+			postsMap[p.ID] = p
+			_ = redis.Posts.SetObject(ctx, p.ID, p) // Réhydratation L1
+		}
+	}
+
+	// Identification de ce qu'il reste à trouver
+	for _, id := range missingFromL1 {
+		if _, exists := postsMap[id]; !exists {
+			missingFromL2 = append(missingFromL2, id)
+		}
+	}
+
+	if len(missingFromL2) == 0 {
+		return postsMap
+	}
+
+	// Étape 3 : Source of Truth (PostgreSQL) via ta fonction paramétrée
+	pgPosts, errPg := postgres.FuncLoadPosts(missingFromL2, len(missingFromL2), 0)
+	if errPg == nil {
+		for _, p := range pgPosts {
+			postsMap[p.ID] = p
+			_ = redis.Posts.SetObject(ctx, p.ID, p) // Réhydratation L1
+		}
+	}
+
+	return postsMap
+}

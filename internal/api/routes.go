@@ -80,9 +80,9 @@ func SetupRoutes(r *gin.Engine) {
 	secured.Use(middleware.HMACMiddleware()) // 2. Est-ce authentique ? (Check Signature with Redis Secret)
 
 	// --- Posts ---
-	secured.GET("/feed", LoadFeedHandler)          // ℹ️❌
-	secured.GET("/feed/more", LoadMoreFeedHandler) // ℹ️❌
-	secured.GET("/posts", GetPostsHandler)         // ℹ️❌
+	secured.GET("/feed", LoadFeedHandler)              // ℹ️❌
+	secured.GET("/feed/more", LoadMoreFeedHandler)     // ℹ️❌
+	secured.GET("/post", post_handlers.GetPostHandler) // ℹ️❌
 	secured.POST("/post", post_handlers.CreatePostHandler)
 	secured.PATCH("/post", post_handlers.UpdatePostHandler)
 	secured.DELETE("/post", post_handlers.DeletePostHandler)
@@ -180,11 +180,6 @@ func LoadFeedHandler(c *gin.Context) {
 func LoadMoreFeedHandler(c *gin.Context) {
 	// TODO: charger plus de posts depuis la base
 	c.JSON(http.StatusOK, gin.H{"posts": []string{"post_service 3", "post_service 4"}})
-}
-
-func GetPostsHandler(c *gin.Context) {
-	// TODO: récupérer les posts depuis la base
-	c.JSON(http.StatusOK, gin.H{"posts": []string{"post_service 1", "post_service 2"}})
 }
 
 func UnLikeHandler(c *gin.Context) {

@@ -138,7 +138,7 @@ func HydrateFeed(ctx context.Context, postIDs []int64) ([]models.PostRequest, er
 		// ─────────────────────────────────────────────────────────────────────
 		// Si le post_service a été modéré, ou l'auteur banni entre la création du buffer et la lecture.
 		// On s'aligne sur ta logique Postgres où la visibilité '2' équivaut à un post_service supprimé/masqué.
-		if post.Visibility == 2 {
+		if post.Visibility == -1 {
 			// Le post_service est ignoré silencieusement côté backend.
 			// Le frontend ne le recevra même pas, ce qui économise de la bande passante
 			// et garantit qu'aucune donnée d'un utilisateur banni ne fuite.
