@@ -7,6 +7,7 @@ import (
 
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 )
 
@@ -74,25 +75,25 @@ func handleSocialFanOut(ctx context.Context, events []redis.AsyncEvent) {
 				continue // Impossible de déterminer l'auteur, protection contre les payloads corrompus
 			}
 
-			// 1. Récupération instantanée des abonnés depuis le Speed Cache (O(1) en RAM)
-			followersKey := fmt.Sprintf("speed:followers:%d", authorID)
-			followerStrings, err := redisgo.Rdb.SMembers(ctx, followersKey).Result()
+			// 1. Récupération instantanée des abonnés via notre service dédié (O(1) en RAM)
+			followerIDs, err := cache_service.GetSpeedFollowers(ctx, authorID)
 			if err != nil {
 				log.Printf("⚠️ [FanOut] Impossible de lire les abonnés de l'user %d: %v", authorID, err)
 				continue
 			}
 
-			if len(followerStrings) == 0 {
+			if len(followerIDs) == 0 {
 				continue // L'utilisateur n'a pas d'abonnés (Ville fantôme locale), rien à distribuer
 			}
 
 			// 2. Distribution de masse via Redis Pipeline (Vitesse maximale, 1 seul aller-retour TCP)
 			pipe := redisgo.Rdb.Pipeline()
-			for _, followerStr := range followerStrings {
+			for _, followerID := range followerIDs {
 				// Génération de la clé de la boîte aux lettres du flux social de l'abonné
-				feedUserKey := fmt.Sprintf("feed_service:user:%s", followerStr)
+				// (On utilise %d car followerID est désormais un int64 propre)
+				feedUserKey := fmt.Sprintf("feed_service:user:%d", followerID)
 
-				// LPUSH met le nouveau post_service tout en haut de la file d'attente sociale
+				// LPUSH met le nouveau post tout en haut de la file d'attente sociale
 				pipe.LPush(ctx, feedUserKey, postID)
 
 				// LTRIM borne la boîte aux lettres à 1000 éléments.
