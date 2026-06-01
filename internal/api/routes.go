@@ -80,12 +80,12 @@ func SetupRoutes(r *gin.Engine) {
 	secured.Use(middleware.HMACMiddleware()) // 2. Est-ce authentique ? (Check Signature with Redis Secret)
 
 	// --- Posts ---
-	secured.GET("/feed", LoadFeedHandler)                            // ℹ️❌
-	secured.GET("/feed/more", LoadMoreFeedHandler)                   // ℹ️❌
-	secured.GET("/posts", GetPostsHandler)                           // ℹ️❌
-	secured.POST("/post", post_handlers.CreatePostHandler)           // ℹ️❌ à vérifier
-	secured.PATCH("/post", ModifyPostHandler)                        // ℹ️❌
-	secured.DELETE("/post", DeletePost)                              // ℹ️❌
+	secured.GET("/feed", LoadFeedHandler)          // ℹ️❌
+	secured.GET("/feed/more", LoadMoreFeedHandler) // ℹ️❌
+	secured.GET("/posts", GetPostsHandler)         // ℹ️❌
+	secured.POST("/post", post_handlers.CreatePostHandler)
+	secured.PATCH("/post", post_handlers.UpdatePostHandler)
+	secured.DELETE("/post", post_handlers.DeletePostHandler)
 	secured.POST("/views/batch", handlers.RegisterBatchViewsHandler) // ℹ️❌ à vérifier
 
 	// --- Profils / Utilisateurs ---
@@ -185,16 +185,6 @@ func LoadMoreFeedHandler(c *gin.Context) {
 func GetPostsHandler(c *gin.Context) {
 	// TODO: récupérer les posts depuis la base
 	c.JSON(http.StatusOK, gin.H{"posts": []string{"post_service 1", "post_service 2"}})
-}
-
-func ModifyPostHandler(c *gin.Context) {
-	// TODO: modifier un post_service dans la base
-	c.JSON(http.StatusOK, gin.H{"message": "post_service modified"})
-}
-
-func DeletePost(c *gin.Context) {
-	// TODO: supprimer post_service de la base
-	c.JSON(http.StatusOK, gin.H{"message": "post_service deleted"})
 }
 
 func UnLikeHandler(c *gin.Context) {
