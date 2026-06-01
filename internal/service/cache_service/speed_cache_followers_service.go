@@ -39,7 +39,7 @@ func RelationValue(ctx context.Context, targetID int64, callerID int64) int {
 	}
 
 	// Étape 2 : Cold Storage L2 (MongoDB, ~5ms)
-	state, errMongo := mongo.MongoGetRelationState(ctx, callerID, targetID)
+	state, errMongo := mongo.MongoGetRelationState(callerID, targetID)
 	if errMongo == nil {
 		// Réhydratation L1
 		_ = redisgo.Rdb.HSet(ctx, key, strCallerID, state).Err()

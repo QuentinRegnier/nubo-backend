@@ -283,7 +283,7 @@ func bulkUpdatePostgres(ctx context.Context, entity redis.EntityType, events []r
 }
 
 // ============================================================================
-// 3. BULK DELETE (WHERE ID = ANY(...))
+// 3. BULK DELETE
 // ============================================================================
 func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []redis.AsyncEvent) error {
 	mapper := GetMapper(entity)
@@ -291,6 +291,44 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 		return fmt.Errorf("pas de mapper Postgres pour %s", entity)
 	}
 
+	// 🚨 CAS SPÉCIAL : LES LIKES (Suppression par clé composite)
+	if entity == redis.EntityLike {
+		tx, err := postgres.PostgresDB.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+
+		stmt, err := tx.Prepare("DELETE FROM content.likes WHERE target_type = $1 AND target_id = $2 AND user_id = $3")
+		if err != nil {
+			err := tx.Rollback()
+			if err != nil {
+				return err
+			}
+			return err
+		}
+		defer func(stmt *sql.Stmt) {
+			err := stmt.Close()
+			if err != nil {
+				fmt.Printf("⚠️ Erreur fermeture statement Delete Likes: %v\n", err)
+			}
+		}(stmt)
+
+		for _, e := range events {
+			jsonBytes, _ := json.Marshal(e.Payload)
+			var l map[string]interface{}
+			_ = json.Unmarshal(jsonBytes, &l)
+
+			// Extraction robuste des valeurs flottantes du JSON
+			targetType := int(l["target_type"].(float64))
+			targetID := int64(l["target_id"].(float64))
+			userID := int64(l["user_id"].(float64))
+
+			_, _ = stmt.Exec(targetType, targetID, userID)
+		}
+		return tx.Commit()
+	}
+
+	// COMPORTEMENT STANDARD (Par tableau d'IDs)
 	ids := make([]int64, len(events))
 	for i, e := range events {
 		ids[i] = e.ID
@@ -298,10 +336,10 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 
 	var query string
 	if entity == redis.EntityPost {
-		// SOFT DELETE spécifique aux posts (Mise à jour de la visibilité à -1)
+		// SOFT DELETE
 		query = fmt.Sprintf("UPDATE %s SET visibility = -1 WHERE id = ANY($1)", mapper.TableName())
 	} else {
-		// HARD DELETE standard
+		// HARD DELETE
 		query = fmt.Sprintf("DELETE FROM %s WHERE id = ANY($1)", mapper.TableName())
 	}
 

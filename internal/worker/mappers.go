@@ -36,8 +36,8 @@ func GetMapper(entity redis.EntityType) EntityMapper {
 	// 	return &CommentMapper{}
 	case redis.EntityMedia:
 		return &MediaMapper{}
-	// case redis.EntityLike: // Assure-toi d'avoir cette constante dans redis/async_queue.go
-	// 	return &LikeMapper{}
+	case redis.EntityLike:
+		return &LikeMapper{}
 
 	// // --- MESSAGING ---
 	// case redis.EntityMessage:
@@ -249,22 +249,38 @@ func (m *MediaMapper) BuildUpdateQuery(tempTable string) string {
 // 	return buildGenericUpdateQuery(m.TableName(), t, m.Columns())
 // }
 
-// // --- LIKE MAPPER (content.likes) ---
-// type LikeMapper struct{}
+// --- LIKE MAPPER (content.likes) ---
+type LikeMapper struct{}
 
-// func (m *LikeMapper) TableName() string { return "content.likes" }
-// func (m *LikeMapper) Columns() []string {
-// 	return []string{"id", "target_type", "target_id", "user_id", "created_at"}
-// }
-// func (m *LikeMapper) ToRow(data any) []any {
-// 	jsonBytes, _ := json.Marshal(data)
-// 	var l domain.Like
-// 	json.Unmarshal(jsonBytes, &l)
-// 	return []any{l.ID, l.TargetType, l.TargetID, l.UserID, l.CreatedAt}
-// }
+func (m *LikeMapper) TableName() string { return "content.likes" }
+func (m *LikeMapper) Columns() []string {
+	return []string{"id", "target_type", "target_id", "user_id", "created_at"}
+}
 
-// // Pas d'update sur les likes, mais on met la fonction pour l'interface
-// func (m *LikeMapper) BuildUpdateQuery(t string) string { return "" }
+// On crée une structure interne stricte pour mapper le JSON issu du Worker
+type LikeWorkerPayload struct {
+	ID         int64  `json:"id"`
+	TargetType int    `json:"target_type"`
+	TargetID   int64  `json:"target_id"`
+	UserID     int64  `json:"user_id"`
+	CreatedAt  string `json:"created_at"`
+}
+
+func (m *LikeMapper) ToRow(data any) ([]any, error) {
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	var l LikeWorkerPayload
+	if err := json.Unmarshal(jsonBytes, &l); err != nil {
+		return nil, err
+	}
+
+	return []any{l.ID, l.TargetType, l.TargetID, l.UserID, l.CreatedAt}, nil
+}
+
+// Pas d'update sur les likes
+func (m *LikeMapper) BuildUpdateQuery(t string) string { return "" }
 
 // // ============================================================================
 // //                                MESSAGING SCHEMA

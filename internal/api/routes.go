@@ -93,23 +93,23 @@ func SetupRoutes(r *gin.Engine) {
 	secured.GET("/users/:id/posts", handlers.GetUserPostsHandler)
 
 	// --- Actions Sociales ---
-	secured.POST("/like", post_handlers.LikePostHandler) // ℹ️❌ à vérifier
-	secured.DELETE("/like", UnLikeHandler)               // ℹ️❌
-	secured.POST("/comment", CommentHandler)             // ℹ️❌
-	secured.DELETE("/comment", UnCommentHandler)         // ℹ️❌
-	secured.GET("/comments", LoadCommentsHandler)        // ℹ️❌
-	secured.POST("/follow", FollowHandler)               // ℹ️❌
-	secured.DELETE("/follow", UnFollowHandler)           // ℹ️❌
-	secured.POST("/friend", FriendHandler)               // ℹ️❌
-	secured.DELETE("/friend", UnFriendHandler)           // ℹ️❌
-	secured.POST("/limited", LimitedHandler)             // ℹ️❌
-	secured.DELETE("/limited", UnLimitedHandler)         // ℹ️❌
-	secured.POST("/block", BlockHandler)                 // ℹ️❌
-	secured.DELETE("/block", UnBlockHandler)             // ℹ️❌
-	secured.POST("/share", ShareHandler)                 // ℹ️❌
-	secured.POST("/save", SaveHandler)                   // ℹ️❌
-	secured.DELETE("/saved", UnSavedHandler)             // ℹ️❌
-	secured.GET("/saveds", LoadSavedsHandler)            // ℹ️❌
+	secured.POST("/like", post_handlers.LikePostHandler)
+	secured.GET("/like", post_handlers.GetPostHandlerLikes)
+	secured.POST("/comment", CommentHandler)      // ℹ️❌
+	secured.DELETE("/comment", UnCommentHandler)  // ℹ️❌
+	secured.GET("/comments", LoadCommentsHandler) // ℹ️❌
+	secured.POST("/follow", FollowHandler)        // ℹ️❌
+	secured.DELETE("/follow", UnFollowHandler)    // ℹ️❌
+	secured.POST("/friend", FriendHandler)        // ℹ️❌
+	secured.DELETE("/friend", UnFriendHandler)    // ℹ️❌
+	secured.POST("/limited", LimitedHandler)      // ℹ️❌
+	secured.DELETE("/limited", UnLimitedHandler)  // ℹ️❌
+	secured.POST("/block", BlockHandler)          // ℹ️❌
+	secured.DELETE("/block", UnBlockHandler)      // ℹ️❌
+	secured.POST("/share", ShareHandler)          // ℹ️❌
+	secured.POST("/save", SaveHandler)            // ℹ️❌
+	secured.DELETE("/saved", UnSavedHandler)      // ℹ️❌
+	secured.GET("/saveds", LoadSavedsHandler)     // ℹ️❌
 
 	// --- Reglage ---
 	secured.PATCH("/profile", UpdateProfileHangler)            // ℹ️❌
@@ -180,11 +180,6 @@ func LoadFeedHandler(c *gin.Context) {
 func LoadMoreFeedHandler(c *gin.Context) {
 	// TODO: charger plus de posts depuis la base
 	c.JSON(http.StatusOK, gin.H{"posts": []string{"post_service 3", "post_service 4"}})
-}
-
-func UnLikeHandler(c *gin.Context) {
-	// TODO: retirer un like à un post_service
-	c.JSON(http.StatusOK, gin.H{"message": "post_service unliked"})
 }
 
 func CommentHandler(c *gin.Context) {

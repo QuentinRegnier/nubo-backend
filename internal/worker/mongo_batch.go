@@ -81,13 +81,15 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 			case redis.ActionDelete:
 				if entity == redis.EntityPost {
 					// SOFT DELETE pour les Posts : On passe la visibilité à -1
+					// (Si les posts ont leur Snowflake mappé sur 'id')
 					models = append(models, libMongo.NewUpdateOneModel().
-						SetFilter(bson.M{"_id": e.ID}).
+						SetFilter(bson.M{"id": e.ID}).
 						SetUpdate(bson.M{"$set": bson.M{"visibility": -1}}))
 				} else {
 					// HARD DELETE pour le reste (ex: Likes, Relations)
+					// CORRECTION : On filtre sur 'id' au lieu de '_id'
 					models = append(models, libMongo.NewDeleteOneModel().
-						SetFilter(bson.M{"_id": e.ID}))
+						SetFilter(bson.M{"id": e.ID}))
 				}
 			}
 		}
