@@ -296,12 +296,15 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 		ids[i] = e.ID
 	}
 
-	query := fmt.Sprintf("DELETE FROM %s WHERE id = ANY($1)", mapper.TableName())
-
-	_, err := postgres.PostgresDB.ExecContext(ctx, query, pq.Array(ids))
-	if err != nil {
-		return fmt.Errorf("erreur Bulk Delete: %w", err)
+	var query string
+	if entity == redis.EntityPost {
+		// SOFT DELETE spécifique aux posts (Mise à jour de la visibilité)
+		query = fmt.Sprintf("UPDATE %s SET visibility = 2 WHERE id = ANY($1)", mapper.TableName())
+	} else {
+		// HARD DELETE standard
+		query = fmt.Sprintf("DELETE FROM %s WHERE id = ANY($1)", mapper.TableName())
 	}
 
-	return nil
+	_, err := postgres.PostgresDB.ExecContext(ctx, query, pq.Array(ids))
+	return err
 }

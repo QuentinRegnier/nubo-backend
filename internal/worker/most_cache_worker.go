@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -34,16 +35,25 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 			}
 		}
 
-		// 2. SI C'EST UNE SUPPRESSION DE POST (Cache Busting)
+		// 2. SI C'EST UNE SUPPRESSION DE POST (Nettoyage ZSET)
 		if e.Type == redis.EntityPost && e.Action == redis.ActionDelete {
 			jsonBytes, err := json.Marshal(e.Payload)
 			if err == nil {
 				var post models.PostRequest
-				// On s'assure d'avoir bien pu extraire le UserID du payload de suppression
-				if err := json.Unmarshal(jsonBytes, &post); err == nil && post.UserID != 0 {
-					// Invalidation radicale : on détruit le ZSET de l'utilisateur.
-					// Zéro dérive d'état garantie.
-					cache_service.InvalidateUserProfileCache(ctx, post.UserID)
+				if err := json.Unmarshal(jsonBytes, &post); err == nil {
+					// Utilise un Pipeline Redis pour plus de performance
+					pipe := redisgo.Rdb.Pipeline()
+
+					// A. Retrait du classement Global (Discovery)
+					dateKey := post.CreatedAt.UTC().Format("20060102")
+					pipe.ZRem(ctx, fmt.Sprintf("trend:global:daily:%s", dateKey), post.ID)
+
+					// B. Retrait de tous les classements Thématiques (Tags)
+					for _, tag := range post.Hashtags {
+						pipe.ZRem(ctx, fmt.Sprintf("trend:tag:%s:daily", tag), post.ID)
+					}
+
+					_, _ = pipe.Exec(ctx)
 				}
 			}
 		}
