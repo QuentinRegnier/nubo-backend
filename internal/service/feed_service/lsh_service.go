@@ -2,6 +2,7 @@ package feed_service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
@@ -191,6 +192,23 @@ func GetLSHCandidateIDs(ctx context.Context, hash uint32) (map[int64]bool, error
 func RemoveLSHBucket(ctx context.Context, postID int64, hash uint32) error {
 	key := fmt.Sprintf(variables.RedisKeyLSHBucket, hash)
 	return redisgo.Rdb.SRem(ctx, key, strconv.FormatInt(postID, 10)).Err()
+}
+
+// PurgePostVectors supprime le vecteur d'engagement du post et le retire de son bucket LSH
+func PurgePostVectors(ctx context.Context, postID int64) error {
+	vecKey := fmt.Sprintf("content:vec:%d", postID)
+
+	// 1. Lecture pour récupérer le LSHHash
+	if vecData, err := redisgo.Rdb.Get(ctx, vecKey).Bytes(); err == nil {
+		var payload ContentVectorPayload // ou le nom exact de ta structure vectorielle
+		if err := json.Unmarshal(vecData, &payload); err == nil {
+			// On retire le post de son bucket LSH
+			_ = RemoveLSHBucket(ctx, postID, payload.LSHHash)
+		}
+	}
+
+	// 2. Purge définitive du vecteur
+	return redisgo.Rdb.Del(ctx, vecKey).Err()
 }
 
 // LSHConfidenceThreshold est le seuil de confiance utilisateur pour activer le LSH.

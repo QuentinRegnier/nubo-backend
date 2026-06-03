@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/lib/pq"
 )
@@ -32,8 +34,8 @@ func GetMapper(entity redis.EntityType) EntityMapper {
 	// --- CONTENT ---
 	case redis.EntityPost:
 		return &PostMapper{}
-	// case redis.EntityComment:
-	// 	return &CommentMapper{}
+	case redis.EntityComment:
+		return &CommentMapper{}
 	case redis.EntityMedia:
 		return &MediaMapper{}
 	case redis.EntityLike:
@@ -175,7 +177,7 @@ func (m *PostMapper) ToRow(data any) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var p models.PostRequest
+	var p post_models.PostPayload
 	if err := json.Unmarshal(jsonBytes, &p); err != nil {
 		return nil, err
 	}
@@ -232,22 +234,29 @@ func (m *MediaMapper) BuildUpdateQuery(tempTable string) string {
 	return buildGenericUpdateQuery(m.TableName(), tempTable, m.Columns())
 }
 
-// // --- COMMENT MAPPER (content.comments) ---
-// type CommentMapper struct{}
+// --- COMMENT MAPPER (content.comments) ---
+type CommentMapper struct{}
 
-// func (m *CommentMapper) TableName() string { return "content.comments" }
-// func (m *CommentMapper) Columns() []string {
-// 	return []string{"id", "post_id", "user_id", "content", "visibility", "created_at", "updated_at"}
-// }
-// func (m *CommentMapper) ToRow(data any) []any {
-// 	jsonBytes, _ := json.Marshal(data)
-// 	var c domain.Comment
-// 	json.Unmarshal(jsonBytes, &c)
-// 	return []any{c.ID, c.PostID, c.UserID, c.Content, c.Visibility, c.CreatedAt, c.UpdatedAt}
-// }
-// func (m *CommentMapper) BuildUpdateQuery(t string) string {
-// 	return buildGenericUpdateQuery(m.TableName(), t, m.Columns())
-// }
+func (m *CommentMapper) TableName() string { return "content.comments" }
+func (m *CommentMapper) Columns() []string {
+	return []string{"id", "post_id", "user_id", "content", "visibility", "created_at", "updated_at"}
+}
+
+func (m *CommentMapper) ToRow(data any) ([]any, error) {
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	var c comment_models.CommentPayload
+	if err := json.Unmarshal(jsonBytes, &c); err != nil {
+		return nil, err
+	}
+	return []any{c.ID, c.PostID, c.UserID, c.Content, c.Visibility, c.CreatedAt, c.UpdatedAt}, nil
+}
+
+func (m *CommentMapper) BuildUpdateQuery(t string) string {
+	return buildGenericUpdateQuery(m.TableName(), t, m.Columns())
+}
 
 // --- LIKE MAPPER (content.likes) ---
 type LikeMapper struct{}

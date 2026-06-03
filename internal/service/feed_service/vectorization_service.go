@@ -8,7 +8,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
@@ -56,7 +56,7 @@ type ContentVectorOptions struct {
 //   - Met également à jour le bucket LSH: lsh:bucket:{hash}
 //
 // Signature préservée pour rétrocompatibilité avec les workers existants.
-func StoreContentVector(ctx context.Context, post models.PostRequest) {
+func StoreContentVector(ctx context.Context, post post_models.PostPayload) {
 	// Calcul du vecteur ĉ_p ∈ R^224 complet (nil opts = blocs SVD/soc à zéro)
 	vec := ComputeContentVectorFull(post, nil)
 
@@ -90,7 +90,7 @@ func StoreContentVector(ctx context.Context, post models.PostRequest) {
 //
 // TDD §4.1: "mises à jour suite à de nouveaux engagements effectuées de manière
 // asynchrone par le worker de score"
-func UpdatePostEngagementVector(ctx context.Context, post models.PostRequest) {
+func UpdatePostEngagementVector(ctx context.Context, post post_models.PostPayload) {
 	key := fmt.Sprintf(variables.RedisKeyContentVector, post.ID)
 
 	// Lecture du payload existant
@@ -137,7 +137,7 @@ func UpdatePostEngagementVector(ctx context.Context, post models.PostRequest) {
 //
 //	c_p = [c_p^(cat) | c_p^(temp) | c_p^(eng) | c_p^(soc)]
 //	Normalisé: ĉ_p = c_p / ||c_p||_2
-func ComputeContentVectorFull(post models.PostRequest, opts *ContentVectorOptions) []float32 {
+func ComputeContentVectorFull(post post_models.PostPayload, opts *ContentVectorOptions) []float32 {
 	// Allocation unique du vecteur (pré-initialisé à zéro)
 	vec := make([]float32, variables.VectorDimTotal)
 
@@ -260,7 +260,7 @@ func computeTempBlock(hour int, block []float32) {
 // Les dimensions 0,1,4,5 nécessitent des données de session (zéro à la création,
 // mises à jour de manière asynchrone). Les dimensions 2,3,6,7 sont calculées
 // depuis les métriques disponibles dans domain.PostRequest.
-func computeEngBlock(post models.PostRequest, block []float32) {
+func computeEngBlock(post post_models.PostPayload, block []float32) {
 	// sigmoid(x) : borne les valeurs dans (0,1) — normalisation TDD §2.2
 	sigmoid := func(x float64) float32 {
 		return float32(1.0 / (1.0 + math.Exp(-x)))

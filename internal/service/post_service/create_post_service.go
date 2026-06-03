@@ -5,12 +5,12 @@ import (
 	"mime/multipart"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 )
 
 // CreatePost (Inchangé)
@@ -25,14 +25,14 @@ func CreatePost(userID int64, input post_models.CreatePostInput, files []*multip
 		file, err := fileHeader.Open()
 		if err == nil {
 			go func() {
-				_ = service.UploadMedia(file, userID, mediaID)
+				_ = media_service.UploadMedia(file, userID, mediaID)
 			}()
 			mediaIDs = append(mediaIDs, mediaID)
 		}
 	}
 
 	// 2. Création Objet
-	post := models.PostRequest{
+	post := post_models.PostPayload{
 		ID:            postID,
 		UserID:        userID,
 		Content:       pkg.CleanStr(input.Content),
@@ -59,7 +59,7 @@ func CreatePost(userID int64, input post_models.CreatePostInput, files []*multip
 	post.Vector = feed_service.ComputeContentVectorFull(post, nil)
 
 	// 3. Cache Redis (LFU Init)
-	if err := redis.Posts.SetObject(context.Background(), post.ID, post); err != nil {
+	if err := cache_service.SetPostInObjectCache(context.Background(), post); err != nil {
 		return -1, err
 	}
 

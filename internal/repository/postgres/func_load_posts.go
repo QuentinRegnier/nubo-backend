@@ -4,12 +4,12 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/lib/pq"
 )
 
-func FuncLoadPosts(postIDs []int64, limit int, offset int) ([]models.PostRequest, error) {
+func FuncLoadPosts(postIDs []int64, limit int, offset int) ([]post_models.PostPayload, error) {
 	fmt.Println("FuncLoadPosts called with IDs count:", len(postIDs), "Limit:", limit, "Offset:", offset)
 
 	// 1. Préparation de l'argument des IDs

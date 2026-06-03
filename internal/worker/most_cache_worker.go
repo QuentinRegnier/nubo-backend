@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
@@ -23,7 +23,7 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 		if e.Type == redis.EntityPost && (e.Action == redis.ActionCreate || e.Action == redis.ActionUpdate) {
 			jsonBytes, err := json.Marshal(e.Payload)
 			if err == nil {
-				var post models.PostRequest
+				var post post_models.PostPayload
 				if err := json.Unmarshal(jsonBytes, &post); err == nil {
 					// A. Algorithme de Recommandation (Tags, Global, Recent)
 					cache_service.UpdatePostRecommendationScore(ctx, post) // Passe l'objet complet
@@ -39,7 +39,7 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 		if e.Type == redis.EntityPost && e.Action == redis.ActionDelete {
 			jsonBytes, err := json.Marshal(e.Payload)
 			if err == nil {
-				var post models.PostRequest
+				var post post_models.PostPayload
 				if err := json.Unmarshal(jsonBytes, &post); err == nil {
 					// Utilise un Pipeline Redis pour plus de performance
 					pipe := redisgo.Rdb.Pipeline()
@@ -115,7 +115,7 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 									p.LikeCount = 0
 								}
 
-								_ = redis.Posts.SetObject(ctx, p.ID, p)
+								_ = cache_service.SetPostInObjectCache(ctx, p)
 								cache_service.EvaluatePostAfterLike(ctx, p)
 
 							} else if e.Type == redis.EntityView {
@@ -124,10 +124,44 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 									p.ViewCount = 0
 								}
 
-								_ = redis.Posts.SetObject(ctx, p.ID, p)
+								_ = cache_service.SetPostInObjectCache(ctx, p)
 								cache_service.EvaluatePostAfterView(ctx, p)
 							}
 						}
+					}
+				}
+			}
+		}
+
+		// 4. SI C'EST UN COMMENTAIRE (+1 ou -1 sur le Post Parent)
+		if e.Type == redis.EntityComment && (e.Action == redis.ActionCreate || e.Action == redis.ActionDelete) {
+			jsonBytes, err := json.Marshal(e.Payload)
+			if err == nil {
+				var commentEvent struct {
+					PostID int64 `json:"post_id"`
+				}
+
+				if err := json.Unmarshal(jsonBytes, &commentEvent); err == nil && commentEvent.PostID != 0 {
+					p, err := getPostWithFallback(ctx, commentEvent.PostID)
+					if err == nil && p.Visibility != -1 {
+
+						// Incrémentation ou Décrémentation
+						delta := 1
+						if e.Action == redis.ActionDelete {
+							delta = -1
+						}
+
+						p.CommentCount += delta
+						if p.CommentCount < 0 {
+							p.CommentCount = 0
+						}
+
+						// 1. Mise à jour de l'Object Cache instantanément
+						_ = cache_service.SetPostInObjectCache(ctx, p)
+
+						// 2. Recalcul des scores algorithmiques de découverte (MOST Cache)
+						// Note : Assure-toi que cette fonction (ou UpdatePostRecommendationScore) gère le multiplicateur de commentaires.
+						cache_service.UpdatePostRecommendationScore(ctx, p)
 					}
 				}
 			}
@@ -139,12 +173,12 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 
 // getPostWithFallback implémente la chaîne de résolution L1 -> L2 -> L3
 // pour maximiser le taux de cache_service hit et protéger PostgreSQL lors du recalcul des scores.
-func getPostWithFallback(ctx context.Context, postID int64) (models.PostRequest, error) {
-	var p models.PostRequest
+func getPostWithFallback(ctx context.Context, postID int64) (post_models.PostPayload, error) {
+	var p post_models.PostPayload
 
 	// Étape 1 : Cache L1 (Redis Object Cache)
-	if err := redis.Posts.GetObject(ctx, postID, &p); err == nil {
-		return p, nil
+	if postL1, err := cache_service.GetPostFromObjectCache(ctx, postID); err == nil {
+		return postL1, nil
 	}
 
 	// Étape 2 : Cache L2 (MongoDB - Historique récent de 30 jours)
@@ -153,7 +187,7 @@ func getPostWithFallback(ctx context.Context, postID int64) (models.PostRequest,
 	if err == nil && len(docs) > 0 {
 		if errStruct := pkg.ToStruct(docs[0], &p); errStruct == nil {
 			// Réhydratation dynamique : on le remet en L1 pour les prochaines lectures
-			_ = redis.Posts.SetObject(ctx, p.ID, p)
+			_ = cache_service.SetPostInObjectCache(ctx, p)
 			return p, nil
 		}
 	}
@@ -163,9 +197,9 @@ func getPostWithFallback(ctx context.Context, postID int64) (models.PostRequest,
 	if err == nil && len(posts) > 0 {
 		p = posts[0]
 		// Réhydratation dynamique : on le remet en L1
-		_ = redis.Posts.SetObject(ctx, p.ID, p)
+		_ = cache_service.SetPostInObjectCache(ctx, p)
 		return p, nil
 	}
 
-	return models.PostRequest{}, fmt.Errorf("post_service %d introuvable dans L1, L2 et L3", postID)
+	return post_models.PostPayload{}, fmt.Errorf("post_service %d introuvable dans L1, L2 et L3", postID)
 }

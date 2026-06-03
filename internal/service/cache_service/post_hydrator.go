@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
@@ -17,14 +17,14 @@ import (
 // 3. ROUTINES PRIVÉES D'ACCÈS AUX DONNÉES
 // ============================================================================
 
-func fetchAndHydrateFromZSET(ctx context.Context, key string, offset int64, limit int64) ([]models.PostRequest, error) {
+func fetchAndHydrateFromZSET(ctx context.Context, key string, offset int64, limit int64) ([]post_models.PostPayload, error) {
 	idStrings, err := redis.ZRevRange(ctx, key, offset, offset+limit-1)
 	if err != nil {
 		return nil, fmt.Errorf("erreur lecture ZSET %s: %w", key, err)
 	}
 
 	if len(idStrings) == 0 {
-		return []models.PostRequest{}, nil
+		return []post_models.PostPayload{}, nil
 	}
 
 	var ids []int64
@@ -40,18 +40,18 @@ func fetchAndHydrateFromZSET(ctx context.Context, key string, offset int64, limi
 	return GetPostsView(ids)
 }
 
-func getPostsFromMongoPaginated(field string, value any, offset int64, limit int64) ([]models.PostRequest, error) {
+func getPostsFromMongoPaginated(field string, value any, offset int64, limit int64) ([]post_models.PostPayload, error) {
 	filter := map[string]any{field: value}
 	sort := map[string]any{"created_at": -1}
 
 	docs, err := mongo.Posts.GetPaginated(filter, sort, offset, limit)
 	if err != nil {
-		return []models.PostRequest{}, err
+		return []post_models.PostPayload{}, err
 	}
 
-	var posts []models.PostRequest
+	var posts []post_models.PostPayload
 	for _, doc := range docs {
-		var p models.PostRequest
+		var p post_models.PostPayload
 		if err := pkg.ToStruct(doc, &p); err == nil {
 			posts = append(posts, p)
 		}
@@ -60,7 +60,7 @@ func getPostsFromMongoPaginated(field string, value any, offset int64, limit int
 	return posts, nil
 }
 
-func getPostsFromPostgresPaginated(ctx context.Context, rankType string, offset int64, limit int64) ([]models.PostRequest, error) {
+func getPostsFromPostgresPaginated(ctx context.Context, rankType string, offset int64, limit int64) ([]post_models.PostPayload, error) {
 	// TODO: Optimiser ces requêtes avec des vues matérialisées si la BDD dépasse 1M de lignes
 	var query string
 
@@ -110,24 +110,26 @@ func getPostsFromPostgresPaginated(ctx context.Context, rankType string, offset 
 // HydrateFeed prend les IDs bruts d'une page de buffer (générée par le Distributeur)
 // et les transforme en objets complets prêts pour le frontend.
 // C'est ICI que l'on applique le filtrage de dernière minute (Visibility, Banned).
-func HydrateFeed(ctx context.Context, postIDs []int64) ([]models.PostRequest, error) {
+func HydrateFeed(ctx context.Context, postIDs []int64) ([]post_models.PostPayload, error) {
 	// Pré-allocation pour optimiser la mémoire
-	hydratedPosts := make([]models.PostRequest, 0, len(postIDs))
+	hydratedPosts := make([]post_models.PostPayload, 0, len(postIDs))
 
 	for _, id := range postIDs {
-		var post models.PostRequest
+		var post post_models.PostPayload
 
 		// 1. Tentative de récupération depuis le cache_service LFU (Object Cache Redis)
 		// C'est le même cache_service que tu initialises dans CreatePost.
-		err := redis.Posts.GetObject(ctx, id, &post)
-		if err != nil {
+		p, err := GetPostFromObjectCache(ctx, id)
+		if err == nil {
+			post = p
+		} else {
 			// FALLBACK : Si le post_service a été évincé du cache_service Redis, on va le chercher en base
 			// (En réutilisant ta méthode GetPostsView existante qui tape sur la BDD)
 			postsFromDB, errDB := GetPostsView([]int64{id})
 			if errDB == nil && len(postsFromDB) > 0 {
 				post = postsFromDB[0]
 				// Réhydratation silencieuse du cache_service LFU pour les prochains appels
-				_ = redis.Posts.SetObject(ctx, id, post)
+				_ = SetPostInObjectCache(ctx, post)
 			} else {
 				continue // Post totalement introuvable (Hard Delete), on l'ignore
 			}

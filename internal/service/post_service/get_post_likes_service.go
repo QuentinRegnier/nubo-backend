@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 )
 
@@ -18,11 +16,12 @@ func GetPostLikes(ctx context.Context, input post_models.GetPostLikesInput) (pos
 	// ─────────────────────────────────────────────────────────────────────────
 	// 1. SÉCURITÉ : VÉRIFICATION DES DROITS D'ACCÈS AU POST (L1 -> L2 -> L3)
 	// ─────────────────────────────────────────────────────────────────────────
-	var post models.PostRequest
+	var post post_models.PostPayload
 	var found bool
 
 	// Lecture ultra-rapide du post pour checker les droits
-	if err := redis.Posts.GetObject(ctx, input.PostID, &post); err == nil {
+	if p, err := cache_service.GetPostFromObjectCache(ctx, input.PostID); err == nil {
+		post = p
 		found = true
 	} else {
 		// Fallback BDD si le post n'est plus en RAM

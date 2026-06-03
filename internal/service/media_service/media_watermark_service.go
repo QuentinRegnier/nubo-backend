@@ -1,4 +1,4 @@
-package service
+package media_service
 
 import (
 	"fmt"

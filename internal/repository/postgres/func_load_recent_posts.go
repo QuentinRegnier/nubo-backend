@@ -4,11 +4,11 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
-func FuncLoadRecentPosts(days int) ([]models.PostRequest, error) {
+func FuncLoadRecentPosts(days int) ([]post_models.PostPayload, error) {
 	query := `
 		SELECT 
 			p.id, p.user_id, p.content, p.hashtags, p.identifiers, p.media_ids, 

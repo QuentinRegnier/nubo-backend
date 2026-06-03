@@ -147,8 +147,8 @@ func purifyBatch(ctx context.Context, events []redis.AsyncEvent) []redis.AsyncEv
 	validEvents := make([]redis.AsyncEvent, 0, len(events))
 
 	for _, e := range events {
-		// On inspecte uniquement les interactions (Likes, Vues)
-		if e.Type == redis.EntityLike || e.Type == redis.EntityView {
+		// On inspecte les interactions ET les Commentaires
+		if e.Type == redis.EntityLike || e.Type == redis.EntityView || e.Type == redis.EntityComment {
 			jsonBytes, err := json.Marshal(e.Payload)
 			if err != nil {
 				continue // Payload corrompu, on drop

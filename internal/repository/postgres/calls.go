@@ -4,17 +4,17 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/lib/pq"
 )
 
 // scanPosts mutualise la logique d'itération et de scan des lignes (DRY).
 // Elle lit les 16 colonnes (incluant view_count et vector) pour construire les PostRequests.
-func scanPosts(rows *sql.Rows) ([]models.PostRequest, error) {
-	var posts []models.PostRequest
+func scanPosts(rows *sql.Rows) ([]post_models.PostPayload, error) {
+	var posts []post_models.PostPayload
 
 	for rows.Next() {
-		var p models.PostRequest
+		var p post_models.PostPayload
 		var location sql.NullString
 
 		err := rows.Scan(

@@ -1,4 +1,4 @@
-package service
+package media_service
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/google/uuid"
 
 	"github.com/disintegration/imaging"
@@ -92,19 +93,15 @@ func UploadMedia(file io.ReadSeeker, ownerID int64, mediaID int64) error {
 		UpdatedAt:   now,
 	}
 
-	// --- 5. CACHE REDIS (Immédiat) ---
-	// On met en cache_service pour que l'UI puisse afficher l'image tout de suite si besoin
-	// Clé ex: "media:12345"
+	// On initialise le contexte ici pour qu'il serve au Cache ET à la Queue Asynchrone
+	ctx := context.Background()
 
-	// On écrit directement dans Redis (Set avec expiration par exemple 24h)
-	if err := redis.RedisCreateMedia(media); err != nil {
+	// --- 5. CACHE REDIS (Immédiat) ---
+	if err := cache_service.SetMediaInObjectCache(ctx, media); err != nil {
 		fmt.Printf("⚠️ Erreur Redis Media Set: %v\n", err)
 	}
 
 	// --- 6. PERSISTANCE ASYNCHRONE (Mongo + Postgres) ---
-	// C'est ici qu'on remplace les appels SQL directs par la file d'attente
-	ctx := context.Background()
-
 	err = redis.EnqueueDB(
 		ctx,
 		mediaID,

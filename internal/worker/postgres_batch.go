@@ -56,8 +56,8 @@ func flushPostgres(ctx context.Context, events []redis.AsyncEvent) {
 
 	// 1. Exécution ordonnée
 	for _, entityType := range executionOrder {
-		if evts, exists := grouped[entityType]; exists {
-			processEntityEvents(ctx, entityType, evts)
+		if events, exists := grouped[entityType]; exists {
+			processEntityEvents(ctx, entityType, events)
 			delete(grouped, entityType)
 		}
 	}
@@ -66,13 +66,14 @@ func flushPostgres(ctx context.Context, events []redis.AsyncEvent) {
 	for entityType, evts := range grouped {
 		processEntityEvents(ctx, entityType, evts)
 	}
+	updateCountersPostgres(ctx, events)
 }
 
 // processEntityEvents gère le Fast Path et déclenche le Slow Path en cas d'erreur.
-func processEntityEvents(ctx context.Context, entityType redis.EntityType, evts []redis.AsyncEvent) {
+func processEntityEvents(ctx context.Context, entityType redis.EntityType, events []redis.AsyncEvent) {
 	var inserts, updates, deletes []redis.AsyncEvent
 
-	for _, e := range evts {
+	for _, e := range events {
 		switch e.Action {
 		case redis.ActionCreate:
 			inserts = append(inserts, e)
@@ -345,4 +346,63 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 
 	_, err := postgres.PostgresDB.ExecContext(ctx, query, pq.Array(ids))
 	return err
+}
+
+// updateCountersPostgres regroupe les événements et met à jour les colonnes 'en dur' de la table posts.
+func updateCountersPostgres(ctx context.Context, events []redis.AsyncEvent) {
+	likeDeltas := make(map[int64]int)
+	commentDeltas := make(map[int64]int)
+	viewDeltas := make(map[int64]int)
+
+	for _, e := range events {
+		delta := 1
+		if e.Action == redis.ActionDelete {
+			delta = -1
+		}
+
+		jsonBytes, _ := json.Marshal(e.Payload)
+
+		if e.Type == redis.EntityLike {
+			var p struct {
+				TargetType int   `json:"target_type"`
+				TargetID   int64 `json:"target_id"`
+			}
+			_ = json.Unmarshal(jsonBytes, &p)
+			if p.TargetType == 0 && p.TargetID != 0 {
+				likeDeltas[p.TargetID] += delta
+			}
+		} else if e.Type == redis.EntityComment {
+			var p struct {
+				PostID int64 `json:"post_id"`
+			}
+			_ = json.Unmarshal(jsonBytes, &p)
+			if p.PostID != 0 {
+				commentDeltas[p.PostID] += delta
+			}
+		} else if e.Type == redis.EntityView {
+			var p struct {
+				TargetID int64 `json:"target_id"`
+				Count    int   `json:"count"`
+			}
+			_ = json.Unmarshal(jsonBytes, &p)
+			if p.TargetID != 0 {
+				if p.Count != 0 {
+					delta = p.Count // Prise en compte des vues groupées
+				}
+				viewDeltas[p.TargetID] += delta
+			}
+		}
+	}
+
+	// Exécution des mises à jour
+	// L'utilisation de GREATEST(0, ...) est une sécurité mathématique SQL pour ne jamais avoir de compteurs négatifs.
+	for id, delta := range likeDeltas {
+		_, _ = postgres.PostgresDB.ExecContext(ctx, "UPDATE content.posts SET like_count = GREATEST(0, like_count + $1) WHERE id = $2", delta, id)
+	}
+	for id, delta := range commentDeltas {
+		_, _ = postgres.PostgresDB.ExecContext(ctx, "UPDATE content.posts SET comment_count = GREATEST(0, comment_count + $1) WHERE id = $2", delta, id)
+	}
+	for id, delta := range viewDeltas {
+		_, _ = postgres.PostgresDB.ExecContext(ctx, "UPDATE content.posts SET view_count = GREATEST(0, view_count + $1) WHERE id = $2", delta, id)
+	}
 }

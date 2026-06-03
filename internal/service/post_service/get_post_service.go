@@ -3,11 +3,9 @@ package post_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 )
 
@@ -89,14 +87,13 @@ func GetPosts(ctx context.Context, input post_models.GetPostInput) []post_models
 }
 
 // fetchPostsCascade gère la récupération L1 -> L2 -> L3 pour un batch d'IDs.
-func fetchPostsCascade(ctx context.Context, ids []int64) map[int64]models.PostRequest {
-	postsMap := make(map[int64]models.PostRequest)
+func fetchPostsCascade(ctx context.Context, ids []int64) map[int64]post_models.PostPayload {
+	postsMap := make(map[int64]post_models.PostPayload)
 	var missingFromL1 []int64
 
 	// Étape 1 : Object Cache LFU (Redis)
 	for _, id := range ids {
-		var p models.PostRequest
-		if err := redis.Posts.GetObject(ctx, id, &p); err == nil {
+		if p, err := cache_service.GetPostFromObjectCache(ctx, id); err == nil {
 			postsMap[id] = p
 		} else {
 			missingFromL1 = append(missingFromL1, id)
@@ -113,7 +110,7 @@ func fetchPostsCascade(ctx context.Context, ids []int64) map[int64]models.PostRe
 	if errMongo == nil {
 		for _, p := range mongoPosts {
 			postsMap[p.ID] = p
-			_ = redis.Posts.SetObject(ctx, p.ID, p) // Réhydratation L1
+			_ = cache_service.SetPostInObjectCache(ctx, p) // Réhydratation L1
 		}
 	}
 
@@ -133,7 +130,7 @@ func fetchPostsCascade(ctx context.Context, ids []int64) map[int64]models.PostRe
 	if errPg == nil {
 		for _, p := range pgPosts {
 			postsMap[p.ID] = p
-			_ = redis.Posts.SetObject(ctx, p.ID, p) // Réhydratation L1
+			_ = cache_service.SetPostInObjectCache(ctx, p) // Réhydratation L1
 		}
 	}
 

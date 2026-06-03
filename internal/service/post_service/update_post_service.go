@@ -5,17 +5,17 @@ import (
 	"errors"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 )
 
 // UpdatePost gère la modification en récupérant l'objet complet pour nourrir le Bulk Update des workers.
 func UpdatePost(ctx context.Context, input post_models.UpdatePostInput) error {
-	var post models.PostRequest
+	var post post_models.PostPayload
 	var found bool
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -23,7 +23,8 @@ func UpdatePost(ctx context.Context, input post_models.UpdatePostInput) error {
 	// ─────────────────────────────────────────────────────────────────────────
 
 	// L1 : Object Cache LFU (Redis)
-	if err := redis.Posts.GetObject(ctx, input.PostID, &post); err == nil {
+	if p, err := cache_service.GetPostFromObjectCache(ctx, input.PostID); err == nil {
+		post = p
 		found = true
 	} else {
 		// L2 : Cold Storage (MongoDB) en utilisant ta fonction existante
@@ -76,7 +77,7 @@ func UpdatePost(ctx context.Context, input post_models.UpdatePostInput) error {
 	// ─────────────────────────────────────────────────────────────────────────
 
 	// 1. Écrasement LFU immédiat
-	if err := redis.Posts.SetObject(ctx, post.ID, post); err != nil {
+	if err := cache_service.SetPostInObjectCache(ctx, post); err != nil {
 		return err
 	}
 

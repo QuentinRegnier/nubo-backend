@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
@@ -101,6 +102,77 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 			if err != nil {
 				log.Printf("❌ Erreur Mongo BulkWrite %s: %v", c.Name, err)
 			}
+		}
+	}
+	updateCountersMongo(ctx, events)
+}
+
+// updateCountersMongo regroupe les événements et met à jour les documents Posts dans le stockage à froid L2.
+func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
+	likeDeltas := make(map[int64]int)
+	commentDeltas := make(map[int64]int)
+	viewDeltas := make(map[int64]int)
+
+	for _, e := range events {
+		delta := 1
+		if e.Action == redis.ActionDelete {
+			delta = -1
+		}
+
+		jsonBytes, _ := json.Marshal(e.Payload)
+
+		if e.Type == redis.EntityLike {
+			var p struct {
+				TargetType int   `json:"target_type"`
+				TargetID   int64 `json:"target_id"`
+			}
+			_ = json.Unmarshal(jsonBytes, &p)
+			if p.TargetType == 0 && p.TargetID != 0 {
+				likeDeltas[p.TargetID] += delta
+			}
+		} else if e.Type == redis.EntityComment {
+			var p struct {
+				PostID int64 `json:"post_id"`
+			}
+			_ = json.Unmarshal(jsonBytes, &p)
+			if p.PostID != 0 {
+				commentDeltas[p.PostID] += delta
+			}
+		} else if e.Type == redis.EntityView {
+			var p struct {
+				TargetID int64 `json:"target_id"`
+				Count    int   `json:"count"`
+			}
+			_ = json.Unmarshal(jsonBytes, &p)
+			if p.TargetID != 0 {
+				if p.Count != 0 {
+					delta = p.Count
+				}
+				viewDeltas[p.TargetID] += delta
+			}
+		}
+	}
+
+	var models []libMongo.WriteModel
+
+	// MongoDB utilise l'opérateur $inc pour faire une incrémentation mathématique propre
+	for id, delta := range likeDeltas {
+		models = append(models, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"like_count": delta}}))
+	}
+	for id, delta := range commentDeltas {
+		models = append(models, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"comment_count": delta}}))
+	}
+	for id, delta := range viewDeltas {
+		models = append(models, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"view_count": delta}}))
+	}
+
+	// Exécution de l'écriture groupée sur la collection Posts
+	if len(models) > 0 && mongo.Posts != nil {
+		coll := mongo.Posts.DB.Collection(mongo.Posts.Name)
+		opts := options.BulkWrite().SetOrdered(false)
+		_, err := coll.BulkWrite(ctx, models, opts)
+		if err != nil {
+			log.Printf("❌ Erreur Mongo BulkWrite Counters: %v", err)
 		}
 	}
 }

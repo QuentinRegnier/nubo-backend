@@ -112,7 +112,7 @@ func SeedMostCache() error {
 		if err == nil {
 			for _, p := range winners {
 				// Sanctuarisation L1 (Redis Object Cache) - Pas de TTL (0)
-				_ = redis.Posts.SetObject(ctx, p.ID, p)
+				_ = SetPostInObjectCache(ctx, p)
 
 				// Synchronisation L2 (MongoDB)
 				doc, _ := pkg.ToMap(p)

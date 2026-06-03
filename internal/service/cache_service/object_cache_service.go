@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -13,14 +14,14 @@ import (
 )
 
 // GetPostsView : Le Pipeline d'Hydratation Optimisé (L1 Redis → L2 Mongo → L3 Postgres)
-func GetPostsView(ids []int64) ([]models.PostRequest, error) {
+func GetPostsView(ids []int64) ([]post_models.PostPayload, error) {
 	if len(ids) == 0 {
-		return []models.PostRequest{}, nil
+		return []post_models.PostPayload{}, nil
 	}
 
 	ctx := context.Background()
-	finalPosts := make([]models.PostRequest, 0, len(ids))
-	tempMap := make(map[int64]models.PostRequest)
+	finalPosts := make([]post_models.PostPayload, 0, len(ids))
+	tempMap := make(map[int64]post_models.PostPayload)
 
 	// ========================================================================
 	// NIVEAU 1 : REDIS MGET (Ultra Rapide)
@@ -31,7 +32,7 @@ func GetPostsView(ids []int64) ([]models.PostRequest, error) {
 		result = &redis.GetManyResult{MissingIDs: ids}
 	} else {
 		for id, data := range result.Found {
-			var p models.PostRequest
+			var p post_models.PostPayload
 			// Décodage du binaire MsgPack au lieu du JSON
 			if msgpack.Unmarshal(data, &p) == nil {
 				tempMap[id] = p
@@ -58,8 +59,8 @@ func GetPostsView(ids []int64) ([]models.PostRequest, error) {
 				mongoFound[p.ID] = true
 
 				// ⬆️ PROMOTION L2 -> L1 (Réparation du Cache RAM)
-				go func(post models.PostRequest) {
-					_ = redis.Posts.SetObject(context.Background(), post.ID, post)
+				go func(post post_models.PostPayload) {
+					_ = SetPostInObjectCache(context.Background(), post)
 				}(p)
 			}
 
@@ -92,14 +93,14 @@ func GetPostsView(ids []int64) ([]models.PostRequest, error) {
 				tempMap[p.ID] = p
 
 				// ⬆️ PROMOTION L3 -> L2 & L1 (Auto-Guérison du Système)
-				go func(post models.PostRequest) {
+				go func(post post_models.PostPayload) {
 					// 1. Réparer Mongo
 					doc, _ := pkg.ToMap(post)
 					if doc != nil {
 						_ = mongo.Posts.Set(doc) // Assure-toi que cela fait bien un Upsert
 					}
 					// 2. Réparer Redis
-					_ = redis.Posts.SetObject(context.Background(), post.ID, post)
+					_ = SetPostInObjectCache(context.Background(), post)
 				}(p)
 			}
 		}
@@ -115,4 +116,44 @@ func GetPostsView(ids []int64) ([]models.PostRequest, error) {
 	}
 
 	return finalPosts, nil
+}
+
+// --- GESTION DES POSTS (CACHE L1) ---
+
+// GetPostFromObjectCache récupère un post depuis le cache L1
+func GetPostFromObjectCache(ctx context.Context, postID int64) (post_models.PostPayload, error) {
+	var p post_models.PostPayload
+	err := redis.Posts.GetObject(ctx, postID, &p)
+	return p, err
+}
+
+// SetPostInObjectCache enregistre ou met à jour un post dans le cache L1
+func SetPostInObjectCache(ctx context.Context, post post_models.PostPayload) error {
+	return redis.Posts.SetObject(ctx, post.ID, post)
+}
+
+// DeletePostFromObjectCache purge instantanément un post du cache L1
+func DeletePostFromObjectCache(ctx context.Context, postID int64) error {
+	// Utilisation propre de la méthode native du wrapper Redis
+	return redis.Posts.DeleteObject(ctx, postID)
+}
+
+// --- GESTION DES MÉDIAS (CACHE L1) ---
+
+// SetMediaInObjectCache place les métadonnées de l'image en RAM (Write-Behind)
+func SetMediaInObjectCache(ctx context.Context, media models.MediaRequest) error {
+	// Le TTL (ex: 24h) est défini dans le manager Redis et se réinitialise à chaque GET
+	return redis.Media.SetObject(ctx, media.ID, media)
+}
+
+// GetMediaFromObjectCache récupère instantanément les métadonnées (O(1))
+func GetMediaFromObjectCache(ctx context.Context, mediaID int64) (models.MediaRequest, error) {
+	var m models.MediaRequest
+	err := redis.Media.GetObject(ctx, mediaID, &m)
+	return m, err
+}
+
+// DeleteMediaFromObjectCache purge les métadonnées de la RAM
+func DeleteMediaFromObjectCache(ctx context.Context, mediaID int64) error {
+	return redis.Media.DeleteObject(ctx, mediaID)
 }

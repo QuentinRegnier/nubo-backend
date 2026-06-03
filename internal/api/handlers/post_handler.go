@@ -5,7 +5,7 @@ import (
 	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
@@ -92,7 +92,7 @@ func GetUserPostsHandler(c *gin.Context) {
 
 	// 4. On garantit un tableau vide [] au lieu de null pour le JSON
 	if posts == nil {
-		posts = []models.PostRequest{}
+		posts = []post_models.PostPayload{}
 	}
 
 	c.JSON(http.StatusOK, posts)

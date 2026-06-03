@@ -15,6 +15,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	postgresgo "github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
@@ -32,8 +33,8 @@ func Login(
 	// 1. CHARGEMENT DE L'UTILISATEUR (Fallback: Redis -> Mongo -> Postgres)
 	// ---------------------------------------------------------
 
-	// A. Essai Redis
-	user, err = redis.RedisLoadUser(-1, "", input.Email, "")
+	// A. Essai Cache
+	user, err = cache_service.LoadUserFullFromCache(context.Background(), -1, "", input.Email, "")
 	if err != nil {
 		fmt.Printf("🔸 Redis: erreur (%v)\n", err)
 	} else {
@@ -50,7 +51,7 @@ func Login(
 		} else {
 			fmt.Println("✅ Utilisateur trouvé dans Mongo !")
 			fmt.Println("User loaded from Mongo:", user)
-			if errAdd := redis.RedisCreateUser(user); errAdd != nil {
+			if errAdd := cache_service.SetUserFullInCache(context.Background(), user); errAdd != nil {
 				log.Printf("⚠️ Warning: Echec cache_service Redis User: %v", errAdd)
 			}
 		}
@@ -72,7 +73,7 @@ func Login(
 
 		fmt.Println("✅ Utilisateur trouvé dans Postgres !")
 		fmt.Println("User loaded from Postgres:", user)
-		if errAdd := redis.RedisCreateUser(user); errAdd != nil {
+		if errAdd := cache_service.SetUserFullInCache(context.Background(), user); errAdd != nil {
 			log.Printf("⚠️ Warning: Echec cache_service Redis User: %v", errAdd)
 		}
 		if err := redis.EnqueueDB(context.Background(), user.ID, 0, redis.EntityUser, redis.ActionCreate, &user, redis.TargetMongo); err != nil {
@@ -110,9 +111,9 @@ func Login(
 	isNewSession := false
 	DeviceToken := input.DeviceToken
 
-	// A. TENTATIVE DE RECUPERATION (Redis -> Mongo -> Postgres)
+	// A. TENTATIVE DE RECUPERATION (Cache -> Mongo -> Postgres)
 	// On essaie de trouver une session active pour ce device
-	sessions, _ = redis.RedisLoadSession(user.ID, DeviceToken, "", "")
+	sessions, _ = cache_service.LoadSessionFromCache(context.Background(), user.ID, DeviceToken, "", "")
 	if sessions.ID == 0 {
 		sessions, _ = mongo.MongoLoadSession(user.ID, DeviceToken, "", "")
 		if sessions.ID == 0 {
@@ -120,7 +121,7 @@ func Login(
 			if sessions.ID == 0 {
 				fmt.Println("🔸 Postgres: Session non trouvée, création d'une nouvelle session...")
 			} else {
-				if err := redis.RedisCreateSession(sessions); err != nil {
+				if err := cache_service.SetSessionInCache(context.Background(), sessions); err != nil {
 					log.Printf("⚠️ Warning: Echec mise à jour cache_service Redis Session: %v", err)
 				}
 				if err := redis.EnqueueDB(ctx, sessions.ID, 0, redis.EntitySession, redis.ActionCreate, sessions, redis.TargetMongo); err != nil {
@@ -129,7 +130,7 @@ func Login(
 				fmt.Println("✅ Session trouvée dans Postgres")
 			}
 		} else {
-			if err := redis.RedisCreateSession(sessions); err != nil {
+			if err := cache_service.SetSessionInCache(context.Background(), sessions); err != nil {
 				log.Printf("⚠️ Warning: Echec mise à jour cache_service Redis Session: %v", err)
 			}
 			fmt.Println("✅ Session trouvée dans Mongo")
@@ -184,16 +185,10 @@ func Login(
 	// 4. SAUVEGARDE & PERSISTANCE (Architecture Write-Behind)
 	// ---------------------------------------------------------
 
-	// A. CACHE REDIS (Immédiat)
-	// On utilise toujours RedisCreateSession ici (qui fait un SET) pour écraser le cache_service avec les nouvelles infos fraîches
-	if isNewSession {
-		if err := redis.RedisCreateSession(sessions); err != nil {
-			log.Printf("⚠️ Warning: Echec mise à jour cache_service Redis Session: %v", err)
-		}
-	} else {
-		if err := redis.RedisUpdateSession(sessions); err != nil {
-			log.Printf("⚠️ Warning: Echec mise à jour cache_service Redis Session: %v", err)
-		}
+	// A. CACHE (Immédiat)
+	// L'opération SET écrase l'ancienne valeur. On utilise donc SetSessionInCache dans les deux cas.
+	if err := cache_service.SetSessionInCache(context.Background(), sessions); err != nil {
+		log.Printf("⚠️ Warning: Echec mise à jour cache_service Session: %v", err)
 	}
 	// B. PERSISTANCE ASYNCHRONE (Vers Mongo & Postgres)
 	// On choisit l'action : CREATE (si nouveau) ou UPDATE (si existant)

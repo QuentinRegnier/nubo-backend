@@ -12,7 +12,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
@@ -57,12 +58,12 @@ func CreateUser(
 
 	// 2. MISE EN CACHE IMMÉDIATE (Lecture rapide pour le user)
 	// --------------------------------------------------------
-	// On écrit dans Redis tout de suite pour que le user puisse se loguer/voir son profil
+	// On écrit dans le cache tout de suite pour que le user puisse se loguer/voir son profil
 	// sans attendre le worker Postgres.
-	if err := redis.RedisCreateUser(*req); err != nil {
+	if err := cache_service.SetUserFullInCache(context.Background(), *req); err != nil {
 		log.Printf("⚠️ Warning: Echec cache_service Redis User: %v", err)
 	}
-	if err := redis.RedisCreateSession(*sessions); err != nil {
+	if err := cache_service.SetSessionInCache(context.Background(), *sessions); err != nil {
 		log.Printf("⚠️ Warning: Echec cache_service Redis Session: %v", err)
 	}
 
@@ -98,7 +99,7 @@ func CreateUser(
 
 		// On récupère l'ID entier de la BDD
 		go func() {
-			err = service.UploadMedia(file, userID, mediaID)
+			err = media_service.UploadMedia(file, userID, mediaID)
 			if err != nil {
 				log.Printf("internal error (image upload): %v", err)
 				return

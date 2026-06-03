@@ -7,7 +7,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
@@ -21,7 +21,7 @@ import (
 // ============================================================================
 
 // UpdatePostRecommendationScore recalcule le score à partir de l'entité déjà chargée en RAM.
-func UpdatePostRecommendationScore(ctx context.Context, p models.PostRequest) {
+func UpdatePostRecommendationScore(ctx context.Context, p post_models.PostPayload) {
 	mediaCount := 0
 	if p.HasMedia || len(p.MediaIDs) > 0 {
 		mediaCount = 1
@@ -33,13 +33,13 @@ func UpdatePostRecommendationScore(ctx context.Context, p models.PostRequest) {
 }
 
 // EvaluatePostAfterLike force l'insertion du post_service avec sa valeur absolue dans les classements stricts.
-func EvaluatePostAfterLike(ctx context.Context, p models.PostRequest) {
+func EvaluatePostAfterLike(ctx context.Context, p post_models.PostPayload) {
 	_ = redis.ZAddWithCap(ctx, variables.RedisKeyStrictLikes, float64(p.LikeCount), p.ID, variables.MaxStrictElements)
 	UpdatePostRecommendationScore(ctx, p)
 }
 
 // EvaluatePostAfterView force l'insertion du post_service avec sa valeur absolue dans les classements stricts.
-func EvaluatePostAfterView(ctx context.Context, p models.PostRequest) {
+func EvaluatePostAfterView(ctx context.Context, p post_models.PostPayload) {
 	_ = redis.ZAddWithCap(ctx, variables.RedisKeyStrictViews, float64(p.ViewCount), p.ID, variables.MaxStrictElements)
 	UpdatePostRecommendationScore(ctx, p)
 }
@@ -48,7 +48,7 @@ func EvaluatePostAfterView(ctx context.Context, p models.PostRequest) {
 // 2. LECTURE ET FALLBACKS (L1 -> L2 -> L3)
 // ============================================================================
 
-func GetRankedPosts(ctx context.Context, rankType string, offset int64, limit int64) ([]models.PostRequest, error) {
+func GetRankedPosts(ctx context.Context, rankType string, offset int64, limit int64) ([]post_models.PostPayload, error) {
 	// Note: On utilise MaxStrictElements comme seuil de sécurité global pour le fallback
 	if offset >= variables.MaxStrictElements {
 		filter := map[string]any{}
@@ -72,9 +72,9 @@ func GetRankedPosts(ctx context.Context, rankType string, offset int64, limit in
 			return getPostsFromPostgresPaginated(ctx, rankType, offset, limit)
 		}
 
-		var posts []models.PostRequest
+		var posts []post_models.PostPayload
 		for _, doc := range docs {
-			var p models.PostRequest
+			var p post_models.PostPayload
 			if err := pkg.ToStruct(doc, &p); err == nil {
 				posts = append(posts, p)
 			}
@@ -86,7 +86,7 @@ func GetRankedPosts(ctx context.Context, rankType string, offset int64, limit in
 	key := fmt.Sprintf("most_cache:%s", rankType)
 	return fetchAndHydrateFromZSET(ctx, key, offset, limit)
 }
-func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([]models.PostRequest, error) {
+func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([]post_models.PostPayload, error) {
 	if offset >= variables.MaxTagElements {
 		posts, err := getPostsFromMongoPaginated("hashtags", slug, offset, limit)
 		if err != nil {
@@ -94,7 +94,7 @@ func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([
 			query := `SELECT id FROM content.posts WHERE $1 = ANY(hashtags) AND visibility != 2 ORDER BY created_at DESC OFFSET $2 LIMIT $3`
 			rows, err := postgres.PostgresDB.QueryContext(ctx, query, slug, offset, limit)
 			if err != nil {
-				return []models.PostRequest{}, fmt.Errorf("erreur requête L3 Postgres tag: %w", err)
+				return []post_models.PostPayload{}, fmt.Errorf("erreur requête L3 Postgres tag: %w", err)
 			}
 			defer func(rows *sql.Rows) {
 				err := rows.Close()
