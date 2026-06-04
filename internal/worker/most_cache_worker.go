@@ -12,6 +12,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 )
 
@@ -25,11 +26,8 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 			if err == nil {
 				var post post_models.PostPayload
 				if err := json.Unmarshal(jsonBytes, &post); err == nil {
-					// A. Algorithme de Recommandation (Tags, Global, Recent)
-					cache_service.UpdatePostRecommendationScore(ctx, post) // Passe l'objet complet
-					// B. Chronologie Utilisateur (Grille Profil) avec précision temporelle stricte
+					cache_service.UpdatePostRecommendationScore(ctx, post)
 					cache_service.AddPostToUserProfile(ctx, post.UserID, post.ID, post.CreatedAt.UnixMilli())
-					// C. Vecteur de Contenu pour Recommandation Personnalisée (Pilier 3)
 					feed_service.StoreContentVector(ctx, post)
 				}
 			}
@@ -41,18 +39,13 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 			if err == nil {
 				var post post_models.PostPayload
 				if err := json.Unmarshal(jsonBytes, &post); err == nil {
-					// Utilise un Pipeline Redis pour plus de performance
 					pipe := redisgo.Rdb.Pipeline()
-
-					// A. Retrait du classement Global (Discovery)
 					dateKey := post.CreatedAt.UTC().Format("20060102")
 					pipe.ZRem(ctx, fmt.Sprintf("trend:global:daily:%s", dateKey), post.ID)
 
-					// B. Retrait de tous les classements Thématiques (Tags)
 					for _, tag := range post.Hashtags {
 						pipe.ZRem(ctx, fmt.Sprintf("trend:tag:%s:daily", tag), post.ID)
 					}
-
 					_, _ = pipe.Exec(ctx)
 				}
 			}
@@ -62,15 +55,21 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 		if (e.Type == redis.EntityLike || e.Type == redis.EntityView) && (e.Action == redis.ActionCreate || e.Action == redis.ActionDelete) {
 			jsonBytes, err := json.Marshal(e.Payload)
 			if err == nil {
-				// STRUCTURE COMMUNE : On inclut UserID pour pouvoir vérifier les droits
 				var interactionEvent struct {
-					PostID   int64 `json:"post_id"`
-					TargetID int64 `json:"target_id"`
-					UserID   int64 `json:"user_id"` // <--- L'auteur de l'action
-					Count    int   `json:"count"`
+					PostID     int64 `json:"post_id"`
+					TargetID   int64 `json:"target_id"`
+					TargetType int   `json:"target_type"`
+					UserID     int64 `json:"user_id"`
+					Count      int   `json:"count"`
 				}
 
 				if err := json.Unmarshal(jsonBytes, &interactionEvent); err == nil {
+
+					// 🛡️ BOUCLIER : Le Most Cache ignore totalement les interactions sur les commentaires
+					if interactionEvent.TargetType != 0 {
+						continue
+					}
+
 					targetID := interactionEvent.TargetID
 					if interactionEvent.PostID != 0 {
 						targetID = interactionEvent.PostID
@@ -78,53 +77,26 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 
 					if targetID != 0 {
 						p, err := getPostWithFallback(ctx, targetID)
-						if err == nil && p.Visibility != -1 { // On rejette direct si Soft-Delete
+						if err == nil && p.Visibility != -1 {
 
-							// ─────────────────────────────────────────────────────────────
-							// 🛡️ VÉRIFICATION DES DROITS ASYNCHRONE
-							// ─────────────────────────────────────────────────────────────
+							// VÉRIFICATION DES DROITS ASYNCHRONE
 							if interactionEvent.UserID != 0 && p.UserID != interactionEvent.UserID {
 								relationState := cache_service.RelationValue(ctx, p.UserID, interactionEvent.UserID)
-
-								// Si l'utilisateur est banni ou n'a pas la relation requise,
-								// on abandonne l'incrémentation (Le Hacker perd son temps).
 								if relationState == -1 {
 									continue
 								}
-								if p.Visibility == 1 && relationState < 1 { // Réservé Abonnés
+								if p.Visibility == 1 && relationState < 1 {
 									continue
 								}
-								if p.Visibility == 2 && relationState != 2 { // Réservé Amis
+								if p.Visibility == 2 && relationState != 2 {
 									continue
 								}
 							}
 
-							// ─────────────────────────────────────────────────────────────
-							// INCÉMENTATION ET MISE À JOUR DES ZSETS
-							// ─────────────────────────────────────────────────────────────
-							delta := 1
-							if e.Action == redis.ActionDelete {
-								delta = -1
-							} else if interactionEvent.Count != 0 {
-								delta = interactionEvent.Count
-							}
-
+							// ÉVALUATION ALGORITHMIQUE (Plus d'écriture dans l'Object Cache ici !)
 							if e.Type == redis.EntityLike {
-								p.LikeCount += delta
-								if p.LikeCount < 0 {
-									p.LikeCount = 0
-								}
-
-								_ = cache_service.SetPostInObjectCache(ctx, p)
 								cache_service.EvaluatePostAfterLike(ctx, p)
-
 							} else if e.Type == redis.EntityView {
-								p.ViewCount += delta
-								if p.ViewCount < 0 {
-									p.ViewCount = 0
-								}
-
-								_ = cache_service.SetPostInObjectCache(ctx, p)
 								cache_service.EvaluatePostAfterView(ctx, p)
 							}
 						}
@@ -133,7 +105,7 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 			}
 		}
 
-		// 4. SI C'EST UN COMMENTAIRE (+1 ou -1 sur le Post Parent)
+		// 4. SI C'EST UN COMMENTAIRE (Recalcul algorithmique du Post)
 		if e.Type == redis.EntityComment && (e.Action == redis.ActionCreate || e.Action == redis.ActionDelete) {
 			jsonBytes, err := json.Marshal(e.Payload)
 			if err == nil {
@@ -144,23 +116,7 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 				if err := json.Unmarshal(jsonBytes, &commentEvent); err == nil && commentEvent.PostID != 0 {
 					p, err := getPostWithFallback(ctx, commentEvent.PostID)
 					if err == nil && p.Visibility != -1 {
-
-						// Incrémentation ou Décrémentation
-						delta := 1
-						if e.Action == redis.ActionDelete {
-							delta = -1
-						}
-
-						p.CommentCount += delta
-						if p.CommentCount < 0 {
-							p.CommentCount = 0
-						}
-
-						// 1. Mise à jour de l'Object Cache instantanément
-						_ = cache_service.SetPostInObjectCache(ctx, p)
-
-						// 2. Recalcul des scores algorithmiques de découverte (MOST Cache)
-						// Note : Assure-toi que cette fonction (ou UpdatePostRecommendationScore) gère le multiplicateur de commentaires.
+						// ÉVALUATION ALGORITHMIQUE UNIQUEMENT
 						cache_service.UpdatePostRecommendationScore(ctx, p)
 					}
 				}
@@ -171,35 +127,29 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 	}
 }
 
-// getPostWithFallback implémente la chaîne de résolution L1 -> L2 -> L3
-// pour maximiser le taux de cache_service hit et protéger PostgreSQL lors du recalcul des scores.
+// getPostWithFallback reste inchangé
 func getPostWithFallback(ctx context.Context, postID int64) (post_models.PostPayload, error) {
 	var p post_models.PostPayload
 
-	// Étape 1 : Cache L1 (Redis Object Cache)
-	if postL1, err := cache_service.GetPostFromObjectCache(ctx, postID); err == nil {
+	if postL1, err := object_cache_service.GetPostFromObjectCache(ctx, postID); err == nil {
 		return postL1, nil
 	}
 
-	// Étape 2 : Cache L2 (MongoDB - Historique récent de 30 jours)
 	filter := map[string]any{"id": postID}
 	docs, err := mongo.Posts.GetPaginated(filter, nil, 0, 1)
 	if err == nil && len(docs) > 0 {
 		if errStruct := pkg.ToStruct(docs[0], &p); errStruct == nil {
-			// Réhydratation dynamique : on le remet en L1 pour les prochaines lectures
-			_ = cache_service.SetPostInObjectCache(ctx, p)
+			_ = object_cache_service.SetPostInObjectCache(ctx, p)
 			return p, nil
 		}
 	}
 
-	// Étape 3 : Base L3 (PostgreSQL - Le dernier recours)
 	posts, err := postgres.FuncLoadPosts([]int64{postID}, 1, 0)
 	if err == nil && len(posts) > 0 {
 		p = posts[0]
-		// Réhydratation dynamique : on le remet en L1
-		_ = cache_service.SetPostInObjectCache(ctx, p)
+		_ = object_cache_service.SetPostInObjectCache(ctx, p)
 		return p, nil
 	}
 
-	return post_models.PostPayload{}, fmt.Errorf("post_service %d introuvable dans L1, L2 et L3", postID)
+	return post_models.PostPayload{}, fmt.Errorf("post_service %d introuvable", postID)
 }

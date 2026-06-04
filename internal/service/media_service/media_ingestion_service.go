@@ -13,7 +13,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/google/uuid"
 
 	"github.com/disintegration/imaging"
@@ -97,7 +97,7 @@ func UploadMedia(file io.ReadSeeker, ownerID int64, mediaID int64) error {
 	ctx := context.Background()
 
 	// --- 5. CACHE REDIS (Immédiat) ---
-	if err := cache_service.SetMediaInObjectCache(ctx, media); err != nil {
+	if err := object_cache_service.SetMediaInObjectCache(ctx, media); err != nil {
 		fmt.Printf("⚠️ Erreur Redis Media Set: %v\n", err)
 	}
 

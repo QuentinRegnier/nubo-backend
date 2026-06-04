@@ -9,8 +9,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

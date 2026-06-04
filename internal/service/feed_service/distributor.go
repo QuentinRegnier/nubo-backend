@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	redisgogo "github.com/QuentinRegnier/nubo-backend/internal/pkg/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 )
@@ -87,8 +87,9 @@ func (d *FeedDistributor) HandlePullToRefresh(ctx context.Context, opts RefreshO
 		// l'utilisateur est sur sa dernière cartouche.
 		futurePageKey := fmt.Sprintf(RedisKeyFeedBufferPage, opts.UserID, nextPage+1)
 
-		// Note : Exists() est O(1), ça ne coûte rien.
-		if exists, _ := redisgo.Rdb.Exists(ctx, futurePageKey).Result(); exists == 0 {
+		// Note : Exists() est O(1), ça ne coûte rien. On évalue directement le booléen.
+		exists, _ := redisgogo.Exists(ctx, futurePageKey)
+		if !exists {
 
 			// On poste l'événement dans ta file Redis shardée.
 			// partitionKey = opts.UserID pour que ça aille dans le bon shard.

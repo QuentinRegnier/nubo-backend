@@ -2,15 +2,9 @@ package redis
 
 import (
 	"context"
-	"time"
 
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 )
-
-// Helper pour le contexte (timeout court pour ne pas bloquer l'API)
-func getCtx() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), 2*time.Second)
-}
 
 // Exists vérifie rapidement si une clé brute est présente dans le cache_service Redis (O(1))
 // Renvoie true si la clé existe, false sinon.

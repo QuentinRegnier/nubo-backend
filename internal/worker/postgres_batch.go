@@ -336,7 +336,7 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 	}
 
 	var query string
-	if entity == redis.EntityPost {
+	if entity == redis.EntityPost || entity == redis.EntityComment { // <-- AJOUT ICI
 		// SOFT DELETE
 		query = fmt.Sprintf("UPDATE %s SET visibility = -1 WHERE id = ANY($1)", mapper.TableName())
 	} else {
@@ -353,6 +353,7 @@ func updateCountersPostgres(ctx context.Context, events []redis.AsyncEvent) {
 	likeDeltas := make(map[int64]int)
 	commentDeltas := make(map[int64]int)
 	viewDeltas := make(map[int64]int)
+	commentLikeDeltas := make(map[int64]int)
 
 	for _, e := range events {
 		delta := 1
@@ -368,8 +369,11 @@ func updateCountersPostgres(ctx context.Context, events []redis.AsyncEvent) {
 				TargetID   int64 `json:"target_id"`
 			}
 			_ = json.Unmarshal(jsonBytes, &p)
+
 			if p.TargetType == 0 && p.TargetID != 0 {
-				likeDeltas[p.TargetID] += delta
+				likeDeltas[p.TargetID] += delta // Like sur un Post
+			} else if p.TargetType == 1 && p.TargetID != 0 {
+				commentLikeDeltas[p.TargetID] += delta // ✅ Like sur un Commentaire
 			}
 		} else if e.Type == redis.EntityComment {
 			var p struct {
@@ -404,5 +408,8 @@ func updateCountersPostgres(ctx context.Context, events []redis.AsyncEvent) {
 	}
 	for id, delta := range viewDeltas {
 		_, _ = postgres.PostgresDB.ExecContext(ctx, "UPDATE content.posts SET view_count = GREATEST(0, view_count + $1) WHERE id = $2", delta, id)
+	}
+	for id, delta := range commentLikeDeltas {
+		_, _ = postgres.PostgresDB.ExecContext(ctx, "UPDATE content.comments SET like_count = GREATEST(0, like_count + $1) WHERE id = $2", delta, id)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
 
 // GetPosts orchestre la récupération d'une liste de posts et applique le filtrage de visibilité.
@@ -93,7 +94,7 @@ func fetchPostsCascade(ctx context.Context, ids []int64) map[int64]post_models.P
 
 	// Étape 1 : Object Cache LFU (Redis)
 	for _, id := range ids {
-		if p, err := cache_service.GetPostFromObjectCache(ctx, id); err == nil {
+		if p, err := object_cache_service.GetPostFromObjectCache(ctx, id); err == nil {
 			postsMap[id] = p
 		} else {
 			missingFromL1 = append(missingFromL1, id)
@@ -110,7 +111,7 @@ func fetchPostsCascade(ctx context.Context, ids []int64) map[int64]post_models.P
 	if errMongo == nil {
 		for _, p := range mongoPosts {
 			postsMap[p.ID] = p
-			_ = cache_service.SetPostInObjectCache(ctx, p) // Réhydratation L1
+			_ = object_cache_service.SetPostInObjectCache(ctx, p) // Réhydratation L1
 		}
 	}
 
@@ -130,7 +131,7 @@ func fetchPostsCascade(ctx context.Context, ids []int64) map[int64]post_models.P
 	if errPg == nil {
 		for _, p := range pgPosts {
 			postsMap[p.ID] = p
-			_ = cache_service.SetPostInObjectCache(ctx, p) // Réhydratation L1
+			_ = object_cache_service.SetPostInObjectCache(ctx, p) // Réhydratation L1
 		}
 	}
 

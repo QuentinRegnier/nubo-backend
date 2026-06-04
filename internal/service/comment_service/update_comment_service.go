@@ -1,23 +1,22 @@
-package post_service
+package comment_service
 
 import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
 )
 
-// UpdatePost gère la modification en récupérant l'objet complet pour nourrir le Bulk Update des workers.
-func UpdatePost(ctx context.Context, input post_models.UpdatePostInput) error {
+// UpdateComment gère la modification en récupérant l'objet complet pour le Bulk Update des workers.
+func UpdateComment(ctx context.Context, input comment_models.UpdateCommentInput) error {
 	// ─────────────────────────────────────────────────────────────────────────
 	// 1. VERIFICATION DROIT D'ACCÈS ET RÉCUPÉRATION DE L'OBJET COMPLET (Nécessaire pour les étapes suivantes)
 	// ─────────────────────────────────────────────────────────────────────────
 
-	post, err := security_service.LeftPost(ctx, input.PostID, input.UserID)
+	comment, err := security_service.LeftComment(ctx, input.CommentID, input.UserID)
 	if err != nil {
 		return err
 	}
@@ -25,31 +24,18 @@ func UpdatePost(ctx context.Context, input post_models.UpdatePostInput) error {
 	// ─────────────────────────────────────────────────────────────────────────
 	// 2. APPLICATION DES MODIFICATIONS
 	// ─────────────────────────────────────────────────────────────────────────
-	post.Content = input.Content
-	post.Hashtags = input.Hashtags
-	post.Identifiers = input.Identifiers
-	post.Location = input.Location
-	post.Visibility = input.Visibility
-	post.UpdatedAt = time.Now().UTC()
-
-	// L'IA locale (Edge Computing) saura qu'il faut recalculer ses affinités
-	post.VectorVersion += 1
+	comment.Content = input.Content
+	comment.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// 3. RE-VECTORISATION SYNCHRONE DU CONTENU
-	// ─────────────────────────────────────────────────────────────────────────
-	// On met à jour le vecteur avec les nouvelles données textuelles/thématiques.
-	post.Vector = feed_service.ComputeContentVectorFull(post, nil)
-
-	// ─────────────────────────────────────────────────────────────────────────
-	// 4. SAUVEGARDE ET DÉLÉGATION AUX WORKERS BATCH
+	// 3. SAUVEGARDE ET DÉLÉGATION AUX WORKERS BATCH
 	// ─────────────────────────────────────────────────────────────────────────
 
 	// 1. Écrasement LFU immédiat
-	if err := object_cache_service.SetPostInObjectCache(ctx, post); err != nil {
+	if err := object_cache_service.SetCommentInObjectCache(ctx, comment); err != nil {
 		return err
 	}
 
-	// 2. Envoi de l'objet COMPLET dans la file asynchrone pour que tes bulkUpdate fonctionnent
-	return redis.EnqueueDB(ctx, post.ID, 0, redis.EntityPost, redis.ActionUpdate, post, redis.TargetAll)
+	// 2. Envoi de l'objet COMPLET dans la file asynchrone pour les bulkUpdate
+	return redis.EnqueueDB(ctx, comment.ID, 0, redis.EntityComment, redis.ActionUpdate, comment, redis.TargetAll)
 }

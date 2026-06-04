@@ -8,7 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 )
@@ -59,7 +59,7 @@ func CreatePost(userID int64, input post_models.CreatePostInput, files []*multip
 	post.Vector = feed_service.ComputeContentVectorFull(post, nil)
 
 	// 3. Cache Redis (LFU Init)
-	if err := cache_service.SetPostInObjectCache(context.Background(), post); err != nil {
+	if err := object_cache_service.SetPostInObjectCache(context.Background(), post); err != nil {
 		return -1, err
 	}
 

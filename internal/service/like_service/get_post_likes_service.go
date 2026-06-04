@@ -1,4 +1,4 @@
-package post_service
+package like_service
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
 
 // GetPostLikes récupère les abonnés ayant liké un post en appliquant les règles de visibilité.
@@ -20,7 +21,7 @@ func GetPostLikes(ctx context.Context, input post_models.GetPostLikesInput) (pos
 	var found bool
 
 	// Lecture ultra-rapide du post pour checker les droits
-	if p, err := cache_service.GetPostFromObjectCache(ctx, input.PostID); err == nil {
+	if p, err := object_cache_service.GetPostFromObjectCache(ctx, input.PostID); err == nil {
 		post = p
 		found = true
 	} else {

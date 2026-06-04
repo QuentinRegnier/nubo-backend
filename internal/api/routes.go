@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/auth_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/comment_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/like_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/post_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/security_handlers"
 	"github.com/golang-jwt/jwt/v5"
@@ -89,27 +91,27 @@ func SetupRoutes(r *gin.Engine) {
 	secured.POST("/views/batch", handlers.RegisterBatchViewsHandler) // ℹ️❌ à vérifier
 
 	// --- Profils / Utilisateurs ---
-	secured.GET("/search/users/quick", handlers.UserSearchHandler) // <--- SPEED Cache: Auto-complétion
-	secured.GET("/users/:id/posts", handlers.GetUserPostsHandler)
+	secured.GET("/search/users/quick", handlers.UserSearchHandler) // ℹ️❌ à vérifier
+	secured.GET("/users/:id/posts", handlers.GetUserPostsHandler)  // ℹ️❌ à vérifier
 
 	// --- Actions Sociales ---
-	secured.POST("/like", post_handlers.LikePostHandler)
-	secured.GET("/like", post_handlers.GetPostHandlerLikes)
-	secured.POST("/comment", CommentHandler)      // ℹ️❌
-	secured.DELETE("/comment", UnCommentHandler)  // ℹ️❌
-	secured.GET("/comments", LoadCommentsHandler) // ℹ️❌
-	secured.POST("/follow", FollowHandler)        // ℹ️❌
-	secured.DELETE("/follow", UnFollowHandler)    // ℹ️❌
-	secured.POST("/friend", FriendHandler)        // ℹ️❌
-	secured.DELETE("/friend", UnFriendHandler)    // ℹ️❌
-	secured.POST("/limited", LimitedHandler)      // ℹ️❌
-	secured.DELETE("/limited", UnLimitedHandler)  // ℹ️❌
-	secured.POST("/block", BlockHandler)          // ℹ️❌
-	secured.DELETE("/block", UnBlockHandler)      // ℹ️❌
-	secured.POST("/share", ShareHandler)          // ℹ️❌
-	secured.POST("/save", SaveHandler)            // ℹ️❌
-	secured.DELETE("/saved", UnSavedHandler)      // ℹ️❌
-	secured.GET("/saveds", LoadSavedsHandler)     // ℹ️❌
+	secured.POST("/post/like", like_handlers.LikePostHandler)
+	secured.GET("/post/like", like_handlers.GetPostLikesHandler)
+	secured.POST("/comment/like", like_handlers.LikeCommentHandler)
+	secured.POST("/comment", comment_handlers.CreateCommentHandler)
+	secured.PATCH("/comment", comment_handlers.UpdateCommentHandler)
+	secured.DELETE("/comment", comment_handlers.DeleteCommentHandler)
+	secured.GET("/comment", comment_handlers.GetCommentsHandler)
+	secured.POST("/follow", FollowHandler)     // ℹ️❌
+	secured.DELETE("/follow", UnFollowHandler) // ℹ️❌
+	secured.POST("/friend", FriendHandler)     // ℹ️❌
+	secured.DELETE("/friend", UnFriendHandler) // ℹ️❌
+	secured.POST("/block", BlockHandler)       // ℹ️❌
+	secured.DELETE("/block", UnBlockHandler)   // ℹ️❌
+	secured.POST("/share", ShareHandler)       // ℹ️❌
+	secured.POST("/save", SaveHandler)         // ℹ️❌
+	secured.DELETE("/saved", UnSavedHandler)   // ℹ️❌
+	secured.GET("/saveds", LoadSavedsHandler)  // ℹ️❌
 
 	// --- Reglage ---
 	secured.PATCH("/profile", UpdateProfileHangler)            // ℹ️❌
@@ -182,21 +184,6 @@ func LoadMoreFeedHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"posts": []string{"post_service 3", "post_service 4"}})
 }
 
-func CommentHandler(c *gin.Context) {
-	// TODO: ajouter un commentaire à un post_service
-	c.JSON(http.StatusOK, gin.H{"message": "post_service commented"})
-}
-
-func UnCommentHandler(c *gin.Context) {
-	// TODO: retirer un commentaire à un post_service
-	c.JSON(http.StatusOK, gin.H{"message": "post_service uncommented"})
-}
-
-func LoadCommentsHandler(c *gin.Context) {
-	// TODO: charger les commentaires d'un post_service depuis la base
-	c.JSON(http.StatusOK, gin.H{"comments": []string{"comment 1", "comment 2"}})
-}
-
 func FollowHandler(c *gin.Context) {
 	// TODO: gérer les relations d'amitié
 	c.JSON(http.StatusOK, gin.H{"message": "friendship managed"})
@@ -213,16 +200,6 @@ func FriendHandler(c *gin.Context) {
 }
 
 func UnFriendHandler(c *gin.Context) {
-	// TODO: retirer une relation d'amitié
-	c.JSON(http.StatusOK, gin.H{"message": "friendship removed"})
-}
-
-func LimitedHandler(c *gin.Context) {
-	// TODO: gérer les relations d'amitié
-	c.JSON(http.StatusOK, gin.H{"message": "friendship managed"})
-}
-
-func UnLimitedHandler(c *gin.Context) {
 	// TODO: retirer une relation d'amitié
 	c.JSON(http.StatusOK, gin.H{"message": "friendship removed"})
 }

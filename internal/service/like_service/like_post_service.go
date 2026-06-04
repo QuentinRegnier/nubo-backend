@@ -1,41 +1,27 @@
-package post_service
+package like_service
 
 import (
 	"context"
-	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/like_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 )
 
-// On aligne la structure avec ce que le Mapper attend !
-type likePayload struct {
-	ID         int64  `json:"id"`
-	TargetType int    `json:"target_type"`
-	TargetID   int64  `json:"target_id"` // Remplace post_id pour la généricité
-	UserID     int64  `json:"user_id"`
-	CreatedAt  string `json:"created_at"`
-}
-
 // ToggleLike agit comme un simple routeur asynchrone ultra-rapide (Fire and Forget).
-func ToggleLike(ctx context.Context, input post_models.LikePostInput) error {
+func TogglePostLike(ctx context.Context, input like_models.LikePostInput) error {
 	// ─────────────────────────────────────────────────────────────────────────
 	// 1. IDEMPOTENCE EN RAM (O(1)) - Bloque le Spam Clic
 	// ─────────────────────────────────────────────────────────────────────────
-	setKey := fmt.Sprintf("post:likes_set:%d", input.PostID)
-
 	if input.Action == "like" {
-		added, err := redisgo.Rdb.SAdd(ctx, setKey, input.UserID).Result()
-		if err == nil && added == 0 {
-			return nil // Déjà liké, on ignore silencieusement
+		if !cache_service.TryAddLikeIdempotency(ctx, 0, input.PostID, input.UserID) { // targetType = 0
+			return nil
 		}
 	} else {
-		removed, err := redisgo.Rdb.SRem(ctx, setKey, input.UserID).Result()
-		if err == nil && removed == 0 {
-			return nil // Déjà unliké, on ignore silencieusement
+		if !cache_service.TryRemoveLikeIdempotency(ctx, 0, input.PostID, input.UserID) { // targetType = 0
+			return nil
 		}
 	}
 
@@ -47,9 +33,9 @@ func ToggleLike(ctx context.Context, input post_models.LikePostInput) error {
 		action = redis.ActionDelete
 	}
 
-	payload := likePayload{
-		ID:         pkg.GenerateID(), // On génère la Primary Key du Like
-		TargetType: 0,                // 0 = Post (Polymorphisme)
+	payload := like_models.LikePayload{
+		ID:         pkg.GenerateID(),
+		TargetType: 0, // ✅ 0 = Post (Polymorphisme défini)
 		TargetID:   input.PostID,
 		UserID:     input.UserID,
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339),

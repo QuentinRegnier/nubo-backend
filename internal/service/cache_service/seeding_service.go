@@ -11,6 +11,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
@@ -112,7 +113,7 @@ func SeedMostCache() error {
 		if err == nil {
 			for _, p := range winners {
 				// Sanctuarisation L1 (Redis Object Cache) - Pas de TTL (0)
-				_ = SetPostInObjectCache(ctx, p)
+				_ = object_cache_service.SetPostInObjectCache(ctx, p)
 
 				// Synchronisation L2 (MongoDB)
 				doc, _ := pkg.ToMap(p)

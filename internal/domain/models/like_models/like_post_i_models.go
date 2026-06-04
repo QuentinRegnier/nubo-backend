@@ -1,4 +1,4 @@
-package post_models
+package like_models
 
 // LikePostInput centralise toute la donnée de l'action.
 type LikePostInput struct {

@@ -1,41 +1,39 @@
-package post_service
+package comment_service
 
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
 )
 
-// DeletePost gère la rétractation d'un post (Purge L1, Purge LSH, Soft Delete Workers).
-func DeletePost(ctx context.Context, input post_models.DeletePostInput) error {
+// DeleteComment gère la rétractation d'un commentaire (Purge L1, Soft Delete asynchrone et décrémentation).
+func DeleteComment(ctx context.Context, input comment_models.DeleteCommentInput) error {
 	// ─────────────────────────────────────────────────────────────────────────
 	// 1. VERIFICATION DROIT D'ACCÈS ET RÉCUPÉRATION DE L'OBJET COMPLET (Nécessaire pour les étapes suivantes)
 	// ─────────────────────────────────────────────────────────────────────────
 
-	post, err := security_service.LeftPost(ctx, input.PostID, input.UserID)
+	comment, err := security_service.LeftComment(ctx, input.CommentID, input.UserID)
 	if err != nil {
 		return err
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// 2. PURGE SYNCHRONE DES CACHES (Disparition instantanée pour les utilisateurs)
+	// 2. PURGE DU CACHE L1 ET PRÉPARATION DU SOFT DELETE
 	// ─────────────────────────────────────────────────────────────────────────
 
-	// A. Suppression de l'Object Cache L1
-	_ = object_cache_service.DeletePostFromObjectCache(ctx, input.PostID)
+	// Disparition immédiate de la RAM pour les prochains lecteurs
+	_ = object_cache_service.DeleteCommentFromObjectCache(ctx, comment.ID)
+	_ = object_cache_service.RemoveCommentFromZSET(ctx, comment.PostID, comment.ID)
 
-	// B. Suppression du seau LSH et du Vecteur (Délégué au service dédié)
-	_ = feed_service.PurgePostVectors(ctx, input.PostID)
+	comment.Visibility = -1
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// 3. ENVOI AUX WORKERS POUR SOFT-DELETE (BDD et MOST Cache)
+	// 3. ENVOI AUX WORKERS POUR DÉCRÉMENTATION ET MISE À JOUR BDD
 	// ─────────────────────────────────────────────────────────────────────────
-
-	// On passe l'objet `post` ENTIER dans le payload. C'est crucial pour que
-	// `most_cache_worker.go` puisse lire `post.Hashtags` et nettoyer les bons ZSETs.
-	return redis.EnqueueDB(ctx, post.ID, 0, redis.EntityPost, redis.ActionDelete, post, redis.TargetAll)
+	// L'ActionDelete va ordonner à most_cache_worker, mongo_batch et postgres_batch
+	// de faire un "-1" sur le CommentCount du post parent.
+	return redis.EnqueueDB(ctx, comment.ID, comment.PostID, redis.EntityComment, redis.ActionDelete, comment, redis.TargetAll)
 }

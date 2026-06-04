@@ -1,10 +1,9 @@
-package cache_service
+package object_cache_service
 
 import (
 	"context"
 	"log"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
@@ -116,44 +115,4 @@ func GetPostsView(ids []int64) ([]post_models.PostPayload, error) {
 	}
 
 	return finalPosts, nil
-}
-
-// --- GESTION DES POSTS (CACHE L1) ---
-
-// GetPostFromObjectCache récupère un post depuis le cache L1
-func GetPostFromObjectCache(ctx context.Context, postID int64) (post_models.PostPayload, error) {
-	var p post_models.PostPayload
-	err := redis.Posts.GetObject(ctx, postID, &p)
-	return p, err
-}
-
-// SetPostInObjectCache enregistre ou met à jour un post dans le cache L1
-func SetPostInObjectCache(ctx context.Context, post post_models.PostPayload) error {
-	return redis.Posts.SetObject(ctx, post.ID, post)
-}
-
-// DeletePostFromObjectCache purge instantanément un post du cache L1
-func DeletePostFromObjectCache(ctx context.Context, postID int64) error {
-	// Utilisation propre de la méthode native du wrapper Redis
-	return redis.Posts.DeleteObject(ctx, postID)
-}
-
-// --- GESTION DES MÉDIAS (CACHE L1) ---
-
-// SetMediaInObjectCache place les métadonnées de l'image en RAM (Write-Behind)
-func SetMediaInObjectCache(ctx context.Context, media models.MediaRequest) error {
-	// Le TTL (ex: 24h) est défini dans le manager Redis et se réinitialise à chaque GET
-	return redis.Media.SetObject(ctx, media.ID, media)
-}
-
-// GetMediaFromObjectCache récupère instantanément les métadonnées (O(1))
-func GetMediaFromObjectCache(ctx context.Context, mediaID int64) (models.MediaRequest, error) {
-	var m models.MediaRequest
-	err := redis.Media.GetObject(ctx, mediaID, &m)
-	return m, err
-}
-
-// DeleteMediaFromObjectCache purge les métadonnées de la RAM
-func DeleteMediaFromObjectCache(ctx context.Context, mediaID int64) error {
-	return redis.Media.DeleteObject(ctx, mediaID)
 }

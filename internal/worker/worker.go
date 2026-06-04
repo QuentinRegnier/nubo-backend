@@ -126,18 +126,23 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 		}
 	}()
 
+	// 🛑 BARRIÈRE DE SYNCHRONISATION
 	// On DOIT attendre que la BDD ait validé les transactions sur le disque
-	// avant de mettre à jour le cache_service, sinon on lira des valeurs périmées.
+	// avant de mettre à jour le cache, sinon on lira des valeurs périmées.
 	<-done
 	<-done
 
-	// Étape 2 : Mise à jour de l'index de découverte (MOST Cache)
-	// S'exécute de manière asynchrone mais séquencée APRÈS la BDD.
-	updateMostCache(ctx, validEvents) // ✅ CORRIGÉ : On utilise le lot purifié
+	// ✅ ÉTAPE 2 : MISE À JOUR DES CACHES (Object Cache L1 & Most Cache)
+	// À cet instant, on est certain que le disque est à jour.
+	if len(validEvents) > 0 {
+		// On lance les deux métiers de cache en parallèle
+		go updateCountersCache(ctx, validEvents) // Le Secrétaire (Object Cache)
+		go updateMostCache(ctx, validEvents)     // Le Cerveau (ZSETs et Recommandations)
+	}
 
 	// Étape 3 : Fan-Out Social de masse (Distribution dans les boîtes aux lettres du Speed Cache)
 	// S'exécute de manière ultra-rapide en RAM juste après la validation BDD
-	handleSocialFanOut(ctx, validEvents) // ✅ CORRIGÉ : On utilise le lot purifié
+	handleSocialFanOut(ctx, validEvents)
 }
 
 // purifyBatch agit comme un pare-feu asynchrone.

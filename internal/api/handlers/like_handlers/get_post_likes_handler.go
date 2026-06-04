@@ -1,14 +1,14 @@
-package post_handlers
+package like_handlers
 
 import (
 	"net/http"
 	"strconv"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/service/like_service"
 	"github.com/gin-gonic/gin"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/post_service"
 )
 
 // GetPostLikesHandler godoc
@@ -38,7 +38,7 @@ import (
 // @Failure      404  {object}  domain.ErrorResponse "Post introuvable ou inaccessible"
 // @Failure      500  {object}  domain.ErrorResponse "Erreur interne lors de la récupération des likes"
 // @Router       /post/{id}/likes [get]
-func GetPostHandlerLikes(c *gin.Context) {
+func GetPostLikesHandler(c *gin.Context) {
 	// 1. Authentification
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
@@ -73,7 +73,7 @@ func GetPostHandlerLikes(c *gin.Context) {
 	}
 
 	// 5. Appel au service métier (qui inclut la vérification des droits L1->L2->L3)
-	output, err := post_service.GetPostLikes(c.Request.Context(), input)
+	output, err := like_service.GetPostLikes(c.Request.Context(), input)
 	if err != nil {
 		if err.Error() == "not found" || err.Error() == "forbidden" || err.Error() == "banned" {
 			// On maintient le mode furtif

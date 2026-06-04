@@ -80,15 +80,13 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 					SetUpdate(bson.M{"$set": e.Payload}))
 
 			case redis.ActionDelete:
-				if entity == redis.EntityPost {
-					// SOFT DELETE pour les Posts : On passe la visibilité à -1
-					// (Si les posts ont leur Snowflake mappé sur 'id')
+				if entity == redis.EntityPost || entity == redis.EntityComment { // <-- AJOUT ICI
+					// SOFT DELETE pour les Posts et Commentaires
 					models = append(models, libMongo.NewUpdateOneModel().
 						SetFilter(bson.M{"id": e.ID}).
 						SetUpdate(bson.M{"$set": bson.M{"visibility": -1}}))
 				} else {
 					// HARD DELETE pour le reste (ex: Likes, Relations)
-					// CORRECTION : On filtre sur 'id' au lieu de '_id'
 					models = append(models, libMongo.NewDeleteOneModel().
 						SetFilter(bson.M{"id": e.ID}))
 				}
@@ -109,7 +107,8 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 
 // updateCountersMongo regroupe les événements et met à jour les documents Posts dans le stockage à froid L2.
 func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
-	likeDeltas := make(map[int64]int)
+	postLikeDeltas := make(map[int64]int)
+	commentLikeDeltas := make(map[int64]int) // ✅ NOUVEAU
 	commentDeltas := make(map[int64]int)
 	viewDeltas := make(map[int64]int)
 
@@ -118,7 +117,6 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 		if e.Action == redis.ActionDelete {
 			delta = -1
 		}
-
 		jsonBytes, _ := json.Marshal(e.Payload)
 
 		if e.Type == redis.EntityLike {
@@ -128,7 +126,9 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 			}
 			_ = json.Unmarshal(jsonBytes, &p)
 			if p.TargetType == 0 && p.TargetID != 0 {
-				likeDeltas[p.TargetID] += delta
+				postLikeDeltas[p.TargetID] += delta // Like sur un Post
+			} else if p.TargetType == 1 && p.TargetID != 0 {
+				commentLikeDeltas[p.TargetID] += delta // ✅ Like sur un Commentaire
 			}
 		} else if e.Type == redis.EntityComment {
 			var p struct {
@@ -153,26 +153,30 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 		}
 	}
 
-	var models []libMongo.WriteModel
+	var postModels []libMongo.WriteModel
+	var commentModels []libMongo.WriteModel // ✅ NOUVEAU
 
-	// MongoDB utilise l'opérateur $inc pour faire une incrémentation mathématique propre
-	for id, delta := range likeDeltas {
-		models = append(models, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"like_count": delta}}))
+	// Modèles pour POSTS
+	for id, delta := range postLikeDeltas {
+		postModels = append(postModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"like_count": delta}}))
 	}
 	for id, delta := range commentDeltas {
-		models = append(models, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"comment_count": delta}}))
+		postModels = append(postModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"comment_count": delta}}))
 	}
 	for id, delta := range viewDeltas {
-		models = append(models, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"view_count": delta}}))
+		postModels = append(postModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"view_count": delta}}))
 	}
 
-	// Exécution de l'écriture groupée sur la collection Posts
-	if len(models) > 0 && mongo.Posts != nil {
-		coll := mongo.Posts.DB.Collection(mongo.Posts.Name)
-		opts := options.BulkWrite().SetOrdered(false)
-		_, err := coll.BulkWrite(ctx, models, opts)
-		if err != nil {
-			log.Printf("❌ Erreur Mongo BulkWrite Counters: %v", err)
-		}
+	// Modèles pour COMMENTS
+	for id, delta := range commentLikeDeltas {
+		commentModels = append(commentModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"like_count": delta}}))
+	}
+
+	// Exécutions indépendantes
+	if len(postModels) > 0 && mongo.Posts != nil {
+		_, _ = mongo.Posts.DB.Collection(mongo.Posts.Name).BulkWrite(ctx, postModels, options.BulkWrite().SetOrdered(false))
+	}
+	if len(commentModels) > 0 && mongo.Comments != nil {
+		_, _ = mongo.Comments.DB.Collection(mongo.Comments.Name).BulkWrite(ctx, commentModels, options.BulkWrite().SetOrdered(false))
 	}
 }

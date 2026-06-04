@@ -12,6 +12,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
@@ -110,7 +111,7 @@ func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([
 					ids = append(ids, id)
 				}
 			}
-			return GetPostsView(ids)
+			return object_cache_service.GetPostsView(ids)
 		}
 		return posts, nil
 	}

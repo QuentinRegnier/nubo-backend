@@ -1,14 +1,14 @@
-package post_handlers
+package like_handlers
 
 import (
 	"net/http"
 	"strconv"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/like_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/like_service"
 	"github.com/gin-gonic/gin"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/post_service"
 )
 
 // LikePostHandler godoc
@@ -51,7 +51,7 @@ func LikePostHandler(c *gin.Context) {
 	}
 
 	// 3. Binding du payload et empaquetage
-	var input post_models.LikePostInput
+	var input like_models.LikePostInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "L'action doit être 'like' ou 'unlike'"})
 		return
@@ -60,7 +60,7 @@ func LikePostHandler(c *gin.Context) {
 	input.PostID = postID
 
 	// 4 & 5. Envoi au service (Ultra rapide)
-	_ = post_service.ToggleLike(c.Request.Context(), input)
+	_ = like_service.TogglePostLike(c.Request.Context(), input)
 
 	// 6. Confirmation instantanée
 	c.JSON(http.StatusOK, gin.H{"message": "Action prise en compte"})

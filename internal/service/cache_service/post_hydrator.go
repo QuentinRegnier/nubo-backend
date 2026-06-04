@@ -11,6 +11,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
 
 // ============================================================================
@@ -37,7 +38,7 @@ func fetchAndHydrateFromZSET(ctx context.Context, key string, offset int64, limi
 		ids = append(ids, id)
 	}
 
-	return GetPostsView(ids)
+	return object_cache_service.GetPostsView(ids)
 }
 
 func getPostsFromMongoPaginated(field string, value any, offset int64, limit int64) ([]post_models.PostPayload, error) {
@@ -100,7 +101,7 @@ func getPostsFromPostgresPaginated(ctx context.Context, rankType string, offset 
 		}
 	}
 
-	return GetPostsView(ids)
+	return object_cache_service.GetPostsView(ids)
 }
 
 // ============================================================================
@@ -119,17 +120,17 @@ func HydrateFeed(ctx context.Context, postIDs []int64) ([]post_models.PostPayloa
 
 		// 1. Tentative de récupération depuis le cache_service LFU (Object Cache Redis)
 		// C'est le même cache_service que tu initialises dans CreatePost.
-		p, err := GetPostFromObjectCache(ctx, id)
+		p, err := object_cache_service.GetPostFromObjectCache(ctx, id)
 		if err == nil {
 			post = p
 		} else {
 			// FALLBACK : Si le post_service a été évincé du cache_service Redis, on va le chercher en base
 			// (En réutilisant ta méthode GetPostsView existante qui tape sur la BDD)
-			postsFromDB, errDB := GetPostsView([]int64{id})
+			postsFromDB, errDB := object_cache_service.GetPostsView([]int64{id})
 			if errDB == nil && len(postsFromDB) > 0 {
 				post = postsFromDB[0]
 				// Réhydratation silencieuse du cache_service LFU pour les prochains appels
-				_ = SetPostInObjectCache(ctx, post)
+				_ = object_cache_service.SetPostInObjectCache(ctx, post)
 			} else {
 				continue // Post totalement introuvable (Hard Delete), on l'ignore
 			}
