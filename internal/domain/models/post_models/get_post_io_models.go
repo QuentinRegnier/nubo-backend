@@ -6,9 +6,10 @@ type GetPostInput struct {
 	PostIDs []int64 `json:"post_ids"`
 }
 
-// GetPostOutput représente la réponse pour un ID spécifique (Soit le post, soit une erreur d'accès).
+// GetPostOutput représente la réponse pour un ID spécifique
 type GetPostOutput struct {
 	PostID int64        `json:"post_id"`
 	Data   *PostPayload `json:"data,omitempty"`
+	Media  []string     `json:"media,omitempty"` // ✅ Ajout du tableau d'URL signées prêtes à l'emploi
 	Error  string       `json:"error,omitempty"`
 }

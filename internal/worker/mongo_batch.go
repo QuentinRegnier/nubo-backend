@@ -79,14 +79,31 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 					SetFilter(bson.M{"_id": e.ID}).
 					SetUpdate(bson.M{"$set": e.Payload}))
 
+			// ... dans la boucle switch e.Action de flushMongo ...
+
 			case redis.ActionDelete:
-				if entity == redis.EntityPost || entity == redis.EntityComment { // <-- AJOUT ICI
-					// SOFT DELETE pour les Posts et Commentaires
+				if entity == redis.EntityPost {
+					// 1. SOFT DELETE du Post (Pour le retirer des recherches L2)
+					models = append(models, libMongo.NewUpdateOneModel().
+						SetFilter(bson.M{"id": e.ID}).
+						SetUpdate(bson.M{"$set": bson.M{"visibility": -1}}))
+
+					// 2. CASCADE MONGO : Hard Delete de tous les commentaires
+					if mongo.Comments != nil {
+						_, _ = mongo.Comments.DB.Collection(mongo.Comments.Name).DeleteMany(ctx, bson.M{"post_id": e.ID})
+					}
+					// 3. CASCADE MONGO : Hard Delete des Likes (target_type = 0)
+					if mongo.Likes != nil {
+						_, _ = mongo.Likes.DB.Collection(mongo.Likes.Name).DeleteMany(ctx, bson.M{"target_id": e.ID, "target_type": 0})
+					}
+
+				} else if entity == redis.EntityComment {
+					// SOFT DELETE pour les Commentaires effacés unitairement
 					models = append(models, libMongo.NewUpdateOneModel().
 						SetFilter(bson.M{"id": e.ID}).
 						SetUpdate(bson.M{"$set": bson.M{"visibility": -1}}))
 				} else {
-					// HARD DELETE pour le reste (ex: Likes, Relations)
+					// HARD DELETE pour les autres entités
 					models = append(models, libMongo.NewDeleteOneModel().
 						SetFilter(bson.M{"id": e.ID}))
 				}

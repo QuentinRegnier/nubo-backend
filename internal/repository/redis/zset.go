@@ -124,3 +124,16 @@ func ZRangeByLex(ctx context.Context, key string, prefix string, limit int64) ([
 
 	return redisgo.Rdb.ZRangeByLex(ctx, key, opt).Result()
 }
+
+// ZRem supprime un ou plusieurs membres d'un ZSET.
+// Complexité : O(M * log(N))
+// Utilisé pour retirer un commentaire supprimé du classement.
+func ZRem(ctx context.Context, key string, members ...interface{}) error {
+	return redisgo.Rdb.ZRem(ctx, key, members...).Err()
+}
+
+// Del supprime une ou plusieurs clés brutes de Redis.
+// Utilisé pour atomiser entièrement un ZSET, un SET d'idempotence, etc.
+func Del(ctx context.Context, keys ...string) error {
+	return redisgo.Rdb.Del(ctx, keys...).Err()
+}

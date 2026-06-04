@@ -13,29 +13,27 @@ import (
 // DeletePost gère la rétractation d'un post (Purge L1, Purge LSH, Soft Delete Workers).
 func DeletePost(ctx context.Context, input post_models.DeletePostInput) error {
 	// ─────────────────────────────────────────────────────────────────────────
-	// 1. VERIFICATION DROIT D'ACCÈS ET RÉCUPÉRATION DE L'OBJET COMPLET (Nécessaire pour les étapes suivantes)
+	// 1. VERIFICATION DROIT D'ACCÈS ET RÉCUPÉRATION DE L'OBJET COMPLET
 	// ─────────────────────────────────────────────────────────────────────────
-
 	post, err := security_service.LeftPost(ctx, input.PostID, input.UserID)
 	if err != nil {
 		return err
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// 2. PURGE SYNCHRONE DES CACHES (Disparition instantanée pour les utilisateurs)
+	// 2. PURGE SYNCHRONE DES CACHES (Disparition instantanée)
 	// ─────────────────────────────────────────────────────────────────────────
-
-	// A. Suppression de l'Object Cache L1
+	// A. Suppression du Post en RAM
 	_ = object_cache_service.DeletePostFromObjectCache(ctx, input.PostID)
 
-	// B. Suppression du seau LSH et du Vecteur (Délégué au service dédié)
+	// B. Purge des Commentaires en RAM (ZSET + JSON L1)
+	object_cache_service.PurgePostCommentsFromL1(ctx, input.PostID)
+
+	// C. Suppression du seau LSH
 	_ = feed_service.PurgePostVectors(ctx, input.PostID)
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// 3. ENVOI AUX WORKERS POUR SOFT-DELETE (BDD et MOST Cache)
+	// 3. ENVOI AUX WORKERS POUR CASCADE BDD
 	// ─────────────────────────────────────────────────────────────────────────
-
-	// On passe l'objet `post` ENTIER dans le payload. C'est crucial pour que
-	// `most_cache_worker.go` puisse lire `post.Hashtags` et nettoyer les bons ZSETs.
 	return redis.EnqueueDB(ctx, post.ID, 0, redis.EntityPost, redis.ActionDelete, post, redis.TargetAll)
 }

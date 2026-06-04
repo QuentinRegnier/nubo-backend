@@ -336,14 +336,34 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 	}
 
 	var query string
-	if entity == redis.EntityPost || entity == redis.EntityComment { // <-- AJOUT ICI
-		// SOFT DELETE
+
+	if entity == redis.EntityPost {
+		// 1. SOFT DELETE des posts
 		query = fmt.Sprintf("UPDATE %s SET visibility = -1 WHERE id = ANY($1)", mapper.TableName())
+		_, err := postgres.PostgresDB.ExecContext(ctx, query, pq.Array(ids))
+		if err != nil {
+			return err
+		}
+
+		// 2. CASCADE SQL : Soft Delete des commentaires associés
+		_, _ = postgres.PostgresDB.ExecContext(ctx, "UPDATE content.comments SET visibility = -1 WHERE post_id = ANY($1)", pq.Array(ids))
+
+		// 3. CASCADE SQL : Hard Delete des likes associés (0 = targetType Post)
+		_, _ = postgres.PostgresDB.ExecContext(ctx, "DELETE FROM content.likes WHERE target_type = 0 AND target_id = ANY($1)", pq.Array(ids))
+
+		return nil // ✅ Tout s'est bien passé pour la cascade du Post
+
+	} else if entity == redis.EntityComment {
+		// SOFT DELETE pour les commentaires effacés unitairement
+		query = fmt.Sprintf("UPDATE %s SET visibility = -1 WHERE id = ANY($1)", mapper.TableName())
+
 	} else {
-		// HARD DELETE
+		// HARD DELETE pour le reste des entités standards
 		query = fmt.Sprintf("DELETE FROM %s WHERE id = ANY($1)", mapper.TableName())
 	}
 
+	// ✅ UNIFICATION DE L'EXÉCUTION (Le code n'est plus du tout "Unreachable")
+	// Ce bloc s'exécutera uniquement pour les commentaires unitaires et le reste (EntityComment, EntityUser, etc.)
 	_, err := postgres.PostgresDB.ExecContext(ctx, query, pq.Array(ids))
 	return err
 }

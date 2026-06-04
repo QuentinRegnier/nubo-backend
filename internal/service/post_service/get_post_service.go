@@ -8,6 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 )
 
 // GetPosts orchestre la récupération d'une liste de posts et applique le filtrage de visibilité.
@@ -81,7 +82,33 @@ func GetPosts(ctx context.Context, input post_models.GetPostInput) []post_models
 		// ─────────────────────────────────────────────────────────────────
 		// Règle D : Public (Visibility = 0) ou accès validé
 		// ─────────────────────────────────────────────────────────────────
-		results = append(results, post_models.GetPostOutput{PostID: id, Data: &post})
+
+		var mediaURLs []string
+
+		// ⚡ HYDRATATION DES MEDIAS ET SIGNATURE HMAC
+		for _, mediaID := range post.MediaIDs {
+			// On récupère le fameux storage_path
+			mediaPayload, err := media_service.GetMediaCascade(ctx, mediaID)
+
+			// Si le média existe et n'a pas été supprimé par l'auteur
+			if err == nil && mediaPayload.Visibility {
+				// On génère l'URL avec le vrai storage_path !
+				signedURL := media_service.GenerateWatermarkedURL(
+					mediaPayload.StoragePath, // "users/12/posts/45/uuid.avif"
+					post.UserID,              // L'auteur
+					post.ID,                  // Le Post
+					input.UserID,             // Le Lecteur
+				)
+				mediaURLs = append(mediaURLs, signedURL)
+			}
+		}
+
+		val := post
+		results = append(results, post_models.GetPostOutput{
+			PostID: id,
+			Data:   &val,
+			Media:  mediaURLs, // Le client reçoit les URLs prêtes à l'emploi
+		})
 	}
 
 	return results
