@@ -6,8 +6,10 @@ import (
 	"strings"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/report_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/lib/pq"
 )
@@ -49,6 +51,10 @@ func GetMapper(entity redis.EntityType) EntityMapper {
 	// case redis.EntityMembers:
 	// 	return &MemberMapper{}
 
+	// --- MODERATION ---
+	case redis.EntityReport:
+		return &ReportMapper{}
+
 	default:
 		return nil
 	}
@@ -79,7 +85,7 @@ func (m *UserMapper) ToRow(data any) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var u models.UserRequest
+	var u auth_models.UserPayload
 	if err := json.Unmarshal(jsonBytes, &u); err != nil {
 		return nil, err
 	}
@@ -288,8 +294,8 @@ func (m *LikeMapper) ToRow(data any) ([]any, error) {
 	return []any{l.ID, l.TargetType, l.TargetID, l.UserID, l.CreatedAt}, nil
 }
 
-// Pas d'update sur les likes
-func (m *LikeMapper) BuildUpdateQuery(t string) string { return "" }
+// Pas d'update sur les likes (le paramètre requis par l'interface est ignoré via '_')
+func (m *LikeMapper) BuildUpdateQuery(_ string) string { return "" }
 
 // // ============================================================================
 // //                                MESSAGING SCHEMA
@@ -354,6 +360,56 @@ func (m *LikeMapper) BuildUpdateQuery(t string) string { return "" }
 // func (m *MemberMapper) BuildUpdateQuery(t string) string {
 // 	return buildGenericUpdateQuery(m.TableName(), t, m.Columns())
 // }
+
+// ============================================================================
+//                                MODERATION SCHEMA
+// ============================================================================
+
+// --- REPORT MAPPER (moderation.reports) ---
+type ReportMapper struct{}
+
+func (m *ReportMapper) TableName() string { return "moderation.reports" }
+
+func (m *ReportMapper) Columns() []string {
+	return []string{
+		"id",
+		"reporter_id",
+		"target_type",
+		"target_ids",
+		"category",
+		"reason",
+		"state",
+		"created_at",
+		"updated_at",
+	}
+}
+
+func (m *ReportMapper) ToRow(data any) ([]any, error) {
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	var r report_models.ReportPayload
+	if err := json.Unmarshal(jsonBytes, &r); err != nil {
+		return nil, err
+	}
+
+	return []any{
+		r.ID,
+		r.ReporterID,
+		r.TargetType,
+		pq.Array(r.TargetIDs), // ✅ Indispensable pour insérer un bigint[]
+		r.Category,
+		r.Reason,
+		r.State,
+		r.CreatedAt,
+		r.UpdatedAt,
+	}, nil
+}
+
+func (m *ReportMapper) BuildUpdateQuery(tempTable string) string {
+	return buildGenericUpdateQuery(m.TableName(), tempTable, m.Columns())
+}
 
 // ============================================================================
 //                                UTILITAIRES

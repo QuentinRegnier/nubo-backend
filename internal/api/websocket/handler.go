@@ -31,7 +31,7 @@ func WSHandler(c *gin.Context) {
 
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		log.Println("Upgrade error:", err)
+		log.Println("Upgrade nubo_error:", err)
 		return
 	}
 

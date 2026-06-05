@@ -3,13 +3,13 @@ package mongo
 import (
 	"fmt"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 )
 
-func MongoLoadUser(ID int64, Username string, Email string, Phone string) (models.UserRequest, error) {
+func MongoLoadUser(ID int64, Username string, Email string, Phone string) (auth_models.UserPayload, error) {
 	fmt.Println("MongoLoadUser called with:", ID, Username, Email, Phone)
-	var u models.UserRequest
+	var u auth_models.UserPayload
 
 	// Construction du filtre de recherche
 	filter := make(map[string]interface{})
@@ -22,7 +22,7 @@ func MongoLoadUser(ID int64, Username string, Email string, Phone string) (model
 	} else if Phone != "" {
 		filter["phone"] = Phone
 	} else {
-		return models.UserRequest{}, fmt.Errorf("aucun critère de recherche mongo")
+		return auth_models.UserPayload{}, fmt.Errorf("aucun critère de recherche mongo")
 	}
 
 	fmt.Println("MongoLoadUser filter:", filter)

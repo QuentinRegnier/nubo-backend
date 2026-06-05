@@ -42,7 +42,7 @@ const (
 	EntityMessage      EntityType = "Messages"
 	EntityView         EntityType = "VIEW"
 	EntityFeed         EntityType = "Feeds"
-	// Ajoute les autres entités selon tes besoins
+	EntityReport       EntityType = "Reports"
 )
 
 // DBTarget : Bitmask pour savoir où envoyer (Mongo, Postgres, ou les deux)
@@ -97,7 +97,7 @@ func EnqueueDB(ctx context.Context, id int64, partitionKey int64, entity EntityT
 
 	bytes, err := json.Marshal(event)
 	if err != nil {
-		return fmt.Errorf("marshal error: %w", err)
+		return fmt.Errorf("marshal nubo_error: %w", err)
 	}
 
 	// C'EST ICI QUE TOUT SE JOUE : Choix du Shard

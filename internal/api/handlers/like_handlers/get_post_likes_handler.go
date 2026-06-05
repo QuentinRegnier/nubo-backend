@@ -42,14 +42,14 @@ func GetPostLikesHandler(c *gin.Context) {
 	// 1. Authentification
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Utilisateur non identifié"})
+		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
 		return
 	}
 
 	// 2. Extraction du PostID depuis l'URL
 	postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || postID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID de publication invalide"})
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "ID de publication invalide"})
 		return
 	}
 
@@ -77,10 +77,10 @@ func GetPostLikesHandler(c *gin.Context) {
 	if err != nil {
 		if err.Error() == "not found" || err.Error() == "forbidden" || err.Error() == "banned" {
 			// On maintient le mode furtif
-			c.JSON(http.StatusNotFound, gin.H{"error": "Post introuvable ou inaccessible"})
+			c.JSON(http.StatusNotFound, gin.H{"nubo_error": "Post introuvable ou inaccessible"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur interne lors de la récupération"})
+		c.JSON(http.StatusInternalServerError, gin.H{"nubo_error": "Erreur interne lors de la récupération"})
 		return
 	}
 

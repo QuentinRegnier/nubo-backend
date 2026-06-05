@@ -14,7 +14,7 @@ func JWTMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenString := c.GetHeader("Authorization")
 		if tokenString == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header manquant"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"nubo_error": "Authorization header manquant"})
 			return
 		}
 
@@ -31,19 +31,19 @@ func JWTMiddleware() gin.HandlerFunc {
 
 		token, err := jwt.Parse(tokenString, keyFunc)
 		if err != nil || !token.Valid {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token invalide"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"nubo_error": "Token invalide"})
 			return
 		}
 
 		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok || !token.Valid {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Claims invalides"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"nubo_error": "Claims invalides"})
 			return
 		}
 
 		if exp, ok := claims["exp"].(float64); ok {
 			if time.Now().After(time.Unix(int64(exp), 0)) {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token expiré"})
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"nubo_error": "Token expiré"})
 				return
 			}
 		}
@@ -55,7 +55,7 @@ func JWTMiddleware() gin.HandlerFunc {
 			c.Set("deviceToken", dev) // Identifiant unique de la session
 		} else {
 			// Si c'est un vieux token sans claim 'dev', on rejette par sécurité
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token format obsolete (missing device info)"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"nubo_error": "Token format obsolete (missing device info)"})
 			return
 		}
 

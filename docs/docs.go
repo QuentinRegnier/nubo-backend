@@ -89,7 +89,7 @@ const docTemplate = `{
         },
         "/login": {
             "post_service": {
-                "description": "Authentifie un utilisateur via email/password et renvoie son profil complet + token.\n\n**Règles \u0026 Erreurs :**\n\n🔴 **400 Bad Request :**\n* ` + "`" + `The 'data' field containing the JSON is required` + "`" + ` : Champ 'data' manquant.\n* ` + "`" + `Invalid JSON format in 'data'` + "`" + ` : Le JSON envoyé est mal formé.\n\n🟠 **401 Unauthorized :**\n* ` + "`" + `Invalid email or password` + "`" + ` : Identifiants incorrects ou utilisateur introuvable.\n\n⛔ **403 Forbidden :**\n* ` + "`" + `Account deactivated` + "`" + ` : Le compte a été désactivé.\n* ` + "`" + `Account banned` + "`" + ` : Le compte a été banni.\n\n⚫ **500 Internal Server Error :**\n* ` + "`" + `database error` + "`" + ` : Erreur technique interne.",
+                "description": "Authentifie un utilisateur via email/password et renvoie son profil complet + token.\n\n**Règles \u0026 Erreurs :**\n\n🔴 **400 Bad Request :**\n* ` + "`" + `The 'data' field containing the JSON is required` + "`" + ` : Champ 'data' manquant.\n* ` + "`" + `Invalid JSON format in 'data'` + "`" + ` : Le JSON envoyé est mal formé.\n\n🟠 **401 Unauthorized :**\n* ` + "`" + `Invalid email or password` + "`" + ` : Identifiants incorrects ou utilisateur introuvable.\n\n⛔ **403 Forbidden :**\n* ` + "`" + `Account deactivated` + "`" + ` : Le compte a été désactivé.\n* ` + "`" + `Account banned` + "`" + ` : Le compte a été banni.\n\n⚫ **500 Internal Server Error :**\n* ` + "`" + `database nubo_error` + "`" + ` : Erreur technique interne.",
                 "consumes": [
                     "application/json",
                     "multipart/form-data"
@@ -301,7 +301,7 @@ const docTemplate = `{
         },
         "/signup": {
             "post_service": {
-                "description": "Inscription complète avec upload d'avatar et données JSON.\n\n**Règles de validation \u0026 Erreurs :**\n\n🔴 **400 Bad Request (Erreurs client) :**\n* ` + "`" + `The 'data' field containing the JSON is required` + "`" + ` : Tu as oublié d'envoyer le champ texte 'data'.\n* ` + "`" + `Invalid JSON format in 'data': ...` + "`" + ` : Ton JSON est mal écrit (virgule manquante, accolade, etc).\n* ` + "`" + `Invalid date format. Expected format: ddmmaaaa` + "`" + ` : La date de naissance n'est pas bonne.\n* ` + "`" + `Gender must be 0, 1, 2, or null` + "`" + ` : Tu as envoyé un entier invalide pour le sexe.\n* ` + "`" + `Impossible to read image file` + "`" + ` : Le fichier image est corrompu ou illisible.\n\n🟠 **409 Conflict (Doublons) :**\n* ` + "`" + `This username is already taken` + "`" + ` : Le pseudo est déjà en base.\n\n⚫ **500 Internal Server Error (Problèmes serveur) :**\n* ` + "`" + `Internal error (image upload)` + "`" + ` : MinIO est down ou mal configuré.\n* ` + "`" + `Internal error (token generation)` + "`" + ` : Problème avec la signature JWT.\n* ` + "`" + `database error` + "`" + ` : Postgres ou Mongo ne répondent pas.",
+                "description": "Inscription complète avec upload d'avatar et données JSON.\n\n**Règles de validation \u0026 Erreurs :**\n\n🔴 **400 Bad Request (Erreurs client) :**\n* ` + "`" + `The 'data' field containing the JSON is required` + "`" + ` : Tu as oublié d'envoyer le champ texte 'data'.\n* ` + "`" + `Invalid JSON format in 'data': ...` + "`" + ` : Ton JSON est mal écrit (virgule manquante, accolade, etc).\n* ` + "`" + `Invalid date format. Expected format: ddmmaaaa` + "`" + ` : La date de naissance n'est pas bonne.\n* ` + "`" + `Gender must be 0, 1, 2, or null` + "`" + ` : Tu as envoyé un entier invalide pour le sexe.\n* ` + "`" + `Impossible to read image file` + "`" + ` : Le fichier image est corrompu ou illisible.\n\n🟠 **409 Conflict (Doublons) :**\n* ` + "`" + `This username is already taken` + "`" + ` : Le pseudo est déjà en base.\n\n⚫ **500 Internal Server Error (Problèmes serveur) :**\n* ` + "`" + `Internal nubo_error (image upload)` + "`" + ` : MinIO est down ou mal configuré.\n* ` + "`" + `Internal nubo_error (token generation)` + "`" + ` : Problème avec la signature JWT.\n* ` + "`" + `database nubo_error` + "`" + ` : Postgres ou Mongo ne répondent pas.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -368,7 +368,7 @@ const docTemplate = `{
         "github_com_QuentinRegnier_nubo-backend_internal_domain.ErrorResponse": {
             "type": "object",
             "properties": {
-                "error": {
+                "nubo_error": {
                     "type": "string",
                     "example": "Invalid JSON format"
                 }

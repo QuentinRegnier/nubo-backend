@@ -12,11 +12,13 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/gin-gonic/gin"
 )
@@ -53,7 +55,7 @@ func HMACMiddleware() gin.HandlerFunc {
 		clientSig := c.GetHeader("X-Signature")
 
 		if clientTs == "" || clientSig == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Headers de sécurité manquants"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Headers de sécurité manquants"})
 			return
 		}
 
@@ -64,7 +66,7 @@ func HMACMiddleware() gin.HandlerFunc {
 		fmt.Println("🔐 HMAC Middleware: Extracted Context -", "userID:", userIDRaw, "deviceToken:", deviceTokenRaw)
 
 		if !existsUID || !existsDev {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Contexte d'authentification manquant"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Contexte d'authentification manquant"})
 			return
 		}
 
@@ -105,43 +107,55 @@ func HMACMiddleware() gin.HandlerFunc {
 		var session models.SessionsRequest
 		var sessionFound bool = false
 
-		// A. Essai Redis
-		// AJOUT DE LOGS ICI
-		session, err := redis.RedisLoadSession(userID, deviceToken, "", "")
+		// A. Essai Cache L1 (Vitesse absolue pour 99% des requêtes)
+		session, err := cache_service.LoadSessionFromCache(c, userID, deviceToken, "")
 		if err == nil && session.ID != 0 {
-			fmt.Println("✅ Session trouvée dans Redis")
 			sessionFound = true
 		} else {
-			fmt.Printf("⚠️ Redis Load Echec: %v (UserID: %d, Device: %s)\n", err, userID, deviceToken)
+			// En production, tu pourras retirer ce log pour ne pas spammer la console lors d'un cache miss
+			fmt.Printf("⚠️ Cache L1 Miss: %v (UserID: %d, Device: %s)\n", err, userID, deviceToken)
 		}
 
 		if !sessionFound {
-			// B. Essai Mongo
-			// AJOUT DE LOGS ICI
+			// B. Essai Mongo L2 (Stockage Documentaire)
 			session, errMongo := mongo.MongoLoadSession(userID, deviceToken, "", "")
 			if errMongo == nil && session.ID != 0 {
-				fmt.Println("✅ Session trouvée dans Mongo")
+				fmt.Println("✅ Session trouvée dans Mongo L2, réhydratation du cache L1...")
 				sessionFound = true
-				// Repopulation...
-			} else {
-				fmt.Printf("⚠️ Mongo Load Echec: %v\n", errMongo)
+				// Repopulation : Le SET écrase/crée la session dans le cache pour les requêtes suivantes
+				_ = cache_service.SetSessionInCache(c, session)
 			}
 		}
 
 		if !sessionFound {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Session invalide ou expirée"})
+			// C. Essai Postgres L3 (Le filet de sécurité absolu)
+			session, errPg := postgres.FuncLoadSession(-1, userID, deviceToken, "")
+			if errPg == nil && session.ID != 0 {
+				fmt.Println("✅ Session trouvée dans Postgres L3, réhydratation massive...")
+				sessionFound = true
+
+				// Repopulation L1 (Cache pour la vitesse)
+				_ = cache_service.SetSessionInCache(c, session)
+
+				// Repopulation asynchrone L2 (Mongo) pour réparer le trou documentaire
+				_ = redis.EnqueueDB(c, session.ID, 0, redis.EntitySession, redis.ActionCreate, session, redis.TargetMongo)
+			}
+		}
+
+		if !sessionFound {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Session invalide ou expirée"})
 			return
 		}
 
 		// 4. Anti-Rejeu (Timestamp)
 		tsInt, err := strconv.ParseInt(clientTs, 10, 64)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Timestamp invalide"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Timestamp invalide"})
 			return
 		}
 		now := time.Now().Unix()
 		if math.Abs(float64(now-tsInt)) > variables.ToleranceTimeSeconds {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Requête expirée"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Requête expirée"})
 			return
 		}
 
@@ -176,7 +190,7 @@ func HMACMiddleware() gin.HandlerFunc {
 		}
 
 		if !isValid {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Signature HMAC invalide"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Signature HMAC invalide"})
 			return
 		}
 

@@ -69,7 +69,7 @@ const (
  * @param functionID - L'identifiant (constante) de la fonction à appeler.
  * @param params - La liste des arguments à passer à la fonction SQL.
  * @return interface{} - Le résultat retourné par la fonction SQL (ex: un ID, un booléen).
- * @return error - Une erreur si l'appel échoue.
+ * @return nubo_error - Une erreur si l'appel échoue.
  */
 func CallSQLFunction(functionID int, params ...interface{}) (interface{}, error) {
 

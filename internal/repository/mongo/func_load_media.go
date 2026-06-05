@@ -18,7 +18,11 @@ func MongoLoadMedia(mediaIDs []int64) ([]models.MediaRequest, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	filter := bson.M{"id": bson.M{"$in": mediaIDs}}
+	// ✅ On ajoute "visibility: true" au filtre pour ignorer silencieusement les supprimés
+	filter := bson.M{
+		"id":         bson.M{"$in": mediaIDs},
+		"visibility": true,
+	}
 
 	cursor, err := Media.DB.Collection(Media.Name).Find(ctx, filter)
 	if err != nil {

@@ -2,6 +2,7 @@ package object_cache_service
 
 import (
 	"context"
+	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -19,6 +20,12 @@ func SetMediaInObjectCache(ctx context.Context, media models.MediaRequest) error
 func GetMediaFromObjectCache(ctx context.Context, mediaID int64) (models.MediaRequest, error) {
 	var m models.MediaRequest
 	err := redis.Media.GetObject(ctx, mediaID, &m)
+
+	// ✅ Rejet immédiat si le média est soft-deleted
+	if err == nil && !m.Visibility {
+		return m, errors.New("media deleted")
+	}
+
 	return m, err
 }
 

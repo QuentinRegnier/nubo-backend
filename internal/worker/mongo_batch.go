@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"go.mongodb.org/mongo-driver/bson"
@@ -83,20 +84,31 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 
 			case redis.ActionDelete:
 				if entity == redis.EntityPost {
-					// 1. SOFT DELETE du Post (Pour le retirer des recherches L2)
+					// On doit décoder le payload pour récupérer la liste des MediaIDs
+					var post post_models.PostPayload
+					jsonBytes, _ := json.Marshal(e.Payload)
+					_ = json.Unmarshal(jsonBytes, &post)
+
+					// 1. SOFT DELETE du Post
 					models = append(models, libMongo.NewUpdateOneModel().
 						SetFilter(bson.M{"id": e.ID}).
 						SetUpdate(bson.M{"$set": bson.M{"visibility": -1}}))
 
-					// 2. CASCADE MONGO : Hard Delete de tous les commentaires
+					// 2. HARD DELETE des Commentaires
 					if mongo.Comments != nil {
 						_, _ = mongo.Comments.DB.Collection(mongo.Comments.Name).DeleteMany(ctx, bson.M{"post_id": e.ID})
 					}
-					// 3. CASCADE MONGO : Hard Delete des Likes (target_type = 0)
+
+					// 3. HARD DELETE des Likes
 					if mongo.Likes != nil {
 						_, _ = mongo.Likes.DB.Collection(mongo.Likes.Name).DeleteMany(ctx, bson.M{"target_id": e.ID, "target_type": 0})
 					}
 
+					// ✅ 4. HARD DELETE des Médias dans Mongo
+					if mongo.Media != nil && len(post.MediaIDs) > 0 {
+						models = append(models, libMongo.NewDeleteManyModel().
+							SetFilter(bson.M{"id": bson.M{"$in": post.MediaIDs}}))
+					}
 				} else if entity == redis.EntityComment {
 					// SOFT DELETE pour les Commentaires effacés unitairement
 					models = append(models, libMongo.NewUpdateOneModel().

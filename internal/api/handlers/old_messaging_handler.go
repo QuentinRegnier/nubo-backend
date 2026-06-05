@@ -3,7 +3,7 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/gin-gonic/gin"
@@ -27,14 +27,14 @@ func InboxHandler(c *gin.Context) {
 	// 1. Identification
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Utilisateur non identifié"})
+		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
 		return
 	}
 
 	// 2. Appel du pipeline d'hydratation
 	inbox, err := cache_service.GetInboxView(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur lors du chargement de l'inbox"})
+		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur lors du chargement de l'inbox"})
 		return
 	}
 

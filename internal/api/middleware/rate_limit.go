@@ -46,7 +46,7 @@ func RateLimiter() gin.HandlerFunc {
 		// Si on dépasse la limite
 		if count > RateLimitMaxRequests {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"error": "Too many requests. Please calm down.",
+				"nubo_error": "Too many requests. Please calm down.",
 			})
 			return
 		}

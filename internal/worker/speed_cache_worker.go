@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
@@ -18,7 +19,7 @@ func updateSpeedCache(ctx context.Context, e redis.AsyncEvent) {
 	if e.Type == redis.EntityUser && e.Action == redis.ActionCreate {
 		jsonBytes, err := json.Marshal(e.Payload)
 		if err == nil {
-			var user models.UserRequest
+			var user auth_models.UserPayload
 			if err := json.Unmarshal(jsonBytes, &user); err == nil {
 				// Action 1 : Créer le UserLite
 				userLite := models.UserLiteRequest{

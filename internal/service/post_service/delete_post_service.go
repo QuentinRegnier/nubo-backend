@@ -32,6 +32,11 @@ func DeletePost(ctx context.Context, input post_models.DeletePostInput) error {
 	// C. Suppression du seau LSH
 	_ = feed_service.PurgePostVectors(ctx, input.PostID)
 
+	// D. Purge absolue des Médias associés en RAM
+	for _, mediaID := range post.MediaIDs {
+		_ = object_cache_service.DeleteMediaFromObjectCache(ctx, mediaID)
+	}
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// 3. ENVOI AUX WORKERS POUR CASCADE BDD
 	// ─────────────────────────────────────────────────────────────────────────

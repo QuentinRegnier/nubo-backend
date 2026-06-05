@@ -132,7 +132,7 @@ func parseRedisInfoInt(info string, key string) int64 {
 
 // getRedisMemoryUsage récupère la mémoire utilisée actuelle via INFO MEMORY
 // Utilisé principalement dans la boucle de nettoyage pour vérifier si on est repassé sous le seuil.
-func getRedisMemoryUsage(ctx context.Context, rdb *redis.Client) (int64, error) {
+func getRedisMemoryUsage(ctx context.Context, rdb *redis.Client) (int64, nubo_error) {
 	info, err := rdb.Info(ctx, "memory").Result()
 	if err != nil {
 		return 0, err
@@ -147,7 +147,7 @@ func getRedisMemoryUsage(ctx context.Context, rdb *redis.Client) (int64, error) 
 const DefaultFluxTTL = 1 * time.Second
 
 // PushFluxWithTTL publie un message sur un flux et crée un TTL individuel
-func PushFluxWithTTL(rdb *redis.Client, nodeName string, messageID string, message []byte, ttl time.Duration) error {
+func PushFluxWithTTL(rdb *redis.Client, nodeName string, messageID string, message []byte, ttl time.Duration) nubo_error {
 	ctx := context.Background()
 
 	// Stocke le message temporairement avec TTL individuel

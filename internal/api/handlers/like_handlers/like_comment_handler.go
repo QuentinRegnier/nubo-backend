@@ -36,14 +36,14 @@ func LikeCommentHandler(c *gin.Context) {
 	// 1. Sécurité
 	callerUserID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Utilisateur non identifié"})
+		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
 		return
 	}
 
 	// 2. Binding du payload
 	var input like_models.LikeCommentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Format JSON invalide ou action non reconnue ('like'/'unlike' attendu)"})
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Format JSON invalide ou action non reconnue ('like'/'unlike' attendu)"})
 		return
 	}
 
@@ -53,10 +53,10 @@ func LikeCommentHandler(c *gin.Context) {
 	err = like_service.ToggleCommentLike(c.Request.Context(), input)
 	if err != nil {
 		if err.Error() == "not found" {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Commentaire introuvable ou supprimé"})
+			c.JSON(http.StatusNotFound, gin.H{"nubo_error": "Commentaire introuvable ou supprimé"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur interne lors du traitement du like"})
+		c.JSON(http.StatusInternalServerError, gin.H{"nubo_error": "Erreur interne lors du traitement du like"})
 		return
 	}
 

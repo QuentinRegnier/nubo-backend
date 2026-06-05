@@ -158,7 +158,12 @@ func fetchPostsCascade(ctx context.Context, ids []int64) map[int64]post_models.P
 	if errPg == nil {
 		for _, p := range pgPosts {
 			postsMap[p.ID] = p
-			_ = object_cache_service.SetPostInObjectCache(ctx, p) // Réhydratation L1
+
+			// A. Réhydratation du stockage à froid L2 (MongoDB) pour soulager définitivement Postgres
+			_ = mongo.MongoUpsertPost(p)
+
+			// B. Réhydratation du cache haute performance L1 (Redis JSON)
+			_ = object_cache_service.SetPostInObjectCache(ctx, p)
 		}
 	}
 

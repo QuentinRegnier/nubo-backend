@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 
-	redisgogo "github.com/QuentinRegnier/nubo-backend/internal/pkg/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 )
@@ -88,7 +87,7 @@ func (d *FeedDistributor) HandlePullToRefresh(ctx context.Context, opts RefreshO
 		futurePageKey := fmt.Sprintf(RedisKeyFeedBufferPage, opts.UserID, nextPage+1)
 
 		// Note : Exists() est O(1), ça ne coûte rien. On évalue directement le booléen.
-		exists, _ := redisgogo.Exists(ctx, futurePageKey)
+		exists, _ := redis.Exists(ctx, futurePageKey)
 		if !exists {
 
 			// On poste l'événement dans ta file Redis shardée.

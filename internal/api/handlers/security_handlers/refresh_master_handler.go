@@ -12,14 +12,15 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/security_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/gin-gonic/gin"
 )
@@ -56,7 +57,7 @@ func RefreshMaster(c *gin.Context) {
 	// 1. Lecture du Body (Nécessaire pour le calcul HMAC manuel plus bas)
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Erreur lecture body"})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Erreur lecture body"})
 		return
 	}
 
@@ -70,7 +71,7 @@ func RefreshMaster(c *gin.Context) {
 	if jsonData != "" {
 		// CAS 1 : Multipart/Form-Data (celui que tu veux utiliser)
 		if err := json.Unmarshal([]byte(jsonData), &input); err != nil {
-			c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Invalid JSON format in 'data': " + err.Error()})
+			c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Invalid JSON format in 'data': " + err.Error()})
 			return
 		}
 	} else {
@@ -78,12 +79,12 @@ func RefreshMaster(c *gin.Context) {
 		// Si 'data' est vide, on essaie de parser le body entier
 		if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, &input); err != nil {
-				c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Invalid JSON format"})
+				c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Invalid JSON format"})
 				return
 			}
 		} else {
 			// Aucun contenu trouvé
-			c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "The 'data' field containing the JSON is required"})
+			c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "The 'data' field containing the JSON is required"})
 			return
 		}
 	}
@@ -100,30 +101,31 @@ func RefreshMaster(c *gin.Context) {
 	clientTs := c.GetHeader("X-Timestamp")
 
 	if clientHMAC == "" || clientTs == "" {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Headers de sécurité manquants"})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Headers de sécurité manquants"})
 		return
 	}
 
-	// 5. Récupération de la Session (Cascade : Redis -> Mongo -> Postgres)
+	// 5. Récupération de la Session (Cascade : Cache L1 -> Mongo L2 -> Postgres L3)
 	var sessionRaw models.SessionsRequest
 	var sessionFound bool
 
-	// A. Essai Redis
-	if s, err := redis.RedisLoadSession(input.UserID, "", input.MasterToken, ""); err == nil && s.ID != 0 {
+	// A. Essai Cache L1
+	// Note: LoadSessionFromCache prend (ctx, userID, deviceToken, masterToken, currentSecret)
+	if s, err := cache_service.LoadSessionFromCache(c, input.UserID, "", input.MasterToken); err == nil && s.ID != 0 {
 		sessionRaw = s
 		sessionFound = true
 	}
 
-	// B. Essai Mongo
+	// B. Essai Mongo L2
 	if !sessionFound {
 		if s, err := mongo.MongoLoadSession(input.UserID, "", input.MasterToken, ""); err == nil && s.ID != 0 {
 			sessionRaw = s
 			sessionFound = true
-			_ = redis.RedisCreateSession(sessionRaw) // Repopulation cache_service
+			_ = cache_service.SetSessionInCache(c, sessionRaw) // Repopulation instantanée L1
 		}
 	}
 
-	// C. Essai Postgres
+	// C. Essai Postgres L3
 	if !sessionFound {
 		s, err := postgres.FuncLoadSession(-1, input.UserID, "", input.MasterToken)
 		if err == nil && s.ID != 0 {
@@ -131,13 +133,13 @@ func RefreshMaster(c *gin.Context) {
 			sessionFound = true
 			// Repopulation des backups
 			_ = redis.EnqueueDB(c, s.ID, 0, redis.EntitySession, redis.ActionCreate, s, redis.TargetMongo)
-			_ = redis.RedisCreateSession(s)
+			_ = cache_service.SetSessionInCache(c, s) // Repopulation instantanée L1
 		}
 	}
 
 	// SÉCURITÉ CRITIQUE : Si après les 3 essais on n'a rien, on arrête TOUT.
 	if !sessionFound || sessionRaw.ID == 0 {
-		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Session introuvable"})
+		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Session introuvable"})
 		return
 	}
 
@@ -148,30 +150,30 @@ func RefreshMaster(c *gin.Context) {
 	stringToSign := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, clientTs, contentToSign)
 	fmt.Printf("StringToSign for Master Check: %s\n", stringToSign) // --- IGNORE ---
 	if !security.CheckHMAC(stringToSign, input.MasterToken, clientHMAC) {
-		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Signature HMAC invalide (Master Check)"})
+		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Signature HMAC invalide (Master Check)"})
 		return
 	}
 
 	// 6. Génération des Nouveaux Credentials
 	newMasterToken, err := pkg.GenerateToken(input.UserID, sessionRaw.DeviceToken, variables.MasterTokenExpirationSeconds)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur génération MasterToken"})
+		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur génération MasterToken"})
 		return
 	}
 
 	newJWT, err := pkg.GenerateToken(input.UserID, sessionRaw.DeviceToken, variables.JWTExpirationSeconds)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur génération JWT"})
+		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur génération JWT"})
 		return
 	}
 
 	// 7. Reset du Ratchet dans Redis
 	if sessionRaw.CurrentSecret, err = security.ResetRatchet(c, sessionRaw.ID, newMasterToken, sessionRaw.DeviceToken, authHeader); err != nil {
-		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur reset Ratchet"})
+		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur reset Ratchet"})
 		return
 	}
 
-	// 8. Mise à jour des Bases de Données (Redis Sync + Queue Async)
+	// 8. Mise à jour des Bases de Données (Redis Sync L1 + Queue Async L2/L3)
 
 	// Mise à jour de l'objet local
 	sessionRaw.MasterToken = newMasterToken
@@ -180,9 +182,10 @@ func RefreshMaster(c *gin.Context) {
 	sessionRaw.ToleranceTime = time.Now().Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second)
 	sessionRaw.ExpiresAt = time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
 
-	// A. Redis (Immédiat pour le cache_service)
-	if errAdd := redis.RedisUpdateSession(sessionRaw); errAdd != nil {
-		fmt.Printf("⚠️ Warning: Echec update Redis: %v\n", errAdd)
+	// A. Cache L1 (Immédiat pour valider les prochaines requêtes HTTP)
+	// SetSessionInCache écrase proprement l'ancienne valeur et met à jour les index.
+	if errAdd := cache_service.SetSessionInCache(c, sessionRaw); errAdd != nil {
+		fmt.Printf("⚠️ Warning: Echec update Session Cache L1: %v\n", errAdd)
 	}
 
 	// TargetBoth : On veut mettre à jour Mongo (Doc) ET Postgres (Relationnel)
@@ -201,7 +204,7 @@ func RefreshMaster(c *gin.Context) {
 	// A. Sérialisation
 	respBytes, err := json.Marshal(respData)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur encoding réponse"})
+		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur encoding réponse"})
 		return
 	}
 

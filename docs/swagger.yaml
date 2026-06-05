@@ -221,7 +221,7 @@ paths:
         **401 Unauthorized :**\n* `Invalid email or password` : Identifiants incorrects
         ou utilisateur introuvable.\n\n⛔ **403 Forbidden :**\n* `Account deactivated`
         : Le compte a été désactivé.\n* `Account banned` : Le compte a été banni.\n\n⚫
-        **500 Internal Server Error :**\n* `database error` : Erreur technique interne."
+        **500 Internal Server Error :**\n* `database nubo_error` : Erreur technique interne."
       parameters:
       - description: Données JSON (si multipart/form-data)
         in: formData
@@ -400,8 +400,8 @@ paths:
         `Impossible to read image file` : Le fichier image est corrompu ou illisible.\n\n\U0001F7E0
         **409 Conflict (Doublons) :**\n* `This username is already taken` : Le pseudo
         est déjà en base.\n\n⚫ **500 Internal Server Error (Problèmes serveur) :**\n*
-        `Internal error (image upload)` : MinIO est down ou mal configuré.\n* `Internal
-        error (token generation)` : Problème avec la signature JWT.\n* `database error`
+        `Internal nubo_error (image upload)` : MinIO est down ou mal configuré.\n* `Internal
+        nubo_error (token generation)` : Problème avec la signature JWT.\n* `database nubo_error`
         : Postgres ou Mongo ne répondent pas."
       parameters:
       - description: Photo de profil (Image)

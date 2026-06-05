@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"time"
 
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 )
@@ -17,4 +18,9 @@ func Exists(ctx context.Context, key string) (bool, error) {
 	}
 
 	return count > 0, nil
+}
+
+// Expire pose une durée de vie sur une clé
+func Expire(ctx context.Context, key string, expiration time.Duration) error {
+	return redisgo.Rdb.Expire(ctx, key, expiration).Err()
 }

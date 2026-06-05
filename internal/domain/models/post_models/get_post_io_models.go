@@ -11,5 +11,5 @@ type GetPostOutput struct {
 	PostID int64        `json:"post_id"`
 	Data   *PostPayload `json:"data,omitempty"`
 	Media  []string     `json:"media,omitempty"` // ✅ Ajout du tableau d'URL signées prêtes à l'emploi
-	Error  string       `json:"error,omitempty"`
+	Error  string       `json:"nubo_error,omitempty"`
 }

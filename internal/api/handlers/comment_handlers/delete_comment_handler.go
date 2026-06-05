@@ -40,14 +40,14 @@ func DeleteCommentHandler(c *gin.Context) {
 	// 1. Authentification
 	callerUserID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Utilisateur non identifié"})
+		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
 		return
 	}
 
 	// 2. Parsing strict
 	var input comment_models.DeleteCommentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Format JSON invalide ou comment_id manquant"})
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Format JSON invalide ou comment_id manquant"})
 		return
 	}
 
@@ -58,14 +58,14 @@ func DeleteCommentHandler(c *gin.Context) {
 	err = comment_service.DeleteComment(c.Request.Context(), input)
 	if err != nil {
 		if err.Error() == "unauthorized" {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Vous n'êtes pas autorisé à supprimer ce commentaire"})
+			c.JSON(http.StatusForbidden, gin.H{"nubo_error": "Vous n'êtes pas autorisé à supprimer ce commentaire"})
 			return
 		}
 		if err.Error() == "not found" {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Commentaire introuvable ou déjà supprimé"})
+			c.JSON(http.StatusNotFound, gin.H{"nubo_error": "Commentaire introuvable ou déjà supprimé"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur interne lors de la suppression"})
+		c.JSON(http.StatusInternalServerError, gin.H{"nubo_error": "Erreur interne lors de la suppression"})
 		return
 	}
 

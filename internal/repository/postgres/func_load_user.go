@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/lib/pq"
 )
 
-func FuncLoadUser(ID int64, Username string, Email string, Phone string) (models.UserRequest, error) {
+func FuncLoadUser(ID int64, Username string, Email string, Phone string) (auth_models.UserPayload, error) {
 	fmt.Println("FuncLoadUser called with:", ID, Username, Email, Phone)
 
 	// Args...
@@ -37,7 +37,7 @@ func FuncLoadUser(ID int64, Username string, Email string, Phone string) (models
 	fmt.Printf("\n🐘 POSTGRES QUERY : SELECT * FROM auth.func_load_user(%v, %v, '%v', %v)\n", args[0], args[1], args[2], args[3])
 
 	sqlStatement := `SELECT * FROM auth.func_load_user($1, $2, $3, $4)`
-	var res models.UserRequest
+	var res auth_models.UserPayload
 
 	var birthdateRaw sql.NullString
 	var profilePicID sql.NullInt64
@@ -81,10 +81,10 @@ func FuncLoadUser(ID int64, Username string, Email string, Phone string) (models
 		// Si l'erreur est "no rows in result set", c'est que la BDD a renvoyé 0 ligne.
 		if errors.Is(err, sql.ErrNoRows) {
 			fmt.Println("🐘 POSTGRES : Aucune ligne trouvée (sql.ErrNoRows).")
-			return models.UserRequest{}, nil // On renvoie vide, pas d'erreur technique
+			return auth_models.UserPayload{}, nil // On renvoie vide, pas d'erreur technique
 		}
 		fmt.Printf("❌ ERREUR SQL FuncLoadUser (Scan): %v\n", err)
-		return models.UserRequest{}, fmt.Errorf("erreur SQL LoadUser: %w", err)
+		return auth_models.UserPayload{}, fmt.Errorf("erreur SQL LoadUser: %w", err)
 	}
 
 	// 🕵️ DEBUG : On affiche ce qu'on a scanné

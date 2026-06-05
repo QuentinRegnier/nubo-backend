@@ -6,10 +6,10 @@ import (
 	"net/http"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/post_service"
 	"github.com/gin-gonic/gin"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 )
 
@@ -50,7 +50,7 @@ func CreatePostHandler(c *gin.Context) {
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
 		fmt.Printf("❌ Erreur authentification : %v\n", err)
-		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Utilisateur non identifié"})
+		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
 		return
 	}
 
@@ -60,18 +60,18 @@ func CreatePostHandler(c *gin.Context) {
 	var input post_models.CreatePostInput
 	jsonData := c.PostForm("data")
 	if jsonData == "" {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Field 'data' is required"})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Field 'data' is required"})
 		return
 	}
 
 	if err := json.Unmarshal([]byte(jsonData), &input); err != nil {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Invalid JSON: " + err.Error()})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Invalid JSON: " + err.Error()})
 		return
 	}
 
 	// 3. 🛡 BOUCLIER STATIQUE : Validation O(1)
 	if err := pkg.ValidateStruct(&input); err != nil {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Validation failed: " + err.Error()})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Validation failed: " + err.Error()})
 		return
 	}
 
@@ -84,20 +84,20 @@ func CreatePostHandler(c *gin.Context) {
 	form, _ := c.MultipartForm()
 	files := form.File["media"]
 	if len(files) > 4 {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Maximum 4 images allowed"})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Maximum 4 images allowed"})
 		return
 	}
 
 	// Prévention stricte des "Posts Fantômes"
 	if input.Content == "" && len(files) == 0 {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Empty post_service: un texte ou un média est requis"})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Empty post_service: un texte ou un média est requis"})
 		return
 	}
 
 	// 6. Appel au service métier pour la création (et Fan-Out asynchrone)
 	postID, err := post_service.CreatePost(userID, input, files)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Failed to create post_service: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Failed to create post_service: " + err.Error()})
 		return
 	}
 

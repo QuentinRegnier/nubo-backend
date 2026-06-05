@@ -10,7 +10,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 )
 
-func MongoCreateUser(u domain.UserRequest) error {
+func MongoCreateUser(u domain.UserRequest) nubo_error {
 	// Gestion des dates par défaut
 	if u.CreatedAt.IsZero() {
 		u.CreatedAt = time.Now()
@@ -26,7 +26,7 @@ func MongoCreateUser(u domain.UserRequest) error {
 	// Appel à ta fonction utilitaire existante
 	return mongo.Users.Set(doc)
 }
-func MongoCreateSession(s domain.SessionsRequest) error {
+func MongoCreateSession(s domain.SessionsRequest) nubo_error {
 	// Gestion des dates par défaut
 	if s.CreatedAt.IsZero() {
 		s.CreatedAt = time.Now()
@@ -41,7 +41,7 @@ func MongoCreateSession(s domain.SessionsRequest) error {
 	// Appel à ta fonction utilitaire existante
 	return mongo.Sessions.Set(doc)
 }
-func MongoUpdateSession(s domain.SessionsRequest) error {
+func MongoUpdateSession(s domain.SessionsRequest) nubo_error {
 	// 1. Conversion de la structure en Map pour l'update
 	doc, err := pkg.ToMap(s)
 	if err != nil {

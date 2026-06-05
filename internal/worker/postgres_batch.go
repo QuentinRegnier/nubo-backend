@@ -145,11 +145,11 @@ func slowPathDichotomy(ctx context.Context, entity redis.EntityType, action redi
 // sendToDLQ envoie la requête empoisonnée dans une file de quarantaine sur Redis.
 func sendToDLQ(ctx context.Context, entity redis.EntityType, action redis.ActionType, event redis.AsyncEvent, dbErr error) {
 	dlqPayload := map[string]any{
-		"error":  dbErr.Error(),
-		"time":   time.Now().Format(time.RFC3339),
-		"entity": entity,
-		"action": action,
-		"event":  event,
+		"nubo_error": dbErr.Error(),
+		"time":       time.Now().Format(time.RFC3339),
+		"entity":     entity,
+		"action":     action,
+		"event":      event,
 	}
 
 	bytes, err := json.Marshal(dlqPayload)
@@ -346,12 +346,15 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 		}
 
 		// 2. CASCADE SQL : Soft Delete des commentaires associés
-		_, _ = postgres.PostgresDB.ExecContext(ctx, "UPDATE content.comments SET visibility = -1 WHERE post_id = ANY($1)", pq.Array(ids))
+		_, _ = postgres.PostgresDB.ExecContext(ctx, "UPDATE content.comments SET visibility = -1, updated_at = NOW() WHERE post_id = ANY($1)", pq.Array(ids))
 
-		// 3. CASCADE SQL : Hard Delete des likes associés (0 = targetType Post)
+		// 3. CASCADE SQL : Hard Delete des likes associés
 		_, _ = postgres.PostgresDB.ExecContext(ctx, "DELETE FROM content.likes WHERE target_type = 0 AND target_id = ANY($1)", pq.Array(ids))
 
-		return nil // ✅ Tout s'est bien passé pour la cascade du Post
+		// ✅ 4. CASCADE SQL : Soft Delete des Médias associés (visibility = false)
+		_, _ = postgres.PostgresDB.ExecContext(ctx, "UPDATE content.media SET visibility = false, updated_at = NOW() WHERE id IN (SELECT unnest(media_ids) FROM content.posts WHERE id = ANY($1))", pq.Array(ids))
+
+		return nil
 
 	} else if entity == redis.EntityComment {
 		// SOFT DELETE pour les commentaires effacés unitairement

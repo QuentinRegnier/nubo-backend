@@ -46,14 +46,14 @@ func GetPostHandler(c *gin.Context) {
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
 		fmt.Printf("❌ Erreur authentification : %v\n", err)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Utilisateur non identifié"})
+		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
 		return
 	}
 
 	// 2. Récupération des données (Parsing du query param 'ids')
 	idsParam := c.Query("ids")
 	if idsParam == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Le paramètre 'ids' est requis"})
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Le paramètre 'ids' est requis"})
 		return
 	}
 
@@ -61,7 +61,7 @@ func GetPostHandler(c *gin.Context) {
 	strIDs := strings.Split(idsParam, ",")
 	if len(strIDs) > 50 {
 		// Bouclier statique : on empêche de demander 10 000 posts d'un coup
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Limite maximum fixée à 50 IDs par requête"})
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Limite maximum fixée à 50 IDs par requête"})
 		return
 	}
 
@@ -74,7 +74,7 @@ func GetPostHandler(c *gin.Context) {
 	}
 
 	if len(postIDs) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Aucun ID valide fourni"})
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Aucun ID valide fourni"})
 		return
 	}
 

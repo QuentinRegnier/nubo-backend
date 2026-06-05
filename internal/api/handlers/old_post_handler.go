@@ -2,12 +2,9 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 	"github.com/gin-gonic/gin"
 )
@@ -31,20 +28,20 @@ type BatchViewInput struct {
 func RegisterBatchViewsHandler(c *gin.Context) {
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Utilisateur non identifié"})
+		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
 		return
 	}
 
 	var input BatchViewInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Format JSON invalide"})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide"})
 		return
 	}
 
 	// Sécurité anti-spam : on limite la taille du lot à 100 vues maximum par requête
 	// (Personne ne scrolle plus de 100 posts en 10 secondes)
 	if len(input.PostIDs) > 100 {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Trop d'IDs dans le lot (max 100)"})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Trop d'IDs dans le lot (max 100)"})
 		return
 	}
 
@@ -57,47 +54,4 @@ func RegisterBatchViewsHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Vues enregistrées avec succès"})
-}
-
-// GetUserPostsHandler récupère la chronologie des posts d'un utilisateur (Profil).
-// @Summary      Récupérer les posts d'un utilisateur
-// @Description  Récupère les publications d'un profil spécifique via le cache_service hybride (ZSET -> Mongo -> Postgres).
-// @Tags         posts
-// @Param        id     path    int     true  "ID de l'utilisateur"
-// @Param        offset query   int     false "Offset de pagination"
-// @Param        limit  query   int     false "Nombre de posts (max 50)"
-// @Router       /users/{id}/posts [get]
-func GetUserPostsHandler(c *gin.Context) {
-	// 1. Parsing de l'ID cible (Snowflake int64)
-	targetUserID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "ID utilisateur invalide"})
-		return
-	}
-
-	// 2. Pagination avec protection matérielle
-	offset, _ := strconv.ParseInt(c.DefaultQuery("offset", "0"), 10, 64)
-	limit, _ := strconv.ParseInt(c.DefaultQuery("limit", "20"), 10, 64)
-
-	if limit > 50 {
-		limit = 50
-	}
-
-	// 3. Appel au service d'hydratation hybride
-	posts, err := cache_service.GetUserProfilePosts(c.Request.Context(), targetUserID, offset, limit)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur lors de la récupération des posts"})
-		return
-	}
-
-	// 4. On garantit un tableau vide [] au lieu de null pour le JSON
-	if posts == nil {
-		posts = []post_models.PostPayload{}
-	}
-
-	c.JSON(http.StatusOK, posts)
-}
-
-type InteractionInput struct {
-	PostID int64 `json:"post_id" binding:"required"`
 }

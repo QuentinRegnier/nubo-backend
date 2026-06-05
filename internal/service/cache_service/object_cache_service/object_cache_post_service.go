@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	redisgogo "github.com/QuentinRegnier/nubo-backend/internal/pkg/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
@@ -32,7 +31,7 @@ func DeletePostFromObjectCache(ctx context.Context, postID int64) error {
 // IsPostInObjectCache vérifie silencieusement et rapidement si un post est en RAM (O(1))
 func IsPostInObjectCache(ctx context.Context, postID int64) bool {
 	key := fmt.Sprintf("object:post:%d", postID)
-	// Ta fonction Exists renvoie déjà (bool, error), pas besoin de .Result() !
-	exists, _ := redisgogo.Exists(ctx, key)
+	// Ta fonction Exists renvoie déjà (bool, nubo_error), pas besoin de .Result() !
+	exists, _ := redis.Exists(ctx, key)
 	return exists
 }

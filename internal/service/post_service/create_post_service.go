@@ -8,6 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
@@ -62,6 +63,9 @@ func CreatePost(userID int64, input post_models.CreatePostInput, files []*multip
 	if err := object_cache_service.SetPostInObjectCache(context.Background(), post); err != nil {
 		return -1, err
 	}
+
+	// ✅ Mise à jour de la timeline de l'utilisateur en temps réel (ZSET L1)
+	_ = cache_service.AddPostToUserProfile(context.Background(), userID, postID, float64(now.UnixMilli()))
 
 	// 4. Persistance Async
 	// On passe 0 en partitionKey pour que le CRC32 se fasse sur postID.

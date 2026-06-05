@@ -43,14 +43,14 @@ func DeletePostHandler(c *gin.Context) {
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
 		fmt.Printf("❌ Erreur authentification : %v\n", err)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Utilisateur non identifié"})
+		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
 		return
 	}
 
 	// 2. Parsing de la requête
 	var input post_models.DeletePostInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Format JSON invalide ou post_id manquant"})
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Format JSON invalide ou post_id manquant"})
 		return
 	}
 
@@ -61,14 +61,14 @@ func DeletePostHandler(c *gin.Context) {
 	err = post_service.DeletePost(c.Request.Context(), input)
 	if err != nil {
 		if err.Error() == "unauthorized" {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Vous n'êtes pas autorisé à supprimer ce post"})
+			c.JSON(http.StatusForbidden, gin.H{"nubo_error": "Vous n'êtes pas autorisé à supprimer ce post"})
 			return
 		}
 		if err.Error() == "not found" {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Post introuvable"})
+			c.JSON(http.StatusNotFound, gin.H{"nubo_error": "Post introuvable"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur lors de la suppression"})
+		c.JSON(http.StatusInternalServerError, gin.H{"nubo_error": "Erreur lors de la suppression"})
 		return
 	}
 

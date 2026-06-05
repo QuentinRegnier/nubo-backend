@@ -37,7 +37,7 @@ func MaxBodySize() gin.HandlerFunc {
 		// si le Content-Length envoyé par le client dépasse déjà la limite.
 		if c.Request.ContentLength > limit {
 			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
-				"error": "Payload too large. Maximum allowed size exceeded.",
+				"nubo_error": "Payload too large. Maximum allowed size exceeded.",
 			})
 			return
 		}

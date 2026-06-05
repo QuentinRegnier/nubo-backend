@@ -40,14 +40,14 @@ func UpdateCommentHandler(c *gin.Context) {
 	// 1. Authentification
 	callerUserID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Utilisateur non identifié"})
+		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
 		return
 	}
 
 	// 2. Parsing
 	var input comment_models.UpdateCommentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Format JSON invalide ou champs manquants"})
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Format JSON invalide ou champs manquants"})
 		return
 	}
 
@@ -56,11 +56,11 @@ func UpdateCommentHandler(c *gin.Context) {
 	runeCount := len([]rune(input.Content))
 
 	if runeCount == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Le commentaire ne peut pas être vide"})
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Le commentaire ne peut pas être vide"})
 		return
 	}
 	if runeCount > 2200 { // Remplace 2200 par ta limite maximale exacte
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Le commentaire dépasse la taille maximale autorisée"})
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Le commentaire dépasse la taille maximale autorisée"})
 		return
 	}
 
@@ -70,14 +70,14 @@ func UpdateCommentHandler(c *gin.Context) {
 	err = comment_service.UpdateComment(c.Request.Context(), input)
 	if err != nil {
 		if err.Error() == "unauthorized" {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Vous n'êtes pas autorisé à modifier ce commentaire"})
+			c.JSON(http.StatusForbidden, gin.H{"nubo_error": "Vous n'êtes pas autorisé à modifier ce commentaire"})
 			return
 		}
 		if err.Error() == "not found" {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Commentaire introuvable"})
+			c.JSON(http.StatusNotFound, gin.H{"nubo_error": "Commentaire introuvable"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur interne lors de la modification"})
+		c.JSON(http.StatusInternalServerError, gin.H{"nubo_error": "Erreur interne lors de la modification"})
 		return
 	}
 

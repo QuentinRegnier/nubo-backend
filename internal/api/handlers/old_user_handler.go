@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/gin-gonic/gin"
@@ -32,14 +32,14 @@ func UserSearchHandler(c *gin.Context) {
 	// 1. Identification (assurée par le middleware JWT)
 	_, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Utilisateur non identifié"})
+		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
 		return
 	}
 
 	// 2. Paramètre de recherche
 	prefix := c.Query("q")
 	if prefix == "" {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Le paramètre de recherche 'q' est requis"})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Le paramètre de recherche 'q' est requis"})
 		return
 	}
 
@@ -56,7 +56,7 @@ func UserSearchHandler(c *gin.Context) {
 	// 4. Appel du service
 	users, err := cache_service.SearchUserByPrefix(c.Request.Context(), prefix, limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur lors de la recherche d'utilisateurs"})
+		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur lors de la recherche d'utilisateurs"})
 		return
 	}
 

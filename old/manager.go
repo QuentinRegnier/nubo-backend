@@ -116,7 +116,7 @@ func NewCollection(name string, schema map[string]reflect.Kind, rdb *redis.Clien
 
 // ---------------- Validation ----------------
 
-func (c *Collection) validate(obj map[string]any) error {
+func (c *Collection) validate(obj map[string]any) nubo_error {
 	for field, kind := range c.Schema {
 		val, ok := obj[field]
 		if !ok {
@@ -142,7 +142,7 @@ func (c *Collection) validate(obj map[string]any) error {
 // ---------------- Set ----------------
 
 // Set ajoute un élément dans la collection avec gestion automatique ZSET/SET
-func (c *Collection) Set(ctx context.Context, obj map[string]any) error {
+func (c *Collection) Set(ctx context.Context, obj map[string]any) nubo_error {
 	if err := c.validate(obj); err != nil {
 		log.Println("Validation échouée:", err)
 		return err
@@ -220,7 +220,7 @@ func (c *Collection) Set(ctx context.Context, obj map[string]any) error {
 // ---------------- Get ----------------
 
 // Get retourne tous les éléments correspondant au filtre (MongoDB-like)
-func (c *Collection) Get(ctx context.Context, filter map[string]any) ([]map[string]any, error) {
+func (c *Collection) Get(ctx context.Context, filter map[string]any) ([]map[string]any, nubo_error) {
 	// 1. Récupérer l’ensemble des IDs possibles via evalTree
 	fmt.Printf("\n🕵️ --- DEBUG MANAGER GET START [%s] ---\n", c.Name)
 	fmt.Printf("📥 Filtres reçus: %+v\n", filter)
@@ -331,7 +331,7 @@ func (c *Collection) Get(ctx context.Context, filter map[string]any) ([]map[stri
 // ----------- Delete ----------------
 
 // Delete supprime les éléments et nettoie les index (SET et ZSET)
-func (c *Collection) Delete(ctx context.Context, filter map[string]any) error {
+func (c *Collection) Delete(ctx context.Context, filter map[string]any) nubo_error {
 	objs, err := c.Get(ctx, filter)
 	if err != nil {
 		return err
@@ -396,7 +396,7 @@ func (c *Collection) Delete(ctx context.Context, filter map[string]any) error {
 // ---------------- Update ----------------
 
 // Update met à jour les éléments et gère proprement la rotation des index
-func (c *Collection) Update(ctx context.Context, filter map[string]interface{}, update map[string]interface{}) error {
+func (c *Collection) Update(ctx context.Context, filter map[string]interface{}, update map[string]interface{}) nubo_error {
 
 	// 1. Récupérer les objets cibles
 	objs, err := c.Get(ctx, filter)
@@ -506,7 +506,7 @@ func (c *Collection) Update(ctx context.Context, filter map[string]interface{}, 
 
 // ---------------- Filtrage ----------------
 
-func evalTree(ctx context.Context, rdb *redis.Client, collName string, filter map[string]any, type_before string) (map[string]struct{}, []map[string]any, error) {
+func evalTree(ctx context.Context, rdb *redis.Client, collName string, filter map[string]any, type_before string) (map[string]struct{}, []map[string]any, nubo_error) {
 	// Cas 1 : opérateurs logiques
 	fmt.Printf("🔎 evalTree called with filter: %+v\n", filter)
 	if orOps, ok := filter["$or"]; ok {
@@ -595,7 +595,7 @@ func evalTree(ctx context.Context, rdb *redis.Client, collName string, filter ma
 }
 
 // fetchIDsForCondition : récupère les IDs directement depuis Redis
-func fetchIDsForCondition(ctx context.Context, rdb *redis.Client, collName, field, op string, val any) ([]string, error) {
+func fetchIDsForCondition(ctx context.Context, rdb *redis.Client, collName, field, op string, val any) ([]string, nubo_error) {
 	basePrefix := "idx"
 
 	// 1. Récupérer le schéma pour savoir VRAIMENT comment c'est stocké (ZSET vs SET)
@@ -711,7 +711,7 @@ func fetchIDsForCondition(ctx context.Context, rdb *redis.Client, collName, fiel
 }
 
 // Petit helper pour convertir n'importe quoi en float64 (Score)
-func valToScore(val any) (float64, error) {
+func valToScore(val any) (float64, nubo_error) {
 	// Est-ce une date string ou time ?
 	if t, err := parseToTime(val); err == nil {
 		return float64(t.Unix()), nil
@@ -720,7 +720,7 @@ func valToScore(val any) (float64, error) {
 	return toFloat64(val)
 }
 
-func toFloat64(val any) (float64, error) {
+func toFloat64(val any) (float64, nubo_error) {
 	switch v := val.(type) {
 	case int, int8, int16, int32, int64:
 		n, _ := toInt64(v)
@@ -814,7 +814,7 @@ func deleteIDsFromCondition(cond map[string]any, ids *[]string) {
 }
 
 // toInt64 convertit une valeur en int64 si possible
-func toInt64(val any) (int64, error) {
+func toInt64(val any) (int64, nubo_error) {
 	switch v := val.(type) {
 	case int:
 		return int64(v), nil
@@ -851,7 +851,7 @@ func toInt64(val any) (int64, error) {
 	}
 }
 
-func parseToTime(val any) (time.Time, error) {
+func parseToTime(val any) (time.Time, nubo_error) {
 	switch v := val.(type) {
 	case time.Time:
 		return v.UTC(), nil

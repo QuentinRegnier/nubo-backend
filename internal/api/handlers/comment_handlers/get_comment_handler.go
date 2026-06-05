@@ -3,6 +3,7 @@ package comment_handlers
 import (
 	"net/http"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/gin-gonic/gin"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
@@ -46,16 +47,16 @@ import (
 // @Router       /comment [get]
 func GetCommentsHandler(c *gin.Context) {
 	// 1. Sécurité
-	_, err := pkg.GetUserIDFromContext(c)
+	callerID, err := pkg.GetUserIDFromContext(c) // ✅ On récupère le vrai CallerID
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Utilisateur non identifié"})
+		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
 		return
 	}
 
 	// 2. Récupération des données (Binding des Query Params)
 	var input comment_models.GetCommentsInput
 	if err := c.ShouldBindQuery(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Paramètres de requête (post_id) invalides ou manquants"})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Paramètres de requête (post_id) invalides ou manquants"})
 		return
 	}
 
@@ -63,11 +64,12 @@ func GetCommentsHandler(c *gin.Context) {
 	if input.Limit > 100 {
 		input.Limit = 100
 	}
+	input.UserID = callerID // ✅ On injecte l'identité pour la matrice de visibilité
 
 	// 3. Appel au service synchrone
 	comments, err := comment_service.GetComments(c.Request.Context(), input)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur lors de la récupération des commentaires"})
+		c.JSON(http.StatusInternalServerError, gin.H{"nubo_error": "Erreur lors de la récupération des commentaires"})
 		return
 	}
 

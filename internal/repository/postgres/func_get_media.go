@@ -29,5 +29,10 @@ func FuncGetMedia(ctx context.Context, mediaID int64) (models.MediaRequest, erro
 		return m, err
 	}
 
+	// ✅ Rejet si le média a été supprimé
+	if !m.Visibility {
+		return m, errors.New("media deleted")
+	}
+
 	return m, nil
 }

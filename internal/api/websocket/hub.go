@@ -109,13 +109,16 @@ func (h *Hub) Run() {
 func (c *Client) ReadPump(hub *Hub) {
 	defer func() {
 		hub.unregister <- c
-		c.conn.Close()
+		err := c.conn.Close()
+		if err != nil {
+			return
+		}
 	}()
 
 	for {
 		_, msg, err := c.conn.ReadMessage()
 		if err != nil {
-			log.Println("Read error:", err)
+			log.Println("Read nubo_error:", err)
 			break
 		}
 
@@ -131,9 +134,12 @@ func (c *Client) WritePump() {
 	for msg := range c.send {
 		err := c.conn.WriteMessage(websocket.TextMessage, msg)
 		if err != nil {
-			log.Println("Write error:", err)
+			log.Println("Write nubo_error:", err)
 			break
 		}
 	}
-	c.conn.Close()
+	err := c.conn.Close()
+	if err != nil {
+		return
+	}
 }

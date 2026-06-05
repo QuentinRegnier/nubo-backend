@@ -5,10 +5,10 @@ import (
 	"net/http"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/post_service"
 	"github.com/gin-gonic/gin"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 )
 
@@ -43,20 +43,20 @@ func UpdatePostHandler(c *gin.Context) {
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
 		fmt.Printf("❌ Erreur authentification : %v\n", err)
-		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Utilisateur non identifié"})
+		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
 		return
 	}
 
 	// 2. Parsing du JSON strict
 	var input post_models.UpdatePostInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Invalid JSON format or missing post_id"})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Invalid JSON format or missing post_id"})
 		return
 	}
 
 	// 3. 🛡 BOUCLIER STATIQUE : Validation O(1)
 	if err := pkg.ValidateStruct(&input); err != nil {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Validation failed: " + err.Error()})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Validation failed: " + err.Error()})
 		return
 	}
 
@@ -71,14 +71,14 @@ func UpdatePostHandler(c *gin.Context) {
 	if err != nil {
 		// Tri sémantique des erreurs renvoyées par le service
 		if err.Error() == "unauthorized" {
-			c.JSON(http.StatusForbidden, domain.ErrorResponse{Error: "Vous n'êtes pas autorisé à modifier ce post"})
+			c.JSON(http.StatusForbidden, nubo_error.ErrorResponse{Error: "Vous n'êtes pas autorisé à modifier ce post"})
 			return
 		}
 		if err.Error() == "not found" {
-			c.JSON(http.StatusNotFound, domain.ErrorResponse{Error: "Post introuvable"})
+			c.JSON(http.StatusNotFound, nubo_error.ErrorResponse{Error: "Post introuvable"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Failed to update post: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Failed to update post: " + err.Error()})
 		return
 	}
 

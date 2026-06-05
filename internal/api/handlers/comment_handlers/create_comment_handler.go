@@ -42,14 +42,14 @@ func CreateCommentHandler(c *gin.Context) {
 	// 1. Sécurité : Extraction de l'ID via JWT
 	callerUserID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Utilisateur non identifié"})
+		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
 		return
 	}
 
 	// 2. Parsing du JSON
 	var input comment_models.CreateCommentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Format JSON invalide ou champs manquants"})
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Format JSON invalide ou champs manquants"})
 		return
 	}
 
@@ -58,7 +58,7 @@ func CreateCommentHandler(c *gin.Context) {
 	input.Content = pkg.CleanStr(input.Content)
 
 	if input.Content == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Le commentaire ne peut pas être vide"})
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Le commentaire ne peut pas être vide"})
 		return
 	}
 

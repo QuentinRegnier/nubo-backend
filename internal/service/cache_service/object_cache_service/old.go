@@ -27,7 +27,7 @@ func GetPostsView(ids []int64) ([]post_models.PostPayload, error) {
 	// ========================================================================
 	result, err := redis.Posts.GetMany(ctx, ids)
 	if err != nil {
-		log.Printf("⚠️ Redis MGET error: %v (fallback vers L2)", err)
+		log.Printf("⚠️ Redis MGET nubo_error: %v (fallback vers L2)", err)
 		result = &redis.GetManyResult{MissingIDs: ids}
 	} else {
 		for id, data := range result.Found {
@@ -70,7 +70,7 @@ func GetPostsView(ids []int64) ([]post_models.PostPayload, error) {
 				}
 			}
 		} else {
-			log.Printf("⚠️ Mongo Fallback error: %v", err)
+			log.Printf("⚠️ Mongo Fallback nubo_error: %v", err)
 			stillMissingIDs = result.MissingIDs // Si Mongo plante, on cherchera tout dans Postgres
 		}
 	}
@@ -85,7 +85,7 @@ func GetPostsView(ids []int64) ([]post_models.PostPayload, error) {
 		posts, err := postgres.FuncLoadPosts(stillMissingIDs, len(stillMissingIDs), 0)
 
 		if err != nil {
-			log.Printf("⚠️ Postgres Fallback error: %v", err)
+			log.Printf("⚠️ Postgres Fallback nubo_error: %v", err)
 		} else {
 			// 2. Boucle sur les posts propres retournés par la fonction
 			for _, p := range posts {

@@ -1,4 +1,4 @@
-package domain
+package nubo_error
 
 import "errors"
 
@@ -12,5 +12,5 @@ var (
 )
 
 type ErrorResponse struct {
-	Error string `json:"error" example:"Invalid JSON format"`
+	Error string `json:"nubo_error" example:"Invalid JSON format"`
 }

@@ -13,7 +13,7 @@ import (
 
 // FuncCreateUser accepte maintenant directement le modèle RegisterRequest.
 // profilePictureID est passé à part car req.ProfilePicture contient du Base64, pas l'UUID.
-func FuncCreateUser(req domain.UserRequest, sessions domain.SessionsRequest) (int, time.Time, time.Time, int, time.Time, error) {
+func FuncCreateUser(req domain.UserRequest, sessions domain.SessionsRequest) (int, time.Time, time.Time, int, time.Time, nubo_error) {
 
 	const functionID = 1
 
@@ -123,7 +123,7 @@ func FuncCreateUser(req domain.UserRequest, sessions domain.SessionsRequest) (in
 
 	return returnedUUID, createdAtUser, updatedAtUser, returnedSessionUUID, createdAtSession, err
 }
-func FuncCreateSession(UserID int64, MasterToken string, DeviceInfo any, DeviceToken string, IPHistory []string, ExpiresAt time.Time) (int, time.Time, error) {
+func FuncCreateSession(UserID int64, MasterToken string, DeviceInfo any, DeviceToken string, IPHistory []string, ExpiresAt time.Time) (int, time.Time, nubo_error) {
 
 	const functionID = 4
 
@@ -171,7 +171,7 @@ func FuncCreateSession(UserID int64, MasterToken string, DeviceInfo any, DeviceT
 	// 4. Retour du résultat
 	return returnedID, createdAt, nil
 }
-func ProcUpdateSession(ID int64, MasterToken string, DeviceInfo any, DeviceToken string, IPHistory []string, ExpiresAt time.Time) error {
+func ProcUpdateSession(ID int64, MasterToken string, DeviceInfo any, DeviceToken string, IPHistory []string, ExpiresAt time.Time) nubo_error {
 
 	const functionID = 5
 

@@ -39,21 +39,21 @@ func LikePostHandler(c *gin.Context) {
 	// 1. Sécurité
 	callerUserID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Utilisateur non identifié"})
+		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
 		return
 	}
 
 	// 2. Extraction du PostID
 	postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || postID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID de publication invalide"})
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "ID de publication invalide"})
 		return
 	}
 
 	// 3. Binding du payload et empaquetage
 	var input like_models.LikePostInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "L'action doit être 'like' ou 'unlike'"})
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "L'action doit être 'like' ou 'unlike'"})
 		return
 	}
 	input.UserID = callerUserID

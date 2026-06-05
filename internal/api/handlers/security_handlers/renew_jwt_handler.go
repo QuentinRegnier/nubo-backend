@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/security_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
@@ -62,7 +62,7 @@ func RenewJWT(c *gin.Context) {
 	// On ne fait plus de json.Unmarshal ici car on récupère les infos du Token
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Erreur lecture body"})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Erreur lecture body"})
 		return
 	}
 	// On n'a pas besoin de restaurer le body avec NopCloser car on ne le relit plus après
@@ -77,7 +77,7 @@ func RenewJWT(c *gin.Context) {
 	clientTs := c.GetHeader("X-Timestamp")
 
 	if authHeader == "" || clientSecret == "" || clientHMAC == "" || clientTs == "" {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Headers de sécurité manquants"})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Headers de sécurité manquants"})
 		return
 	}
 
@@ -85,32 +85,32 @@ func RenewJWT(c *gin.Context) {
 	// On utilise ParseUnverified de la lib jwt/v5
 	token, _, err := new(jwt.Parser).ParseUnverified(authHeader, jwt.MapClaims{})
 	if err != nil {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Token illisible"})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Token illisible"})
 		return
 	}
 
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Claims JWT invalides"})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Claims JWT invalides"})
 		return
 	}
 
 	// A. Récupération UserID ("sub")
 	sub, err := claims.GetSubject()
 	if err != nil {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "UserID manquant dans le token"})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "UserID manquant dans le token"})
 		return
 	}
 	userID, err := strconv.ParseInt(sub, 10, 64) // Conversion en int64
 	if err != nil {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "Format UserID invalide"})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format UserID invalide"})
 		return
 	}
 
 	// B. Récupération DeviceToken ("dev")
 	deviceToken, ok := claims["dev"].(string)
 	if !ok || deviceToken == "" {
-		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "DeviceToken manquant dans le token"})
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "DeviceToken manquant dans le token"})
 		return
 	}
 
@@ -120,7 +120,7 @@ func RenewJWT(c *gin.Context) {
 	stringToSign := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, clientTs, contentToSign)
 
 	if !security.CheckHMAC(stringToSign, clientSecret, clientHMAC) {
-		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Signature HMAC invalide"})
+		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Signature HMAC invalide"})
 		return
 	}
 
@@ -128,14 +128,14 @@ func RenewJWT(c *gin.Context) {
 	// IMPORTANT : On remet le deviceToken dans le nouveau JWT pour la suite !
 	newJWT, err := pkg.GenerateToken(userID, deviceToken, variables.JWTExpirationSeconds)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur génération token"})
+		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur génération token"})
 		return
 	}
 
 	// 6. Rotation du Ratchet & Mise à jour Session
 	// On utilise le userID extrait du token et le authHeader comme "LastJWT"
 	if err := security.RotateRatchet(c, userID, clientSecret, authHeader); err != nil {
-		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{Error: "Session invalide ou Secret incorrect"})
+		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Session invalide ou Secret incorrect"})
 		return
 	}
 
@@ -149,7 +149,7 @@ func RenewJWT(c *gin.Context) {
 	// A. Sérialisation manuelle en JSON pour la signature
 	respBytes, err := json.Marshal(respData)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "Erreur encoding réponse"})
+		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur encoding réponse"})
 		return
 	}
 

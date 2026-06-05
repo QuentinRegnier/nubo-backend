@@ -9,6 +9,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/comment_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/like_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/post_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/report_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/security_handlers"
 	"github.com/golang-jwt/jwt/v5"
 
@@ -89,15 +90,16 @@ func SetupRoutes(r *gin.Engine) {
 	secured.PATCH("/post", post_handlers.UpdatePostHandler)
 	secured.DELETE("/post", post_handlers.DeletePostHandler)
 	secured.POST("/views/batch", handlers.RegisterBatchViewsHandler) // ℹ️❌ à vérifier
+	secured.GET("/post/user", post_handlers.GetUserPostsHandler)
+	secured.GET("/post/user/force", post_handlers.GetUserPostsHandler) // ✅ Cible exactement le même handler
 
 	// --- Profils / Utilisateurs ---
 	secured.GET("/search/users/quick", handlers.UserSearchHandler) // ℹ️❌ à vérifier
-	secured.GET("/users/:id/posts", handlers.GetUserPostsHandler)  // ℹ️❌ à vérifier
 
 	// --- Actions Sociales ---
-	secured.POST("/post/like", like_handlers.LikePostHandler)
-	secured.GET("/post/like", like_handlers.GetPostLikesHandler)
-	secured.POST("/comment/like", like_handlers.LikeCommentHandler)
+	secured.POST("/like/post", like_handlers.LikePostHandler)
+	secured.GET("/like/post", like_handlers.GetPostLikesHandler)
+	secured.POST("/like/comment", like_handlers.LikeCommentHandler)
 	secured.POST("/comment", comment_handlers.CreateCommentHandler)
 	secured.PATCH("/comment", comment_handlers.UpdateCommentHandler)
 	secured.DELETE("/comment", comment_handlers.DeleteCommentHandler)
@@ -166,12 +168,7 @@ func SetupRoutes(r *gin.Engine) {
 	secured.POST("/search/tag", SearchTagHandler)             // ℹ️❌
 
 	// --- Report ---
-	secured.POST("/report/user", ReportUserHandler)           // ℹ️❌
-	secured.POST("/report/post", ReportPostHandler)           // ℹ️❌
-	secured.POST("/report/comment", ReportCommentHandler)     // ℹ️❌
-	secured.POST("/report/message", ReportMessageHandler)     // ℹ️❌
-	secured.POST("/report/community", ReportCommunityHandler) // ℹ️❌
-	secured.POST("/report/group", ReportGroupHandler)         // ℹ️❌
+	secured.POST("/report", report_handlers.CreateReportHandler)
 }
 
 func LoadFeedHandler(c *gin.Context) {
@@ -447,34 +444,4 @@ func SearchGroupHandler(c *gin.Context) {
 func SearchTagHandler(c *gin.Context) {
 	// TODO: gérer la recherche d'un tag
 	c.JSON(http.StatusOK, gin.H{"tags": []string{"tag 1", "tag 2"}})
-}
-
-func ReportUserHandler(c *gin.Context) {
-	// TODO: gérer la création d'un rapport
-	c.JSON(http.StatusOK, gin.H{"message": "user reported"})
-}
-
-func ReportPostHandler(c *gin.Context) {
-	// TODO: gérer la création d'un rapport
-	c.JSON(http.StatusOK, gin.H{"message": "post_service reported"})
-}
-
-func ReportCommentHandler(c *gin.Context) {
-	// TODO: gérer la création d'un rapport
-	c.JSON(http.StatusOK, gin.H{"message": "comment reported"})
-}
-
-func ReportMessageHandler(c *gin.Context) {
-	// TODO: gérer la création d'un rapport
-	c.JSON(http.StatusOK, gin.H{"message": "message reported"})
-}
-
-func ReportCommunityHandler(c *gin.Context) {
-	// TODO: gérer la création d'un rapport
-	c.JSON(http.StatusOK, gin.H{"message": "community reported"})
-}
-
-func ReportGroupHandler(c *gin.Context) {
-	// TODO: gérer la création d'un rapport
-	c.JSON(http.StatusOK, gin.H{"message": "group reported"})
 }

@@ -2,10 +2,13 @@ package comment_service
 
 import (
 	"context"
+	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
 
@@ -13,6 +16,53 @@ import (
 // Elle renvoie désormais un tableau d'enveloppes (GetCommentOutput) pour gérer les erreurs partielles.
 func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]comment_models.GetCommentOutput, error) {
 	var results []comment_models.GetCommentOutput
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// 0. SÉCURITÉ : VÉRIFICATION DES DROITS D'ACCÈS AU POST PARENT
+	// ─────────────────────────────────────────────────────────────────────────
+	var post post_models.PostPayload
+	post, err := object_cache_service.GetPostFromObjectCache(ctx, input.PostID)
+	if err != nil {
+		// ✅ Fallback L2 (MongoDB) : On cherche le post dans le stockage à froid
+		mongoPosts, errMongo := mongo.MongoLoadPosts([]int64{input.PostID})
+		if errMongo == nil && len(mongoPosts) > 0 {
+			post = mongoPosts[0]
+			_ = object_cache_service.SetPostInObjectCache(ctx, post) // Hydratation L1
+		} else {
+			// ✅ Fallback absolu L3 (PostgreSQL)
+			pgPosts, errPg := postgres.FuncLoadPosts([]int64{input.PostID}, 1, 0)
+			if errPg != nil || len(pgPosts) == 0 {
+				return []comment_models.GetCommentOutput{}, errors.New("post parent introuvable ou supprimé")
+			}
+			post = pgPosts[0]
+
+			// ✅ HYDRATATION EN CASCADE COMPLÈTE (L3 -> L2 -> L1) :
+			// A. Réhydratation du stockage à froid L2 (MongoDB) pour soulager définitivement Postgres
+			_ = mongo.MongoUpsertPost(post)
+
+			// B. Réhydratation du cache haute performance L1 (Redis JSON)
+			_ = object_cache_service.SetPostInObjectCache(ctx, post)
+		}
+	}
+
+	// ⚡ MATRICE DE VISIBILITÉ EXACTE DE NUBO
+	isAuthor := post.UserID == input.UserID
+	if !isAuthor {
+		relationState := cache_service.RelationValue(ctx, post.UserID, input.UserID)
+
+		if relationState == -1 || post.Visibility == -1 {
+			return []comment_models.GetCommentOutput{}, errors.New("accès refusé") // Bloqué ou Supprimé
+		}
+		if post.Visibility == 1 && relationState < 1 {
+			return []comment_models.GetCommentOutput{}, errors.New("les commentaires sont réservés aux abonnés")
+		}
+		if post.Visibility == 2 && relationState != 2 {
+			return []comment_models.GetCommentOutput{}, errors.New("les commentaires sont réservés aux amis")
+		}
+		if post.Visibility == 3 {
+			return []comment_models.GetCommentOutput{}, errors.New("post privé")
+		}
+	}
 
 	// ─────────────────────────────────────────────────────────────────────────
 	// 1. TENTATIVE L1 (VIP PARKING) : Le ZSET REDIS

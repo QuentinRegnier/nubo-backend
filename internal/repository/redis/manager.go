@@ -87,7 +87,7 @@ func (c *Collection) SetObject(ctx context.Context, id any, data any) error {
 	// 1. Sérialisation MsgPack (Binaire, Rapide & Ultra léger en RAM)
 	msgpackBytes, err := msgpack.Marshal(data)
 	if err != nil {
-		return fmt.Errorf("redis marshal error: %w", err)
+		return fmt.Errorf("redis marshal nubo_error: %w", err)
 	}
 
 	// 2. SET avec Expiration (Indispensable pour volatile lfu)
