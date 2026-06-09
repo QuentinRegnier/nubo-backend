@@ -4,9 +4,8 @@ package variables
 // LIMITES OPÉRATIONNELLES ET CACHE
 // ============================================================================
 const (
-	MaxStrictElements    = 5000 // Remplace MaxRankElements — Top absolu pour l'UI (Likes, Vues)
-	MaxTagElements       = 5000 // Taille max pour l'historique brut d'un tag
-	MaxUserPostsElements = 100  // Taille max de l'historique d'un utilisateur
+	MaxStrictElements = 5000 // Remplace MaxRankElements — Top absolu pour l'UI (Likes, Vues)
+	MaxTagElements    = 5000 // Taille max pour l'historique brut d'un tag
 )
 
 // ============================================================================
@@ -31,7 +30,6 @@ const (
 	// CLÉS REDIS — TDD §4.4
 	// ================================================================
 	// Note: RedisKeyContentVector = "content:vec:%d" est conservé dans constant.go
-	RedisKeyUserProfile       = "user:profile:%d"
 	RedisKeyFeedPersonalized  = "feed_service:personalized:%d"
 	RedisKeyTrendGlobalHourly = "most_cache:trend:global:hourly:%s"
 	RedisKeyTrendGlobalDaily  = "most_cache:trend:global:daily:%s"

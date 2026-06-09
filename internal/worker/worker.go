@@ -143,6 +143,10 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 	// Étape 3 : Fan-Out Social de masse (Distribution dans les boîtes aux lettres du Speed Cache)
 	// S'exécute de manière ultra-rapide en RAM juste après la validation BDD
 	handleSocialFanOut(ctx, validEvents)
+
+	// Étape 4 : Mise à jour du Graphe Sémantique (Émergence Collective)
+	// Crée les segments (arêtes) entre les tags co-occurrents via le modèle de Markov
+	handleGraphUpdate(ctx, validEvents)
 }
 
 // purifyBatch agit comme un pare-feu asynchrone.

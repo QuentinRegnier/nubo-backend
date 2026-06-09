@@ -1,4 +1,4 @@
-package feed_service
+package algorithm_service
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
@@ -24,9 +25,10 @@ import (
 // Les champs AuthorID et LSHHash sont inclus pour éviter des lookups supplémentaires
 // lors du calcul de R(u,p) et du pré-filtrage LSH.
 type ContentVectorPayload struct {
-	V        []float32 `json:"v"`         // ĉ_p ∈ R^224 (normalisé L2)
-	LSHHash  uint32    `json:"lsh"`       // Hash LSH pré-calculé pour le bucket §4.5
-	AuthorID int64     `json:"author_id"` // Pour le calcul de B(u,p) §4.2
+	V             []float32 `json:"v"`         // ĉ_p ∈ R^224 (normalisé L2)
+	LSHHash       uint32    `json:"lsh"`       // Hash LSH pré-calculé pour le bucket §4.5
+	AuthorID      int64     `json:"author_id"` // Pour le calcul de B(u,p) §4.2
+	PriorityLevel int       `json:"priority"`  // ✅ Multiplicateur pour la Caissière
 }
 
 // ContentVectorOptions permet d'injecter les embeddings externes optionnels.
@@ -61,9 +63,10 @@ func StoreContentVector(ctx context.Context, post post_models.PostPayload) {
 	vec := ComputeContentVectorFull(post, nil)
 
 	payload := ContentVectorPayload{
-		V:        vec,
-		LSHHash:  DefaultLSHEngine.ComputeHash(vec),
-		AuthorID: post.UserID,
+		V:             vec,
+		LSHHash:       DefaultLSHEngine.ComputeHash(vec),
+		AuthorID:      post.UserID,
+		PriorityLevel: post.PriorityLevel, // ✅ Injection immédiate de la priorité
 	}
 
 	data, err := json.Marshal(payload)
@@ -200,7 +203,7 @@ func ComputeContentVectorFull(post post_models.PostPayload, opts *ContentVectorO
 // posts avec un seul hashtag et évite la division par zéro pour les posts sans tag.
 func computeCatBlock(hashtags []string, embeddings map[string][]float32, block []float32) {
 	for _, tag := range hashtags {
-		normalized := NormalizeHashtag(tag)
+		normalized := service.NormalizeHashtag(tag)
 		emb, ok := embeddings[normalized]
 		if !ok || len(emb) < variables.VectorDimCat {
 			continue

@@ -12,8 +12,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
@@ -28,9 +28,9 @@ func UpdatePostRecommendationScore(ctx context.Context, p post_models.PostPayloa
 		mediaCount = 1
 	}
 
-	// AJOUT : p.Visibility et 0 (pour isFlagged)
+	// ✅ AJOUT : Transmission du PriorityLevel dans la chaîne de calcul
 	// TODO rendre dynamique isFlagged
-	UpdateScoreWithMetrics(ctx, p.ID, p.LikeCount, p.CommentCount, p.ViewCount, mediaCount, p.CreatedAt, p.Hashtags, p.Visibility, 0)
+	UpdateScoreWithMetrics(ctx, p.ID, p.LikeCount, p.CommentCount, p.ViewCount, mediaCount, p.CreatedAt, p.Hashtags, p.Visibility, 0, p.PriorityLevel)
 }
 
 // EvaluatePostAfterLike force l'insertion du post_service avec sa valeur absolue dans les classements stricts.
@@ -139,7 +139,7 @@ func UpdateTrendZSETs(ctx context.Context, postID int64, score float64, hashtags
 	if len(hashtags) > 0 {
 		officialTags := make(map[string]bool)
 		for _, hashtag := range hashtags {
-			if slug, found := feed_service.GetTagFromKeyword(ctx, hashtag); found {
+			if slug, found := service.GetTagFromKeyword(ctx, hashtag); found {
 				officialTags[slug] = true
 			}
 		}
@@ -162,10 +162,10 @@ func UpdateTrendZSETs(ctx context.Context, postID int64, score float64, hashtags
 }
 
 // UpdateScoreWithMetrics orchestre le calcul et la distribution des scores.
-func UpdateScoreWithMetrics(ctx context.Context, postID int64, likes, comments, views, mediaCount int, createdAt time.Time, hashtags []string, visibility int, isFlagged int) {
+func UpdateScoreWithMetrics(ctx context.Context, postID int64, likes, comments, views, mediaCount int, createdAt time.Time, hashtags []string, visibility int, isFlagged int, priorityLevel int) {
 	ageSeconds := time.Since(createdAt).Seconds()
 
-	baseOpts := feed_service.ScoreOptions{
+	baseOpts := service.ScoreOptions{
 		LikesCount:    likes,
 		CommentsCount: comments,
 		ViewCount:     views,
@@ -174,7 +174,21 @@ func UpdateScoreWithMetrics(ctx context.Context, postID int64, likes, comments, 
 		IsDeleted:     visibility == 0,
 		IsReported:    isFlagged == 0,
 	}
-	scoreGlobal := feed_service.CalculateRecommendationScore(postID, baseOpts)
+	scoreGlobal := service.CalculateRecommendationScore(postID, baseOpts)
+
+	// ✅ APPLICATION DU MULTIPLICATEUR DE PRIORITÉ
+	multiplier := 1.0
+	switch priorityLevel {
+	case 1:
+		multiplier = 1.25 // Certifié
+	case 2:
+		multiplier = 2.0 // Partenaire
+	case 3:
+		multiplier = 3.0 // Modérateur
+	case 4:
+		multiplier = 15.0 // Admin
+	}
+	scoreGlobal *= multiplier
 
 	scoreStrictRecent := float64(createdAt.UnixMilli())
 	_ = redis.ZAddWithCap(ctx, variables.RedisKeyStrictRecent, scoreStrictRecent, postID, variables.MaxStrictElements)

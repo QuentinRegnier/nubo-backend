@@ -8,9 +8,9 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 )
 
@@ -32,6 +32,21 @@ func CreatePost(userID int64, input post_models.CreatePostInput, files []*multip
 		}
 	}
 
+	// ✅ ÉVALUATION DYNAMIQUE DE LA PRIORITÉ VIA LA MAP DE GRADES
+	priorityLevel := 0
+	if userLite, err := cache_service.GetUserLite(context.Background(), userID); err == nil {
+		gradeToPriority := map[int]int{
+			0: 0, // normal     -> priority : 0
+			1: 1, // certifier  -> priority : 1
+			2: 2, // partenaire -> priority : 2
+			3: 3, // moderator  -> priority : 3
+			4: 4, // admin      -> priority : 4
+		}
+		if p, ok := gradeToPriority[userLite.Grade]; ok {
+			priorityLevel = p
+		}
+	}
+
 	// 2. Création Objet
 	post := post_models.PostPayload{
 		ID:            postID,
@@ -41,6 +56,7 @@ func CreatePost(userID int64, input post_models.CreatePostInput, files []*multip
 		Identifiers:   input.Identifiers,
 		MediaIDs:      mediaIDs,
 		Visibility:    input.Visibility,
+		PriorityLevel: priorityLevel, // ✅ Injection de la priorité protégée
 		Location:      input.Location,
 		CreatedAt:     now,
 		UpdatedAt:     now,
@@ -57,7 +73,7 @@ func CreatePost(userID int64, input post_models.CreatePostInput, files []*multip
 	// On génère le vecteur mathématique [224]float32 ici, AVANT la persistance.
 	// Cela garantit que L1 Cache, MongoDB et PostgreSQL recevront l'objet complet.
 	// (Adapte le nom de la fonction selon ton vectorization_service.go)
-	post.Vector = feed_service.ComputeContentVectorFull(post, nil)
+	post.Vector = algorithm_service.ComputeContentVectorFull(post, nil)
 
 	// 3. Cache Redis (LFU Init)
 	if err := object_cache_service.SetPostInObjectCache(context.Background(), post); err != nil {

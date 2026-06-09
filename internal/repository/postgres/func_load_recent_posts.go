@@ -9,16 +9,7 @@ import (
 )
 
 func FuncLoadRecentPosts(days int) ([]post_models.PostPayload, error) {
-	query := `
-		SELECT 
-			p.id, p.user_id, p.content, p.hashtags, p.identifiers, p.media_ids, 
-			p.visibility, p.location, p.created_at, p.updated_at, p.like_count, 
-			p.comment_count, p.view_count, p.has_media, p.vector, p.vector_version
-		FROM content.posts p
-		WHERE p.visibility != 2
-		AND p.created_at >= NOW() - ($1 || ' days')::interval
-		ORDER BY p.created_at DESC
-	`
+	query := `SELECT * FROM content.func_load_recent_posts($1)`
 
 	rows, err := postgres.PostgresDB.Query(query, days)
 	if err != nil {

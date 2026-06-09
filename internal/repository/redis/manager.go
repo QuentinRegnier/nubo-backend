@@ -35,6 +35,10 @@ var (
 	UsersLite   *Collection
 	ConvMeta    *Collection
 	ConvMembers *Collection
+
+	// --- FEED cache Collections ---
+	FeedsObject  *Collection
+	FeedsMailbox *Collection
 )
 
 func InitCacheDatabase() {
@@ -57,6 +61,10 @@ func InitCacheDatabase() {
 	UsersLite = NewCollection("speed_cache:user_lite", variables.StandardTTL)
 	ConvMeta = NewCollection("speed_cache:conv_meta", variables.StandardTTL)
 	ConvMembers = NewCollection("speed_cache:conv_members", variables.StandardTTL)
+
+	// --- FEED Cache ---
+	FeedsObject = NewCollection("feed_cache:object", variables.StandardTTL)
+	FeedsMailbox = NewCollection("feed_cache:mailbox", variables.StandardTTL)
 }
 
 // ---------------- Collection ----------------

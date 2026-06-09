@@ -25,6 +25,7 @@ func scanPosts(rows *sql.Rows) ([]post_models.PostPayload, error) {
 			pq.Array(&p.Identifiers),
 			pq.Array(&p.MediaIDs),
 			&p.Visibility,
+			&p.PriorityLevel,
 			&location,
 			&p.CreatedAt,
 			&p.UpdatedAt,

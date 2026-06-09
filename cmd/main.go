@@ -20,6 +20,7 @@ import (
 	mongogo "github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/QuentinRegnier/nubo-backend/internal/worker"
@@ -100,9 +101,29 @@ func main() {
 		if err := cache_service.SeedMostCache(); err != nil {
 			log.Printf("⚠️ Avertissement lors du seeding: %v", err)
 		}
+		if err := cache_service.SeedGraphCache(context.Background()); err != nil {
+			log.Printf("⚠️ Avertissement lors du seeding du graphe: %v", err)
+		}
+
+		// ✅ Seeding du profilage allégé et du graphe relationnel restreint
+		if err := cache_service.SeedSpeedCache(); err != nil {
+			log.Printf("⚠️ Avertissement lors du seeding du SPEED cache: %v", err)
+		}
+
+		// ✅ Seeding des chronologies utilisateurs pour le profil
+		if err := cache_service.SeedUserCache(); err != nil {
+			log.Printf("⚠️ Avertissement lors du seeding du USER cache: %v", err)
+		}
 	} else {
 		log.Printf("✅ Cache Redis déjà peuplé (%d éléments). Seeding ignoré, démarrage éclair !", count)
 	}
+
+	// ✅ INITIALISATION DU DISTRIBUTEUR GLOBAL
+	// Assure-toi que NewFeedDistributor et NewProtoFeedBuilder correspondent bien à tes constructeurs
+	// Si ton constructeur prend d'autres paramètres (comme rng ou rdb), injecte-les ici.
+	algorithm_service.GlobalDistributor = algorithm_service.NewFeedDistributor(
+		algorithm_service.NewProtoFeedBuilder(),
+	)
 
 	// Lance le moteur V12
 	worker.StartBackgroundWorkers(context.Background())

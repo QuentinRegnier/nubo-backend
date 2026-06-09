@@ -7,7 +7,6 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/lib/pq"
 )
 
 // FuncLoadUserPosts est le fallback absolu. Il ramène le payload complet depuis L3 pour hydrater la RAM.
@@ -25,15 +24,5 @@ func FuncLoadUserPosts(ctx context.Context, userID int64, limit int64, offset in
 		}
 	}(rows)
 
-	var posts []post_models.PostPayload
-	for rows.Next() {
-		var p post_models.PostPayload
-		if err := rows.Scan(
-			&p.ID, &p.UserID, &p.Content, &p.Visibility, &p.LikeCount, &p.CommentCount, &p.ViewCount,
-			pq.Array(&p.Hashtags), pq.Array(&p.Identifiers), pq.Array(&p.MediaIDs), &p.CreatedAt, &p.UpdatedAt,
-		); err == nil {
-			posts = append(posts, p)
-		}
-	}
-	return posts, nil
+	return scanPosts(rows)
 }

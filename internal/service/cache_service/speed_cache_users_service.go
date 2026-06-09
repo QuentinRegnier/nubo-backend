@@ -8,6 +8,8 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -27,6 +29,9 @@ func AddUserToSpeedCache(ctx context.Context, u auth_models.UserPayload) error {
 		FirstName:        u.FirstName,
 		LastName:         u.LastName,
 		ProfilePictureID: u.ProfilePictureID,
+		Bio:              u.Bio,
+		Grade:            u.Grade,
+		Badges:           u.Badges,
 	}
 
 	// 3. Sérialisation et persistance de l'objet compact
@@ -82,4 +87,56 @@ func SearchUserByPrefix(ctx context.Context, prefix string, limit int64) ([]mode
 	// Si un ID manque dans le cache_service (MissingIDs), on l'ignore silencieusement.
 	// Pour de l'auto-complétion, la vitesse prime sur l'exhaustivité absolue.
 	return users, nil
+}
+
+// GetUserLite récupère l'empreinte minimale d'un utilisateur depuis le SPEED Cache (L1)
+// avec un fallback en cascade étanche : L2 (MongoDB) -> L3 (PostgreSQL) et réhydratation automatique.
+func GetUserLite(ctx context.Context, userID int64) (models.UserLiteRequest, error) {
+	var ul models.UserLiteRequest
+
+	// 1. TENTATIVE L1 : SPEED Cache (Redis UsersLite)
+	err := redis.UsersLite.GetObject(ctx, userID, &ul)
+	if err == nil {
+		return ul, nil
+	}
+
+	// 2. FALLBACK L2 : Cold Storage (MongoDB)
+	uMongo, errMongo := mongo.MongoLoadUser(userID, "", "", "")
+	if errMongo == nil {
+		// Réhydratation L1 synchrone
+		_ = AddUserToSpeedCache(ctx, uMongo)
+		return models.UserLiteRequest{
+			ID:               uMongo.ID,
+			Username:         uMongo.Username,
+			FirstName:        uMongo.FirstName,
+			LastName:         uMongo.LastName,
+			ProfilePictureID: uMongo.ProfilePictureID,
+			Bio:              uMongo.Bio,
+			Grade:            uMongo.Grade,
+			Badges:           uMongo.Badges,
+		}, nil
+	}
+
+	// 3. FALLBACK L3 : Source de Vérité Absolue (PostgreSQL)
+	uPg, errPg := postgres.FuncLoadUser(userID, "", "", "")
+	if errPg == nil {
+		// A. Réhydratation du stockage à froid L2 (MongoDB)
+		_ = mongo.MongoUpsertUser(uPg)
+
+		// B. Réhydratation du SPEED Cache L1 (Redis)
+		_ = AddUserToSpeedCache(ctx, uPg)
+
+		return models.UserLiteRequest{
+			ID:               uPg.ID,
+			Username:         uPg.Username,
+			FirstName:        uPg.FirstName,
+			LastName:         uPg.LastName,
+			ProfilePictureID: uPg.ProfilePictureID,
+			Bio:              uPg.Bio,
+			Grade:            uPg.Grade,
+			Badges:           uPg.Badges,
+		}, nil
+	}
+
+	return ul, fmt.Errorf("impossible de trouver l'utilisateur %d dans les couches d'infrastructure", userID)
 }

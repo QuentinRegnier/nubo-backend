@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/auth_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/comment_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/feed_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/like_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/post_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/report_handlers"
@@ -83,15 +84,15 @@ func SetupRoutes(r *gin.Engine) {
 	secured.Use(middleware.HMACMiddleware()) // 2. Est-ce authentique ? (Check Signature with Redis Secret)
 
 	// --- Posts ---
-	secured.GET("/feed", LoadFeedHandler)              // ℹ️❌
-	secured.GET("/feed/more", LoadMoreFeedHandler)     // ℹ️❌
-	secured.GET("/post", post_handlers.GetPostHandler) // ℹ️❌
+	secured.GET("/feed", feed_handlers.GetFeedHandler)
+	secured.GET("/feed/force", feed_handlers.GetFeedHandler)
+	secured.GET("/post", post_handlers.GetPostHandler)
 	secured.POST("/post", post_handlers.CreatePostHandler)
 	secured.PATCH("/post", post_handlers.UpdatePostHandler)
 	secured.DELETE("/post", post_handlers.DeletePostHandler)
 	secured.POST("/views/batch", handlers.RegisterBatchViewsHandler) // ℹ️❌ à vérifier
 	secured.GET("/post/user", post_handlers.GetUserPostsHandler)
-	secured.GET("/post/user/force", post_handlers.GetUserPostsHandler) // ✅ Cible exactement le même handler
+	secured.GET("/post/user/force", post_handlers.GetUserPostsHandler)
 
 	// --- Profils / Utilisateurs ---
 	secured.GET("/search/users/quick", handlers.UserSearchHandler) // ℹ️❌ à vérifier
@@ -169,16 +170,6 @@ func SetupRoutes(r *gin.Engine) {
 
 	// --- Report ---
 	secured.POST("/report", report_handlers.CreateReportHandler)
-}
-
-func LoadFeedHandler(c *gin.Context) {
-	// TODO: charger les posts du feed_service
-	c.JSON(http.StatusOK, gin.H{"posts": []string{"post_service 5", "post_service 6"}})
-}
-
-func LoadMoreFeedHandler(c *gin.Context) {
-	// TODO: charger plus de posts depuis la base
-	c.JSON(http.StatusOK, gin.H{"posts": []string{"post_service 3", "post_service 4"}})
 }
 
 func FollowHandler(c *gin.Context) {

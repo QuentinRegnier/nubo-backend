@@ -1,16 +1,16 @@
-package feed_service
+package algorithm_service
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"math"
 	"math/rand"
 	"strconv"
 	"time"
 
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
@@ -22,6 +22,9 @@ type PersonalizedFeedOptions struct {
 	FriendIDs      map[int64]bool // IDs des amis directs de l'utilisateur (pour B(u,p))
 	Date           time.Time      // Date de référence pour les clés ZSET
 	Limit          int            // Taille du feed_service (0 = TDDFeedSize = 50)
+	CandidateIDs   []int64        // ✅ Les IDs apportés par le Magasinier
+	Seed           int64          // ✅ La Graine du panier pour déterminer le rythme de la Vague
+	StartIndex     int            // ✅ Index de départ absolu pour la Vague de Dopamine (évite le reset de la courbe au scroll)
 }
 
 // BuildPersonalizedFeed construit le feed_service personnalisé de K posts pour un utilisateur à partir des candidats.
@@ -40,33 +43,31 @@ func BuildPersonalizedFeed(ctx context.Context, opts PersonalizedFeedOptions) ([
 		}
 	}
 
-	// ── ÉTAPE A: Récupération des candidats globaux ───────────────────────
-	dateKey := opts.Date.UTC().Format("20060102")
-	zsetKey := fmt.Sprintf(variables.RedisKeyTrendGlobalDaily, dateKey)
-
-	zResults, err := redisgo.Rdb.ZRevRangeWithScores(
-		ctx, zsetKey, 0, int64(variables.TDDCandidates-1),
-	).Result()
-	if err != nil {
-		return nil, fmt.Errorf("[personalized] fetch ZSET %s: %w", zsetKey, err)
-	}
-	if len(zResults) == 0 {
+	// ── ÉTAPE A: Récupération des scores de tendance du Panier ────────────
+	postIDs := opts.CandidateIDs
+	if len(postIDs) == 0 {
 		return []int64{}, nil
 	}
 
-	postIDs := make([]int64, 0, len(zResults))
-	trendScores := make(map[int64]float64, len(zResults))
-	for _, z := range zResults {
-		memberStr, ok := z.Member.(string)
-		if !ok {
-			continue
+	dateKey := opts.Date.UTC().Format("20060102")
+	zsetKey := fmt.Sprintf(variables.RedisKeyTrendGlobalDaily, dateKey)
+
+	members := make([]string, len(postIDs))
+	for i, id := range postIDs {
+		members[i] = strconv.FormatInt(id, 10)
+	}
+
+	// Appel abstrait du Pipeline pour récupérer les scores existants
+	scores, _ := redis.ZScores(ctx, zsetKey, members)
+
+	trendScores := make(map[int64]float64, len(postIDs))
+	for i, id := range postIDs {
+		score := scores[i]
+		if score == 0 {
+			// Fallback : Si le post (ex: boîte aux lettres) n'est pas dans le top, on sécurise son score
+			score = 1.0
 		}
-		id, err := strconv.ParseInt(memberStr, 10, 64)
-		if err != nil {
-			continue
-		}
-		postIDs = append(postIDs, id)
-		trendScores[id] = z.Score
+		trendScores[id] = score
 	}
 
 	// ── ÉTAPE B: Récupération des vecteurs de contenu ─────────────────────
@@ -97,11 +98,12 @@ func BuildPersonalizedFeed(ctx context.Context, opts PersonalizedFeedOptions) ([
 			continue
 		}
 		allCandidates = append(allCandidates, PostCandidate{
-			PostID:     postIDs[i],
-			AuthorID:   payload.AuthorID,
-			TrendScore: trendScores[postIDs[i]],
-			ContentVec: payload.V,
-			MatrixIdx:  len(allCandidates),
+			PostID:        postIDs[i],
+			AuthorID:      payload.AuthorID,
+			TrendScore:    trendScores[postIDs[i]],
+			ContentVec:    payload.V,
+			PriorityLevel: payload.PriorityLevel, // ✅ Lecture en O(1) de la priorité
+			MatrixIdx:     len(allCandidates),
 		})
 	}
 
@@ -153,6 +155,7 @@ func BuildPersonalizedFeed(ctx context.Context, opts PersonalizedFeedOptions) ([
 			filteredCandidates[i].ContentVec,
 			filteredCandidates[i].AuthorID,
 			opts.FriendIDs,
+			filteredCandidates[i].PriorityLevel, // ✅ Transmission
 		)
 	}
 
@@ -166,32 +169,24 @@ func BuildPersonalizedFeed(ctx context.Context, opts PersonalizedFeedOptions) ([
 	// ── ÉTAPE F: MMR itératif — K = 50 itérations ─────────────────────
 	selected := RunMMR(filteredCandidates, G, totalN, variables.TDDLambdaMMR, feedSize)
 
-	// ── ÉTAPE G: Injection de sérendipité ────────────────────────────────
+	// ── ÉTAPE G: Injection de sérendipité (La Vague de Dopamine) ──────────
 	serendipPool := make([]int64, len(allCandidates))
 	for i, c := range allCandidates {
 		serendipPool[i] = c.PostID
 	}
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	selected = InjectSerendipity(selected, serendipPool, variables.TDDSerendipity, rng)
+	// ✅ Initialisation stricte du générateur avec la Seed du panier
+	rng := rand.New(rand.NewSource(opts.Seed))
+	selected = InjectSerendipity(selected, serendipPool, rng, opts.StartIndex) // ✅ Transmission du décalage
 
 	feedIDs := make([]int64, len(selected))
 	for i, c := range selected {
 		feedIDs[i] = c.PostID
 	}
 
-	// ── ÉTAPE H: Mise en Buffer paginée (Phase 4) ─────────────────────────
+	// ── ÉTAPE H: Retour du flux calculé ──────────────────────────────────
 	// La Caissière (MMR) a produit la liste finale de postIDs ordonnés.
-	// On les découpe et on les met dans l'Usine à Feeds (pages).
+	// Le Distributeur se chargera de l'enregistrer dans le FeedState.
 
-	err = SaveBuffer(ctx, opts.UserID, feedIDs, variables.TDDFeedSize)
-	if err != nil {
-		log.Printf("⚠️ [personalized] erreur mise en buffer feed_service %d: %v", opts.UserID, err)
-	}
-
-	// On retourne la première page immédiatement (TDDFeedSize) pour le chargement instantané
-	if len(feedIDs) > variables.TDDFeedSize {
-		return feedIDs[:variables.TDDFeedSize], nil
-	}
 	return feedIDs, nil
 }
 

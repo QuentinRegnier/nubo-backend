@@ -2,13 +2,14 @@ package worker
 
 import (
 	"context"
-	"fmt"
 	"log"
+	"math/rand"
+	"time"
 
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 )
 
 // processInternalJobs traite les tâches de calcul asynchrones comme la génération du Feed.
@@ -26,16 +27,17 @@ func processInternalJobs(ctx context.Context, events []redis.AsyncEvent) {
 			log.Printf("🔄 [Worker] Lazy Loading enclenché pour l'utilisateur %d", userID)
 
 			// 2. Instancier le Magasinier avec des quotas standards
-			clerk := feed_service.NewProtoFeedBuilder()
-			quotas := feed_service.Quotas{
+			clerk := algorithm_service.NewProtoFeedBuilder()
+			quotas := algorithm_service.Quotas{
 				MaxCandidates: 1000,
 				SocialRatio:   0.3,
 				TagRatio:      0.5,
 				GlobalRatio:   0.2,
 			}
 
-			// 3. Exécuter le pipeline complet silencieusement
-			_, err := clerk.CollectCandidates(ctx, userID, quotas)
+			// ✅ AJOUT DES GRAINES : Le Magasinier exige son ADN déterministe
+			seeds := [3]int64{rand.Int63(), rand.Int63(), rand.Int63()}
+			_, err := clerk.CollectCandidates(ctx, userID, seeds, quotas)
 			if err != nil {
 				log.Printf("❌ [Worker] Échec Magasinier pour user %d: %v", userID, err)
 				continue
@@ -51,54 +53,67 @@ func processInternalJobs(ctx context.Context, events []redis.AsyncEvent) {
 }
 
 // handleSocialFanOut intercepte les créations de posts pour distribuer l'ID
-// dans les boîtes aux lettres Redis de tous les abonnés de l'auteur.
+// dans les boîtes aux lettres Redis ciblées (Amis ou Abonnés).
 func handleSocialFanOut(ctx context.Context, events []redis.AsyncEvent) {
 	for _, evt := range events {
 		// On ne cible que les créations de posts réussies
 		if evt.Type == redis.EntityPost && evt.Action == redis.ActionCreate {
 			postID := evt.ID
 
-			// Extraction sécurisée de l'ID de l'auteur depuis le payload de l'événement
-			var authorID int64
-			if payloadMap, ok := evt.Payload.(map[string]any); ok {
-				if uid, found := payloadMap["user_id"]; found {
-					switch v := uid.(type) {
-					case float64:
-						authorID = int64(v)
-					case int64:
-						authorID = v
-					}
+			// 1. Vérification absolue via le fallback BDD/Cache (Sécurité & Visibilité)
+			// getPostWithFallback est disponible dans le package worker (défini dans most_cache_worker.go)
+			p, err := getPostWithFallback(ctx, postID)
+			if err != nil || p.Visibility == -1 {
+				continue // Le post a été supprimé ou est introuvable entre temps
+			}
+
+			authorID := p.UserID
+			var targetIDs []int64
+
+			// 2. LE FILTRE DE VISIBILITÉ ET LE FAN-OUT HYBRIDE
+			if p.Visibility == 2 {
+				// ✅ CAS 1 : Post Privé (Amis Uniquement)
+				// On ne l'envoie qu'aux amis (graphe bidirectionnel) pour ne pas polluer les simples abonnés.
+				// (Assure-toi d'avoir implémenté GetSpeedFriends dans cache_service)
+				targetIDs, err = cache_service.GetSpeedFriends(ctx, authorID)
+			} else {
+				// ✅ CAS 2 : Post Public ou Abonnés (Visibility 0 ou 1)
+				// Protection Anti-Crash "Justin Bieber" : On compte avant de charger en RAM
+				// (Assure-toi d'avoir implémenté GetFollowerCount dans cache_service, via un ZCARD par exemple)
+				followerCount := cache_service.GetFollowerCount(ctx, authorID)
+				if followerCount > 50000 {
+					log.Printf("🛡️ [FanOut] Annulé pour le VIP %d (%d abonnés). Délégation au Most Cache Global.", authorID, followerCount)
+					continue
 				}
+
+				targetIDs, err = cache_service.GetSpeedFollowers(ctx, authorID)
 			}
 
-			if authorID == 0 {
-				continue // Impossible de déterminer l'auteur, protection contre les payloads corrompus
-			}
-
-			// 1. Récupération instantanée des abonnés via notre service dédié (O(1) en RAM)
-			followerIDs, err := cache_service.GetSpeedFollowers(ctx, authorID)
 			if err != nil {
-				log.Printf("⚠️ [FanOut] Impossible de lire les abonnés de l'user %d: %v", authorID, err)
+				log.Printf("⚠️ [FanOut] Impossible de lire le graphe de l'user %d: %v", authorID, err)
 				continue
 			}
 
-			if len(followerIDs) == 0 {
-				continue // L'utilisateur n'a pas d'abonnés (Ville fantôme locale), rien à distribuer
+			if len(targetIDs) == 0 {
+				continue // L'utilisateur n'a pas d'audience (Ville fantôme locale), rien à distribuer
 			}
 
-			// 2. Distribution de masse via Redis Pipeline (Vitesse maximale, 1 seul aller-retour TCP)
+			// 3. Distribution de masse via Redis Pipeline (Vitesse maximale, 1 seul aller-retour TCP)
 			pipe := redisgo.Rdb.Pipeline()
-			for _, followerID := range followerIDs {
-				// Génération de la clé de la boîte aux lettres du flux social de l'abonné
-				// (On utilise %d car followerID est désormais un int64 propre)
-				feedUserKey := fmt.Sprintf("feed_service:user:%d", followerID)
+			score := float64(time.Now().UnixMilli()) // Le score chronologique absolu
 
-				// LPUSH met le nouveau post tout en haut de la file d'attente sociale
-				pipe.LPush(ctx, feedUserKey, postID)
+			// ✅ CORRECTION : On itère sur targetIDs (qui contient les amis ou les abonnés filtrés)
+			for _, followerID := range targetIDs {
+				// ✅ Génération propre de la clé via le wrapper de manager.go
+				mailboxKey := redis.FeedsMailbox.Key(followerID)
 
-				// LTRIM borne la boîte aux lettres à 1000 éléments.
-				// Cela évite que le panier social d'un utilisateur inactif ne grandisse indéfiniment en RAM.
-				pipe.LTrim(ctx, feedUserKey, 0, 999)
+				// ✅ On utilise pipe.Do() pour éviter les erreurs de structure avec redisgo.Z{}
+				pipe.Do(ctx, "ZADD", mailboxKey, score, postID)
+
+				// ✅ ZREMRANGEBYRANK remplace LTRIM.
+				// En supprimant du rang 0 au rang -501, on demande à Redis de ne conserver que
+				// les 500 posts avec le score le plus élevé (les plus récents).
+				pipe.Do(ctx, "ZREMRANGEBYRANK", mailboxKey, 0, -501)
 			}
 
 			// Exécution atomique du lot de distribution

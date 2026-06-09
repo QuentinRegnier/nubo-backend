@@ -89,11 +89,42 @@ func GetSpeedFollowers(ctx context.Context, userID int64) ([]int64, error) {
 		return nil, fmt.Errorf("erreur lecture speed cache followers: %w", err)
 	}
 
-	followers := make([]int64, 0, len(followerStrings))
-	for _, fStr := range followerStrings {
-		if id, err := strconv.ParseInt(fStr, 10, 64); err == nil {
+	var followers []int64
+	for _, idStr := range followerStrings {
+		if id, err := strconv.ParseInt(idStr, 10, 64); err == nil {
 			followers = append(followers, id)
 		}
 	}
+
 	return followers, nil
+}
+
+// GetFollowerCount retourne le nombre total d'abonnés d'un utilisateur en O(1).
+// Idéal pour la protection "Anti-Crash Justin Bieber" avant un Fan-Out.
+func GetFollowerCount(ctx context.Context, userID int64) int64 {
+	key := fmt.Sprintf(RedisKeySpeedFollowers, userID)
+	count, _ := redisgo.Rdb.SCard(ctx, key).Result()
+	return count
+}
+
+// GetSpeedFriends récupère strictement la liste des amis (Relation = 2).
+// Utilisé pour le Fan-Out restreint des posts privés.
+func GetSpeedFriends(ctx context.Context, userID int64) ([]int64, error) {
+	key := fmt.Sprintf(RedisKeySpeedRelations, userID)
+
+	relations, err := redisgo.Rdb.HGetAll(ctx, key).Result()
+	if err != nil {
+		return nil, fmt.Errorf("erreur lecture speed cache relations: %w", err)
+	}
+
+	var friends []int64
+	for callerIDStr, stateStr := range relations {
+		if stateStr == "2" { // 2 = État "Ami" strict
+			if callerID, err := strconv.ParseInt(callerIDStr, 10, 64); err == nil {
+				friends = append(friends, callerID)
+			}
+		}
+	}
+
+	return friends, nil
 }

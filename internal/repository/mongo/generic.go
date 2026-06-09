@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/schemas"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -35,17 +35,17 @@ var (
 func InitCacheDatabase() {
 	// Initialiser les collections
 
-	schemaUsers := domain.UsersSchema
-	schemaUserSettings := domain.UserSettingsSchema
-	schemaSessions := domain.SessionsSchema
-	schemaRelations := domain.RelationsSchema
-	schemaPosts := domain.PostsSchema
-	schemaComments := domain.CommentsSchema
-	schemaLikes := domain.LikesSchema
-	schemaMedia := domain.MediaSchema
-	schemaConversations := domain.ConversationsSchema
-	schemaMembers := domain.MembersSchema
-	schemaMessages := domain.MessagesSchema
+	schemaUsers := schemas.UsersSchema
+	schemaUserSettings := schemas.UserSettingsSchema
+	schemaSessions := schemas.SessionsSchema
+	schemaRelations := schemas.RelationsSchema
+	schemaPosts := schemas.PostsSchema
+	schemaComments := schemas.CommentsSchema
+	schemaLikes := schemas.LikesSchema
+	schemaMedia := schemas.MediaSchema
+	schemaConversations := schemas.ConversationsSchema
+	schemaMembers := schemas.MembersSchema
+	schemaMessages := schemas.MessagesSchema
 
 	// variables globales
 	Users = NewMongoCollection("nubo_mongo", "auth.users", schemaUsers)

@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
@@ -72,6 +73,36 @@ func ZCard(ctx context.Context, key string) (int64, error) {
 	return redisgo.Rdb.ZCard(ctx, key).Result()
 }
 
+// ZRevRangeByRanks utilise un Pipeline Redis pour récupérer une liste de rangs spécifiques
+// en un seul aller-retour TCP. Idéal pour extraire des éléments précis sans polluer la RAM.
+func ZRevRangeByRanks(ctx context.Context, key string, ranks []int64) ([]string, error) {
+	if len(ranks) == 0 {
+		return nil, nil
+	}
+
+	pipe := redisgo.Rdb.Pipeline()
+	cmds := make([]*redis.StringSliceCmd, 0, len(ranks))
+
+	for _, rank := range ranks {
+		cmds = append(cmds, pipe.ZRevRange(ctx, key, rank, rank))
+	}
+
+	_, err := pipe.Exec(ctx)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+
+	results := make([]string, 0, len(ranks))
+	for _, cmd := range cmds {
+		res, _ := cmd.Result()
+		if len(res) > 0 {
+			results = append(results, res[0])
+		}
+	}
+
+	return results, nil
+}
+
 // zaddCapScript garantit l'atomicité de l'insertion et du nettoyage à X éléments.
 // TDD §3.3 : Utilise un script Lua pour éviter toute race condition.
 const zaddCapScript = `
@@ -136,4 +167,30 @@ func ZRem(ctx context.Context, key string, members ...interface{}) error {
 // Utilisé pour atomiser entièrement un ZSET, un SET d'idempotence, etc.
 func Del(ctx context.Context, keys ...string) error {
 	return redisgo.Rdb.Del(ctx, keys...).Err()
+}
+
+// ZScores abstrait la récupération de plusieurs scores en un seul aller-retour TCP (Pipeline).
+// Retourne un tableau de scores (0 si le membre n'existe pas).
+func ZScores(ctx context.Context, key string, members []string) ([]float64, error) {
+	if len(members) == 0 {
+		return nil, nil
+	}
+	pipe := redisgo.Rdb.Pipeline()
+	for _, member := range members {
+		pipe.ZScore(ctx, key, member)
+	}
+	cmds, err := pipe.Exec(ctx)
+	if err != nil && err != redis.Nil {
+		return nil, err
+	}
+
+	scores := make([]float64, len(members))
+	for i, cmd := range cmds {
+		// Cast sécurisé pour extraire la valeur du FloatCmd
+		if fCmd, ok := cmd.(*redis.FloatCmd); ok {
+			val, _ := fCmd.Result()
+			scores[i] = val
+		}
+	}
+	return scores, nil
 }

@@ -6,8 +6,8 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
 )
 
@@ -39,7 +39,7 @@ func UpdatePost(ctx context.Context, input post_models.UpdatePostInput) error {
 	// 3. RE-VECTORISATION SYNCHRONE DU CONTENU
 	// ─────────────────────────────────────────────────────────────────────────
 	// On met à jour le vecteur avec les nouvelles données textuelles/thématiques.
-	post.Vector = feed_service.ComputeContentVectorFull(post, nil)
+	post.Vector = algorithm_service.ComputeContentVectorFull(post, nil)
 
 	// ─────────────────────────────────────────────────────────────────────────
 	// 4. SAUVEGARDE ET DÉLÉGATION AUX WORKERS BATCH

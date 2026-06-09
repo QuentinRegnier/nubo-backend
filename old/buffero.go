@@ -1,15 +1,6 @@
-package feed_service
+package old
 
-import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"strconv"
-	"time"
-
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
-)
-
+/*
 // ─────────────────────────────────────────────────────────────────────────────
 // GESTIONNAIRE DE BUFFER (L'Usine à Feeds - Phase 4)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -132,3 +123,4 @@ func ClearBuffer(ctx context.Context, userID int64) error {
 	_, err := pipe.Exec(ctx)
 	return err
 }
+*/

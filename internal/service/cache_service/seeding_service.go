@@ -145,3 +145,89 @@ func SeedMostCache() error {
 
 	return nil
 }
+
+// ============================================================================
+// 5. AMORÇAGE DU SPEED CACHE (Utilisateurs & Relations)
+// ============================================================================
+
+// SeedSpeedCache charge les profils allégés et le graphe social relationnel en RAM
+func SeedSpeedCache() error {
+	ctx := context.Background()
+	limit := 10000
+
+	// --- 1. Utilisateurs ---
+	log.Println("⚡ Amorçage SPEED Cache: Chargement des utilisateurs...")
+	offsetUsers := 0
+	for {
+		users, err := postgres.FuncLoadUsersPaginated(limit, offsetUsers)
+		if err != nil {
+			log.Printf("⚠️ Avertissement: Erreur DB lors du chargement des users: %v", err)
+			break
+		}
+
+		for _, u := range users {
+			_ = AddUserToSpeedCache(ctx, u)
+		}
+
+		offsetUsers += len(users)
+		if len(users) < limit {
+			break
+		}
+	}
+	log.Printf("✅ SPEED Cache Users: %d chargés.", offsetUsers)
+
+	// --- 2. Relations ---
+	log.Println("⚡ Amorçage SPEED Cache: Chargement des relations...")
+	offsetRels := 0
+	for {
+		relations, err := postgres.FuncLoadRelationsPaginated(limit, offsetRels)
+		if err != nil {
+			log.Printf("⚠️ Avertissement: Erreur DB lors du chargement des relations: %v", err)
+			break
+		}
+
+		for _, rel := range relations {
+			_ = UpdateRelationState(ctx, rel.TargetID, rel.CallerID, rel.State)
+		}
+
+		offsetRels += len(relations)
+		if len(relations) < limit {
+			break
+		}
+	}
+	log.Printf("✅ SPEED Cache Relations terminées (%d chargées).", offsetRels)
+
+	return nil
+}
+
+// ============================================================================
+// 6. AMORÇAGE DU USER CACHE (Timelines)
+// ============================================================================
+
+// SeedUserCache reconstruit les chronologies des profils utilisateurs (ZSETs L1)
+func SeedUserCache() error {
+	ctx := context.Background()
+	limit := 10000
+	offset := 0
+
+	log.Println("👤 Amorçage USER Cache: Construction des timelines (ZSETs)...")
+	for {
+		seeds, err := postgres.FuncLoadTimelineSeedPaginated(limit, offset)
+		if err != nil {
+			log.Printf("⚠️ Avertissement: Erreur DB lors du chargement des timelines: %v", err)
+			break
+		}
+
+		for _, s := range seeds {
+			_ = AddPostToUserProfile(ctx, s.UserID, s.PostID, float64(s.CreatedAt.UnixMilli()))
+		}
+
+		offset += len(seeds)
+		if len(seeds) < limit {
+			break
+		}
+	}
+
+	log.Printf("✅ USER Cache: Timelines reconstruites (%d posts assignés).", offset)
+	return nil
+}

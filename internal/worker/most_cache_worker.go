@@ -11,9 +11,9 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 )
 
 // updateMostCache intercepte les événements pour alimenter les ZSETs (Tags, Profils, Classements)
@@ -27,8 +27,11 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 				var post post_models.PostPayload
 				if err := json.Unmarshal(jsonBytes, &post); err == nil {
 					cache_service.UpdatePostRecommendationScore(ctx, post)
-					cache_service.AddPostToUserProfile(ctx, post.UserID, post.ID, post.CreatedAt.UnixMilli())
-					feed_service.StoreContentVector(ctx, post)
+
+					// ✅ IGNORER L'ERREUR (_) ET CASTER EN float64
+					_ = cache_service.AddPostToUserProfile(ctx, post.UserID, post.ID, float64(post.CreatedAt.UnixMilli()))
+
+					algorithm_service.StoreContentVector(ctx, post)
 				}
 			}
 		}

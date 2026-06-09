@@ -1,4 +1,4 @@
-package feed_service
+package algorithm_service
 
 import (
 	"math"
@@ -20,6 +20,7 @@ type PostCandidate struct {
 	AuthorID      int64
 	TrendScore    float64   // S(p,t) — issu du ZSET Redis
 	ContentVec    []float32 // ĉ_p ∈ R^224 (normalisé L2)
+	PriorityLevel int       // ✅ Niveau de priorité (0=Normal, 1=Certifié, etc.)
 	PersonalScore float64   // R(u,p) — calculé à l'étape D
 	MatrixIdx     int       // Index dans la matrice de similarité G
 	IsSerendipity bool      // true si injecté par le mécanisme de sérendipité
@@ -147,9 +148,10 @@ func ComputePersonalizedScore(
 	userVec, contentVec []float32,
 	authorID int64,
 	friendIDs map[int64]bool,
+	priorityLevel int, // ✅ Ajout du paramètre
 ) float64 {
 	if len(userVec) != variables.VectorDimTotal || len(contentVec) != variables.VectorDimTotal {
-		return trendScore // Fallback sur le score de tendance brut
+		return trendScore * (1.0 + float64(priorityLevel)*0.5) // Fallback avec priorité
 	}
 
 	// ── <û, ĉ_p> — Similarité cosinus (produit scalaire de vecteurs normalisés)
@@ -190,7 +192,13 @@ func ComputePersonalizedScore(
 		variables.TDDEta*friendBoost +
 		variables.TDDEtaP*pearson
 
-	return trendScore * inner
+	baseScore := trendScore * inner
+
+	// ✅ APPLICATION DU MULTIPLICATEUR DE PRIORITÉ
+	// Score final = Score * (1 + (PriorityLevel * 0.5))
+	priorityMultiplier := 1.0 + (float64(priorityLevel) * 0.5)
+
+	return baseScore * priorityMultiplier
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -391,21 +399,24 @@ func RunMMR(candidates []PostCandidate, G []float32, totalN int, lambdaD float64
 // SÉRENDIPITÉ — TDD §4.3
 // ─────────────────────────────────────────────────────────────────────────────
 
-// InjectSerendipity remplace aléatoirement des slots du feed_service par des posts de découverte.
-//
-// TDD §4.3:
-//
-//	p_serendip = 0.08 (8%) — probabilité de remplacement par slot
-//	"4 posts sur 50 sont des contenus de découverte en moyenne"
-//	Posts injectés taggés {"discovery": true} côté client
-func InjectSerendipity(feed []PostCandidate, pool []int64, probPerSlot float64, rng *rand.Rand) []PostCandidate {
-	if len(pool) == 0 || probPerSlot <= 0 || rng == nil {
+// InjectSerendipity remplace de manière ondulatoire des slots du feed par des posts de découverte.
+func InjectSerendipity(feed []PostCandidate, pool []int64, rng *rand.Rand, startIndex int) []PostCandidate {
+	if len(pool) == 0 || rng == nil {
 		return feed
 	}
 	for i := range feed {
-		// Chaque slot a une probabilité p_serendip d'être remplacé
-		if rng.Float64() < probPerSlot {
-			// Sélection uniforme dans le pool global (top-N du trend feed_service)
+		// 1. Calcul de la Qualité Requise (Affinité) via la Vague de Dopamine
+		// ✅ L'index global (startIndex + i) garantit la continuité parfaite de l'onde
+		affinityRequired := DopamineWave(float64(startIndex + i))
+
+		// 2. La probabilité d'injecter de la sérendipité (Exploration)
+		// correspond au vide laissé par l'affinité.
+		// Exemple : Si la vague exige 1.0 (Index 0), la probabilité est 0%.
+		// Si la vague creuse un plateau à 0.35, la probabilité monte à 65%.
+		probSerendipity := 1.0 - affinityRequired
+
+		// 3. Tirage aléatoire déterministe via la Seed du panier
+		if rng.Float64() < probSerendipity {
 			poolIdx := rng.Intn(len(pool))
 			feed[i] = PostCandidate{
 				PostID:        pool[poolIdx],

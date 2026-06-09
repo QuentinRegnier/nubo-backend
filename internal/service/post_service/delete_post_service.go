@@ -5,8 +5,8 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
 )
 
@@ -30,7 +30,7 @@ func DeletePost(ctx context.Context, input post_models.DeletePostInput) error {
 	object_cache_service.PurgePostCommentsFromL1(ctx, input.PostID)
 
 	// C. Suppression du seau LSH
-	_ = feed_service.PurgePostVectors(ctx, input.PostID)
+	_ = algorithm_service.PurgePostVectors(ctx, input.PostID)
 
 	// D. Purge absolue des Médias associés en RAM
 	for _, mediaID := range post.MediaIDs {

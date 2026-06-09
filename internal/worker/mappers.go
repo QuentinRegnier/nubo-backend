@@ -176,7 +176,7 @@ type PostMapper struct{}
 
 func (m *PostMapper) TableName() string { return "content.posts" }
 func (m *PostMapper) Columns() []string {
-	return []string{"id", "user_id", "content", "hashtags", "identifiers", "media_ids", "visibility", "location", "created_at", "updated_at", "like_count", "comment_count", "view_count", "has_media", "vector", "vector_version"}
+	return []string{"id", "user_id", "content", "hashtags", "identifiers", "media_ids", "visibility", "priority_level", "location", "created_at", "updated_at", "like_count", "comment_count", "view_count", "has_media", "vector", "vector_version"}
 }
 func (m *PostMapper) ToRow(data any) ([]any, error) {
 	jsonBytes, err := json.Marshal(data)
@@ -196,6 +196,7 @@ func (m *PostMapper) ToRow(data any) ([]any, error) {
 		pq.Array(p.Identifiers),
 		pq.Array(p.MediaIDs),
 		p.Visibility,
+		p.PriorityLevel,
 		p.Location,
 		p.CreatedAt,
 		p.UpdatedAt,
