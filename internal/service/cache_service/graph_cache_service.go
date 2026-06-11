@@ -2,14 +2,13 @@ package cache_service
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"math"
 	"strings"
 	"time"
 
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -50,12 +49,11 @@ func UpdateTagCooccurrences(ctx context.Context, tags []string, nowMs int64) {
 }
 
 // updateEdge exécute l'équation d'état : W_nouveau = (W_ancien * e^(-λ * Δt)) * (1 - α) + α
-func updateEdge(ctx context.Context, source string, target string, nowMs int64) {
-	key := fmt.Sprintf("graph_cache:tag:%s:edges", source)
+func updateEdge(ctx context.Context, sourceTag, target string, nowMs int64) {
 	var edge TagEdge
 
-	// 1. Lecture de l'état actuel (S'il n'existe pas, edge.Weight sera 0)
-	val, err := redisgo.Rdb.HGet(ctx, key, target).Bytes()
+	// 1. Lecture de l'état actuel via la Collection (encapsulation L1)
+	val, err := redis.GraphEdges.HGet(ctx, sourceTag, target).Bytes()
 	if err == nil {
 		_ = msgpack.Unmarshal(val, &edge)
 	}
@@ -78,15 +76,14 @@ func updateEdge(ctx context.Context, source string, target string, nowMs int64) 
 	edge.Timestamp = nowMs
 	binData, _ := msgpack.Marshal(&edge)
 
-	_ = redisgo.Rdb.HSet(ctx, key, target, binData).Err()
+	_ = redis.GraphEdges.HSet(ctx, sourceTag, target, binData)
 }
 
 // GetRelatedTagsLazy retourne les tags cousins et déclenche l'élagage paresseux (Lazy Pruning)
 func GetRelatedTagsLazy(ctx context.Context, sourceTag string) map[string]float64 {
 	sourceTag = strings.ToLower(strings.TrimSpace(sourceTag))
-	key := fmt.Sprintf("graph_cache:tag:%s:edges", sourceTag)
 
-	edgesJSON, err := redisgo.Rdb.HGetAll(ctx, key).Result()
+	edgesJSON, err := redis.GraphEdges.HGetAll(ctx, sourceTag).Result()
 	if err != nil || len(edgesJSON) == 0 {
 		return nil
 	}
@@ -117,7 +114,7 @@ func GetRelatedTagsLazy(ctx context.Context, sourceTag string) map[string]float6
 	// 🧹 HDEL Asynchrone : Auto-nettoyage sans bloquer la requête utilisateur
 	if len(edgesToDelete) > 0 {
 		go func(targets []string) {
-			_ = redisgo.Rdb.HDel(context.Background(), key, targets...).Err()
+			_ = redis.GraphEdges.HDel(context.Background(), sourceTag, targets...)
 		}(edgesToDelete)
 	}
 

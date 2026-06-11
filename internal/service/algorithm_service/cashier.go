@@ -2,16 +2,15 @@ package algorithm_service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
 	"strconv"
 	"time"
 
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 // PersonalizedFeedOptions regroupe les paramètres d'entrée du pipeline §4.4.
@@ -35,12 +34,9 @@ func BuildPersonalizedFeed(ctx context.Context, opts PersonalizedFeedOptions) ([
 	}
 
 	// ── Vérification du cache_service (court-circuit si feed_service récent) ─────────────
-	feedKey := fmt.Sprintf(variables.RedisKeyFeedPersonalized, opts.UserID)
-	if cached, err := redisgo.Rdb.Get(ctx, feedKey).Bytes(); err == nil {
-		var cachedIDs []int64
-		if json.Unmarshal(cached, &cachedIDs) == nil && len(cachedIDs) > 0 {
-			return cachedIDs, nil
-		}
+	var cachedIDs []int64
+	if err := redis.FeedsPersonalized.GetObject(ctx, opts.UserID, &cachedIDs); err == nil && len(cachedIDs) > 0 {
+		return cachedIDs, nil
 	}
 
 	// ── ÉTAPE A: Récupération des scores de tendance du Panier ────────────
@@ -70,37 +66,31 @@ func BuildPersonalizedFeed(ctx context.Context, opts PersonalizedFeedOptions) ([
 		trendScores[id] = score
 	}
 
-	// ── ÉTAPE B: Récupération des vecteurs de contenu ─────────────────────
-	vecKeys := make([]string, len(postIDs))
-	for i, id := range postIDs {
-		vecKeys[i] = fmt.Sprintf(variables.RedisKeyContentVector, id)
-	}
-
-	vecVals, err := redisgo.Rdb.MGet(ctx, vecKeys...).Result()
+	// ── ÉTAPE B: Récupération des vecteurs de contenu via Pipeline MGET Typé ─────────────────────
+	vecResult, err := redis.ContentVectors.GetMany(ctx, postIDs)
 	if err != nil {
-		return nil, fmt.Errorf("[personalized] MGET content vectors: %w", err)
+		return nil, fmt.Errorf("[personalized] GetMany content vectors: %w", err)
 	}
 
 	allCandidates := make([]PostCandidate, 0, len(postIDs))
-	for i, val := range vecVals {
-		if val == nil || i >= len(postIDs) {
+	for _, id := range postIDs {
+		rawData, found := vecResult.Found[id]
+		if !found {
 			continue
 		}
-		valStr, ok := val.(string)
-		if !ok {
-			continue
-		}
+
 		var payload ContentVectorPayload
-		if err := json.Unmarshal([]byte(valStr), &payload); err != nil {
+		// Optimisation RAM/CPU absolue : Lecture directe du flux binaire MsgPack
+		if err := msgpack.Unmarshal(rawData, &payload); err != nil {
 			continue
 		}
 		if len(payload.V) != variables.VectorDimTotal {
 			continue
 		}
 		allCandidates = append(allCandidates, PostCandidate{
-			PostID:        postIDs[i],
+			PostID:        id,
 			AuthorID:      payload.AuthorID,
-			TrendScore:    trendScores[postIDs[i]],
+			TrendScore:    trendScores[id],
 			ContentVec:    payload.V,
 			PriorityLevel: payload.PriorityLevel, // ✅ Lecture en O(1) de la priorité
 			MatrixIdx:     len(allCandidates),
@@ -187,6 +177,9 @@ func BuildPersonalizedFeed(ctx context.Context, opts PersonalizedFeedOptions) ([
 	// La Caissière (MMR) a produit la liste finale de postIDs ordonnés.
 	// Le Distributeur se chargera de l'enregistrer dans le FeedState.
 
+	// Correction de l'idempotence : On fige le calcul en RAM pour intercepter les requêtes concurrentes simultanées
+	_ = redis.FeedsPersonalized.SetObject(ctx, opts.UserID, feedIDs)
+
 	return feedIDs, nil
 }
 
@@ -201,11 +194,13 @@ func InvalidatePersonalizedFeedCache(ctx context.Context, userID int64, oldVec, 
 		diff := float64(nv - oldVec[i])
 		sumSq += diff * diff
 	}
+	// Calcul de l'écart géométrique Euclidien L2 :
+	// \displaystyle \delta = \sqrt{\sum_{i=1}^{224} (u^{\text{new}}_i - u^{\text{old}}_i)^2}
 	delta := math.Sqrt(sumSq)
 
 	if delta > variables.TDDDeltaInvalid {
-		feedKey := fmt.Sprintf(variables.RedisKeyFeedPersonalized, userID)
-		redisgo.Rdb.Del(ctx, feedKey)
+		// Invalidation de l'Object Cache de manière pure et atomique
+		_ = redis.FeedsPersonalized.DeleteObject(ctx, userID)
 		return true
 	}
 	return false

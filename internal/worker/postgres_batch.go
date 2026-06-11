@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/lib/pq"
 )
@@ -154,7 +153,7 @@ func sendToDLQ(ctx context.Context, entity redis.EntityType, action redis.Action
 
 	bytes, err := json.Marshal(dlqPayload)
 	if err == nil {
-		redisgo.Rdb.LPush(ctx, "dlq:postgres_errors", bytes)
+		_ = redis.DLQ.LPush(ctx, "postgres_errors", bytes)
 		log.Printf("🚨 [DLQ] Événement isolé et mis en quarantaine : %s %s (ID: %d)", entity, action, event.ID)
 	}
 }

@@ -9,21 +9,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// ✅ AJOUT DE L'INSTANCE GLOBALE POUR LE CLEAN ARCHITECTURE
-var GlobalDistributor *FeedDistributor
-
-// FeedDistributor orchestre la distribution et le cycle de vie du flux d'actualité.
-type FeedDistributor struct {
-	clerk *ProtoFeedBuilder
-}
-
-// NewFeedDistributor initialise le distributeur de flux.
-func NewFeedDistributor(clerk *ProtoFeedBuilder) *FeedDistributor {
-	return &FeedDistributor{
-		clerk: clerk,
-	}
-}
-
 // RefreshOptions encapsule les données de contexte envoyées par le client mobile/web.
 type RefreshOptions struct {
 	UserID        int64
@@ -31,13 +16,11 @@ type RefreshOptions struct {
 	FetchCount    int // ✅ Permet au Service de demander une quantité précise pour combler les trous
 	Quotas        Quotas
 	PersonalOpts  PersonalizedFeedOptions
+	IsForce       bool
 }
 
 // HandlePullToRefresh applique les règles psychologiques et techniques du Swipe Down.
-func (d *FeedDistributor) HandlePullToRefresh(ctx context.Context, opts RefreshOptions) ([]int64, error) {
-	// Seuil critique métier issu des spécifications (§4.2)
-	const DislikeThreshold = 10
-
+func HandlePullToRefresh(ctx context.Context, opts RefreshOptions) ([]int64, error) {
 	// ─────────────────────────────────────────────────────────────────────────────
 	// CHARGEMENT OU INITIALISATION DE L'ÉTAT DU FEED
 	// ─────────────────────────────────────────────────────────────────────────────
@@ -54,13 +37,11 @@ func (d *FeedDistributor) HandlePullToRefresh(ctx context.Context, opts RefreshO
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────────
-	// CAS 1 : REJET DU FEED (last_seen_index < 10) OU GÉNÉRATION FORCÉE
+	// CAS 1 : GESTION EXPLICITE DU PULL-TO-REFRESH (PURGE ET AMNÉSIE DE SÉCURITÉ)
 	// ─────────────────────────────────────────────────────────────────────────────
-	if opts.LastSeenIndex < DislikeThreshold {
-		// ✅ ARCHIVAGE INTERNE DANS LE CUCKOO FILTER
-		// Avant de détruire le flux actuel, on inscrit tous les IDs distribués (jusqu'au curseur)
-		// dans le filtre RedisBloom de l'utilisateur pour une amnésie à long terme.
-		if len(state.Feeds[state.ActiveFeed].PostIDs) > 0 {
+	if opts.IsForce {
+		// 1. Sauvegarde systématique dans l'historique des posts réellement consommés avant le reset
+		if opts.LastSeenIndex > 0 && len(state.Feeds[state.ActiveFeed].PostIDs) > 0 {
 			endIdx := opts.LastSeenIndex
 			if endIdx > len(state.Feeds[state.ActiveFeed].PostIDs) {
 				endIdx = len(state.Feeds[state.ActiveFeed].PostIDs)
@@ -68,9 +49,15 @@ func (d *FeedDistributor) HandlePullToRefresh(ctx context.Context, opts RefreshO
 			distributedIDs := state.Feeds[state.ActiveFeed].PostIDs[0:endIdx]
 
 			for _, postID := range distributedIDs {
-				service.MarkAsSeen(ctx, opts.UserID, postID) // ✅ Retrait du "_ =" car la fonction ne retourne rien
+				service.MarkAsSeen(ctx, opts.UserID, postID)
 			}
 		}
+
+		// 2. Réinitialisation complète et immédiate du Cuckoo Filter pour vider la RAM (L1)
+		service.ResetCuckooFilter(ctx, opts.UserID)
+
+		// 3. Remise à zéro de l'index pour la nouvelle séquence de consommation
+		opts.LastSeenIndex = 0
 
 		// ✅ UTILISATION DE LA CONSTANTE GLOBALE
 		if time.Since(state.GeneratedAt) >= variables.FeedReloadDelay {
@@ -82,7 +69,7 @@ func (d *FeedDistributor) HandlePullToRefresh(ctx context.Context, opts RefreshO
 			state.Feeds["C"] = FeedData{Seed: rand.Int63(), PostIDs: nil, Fused: false}
 
 			seeds := [3]int64{state.Feeds["A"].Seed, state.Feeds["B"].Seed, state.Feeds["C"].Seed}
-			baskets, _ := d.clerk.CollectCandidates(ctx, opts.UserID, seeds, opts.Quotas)
+			baskets, _ := CollectCandidates(ctx, opts.UserID, seeds, opts.Quotas)
 
 			var candidateIDs []int64
 			for _, item := range baskets.A.Items {
@@ -150,7 +137,7 @@ func (d *FeedDistributor) HandlePullToRefresh(ctx context.Context, opts RefreshO
 		activeData.Fused = true
 	} else {
 		// Cas 3 (Re-sélection / Extension) : Les paniers sont déjà absorbés
-		singleBasket, err := d.clerk.CollectSingleBasket(ctx, opts.UserID, activeData.Seed, opts.Quotas)
+		singleBasket, err := CollectSingleBasket(ctx, opts.UserID, activeData.Seed, opts.Quotas)
 		if err != nil {
 			return nil, err
 		}

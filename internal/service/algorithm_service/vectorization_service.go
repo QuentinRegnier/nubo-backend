@@ -2,14 +2,11 @@ package algorithm_service
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log"
 	"math"
-	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
@@ -69,16 +66,9 @@ func StoreContentVector(ctx context.Context, post post_models.PostPayload) {
 		PriorityLevel: post.PriorityLevel, // ✅ Injection immédiate de la priorité
 	}
 
-	data, err := json.Marshal(payload)
-	if err != nil {
-		log.Printf("⚠️ [vect] sérialisation vecteur post_service %d: %v", post.ID, err)
-		return
-	}
-
-	// TDD §4.1: TTL = 7 jours pour le cache_service LFU Object Store
-	key := fmt.Sprintf(variables.RedisKeyContentVector, post.ID)
-	if err := redisgo.Rdb.Set(ctx, key, data, 7*24*time.Hour).Err(); err != nil {
-		log.Printf("⚠️ [vect] Redis SET content:vec:%d: %v", post.ID, err)
+	// TDD §4.1 : Stockage découplé via la couche L1 Repository au format binaire MsgPack
+	if err := redis.ContentVectors.SetObject(ctx, post.ID, payload); err != nil {
+		log.Printf("⚠️ [vect] Redis SET content:vec:%d via Collection: %v", post.ID, err)
 		return
 	}
 
@@ -94,17 +84,12 @@ func StoreContentVector(ctx context.Context, post post_models.PostPayload) {
 // TDD §4.1: "mises à jour suite à de nouveaux engagements effectuées de manière
 // asynchrone par le worker de score"
 func UpdatePostEngagementVector(ctx context.Context, post post_models.PostPayload) {
-	key := fmt.Sprintf(variables.RedisKeyContentVector, post.ID)
-
-	// Lecture du payload existant
-	rawData, err := redisgo.Rdb.Get(ctx, key).Bytes()
-	if err != nil {
-		log.Printf("⚠️ [vect-update] Redis GET content:vec:%d: %v", post.ID, err)
-		return
-	}
 	var payload ContentVectorPayload
-	if err := json.Unmarshal(rawData, &payload); err != nil || len(payload.V) != variables.VectorDimTotal {
-		// Recalcul complet si le payload est corrompu
+
+	// Récupération et désérialisation MsgPack unifiée via l'Object Cache
+	if err := redis.ContentVectors.GetObject(ctx, post.ID, &payload); err != nil || len(payload.V) != variables.VectorDimTotal {
+		log.Printf("⚠️ [vect-update] Redis GET content:vec:%d absent ou corrompu: %v", post.ID, err)
+		// Recalcul complet si le payload est absent ou corrompu (Graceful Degradation)
 		StoreContentVector(ctx, post)
 		return
 	}
@@ -123,11 +108,10 @@ func UpdatePostEngagementVector(ctx context.Context, post post_models.PostPayloa
 	// Mise à jour du hash LSH après re-normalisation
 	payload.LSHHash = DefaultLSHEngine.ComputeHash(payload.V)
 
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return
+	// Sauvegarde atomique de la mise à jour via la Collection
+	if err := redis.ContentVectors.SetObject(ctx, post.ID, payload); err != nil {
+		log.Printf("⚠️ [vect-update] Échec de la mise à jour du vecteur pour le post %d: %v", post.ID, err)
 	}
-	redisgo.Rdb.Set(ctx, key, data, 7*24*time.Hour)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

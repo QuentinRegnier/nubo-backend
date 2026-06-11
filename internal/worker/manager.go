@@ -21,6 +21,9 @@ func StartBackgroundWorkers(ctx context.Context) {
 	// Lancement du nettoyeur de Tags (Canonicalisation)
 	StartHashtagCanonCron(ctx)
 
+	// Lancement du Moteur de Warm-up Algorithmique (Génération asynchrone des flux)
+	StartFeedWarmupCron(ctx)
+
 	// On lance 64 goroutines (une par shard Redis)
 	for i := 0; i < redis.QueueShards; i++ {
 		wg.Add(1)

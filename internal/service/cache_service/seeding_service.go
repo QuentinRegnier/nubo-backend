@@ -6,7 +6,6 @@ import (
 	"log"
 	"strconv"
 
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -39,7 +38,7 @@ func SeedMostCache() error {
 		for i, v := range tagsToSync {
 			args[i] = v
 		}
-		_ = redisgo.Rdb.SAdd(ctx, variables.RedisKeyActiveTagsSet, args...).Err()
+		_ = redis.Tags.SAdd(ctx, "active", args...)
 	}
 
 	// ---------------------------------------------------------
@@ -90,11 +89,11 @@ func SeedMostCache() error {
 	// 1. Collecte des IDs gagnants dans tous les rayons trend:*
 	winnerIDsMap := make(map[int64]bool)
 
-	// On scanne les clés correspondant à la nomenclature unifiée
-	keys, _ := redisgo.Rdb.Keys(ctx, "most_cache:trend:*").Result()
+	// On scanne les clés correspondant à la nomenclature unifiée via la primitive d'infrastructure
+	keys, _ := redis.Keys(ctx, "most_cache:trend:*")
 	for _, key := range keys {
 		// On récupère tous les membres du ZSET (les IDs des posts d'élite)
-		ids, _ := redisgo.Rdb.ZRange(ctx, key, 0, -1).Result()
+		ids, _ := redis.ZRange(ctx, key, 0, -1)
 		for _, idStr := range ids {
 			if id, err := strconv.ParseInt(idStr, 10, 64); err == nil {
 				winnerIDsMap[id] = true
@@ -139,8 +138,8 @@ func SeedMostCache() error {
 	}
 
 	// 4. Désactivation du flag de maintenance
-	// On utilise une clé Redis dédiée pour que toutes les instances de l'API s'ouvrent en même temps
-	_ = redisgo.Rdb.Set(ctx, "system:status:maintenance", "off", 0).Err()
+	// On utilise une clé Redis dédiée pour que toutes les instances de l'API s'ouvrent en même temps (via Collection)
+	_ = redis.SystemStatus.SetPrimitive(ctx, "maintenance", "off")
 	log.Println("🚀 Mode maintenance désactivé. L'API est opérationnelle.")
 
 	return nil

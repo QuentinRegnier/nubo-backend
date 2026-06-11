@@ -2,14 +2,12 @@ package algorithm_service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
 	"strconv"
-	"time"
 
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
@@ -142,15 +140,14 @@ func (e *LSHEngine) NeighborHashes(h uint32) []uint32 {
 // TDD §4.5: "Redis la table lsh:bucket:{bit32_code} (type Set)"
 // TTL = 7 jours (aligné sur le TTL du vecteur de contenu)
 func StoreLSHBucket(ctx context.Context, postID int64, hash uint32) error {
-	key := fmt.Sprintf(variables.RedisKeyLSHBucket, hash)
 	member := strconv.FormatInt(postID, 10)
 
-	if err := redisgo.Rdb.SAdd(ctx, key, member).Err(); err != nil {
+	if err := redis.LSHBuckets.SAdd(ctx, hash, member); err != nil {
 		return fmt.Errorf("sadd lsh bucket %d: %w", hash, err)
 	}
 
-	// Rafraîchissement du TTL (le bucket est partagé entre plusieurs posts)
-	redisgo.Rdb.Expire(ctx, key, 7*24*time.Hour)
+	// Rafraîchissement du TTL encapsulé (le bucket est partagé entre plusieurs posts)
+	_ = redis.LSHBuckets.RefreshTTL(ctx, hash)
 	return nil
 }
 
@@ -168,9 +165,7 @@ func GetLSHCandidateIDs(ctx context.Context, hash uint32) (map[int64]bool, error
 	result := make(map[int64]bool, 200) // Capacité estimée: ~200 posts (TDD §4.5)
 
 	for _, neighborHash := range neighbors {
-		key := fmt.Sprintf(variables.RedisKeyLSHBucket, neighborHash)
-
-		members, err := redisgo.Rdb.SMembers(ctx, key).Result()
+		members, err := redis.LSHBuckets.SMembers(ctx, neighborHash)
 		if err != nil {
 			// Bucket manquant ou erreur Redis: ignorer silencieusement
 			log.Printf("⚠️ [lsh] SMembers bucket %d: %v", neighborHash, err)
@@ -190,25 +185,21 @@ func GetLSHCandidateIDs(ctx context.Context, hash uint32) (map[int64]bool, error
 
 // RemoveLSHBucket retire un post_service de son bucket LSH (utile lors de la suppression d'un post_service).
 func RemoveLSHBucket(ctx context.Context, postID int64, hash uint32) error {
-	key := fmt.Sprintf(variables.RedisKeyLSHBucket, hash)
-	return redisgo.Rdb.SRem(ctx, key, strconv.FormatInt(postID, 10)).Err()
+	return redis.LSHBuckets.SRem(ctx, hash, strconv.FormatInt(postID, 10))
 }
 
 // PurgePostVectors supprime le vecteur d'engagement du post et le retire de son bucket LSH
 func PurgePostVectors(ctx context.Context, postID int64) error {
-	vecKey := fmt.Sprintf("content:vec:%d", postID)
-
-	// 1. Lecture pour récupérer le LSHHash
-	if vecData, err := redisgo.Rdb.Get(ctx, vecKey).Bytes(); err == nil {
-		var payload ContentVectorPayload // ou le nom exact de ta structure vectorielle
-		if err := json.Unmarshal(vecData, &payload); err == nil {
-			// On retire le post de son bucket LSH
-			_ = RemoveLSHBucket(ctx, postID, payload.LSHHash)
-		}
+	// 1. Lecture via L1 Object Cache pour récupérer le LSHHash
+	// ✅ CORRECTION BUG CRITIQUE : Utilise MsgPack et non plus un JSON Unmarshal obsolète
+	var payload ContentVectorPayload
+	if err := redis.ContentVectors.GetObject(ctx, postID, &payload); err == nil {
+		// On retire le post de son bucket LSH
+		_ = RemoveLSHBucket(ctx, postID, payload.LSHHash)
 	}
 
-	// 2. Purge définitive du vecteur
-	return redisgo.Rdb.Del(ctx, vecKey).Err()
+	// 2. Purge définitive du vecteur via Collection
+	return redis.ContentVectors.DeleteObject(ctx, postID)
 }
 
 // LSHConfidenceThreshold est le seuil de confiance utilisateur pour activer le LSH.

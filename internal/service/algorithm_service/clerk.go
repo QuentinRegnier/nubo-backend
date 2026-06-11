@@ -6,19 +6,13 @@ import (
 	"math"
 	"time"
 
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-type ProtoFeedBuilder struct{}
-
-func NewProtoFeedBuilder() *ProtoFeedBuilder {
-	return &ProtoFeedBuilder{}
-}
-
 // CollectCandidates construit les 3 paniers (A, B, C) avec leurs ADN respectifs
-func (pf *ProtoFeedBuilder) CollectCandidates(ctx context.Context, userID int64, seeds [3]int64, quotas Quotas) (*FeedBaskets, error) {
+func CollectCandidates(ctx context.Context, userID int64, seeds [3]int64, quotas Quotas) (*FeedBaskets, error) {
 	if err := quotas.Validate(); err != nil {
 		return nil, fmt.Errorf("quotas invalides : %w", err)
 	}
@@ -33,21 +27,21 @@ func (pf *ProtoFeedBuilder) CollectCandidates(ctx context.Context, userID int64,
 	// ─────────────────────────────────────────────────────────────────────────────
 	// ACTION 2 : Fusion Télémétrie / Graph 1-Hop / Leaderboard Mondial
 	// ─────────────────────────────────────────────────────────────────────────────
-	tagCloud := pf.buildTagCloud(ctx)
+	tagCloud := buildTagCloud(ctx)
 
 	// ─────────────────────────────────────────────────────────────────────────────
 	// REMPLISSAGE DÉTERMINISTE DES 3 PANIERS
 	// ─────────────────────────────────────────────────────────────────────────────
-	pf.fillBasket(ctx, userID, baskets.A, quotas, tagCloud)
-	pf.fillBasket(ctx, userID, baskets.B, quotas, tagCloud)
-	pf.fillBasket(ctx, userID, baskets.C, quotas, tagCloud)
+	fillBasket(ctx, userID, baskets.A, quotas, tagCloud)
+	fillBasket(ctx, userID, baskets.B, quotas, tagCloud)
+	fillBasket(ctx, userID, baskets.C, quotas, tagCloud)
 
 	return baskets, nil
 }
 
 // CollectSingleBasket construit un unique panier avec son ADN strict (Cas 3 : Extension)
 // Utilise la Seed du flux actif pour garantir la continuité de l'identité algorithmique.
-func (pf *ProtoFeedBuilder) CollectSingleBasket(ctx context.Context, userID int64, seed int64, quotas Quotas) (*CandidateBasket, error) {
+func CollectSingleBasket(ctx context.Context, userID int64, seed int64, quotas Quotas) (*CandidateBasket, error) {
 	if err := quotas.Validate(); err != nil {
 		return nil, fmt.Errorf("quotas invalides : %w", err)
 	}
@@ -60,24 +54,24 @@ func (pf *ProtoFeedBuilder) CollectSingleBasket(ctx context.Context, userID int6
 	singleBasket := baskets.A
 
 	// Fusion Télémétrie / Graph 1-Hop / Leaderboard
-	tagCloud := pf.buildTagCloud(ctx)
+	tagCloud := buildTagCloud(ctx)
 
 	// Remplissage ciblé
-	pf.fillBasket(ctx, userID, singleBasket, quotas, tagCloud)
+	fillBasket(ctx, userID, singleBasket, quotas, tagCloud)
 
 	return singleBasket, nil
 }
 
 // buildTagCloud abstrait la création du Super-Nuage sémantique pour éviter la duplication de code.
-func (pf *ProtoFeedBuilder) buildTagCloud(ctx context.Context) map[string]float64 {
+func buildTagCloud(ctx context.Context) map[string]float64 {
 	// TODO : Récupérer la vraie matrice via la route de télémétrie (quand elle existera)
 	userTelemetry := map[string]float64{
 		"naturisme": 1.0,
 		"plage":     0.8,
 	}
 
-	// Récupération du Leaderboard Global pour influencer les poids
-	leaderboardData, _ := redisgo.Rdb.ZRevRangeWithScores(ctx, variables.RedisKeyHashtagLeaderboard, 0, 49).Result()
+	// Récupération du Leaderboard Global pour influencer les poids (via la couche Repository ZSET)
+	leaderboardData, _ := redis.ZRevRangeWithScores(ctx, variables.RedisKeyHashtagLeaderboard, 0, 49)
 	leaderboardBoosts := make(map[string]float64)
 	if len(leaderboardData) > 0 {
 		maxScore := leaderboardData[0].Score
@@ -109,7 +103,7 @@ func (pf *ProtoFeedBuilder) buildTagCloud(ctx context.Context) map[string]float6
 }
 
 // fillBasket remplit un panier spécifique en respectant les quotas et en appliquant l'expansion dynamique.
-func (pf *ProtoFeedBuilder) fillBasket(ctx context.Context, userID int64, basket *CandidateBasket, quotas Quotas, initialTagCloud map[string]float64) {
+func fillBasket(ctx context.Context, userID int64, basket *CandidateBasket, quotas Quotas, initialTagCloud map[string]float64) {
 	globalTarget := int(float64(quotas.MaxCandidates) * quotas.GlobalRatio)
 	tagTarget := int(float64(quotas.MaxCandidates) * quotas.TagRatio)
 
@@ -204,25 +198,4 @@ func (pf *ProtoFeedBuilder) fillBasket(ctx context.Context, userID int64, basket
 		globalKey := fmt.Sprintf(variables.RedisKeyTrendGlobalDaily, dateKey)
 		basket.FetchDeterministicallyFromZSET(ctx, userID, globalKey, deficit, OriginGlobal)
 	}
-}
-
-// rouletteWheelSelection utilise la SEED du panier pour le choix du tag
-func (pf *ProtoFeedBuilder) rouletteWheelSelection(b *CandidateBasket, items []string, weights []float64) string {
-	sum := 0.0
-	for _, w := range weights {
-		sum += w
-	}
-	if sum == 0 {
-		return items[0]
-	}
-
-	r := b.rng.Float64() * sum
-	cumSum := 0.0
-	for i, w := range weights {
-		cumSum += w
-		if cumSum >= r {
-			return items[i]
-		}
-	}
-	return items[len(items)-1]
 }

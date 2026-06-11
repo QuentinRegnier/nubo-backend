@@ -9,7 +9,6 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/lib/pq"
 	"github.com/vmihailenco/msgpack/v5"
@@ -52,13 +51,13 @@ func GetInboxView(ctx context.Context, userID int64) ([]InboxItemView, error) {
 		missingConvIDs = metaRes.MissingIDs
 	}
 
-	// 3. MGET Massif sur ConvMembers (Clé composite string)
-	var memberKeys []string
+	// 3. MGET Massif sur ConvMembers (Clé composite encapsulée via Collection L1)
+	var memberIDs []any
 	for _, cid := range convIDs {
-		memberKeys = append(memberKeys, redis.ConvMembers.Key(fmt.Sprintf("%d:%d", cid, userID)))
+		memberIDs = append(memberIDs, fmt.Sprintf("%d:%d", cid, userID))
 	}
 
-	memberValues, _ := redisgo.Rdb.MGet(ctx, memberKeys...).Result()
+	memberValues, _ := redis.ConvMembers.MGet(ctx, memberIDs...)
 
 	foundMetas := make(map[int64]models.ConvLiteRequest)
 	foundMembers := make(map[int64]models.MemberLiteRequest)

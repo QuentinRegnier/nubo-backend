@@ -1,4 +1,4 @@
-package feed_service
+package worker
 
 import (
 	"context"

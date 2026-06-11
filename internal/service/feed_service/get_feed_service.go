@@ -14,14 +14,9 @@ import (
 )
 
 // GetFeed orchestre la distribution, la rotation (A/B/C), l'élargissement et l'hydratation des posts
-// GetFeed orchestre la distribution, la rotation (A/B/C), l'élargissement et l'hydratation des posts
 func GetFeed(ctx context.Context, input feed_models.GetFeedInput) ([]post_models.GetPostOutput, int, string, error) {
-	// 1. Gestion du /force (Pull-to-refresh)
-	if input.Force {
-		// Forcer l'index à 0 déclenchera le DislikeThreshold (< 10) dans le Distributeur
-		// et provoquera une purge stricte suivie d'une régénération avec rotation.
-		input.LastSeenIndex = 0
-	}
+	// 1. Configuration des options du Distributeur sans écraser sournoisement l'index de lecture réel
+	isForceTriggered := input.Force
 
 	// 2. Récupération des relations (Amis) en O(1) via le Speed Cache
 	friendIDs, _ := cache_service.GetSpeedFriends(ctx, input.UserID)
@@ -48,6 +43,7 @@ func GetFeed(ctx context.Context, input feed_models.GetFeedInput) ([]post_models
 			Date:           time.Now(),
 			Limit:          variables.TDDFeedSize,
 		},
+		IsForce: isForceTriggered,
 	}
 
 	// 3. Boucle d'hydratation sécurisée (Garantit 50 posts stricts malgré les trous de visibilité)
@@ -60,7 +56,7 @@ func GetFeed(ctx context.Context, input feed_models.GetFeedInput) ([]post_models
 		opts.FetchCount = needed // On ne demande au Distributeur QUE ce qu'il nous manque
 
 		// Appel au Distributeur (Slice dynamique, et Fusion/Re-sélection si nécessaire)
-		idsToFetch, err := algorithm_service.GlobalDistributor.HandlePullToRefresh(ctx, opts)
+		idsToFetch, err := algorithm_service.HandlePullToRefresh(ctx, opts)
 		if err != nil || len(idsToFetch) == 0 {
 			break // Base de données épuisée, on arrête de chercher
 		}

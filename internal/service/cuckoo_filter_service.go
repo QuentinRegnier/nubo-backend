@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
@@ -17,22 +15,12 @@ import (
 // MÉMOIRE DU FEED (Cuckoo Filter Distribué via RedisBloom)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const (
-	// Clé Redis pour le Cuckoo Filter de l'utilisateur.
-	RedisKeyCuckooSeen = "cuckoo:seen:%d"
-	// Durée de mémorisation avant expiration totale (hygiène de la RAM).
-	CuckooSeenTTL = 7 * 24 * time.Hour
-)
-
 // HasSeen vérifie dans le Cuckoo Filter Redis si l'utilisateur a déjà vu ce post_service.
 // Complexité : O(1)
 func HasSeen(ctx context.Context, userID int64, postID int64) bool {
-	key := fmt.Sprintf(RedisKeyCuckooSeen, userID)
-
 	// L'appel utilise RedisBloom (module Redis).
-	// On utilise Do() pour exécuter la commande brute "CF.EXISTS"
-	// si elle n'est pas nativement wrappée par le client.
-	res, err := redisgo.Rdb.Do(ctx, "CF.EXISTS", key, postID).Bool()
+	// Isolation stricte de la commande d'infrastructure probabiliste RedisBloom
+	res, err := redis.CuckooSeen.CFExists(ctx, userID, postID)
 	if err != nil {
 		// ---------------------------------------------------------
 		// FALLBACK TRANSPARENT
@@ -50,10 +38,8 @@ func HasSeen(ctx context.Context, userID int64, postID int64) bool {
 // MarkAsSeen insère le post_service dans le Cuckoo Filter Redis de l'utilisateur.
 // Complexité : O(1)
 func MarkAsSeen(ctx context.Context, userID int64, postID int64) {
-	key := fmt.Sprintf(RedisKeyCuckooSeen, userID)
-
-	// CF.ADD crée automatiquement le filtre s'il n'existe pas.
-	_, err := redisgo.Rdb.Do(ctx, "CF.ADD", key, postID).Result()
+	// CF.ADD crée automatiquement le filtre s'il n'existe pas via notre abstraction L1.
+	err := redis.CuckooSeen.CFAdd(ctx, userID, postID)
 	if err != nil {
 		// ---------------------------------------------------------
 		// FALLBACK & ALERTE SILENCIEUSE
@@ -65,9 +51,14 @@ func MarkAsSeen(ctx context.Context, userID int64, postID int64) {
 		return
 	}
 
-	// À chaque ajout, on repousse le TTL du filtre pour éviter
-	// qu'il ne reste indéfiniment en RAM si l'utilisateur devient inactif.
-	redisgo.Rdb.Expire(ctx, key, CuckooSeenTTL)
+	// Extension automatique de l'index glissant en mémoire volatile
+	_ = redis.CuckooSeen.RefreshTTL(ctx, userID)
+}
+
+// ResetCuckooFilter purge l'intégralité du filtre RedisBloom de l'utilisateur de la RAM (L1).
+// Indispensable pour éviter la saturation sémantique lors des rafraîchissements destructifs (/force).
+func ResetCuckooFilter(ctx context.Context, userID int64) {
+	_ = redis.CuckooSeen.DeleteObject(ctx, userID)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
@@ -47,8 +47,8 @@ func CleanMongo() {
 }
 
 func CleanRedis() {
-	// Sécurité anti-crash
-	if redis.Rdb == nil {
+	// Sécurité anti-crash unifiée via la couche d'accès
+	if !redis.IsReady() {
 		log.Println("⚠️ Redis n'est pas initialisé (Rdb est nil), nettoyage ignoré.")
 		return
 	}
@@ -56,7 +56,7 @@ func CleanRedis() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	err := redis.Rdb.FlushDB(ctx).Err()
+	err := redis.FlushDB(ctx)
 	if err != nil {
 		log.Printf("❌ Erreur flush Redis: %v", err)
 		return

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
@@ -28,8 +27,9 @@ func SetSessionInCache(ctx context.Context, s models.SessionsRequest) error {
 	}
 
 	if s.UserID != 0 && s.DeviceToken != "" {
-		idxKey := fmt.Sprintf("session_cache:%d:%s", s.UserID, s.DeviceToken)
-		return redisgo.Rdb.Set(c, idxKey, s.ID, redis.Sessions.DefaultTTL).Err()
+		// Le préfixe "session_cache:" est maintenant automatiquement géré par la Collection
+		idxKey := fmt.Sprintf("%d:%s", s.UserID, s.DeviceToken)
+		return redis.SessionIndexes.SetPrimitive(c, idxKey, s.ID)
 	}
 
 	return nil
@@ -43,8 +43,8 @@ func LoadSessionFromCache(ctx context.Context, userID int64, deviceToken string,
 	var targetID int64
 
 	if userID != -1 && deviceToken != "" {
-		idxKey := fmt.Sprintf("session_cache:%d:%s", userID, deviceToken)
-		val, err := redisgo.Rdb.Get(c, idxKey).Int64()
+		idxKey := fmt.Sprintf("%d:%s", userID, deviceToken)
+		val, err := redis.SessionIndexes.GetInt64(c, idxKey)
 		if err == nil {
 			targetID = val
 		}

@@ -3,53 +3,114 @@ package worker
 import (
 	"context"
 	"log"
-	"math/rand"
+	"strconv"
 	"time"
 
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/feed_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
 )
 
-// processInternalJobs traite les tâches de calcul asynchrones comme la génération du Feed.
-func processInternalJobs(ctx context.Context, events []redis.AsyncEvent) {
-	for _, evt := range events {
-		if evt.Type == redis.EntityFeed && evt.Action == redis.ActionBuild {
-			userID := evt.ID
-
-			// 1. Reconstituer le contexte utilisateur (Vecteur, Quotas, etc.)
-			// Note: Tu devras injecter ou appeler tes services ici pour obtenir le profil
-			// Exemple fictif basé sur ton architecture :
-			// userVec := service.GetUserVector(ctx, userID)
-			// friendIDs := service.GetUserFriends(ctx, userID)
-
-			log.Printf("🔄 [Worker] Lazy Loading enclenché pour l'utilisateur %d", userID)
-
-			// 2. Instancier le Magasinier avec des quotas standards
-			clerk := algorithm_service.NewProtoFeedBuilder()
-			quotas := algorithm_service.Quotas{
-				MaxCandidates: 1000,
-				SocialRatio:   0.3,
-				TagRatio:      0.5,
-				GlobalRatio:   0.2,
+// StartFeedWarmupCron orchestre l'auto-génération des flux d'actualités par lots pour les utilisateurs inactifs.
+// S'exécute à intervalles réguliers sans jamais scanner l'intégralité de la base de données (O(log(N) + M)).
+func StartFeedWarmupCron(ctx context.Context) {
+	log.Println("🚀 Démarrage du Moteur de Warm-up Algorithmique (Cron 5m)...")
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				processScheduledWarmups(ctx)
 			}
+		}
+	}()
+}
 
-			// ✅ AJOUT DES GRAINES : Le Magasinier exige son ADN déterministe
-			seeds := [3]int64{rand.Int63(), rand.Int63(), rand.Int63()}
-			_, err := clerk.CollectCandidates(ctx, userID, seeds, quotas)
-			if err != nil {
-				log.Printf("❌ [Worker] Échec Magasinier pour user %d: %v", userID, err)
-				continue
-			}
+func processScheduledWarmups(ctx context.Context) {
+	now := time.Now().Unix()
+	const batchSize = 500
 
-			// 4. Appel de la Caissière (BuildPersonalizedFeed)
-			// La sauvegarde en RAM paginée sera faite automatiquement à l'Étape H par la caissière !
-			// ... (Appel à feed_service.BuildPersonalizedFeed avec les bonnes options) ...
+	// 1. Extraction chirurgicale des seuls utilisateurs arrivés à échéance (O(log(N) + M))
+	expiredUserIDs, err := redis.FeedSchedule.ZRangeByScoreWithLimit(ctx, "global", now, batchSize)
+	if err != nil || len(expiredUserIDs) == 0 {
+		return
+	}
 
-			log.Printf("✅ [Worker] Nouveau buffer feed_service généré avec succès pour l'utilisateur %d", userID)
+	log.Printf("🔄 [Warm-up] Analyse d'un lot de %d utilisateurs éligibles.", len(expiredUserIDs))
+
+	for _, idStr := range expiredUserIDs {
+		userID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			continue
+		}
+
+		// 2. Récupération des données de télémétrie (Mock temporaire avant raccordement Pilier 1)
+		lastActiveAt, isOnline := mockGetTelemetryData(userID)
+
+		// Si l'utilisateur est actuellement en ligne, on ne pollue pas sa session active
+		if isOnline {
+			// On repousse simplement sa vérification à plus tard
+			_ = redis.FeedSchedule.ZAdd(ctx, "global", float64(time.Now().Add(1*time.Hour).Unix()), userID)
+			continue
+		}
+
+		inactivityDuration := time.Since(lastActiveAt)
+
+		// 3. Application de la loi de décroissance exponentielle du calcul (§4.4)
+		if inactivityDuration < 2*24*time.Hour {
+			// --- NIVEAU 1 : Inactivité récente (< 2 jours) ---
+			// Rythme soutenu : Régénération complète 2 fois par jour (Toutes les 12 heures)
+			executeBackgroundGeneration(ctx, userID)
+			nextRun := time.Now().Add(12 * time.Hour).Unix()
+			_ = redis.FeedSchedule.ZAdd(ctx, "global", float64(nextRun), userID)
+
+		} else if inactivityDuration >= 2*24*time.Hour && inactivityDuration < 7*24*time.Hour {
+			// --- NIVEAU 2 : Absent temporaire (Entre 2 et 7 jours) ---
+			// Rythme dégradé : Régénération toutes les 48 heures pour capter les grandes tendances mondiales
+			executeBackgroundGeneration(ctx, userID)
+			nextRun := time.Now().Add(48 * time.Hour).Unix()
+			_ = redis.FeedSchedule.ZAdd(ctx, "global", float64(nextRun), userID)
+
+		} else {
+			// --- NIVEAU 3 : Mode Dormant (>= 7 jours d'inactivity) ---
+			// L'utilisateur a probablement désinstallé ou abandonné l'app.
+			// Protection RAM absolue : On l'exclut de la boucle et on vide ses structures volatiles.
+			log.Printf("💤 [Warm-up] Utilisateur %d classé comme DORMANT. Éviction de la RAM L1 en cours.", userID)
+
+			// Invalidation et destruction complète de son orchestrateur d'état via la couche Domaine
+			_ = algorithm_service.DeleteUserFeedState(ctx, userID)
+
+			// Retrait définitif du planificateur pour couper les requêtes Redis obsolètes
+			_ = redis.FeedSchedule.ZRem(ctx, "global", userID)
 		}
 	}
+}
+
+// executeBackgroundGeneration réutilise la route de service officielle pour éviter la duplication de code
+func executeBackgroundGeneration(ctx context.Context, userID int64) {
+	log.Printf("⚡ [Warm-up] Pré-calcul d'un flux frais pour l'utilisateur inactif %d", userID)
+
+	// Simulation de l'input d'un Pull-to-refresh destructif forcé
+	input := feed_models.GetFeedInput{
+		UserID:        userID,
+		Force:         true, // Déclenche la purge du filtre Cuckoo et la re-sélection des paniers
+		LastSeenIndex: 0,
+	}
+
+	// Appel du cas d'usage unifié. L'underscore ignore les structures hydratées/signées (le but est purement le remplissage du cache L1)
+	_, _, _, _ = feed_service.GetFeed(ctx, input)
+}
+
+// mockGetTelemetryData simule le retour de l'Edge Computing en attendant l'implémentation de la route de télémétrie
+func mockGetTelemetryData(userID int64) (time.Time, bool) {
+	// Valeurs codées en dur pour nos simulations d'intégration
+	// TODO ajouter un vrai système de telemetry
+	return time.Now().Add(-30 * time.Hour), false
 }
 
 // handleSocialFanOut intercepte les créations de posts pour distribuer l'ID
@@ -98,8 +159,8 @@ func handleSocialFanOut(ctx context.Context, events []redis.AsyncEvent) {
 				continue // L'utilisateur n'a pas d'audience (Ville fantôme locale), rien à distribuer
 			}
 
-			// 3. Distribution de masse via Redis Pipeline (Vitesse maximale, 1 seul aller-retour TCP)
-			pipe := redisgo.Rdb.Pipeline()
+			// 3. Distribution de masse via Redis Pipeline encapsulé (DDD)
+			pipe := redis.FeedsMailbox.Pipeline()
 			score := float64(time.Now().UnixMilli()) // Le score chronologique absolu
 
 			// ✅ CORRECTION : On itère sur targetIDs (qui contient les amis ou les abonnés filtrés)

@@ -9,7 +9,6 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
@@ -62,9 +61,8 @@ func updateSpeedCache(ctx context.Context, e redis.AsyncEvent) {
 					_ = redis.ConvMeta.SetObject(ctx, convLite.ID, convLite)
 				}
 
-				// Action 2 & 3 : Récupération ultra-rapide via Redis SET (Au revoir Postgres !)
-				participantsKey := fmt.Sprintf("conv:participants:%d", msg.ConversationID)
-				participants, err := redisgo.Rdb.SMembers(ctx, participantsKey).Result()
+				// Action 2 & 3 : Récupération ultra-rapide via Redis SET (Au revoir Postgres !) encapsulée (DDD)
+				participants, err := redis.ConvParticipants.SMembers(ctx, msg.ConversationID)
 
 				if err == nil {
 					for _, participantStr := range participants {
@@ -103,9 +101,8 @@ func updateSpeedCache(ctx context.Context, e redis.AsyncEvent) {
 			var member models.MemberLiteRequest
 			if err := json.Unmarshal(jsonBytes, &member); err == nil && member.ConversationID != 0 {
 
-				// Action A : Ajouter l'ID au SET Redis des participants de cette conversation
-				participantsKey := fmt.Sprintf("conv:participants:%d", member.ConversationID)
-				_ = redisgo.Rdb.SAdd(ctx, participantsKey, member.UserID).Err()
+				// Action A : Ajouter l'ID au SET Redis des participants de cette conversation via Collection L1
+				_ = redis.ConvParticipants.SAdd(ctx, member.ConversationID, member.UserID)
 
 				// Action B : Initialiser son profil MemberLite dans le cache_service
 				memberID := fmt.Sprintf("%d:%d", member.ConversationID, member.UserID)
@@ -129,16 +126,14 @@ func updateSpeedCache(ctx context.Context, e redis.AsyncEvent) {
 			if err := json.Unmarshal(jsonBytes, &member); err == nil && member.ConversationID != 0 {
 
 				// Action A : Retirer l'ID du SET Redis des participants
-				participantsKey := fmt.Sprintf("conv:participants:%d", member.ConversationID)
-				_ = redisgo.Rdb.SRem(ctx, participantsKey, member.UserID).Err()
+				_ = redis.ConvParticipants.SRem(ctx, member.ConversationID, member.UserID)
 
-				// Action B : Nettoyer son MemberLite du cache_service
+				// Action B : Nettoyer son MemberLite du cache_service (ID Composite)
 				memberID := fmt.Sprintf("%d:%d", member.ConversationID, member.UserID)
 				_ = redis.ConvMembers.DeleteObject(ctx, memberID)
 
-				// Action C : Supprimer la conversation de son Inbox (ZSET)
-				inboxKey := fmt.Sprintf("inbox:user:%d", member.UserID)
-				_ = redisgo.Rdb.ZRem(ctx, inboxKey, member.ConversationID).Err()
+				// Action C : Supprimer la conversation de son Inbox (ZSET) via Collection L1
+				_ = redis.UserInbox.ZRem(ctx, member.UserID, member.ConversationID)
 			}
 		}
 	}

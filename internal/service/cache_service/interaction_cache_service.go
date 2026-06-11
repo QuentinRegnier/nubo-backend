@@ -2,30 +2,28 @@ package cache_service
 
 import (
 	"context"
-	"fmt"
 
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
-// getLikeKey génère dynamiquement la clé selon le type de cible
-func getLikeKey(targetType int, targetID int64) string {
-	prefix := "post"
+// getIdempotencyCollection retourne la bonne Collection L1 selon le type de cible
+func getIdempotencyCollection(targetType int) *redis.Collection {
 	if targetType == 1 {
-		prefix = "comment"
+		return redis.CommentLikesSet
 	}
-	return fmt.Sprintf("%s:likes_set:%d", prefix, targetID)
+	return redis.PostLikesSet
 }
 
-// TryAddLikeIdempotency gère l'idempotence pour posts et commentaires.
+// TryAddLikeIdempotency gère l'idempotence pour posts et commentaires de manière thread-safe.
 func TryAddLikeIdempotency(ctx context.Context, targetType int, targetID int64, userID int64) bool {
-	setKey := getLikeKey(targetType, targetID)
-	added, err := redisgo.Rdb.SAdd(ctx, setKey, userID).Result()
+	col := getIdempotencyCollection(targetType)
+	added, err := col.SAddCount(ctx, targetID, userID)
 	return err == nil && added > 0
 }
 
 // TryRemoveLikeIdempotency gère la suppression d'idempotence pour posts et commentaires.
 func TryRemoveLikeIdempotency(ctx context.Context, targetType int, targetID int64, userID int64) bool {
-	setKey := getLikeKey(targetType, targetID)
-	removed, err := redisgo.Rdb.SRem(ctx, setKey, userID).Result()
+	col := getIdempotencyCollection(targetType)
+	removed, err := col.SRemCount(ctx, targetID, userID)
 	return err == nil && removed > 0
 }

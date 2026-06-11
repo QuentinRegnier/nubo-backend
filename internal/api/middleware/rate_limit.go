@@ -2,21 +2,15 @@ package middleware
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/gin-gonic/gin"
-
-	// Import correct de ton infrastructure Redis
-	redisInfra "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 )
 
 const (
 	// Limite : 50 requêtes maximum
 	RateLimitMaxRequests = 50
-	// Fenêtre de temps : 10 secondes
-	RateLimitWindow = 10 * time.Second
 )
 
 // RateLimiter empêche les attaques DDoS applicatives
@@ -25,22 +19,19 @@ func RateLimiter() gin.HandlerFunc {
 		// On identifie l'utilisateur par son IP
 		clientIP := c.ClientIP()
 
-		// Clé Redis unique pour cette IP et cette fenêtre de temps
-		key := fmt.Sprintf("rate_limit:ip:%s", clientIP)
-
 		ctx := context.Background()
 
-		// CORRECTION : Utilisation de `Rdb` qui est ta vraie variable dans client.go
-		count, err := redisInfra.Rdb.Incr(ctx, key).Result()
+		// Utilisation propre de la Collection RateLimits (DDD)
+		count, err := redis.RateLimits.Incr(ctx, clientIP)
 		if err != nil {
 			// Fail-Open : on laisse passer si Redis plante pour ne pas bloquer l'API
 			c.Next()
 			return
 		}
 
-		// Si c'est la première requête, on définit le TTL de 10 secondes
+		// Si c'est la première requête, on rafraîchit le TTL (10s préconfiguré dans le manager)
 		if count == 1 {
-			redisInfra.Rdb.Expire(ctx, key, RateLimitWindow)
+			_ = redis.RateLimits.RefreshTTL(ctx, clientIP)
 		}
 
 		// Si on dépasse la limite

@@ -6,9 +6,8 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/lib/pq"
 )
 
@@ -32,8 +31,8 @@ func StartHashtagCanonCron(ctx context.Context) {
 }
 
 func processHashtagCanonicalization(ctx context.Context) {
-	// 1. Récupération de tous les tags communautaires actifs
-	tags, err := redisgo.Rdb.SMembers(ctx, variables.RedisKeyActiveTagsSet).Result()
+	// 1. Récupération de tous les tags communautaires actifs via Collection
+	tags, err := redis.Tags.SMembers(ctx, "active")
 	if err != nil || len(tags) == 0 {
 		return
 	}
@@ -74,11 +73,12 @@ func processHashtagCanonicalization(ctx context.Context) {
 		}
 	}
 
-	// 2. Sauvegarde des alias dans le HASH Redis (Pipeline pour performance)
+	// 2. Sauvegarde des alias dans le HASH Redis (Pipeline pour performance via Collection)
 	if len(aliasMap) > 0 {
-		pipe := redisgo.Rdb.Pipeline()
+		pipe := redis.HashtagCanon.Pipeline()
 		for typo, canon := range aliasMap {
-			pipe.HSet(ctx, variables.RedisKeyHashtagCanonMap, typo, canon)
+			// On demande proprement la clé finale à la Collection
+			pipe.HSet(ctx, redis.HashtagCanon.Key("map"), typo, canon)
 		}
 		_, err := pipe.Exec(ctx)
 		if err == nil {

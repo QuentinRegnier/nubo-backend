@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/vmihailenco/msgpack/v5"
@@ -32,13 +33,45 @@ var (
 	Relations     *Collection
 
 	// --- SPEED Cache Collections ---
-	UsersLite   *Collection
-	ConvMeta    *Collection
-	ConvMembers *Collection
+	UsersLite      *Collection
+	ConvMeta       *Collection
+	ConvMembers    *Collection
+	SpeedFollowers *Collection
+	SpeedRelations *Collection
 
 	// --- FEED cache Collections ---
-	FeedsObject  *Collection
-	FeedsMailbox *Collection
+	FeedsObject       *Collection
+	FeedsMailbox      *Collection
+	FeedsPersonalized *Collection
+
+	// --- ALGORITHM Cache Collections ---
+	ContentVectors *Collection
+
+	// --- SYSTEM Collections ---
+	RateLimits   *Collection
+	DLQ          *Collection
+	GraphEdges   *Collection
+	Tags         *Collection
+	HashtagCanon *Collection
+
+	// --- INDEX & IDEMPOTENCE ---
+	SessionIndexes  *Collection
+	PostLikesSet    *Collection
+	CommentLikesSet *Collection
+	SystemStatus    *Collection
+
+	// --- Filtre Cuckoo distribué ---
+	CuckooSeen       *Collection
+	TrendGlobalDaily *Collection
+	TrendTagDaily    *Collection
+
+	// --- MESSAGING & LSH ---
+	ConvParticipants *Collection
+	UserInbox        *Collection
+	LSHBuckets       *Collection
+
+	// --- Activity Feed ---
+	FeedSchedule *Collection
 )
 
 func InitCacheDatabase() {
@@ -61,10 +94,67 @@ func InitCacheDatabase() {
 	UsersLite = NewCollection("speed_cache:user_lite", variables.StandardTTL)
 	ConvMeta = NewCollection("speed_cache:conv_meta", variables.StandardTTL)
 	ConvMembers = NewCollection("speed_cache:conv_members", variables.StandardTTL)
+	SpeedFollowers = NewCollection("speed:followers", variables.StandardTTL)
+	SpeedRelations = NewCollection("speed:relations", variables.StandardTTL)
 
 	// --- FEED Cache ---
-	FeedsObject = NewCollection("feed_cache:object", variables.StandardTTL)
+	FeedsObject = NewCollection("feed:state", variables.StandardTTL)
 	FeedsMailbox = NewCollection("feed_cache:mailbox", variables.StandardTTL)
+	FeedsPersonalized = NewCollection("feed:personalized", variables.StandardTTL)
+
+	// --- ALGORITHM Cache (TDD §4.1 : LFU Object Store, TTL = 7 jours) ---
+	ContentVectors = NewCollection("most_cache:vec", variables.StandardTTL)
+
+	// --- SYSTEM Cache ---
+	RateLimits = NewCollection("rate_limit:ip", 10*time.Second)
+	DLQ = NewCollection("dlq", 0)                          // TTL infini pour la Dead Letter Queue
+	GraphEdges = NewCollection("graph_cache:tag_edges", 0) // Remplace le formatage de clé manuel
+	Tags = NewCollection("tags", 0)
+	HashtagCanon = NewCollection("hashtag:canon", 0)
+
+	// --- INDEX & IDEMPOTENCE ---
+	SessionIndexes = NewCollection("session_cache", variables.StandardTTL)
+	PostLikesSet = NewCollection("post:likes_set", 0)
+	CommentLikesSet = NewCollection("comment:likes_set", 0)
+	SystemStatus = NewCollection("system:status", 0)
+
+	// --- Filtre Cuckoo distribué ---
+	CuckooSeen = NewCollection("cuckoo:seen", variables.StandardTTL)
+	TrendGlobalDaily = NewCollection("trend:global:daily", 0)
+	TrendTagDaily = NewCollection("trend:tag", 0)
+
+	// --- MESSAGING & LSH ---
+	ConvParticipants = NewCollection("conv:participants", 0)
+	UserInbox = NewCollection("inbox:user", 0)
+	LSHBuckets = NewCollection("lsh:bucket", variables.StandardTTL)
+
+	// --- Activity Feed ---
+	FeedSchedule = NewCollection("feed:precompute:schedule", 0)
+}
+
+// IsReady isole l'état de l'infrastructure pour les routines de maintenance administratives.
+func IsReady() bool {
+	return redisgo.Rdb != nil
+}
+
+// CFExists encapsule la vérification probabiliste native de RedisBloom (O(1)).
+func (c *Collection) CFExists(ctx context.Context, id any, item any) (bool, error) {
+	return c.Client.Do(ctx, "CF.EXISTS", c.Key(id), item).Bool()
+}
+
+// CFAdd délègue l'allocation ou l'écriture atomique dans le filtre Cuckoo de l'écosystème Redis.
+func (c *Collection) CFAdd(ctx context.Context, id any, item any) error {
+	return c.Client.Do(ctx, "CF.ADD", c.Key(id), item).Err()
+}
+
+// Keys renvoie toutes les clés correspondant à un pattern global (Administration).
+func Keys(ctx context.Context, pattern string) ([]string, error) {
+	return redisgo.Rdb.Keys(ctx, pattern).Result()
+}
+
+// FlushDB vide l'intégralité de la base de données Redis courante de manière synchrone.
+func FlushDB(ctx context.Context) error {
+	return redisgo.Rdb.FlushDB(ctx).Err()
 }
 
 // ---------------- Collection ----------------
@@ -86,6 +176,27 @@ func NewCollection(prefix string, ttl time.Duration) *Collection {
 // Key génère la clé Redis finale : "prefix:id"
 func (c *Collection) Key(id any) string {
 	return fmt.Sprintf("%s:%v", c.Prefix, id)
+}
+
+// --- Primitives ZSET de Collection ---
+
+func (c *Collection) ZAdd(ctx context.Context, id any, score float64, member any) error {
+	return c.Client.ZAdd(ctx, c.Key(id), &redis.Z{Score: score, Member: member}).Err()
+}
+
+// ZRem supprime des membres d'un ZSET.
+func (c *Collection) ZRem(ctx context.Context, id any, members ...any) error {
+	return c.Client.ZRem(ctx, c.Key(id), members...).Err()
+}
+
+// ZRangeByScoreWithLimit extrait les membres dont le score est inférieur ou égal à un seuil maximum (Batching O(log(N) + M)).
+func (c *Collection) ZRangeByScoreWithLimit(ctx context.Context, id any, maxScore int64, limit int64) ([]string, error) {
+	return c.Client.ZRangeByScore(ctx, c.Key(id), &redis.ZRangeBy{
+		Min:    "-inf",
+		Max:    strconv.FormatInt(maxScore, 10),
+		Offset: 0,
+		Count:  limit,
+	}).Result()
 }
 
 // ---------------- CRUD OBJET (Single) ----------------
@@ -126,6 +237,89 @@ func (c *Collection) DeleteObject(ctx context.Context, id any) error {
 // RefreshTTL prolonge la durée de vie d'un objet (utile pour les sessions actives).
 func (c *Collection) RefreshTTL(ctx context.Context, id any) error {
 	return c.Client.Expire(ctx, c.Key(id), c.DefaultTTL).Err()
+}
+
+// Incr incrémente une valeur numérique et retourne le nouveau compteur (ex: Rate Limiting).
+func (c *Collection) Incr(ctx context.Context, id any) (int64, error) {
+	return c.Client.Incr(ctx, c.Key(id)).Result()
+}
+
+// LPush ajoute un élément en tête de liste (ex: DLQ).
+func (c *Collection) LPush(ctx context.Context, id any, values ...any) error {
+	return c.Client.LPush(ctx, c.Key(id), values...).Err()
+}
+
+// Pipeline retourne un Pipeliner Redis depuis le client de la collection.
+func (c *Collection) Pipeline() redis.Pipeliner {
+	return c.Client.Pipeline()
+}
+
+// --- Primitives HASH ---
+
+func (c *Collection) HGet(ctx context.Context, id any, field string) *redis.StringCmd {
+	return c.Client.HGet(ctx, c.Key(id), field)
+}
+
+func (c *Collection) HSet(ctx context.Context, id any, values ...any) error {
+	return c.Client.HSet(ctx, c.Key(id), values...).Err()
+}
+
+func (c *Collection) HGetAll(ctx context.Context, id any) *redis.StringStringMapCmd {
+	return c.Client.HGetAll(ctx, c.Key(id))
+}
+
+func (c *Collection) HDel(ctx context.Context, id any, fields ...string) error {
+	return c.Client.HDel(ctx, c.Key(id), fields...).Err()
+}
+
+// --- Primitives SET ---
+
+func (c *Collection) SAdd(ctx context.Context, id any, members ...any) error {
+	return c.Client.SAdd(ctx, c.Key(id), members...).Err()
+}
+
+func (c *Collection) SRem(ctx context.Context, id any, members ...any) error {
+	return c.Client.SRem(ctx, c.Key(id), members...).Err()
+}
+
+func (c *Collection) SMembers(ctx context.Context, id any) ([]string, error) {
+	return c.Client.SMembers(ctx, c.Key(id)).Result()
+}
+
+func (c *Collection) SCard(ctx context.Context, id any) (int64, error) {
+	return c.Client.SCard(ctx, c.Key(id)).Result()
+}
+
+// SetPrimitive stocke une valeur brute sans MsgPack (utile pour les index pointant vers des IDs)
+func (c *Collection) SetPrimitive(ctx context.Context, id any, val any) error {
+	return c.Client.Set(ctx, c.Key(id), val, c.DefaultTTL).Err()
+}
+
+// GetInt64 récupère une valeur primitive brute sous forme d'entier
+func (c *Collection) GetInt64(ctx context.Context, id any) (int64, error) {
+	return c.Client.Get(ctx, c.Key(id)).Int64()
+}
+
+// MGet expose l'accès multiple brut. Préférer GetMany quand c'est possible, mais vital pour les clés composites.
+func (c *Collection) MGet(ctx context.Context, ids ...any) ([]interface{}, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = c.Key(id)
+	}
+	return c.Client.MGet(ctx, keys...).Result()
+}
+
+// SAddCount ajoute au SET et retourne le nombre d'éléments réellement ajoutés (indispensable pour l'idempotence)
+func (c *Collection) SAddCount(ctx context.Context, id any, members ...any) (int64, error) {
+	return c.Client.SAdd(ctx, c.Key(id), members...).Result()
+}
+
+// SRemCount supprime du SET et retourne le nombre d'éléments réellement supprimés
+func (c *Collection) SRemCount(ctx context.Context, id any, members ...any) (int64, error) {
+	return c.Client.SRem(ctx, c.Key(id), members...).Result()
 }
 
 // ---------------- PIPELINE D'HYDRATATION (Massive Read) ----------------

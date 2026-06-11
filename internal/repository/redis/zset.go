@@ -45,6 +45,11 @@ func ZRevRange(ctx context.Context, key string, start, stop int64) ([]string, er
 	return redisgo.Rdb.ZRevRange(ctx, key, start, stop).Result()
 }
 
+// ZRange récupère une liste d'éléments triés du plus petit score au plus grand (Ordre chronologique naturel).
+func ZRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
+	return redisgo.Rdb.ZRange(ctx, key, start, stop).Result()
+}
+
 // ZRemRangeByRank supprime les éléments selon leur position (rang) dans le tri.
 // Complexité : O(log(N) + M)
 // C'est la fonction CLÉ pour le "Capping" (Nettoyage automatique).
@@ -124,6 +129,11 @@ const zaddCapScript = `
 // ZAddWithCap insère un élément et plafonne le ZSET en une seule passe atomique via Lua.
 func ZAddWithCap(ctx context.Context, key string, score float64, member any, maxSize int) error {
 	return redisgo.Rdb.Eval(ctx, zaddCapScript, []string{key}, score, member, maxSize).Err()
+}
+
+// ZRevRangeWithScores récupère une liste d'éléments triés avec leurs scores respectifs.
+func ZRevRangeWithScores(ctx context.Context, key string, start, stop int64) ([]redis.Z, error) {
+	return redisgo.Rdb.ZRevRangeWithScores(ctx, key, start, stop).Result()
 }
 
 // ============================================================================

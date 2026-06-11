@@ -88,7 +88,6 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 
 	var mongoEvents []redis.AsyncEvent
 	var pgEvents []redis.AsyncEvent
-	var workerEvents []redis.AsyncEvent // <-- NOUVEAU
 
 	for _, evt := range validEvents {
 		if evt.Targets&redis.TargetMongo != 0 {
@@ -96,9 +95,6 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 		}
 		if evt.Targets&redis.TargetPostgres != 0 {
 			pgEvents = append(pgEvents, evt)
-		}
-		if evt.Targets&redis.TargetWorker != 0 { // <-- NOUVEAU
-			workerEvents = append(workerEvents, evt)
 		}
 	}
 
@@ -117,13 +113,6 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 			flushPostgres(ctx, pgEvents)
 		}
 		done <- true
-	}()
-
-	// Lancement des tâches internes (hors BDD) en parallèle
-	go func() {
-		if len(workerEvents) > 0 {
-			processInternalJobs(ctx, workerEvents)
-		}
 	}()
 
 	// 🛑 BARRIÈRE DE SYNCHRONISATION

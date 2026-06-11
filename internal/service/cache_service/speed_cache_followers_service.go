@@ -6,16 +6,9 @@ import (
 	"log"
 	"strconv"
 
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-)
-
-const (
-	// RedisKeySpeedFollowers maintient la LISTE des abonnés pour le Fan-Out (Worker)
-	RedisKeySpeedFollowers = "speed:followers:%d"
-	// RedisKeySpeedRelations maintient l'ÉTAT exact (0, 1, 2, -1) pour les droits d'accès
-	RedisKeySpeedRelations = "speed:relations:%d"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -25,13 +18,10 @@ const (
 // RelationValue retourne l'état strict de la relation (0 = Rien, 1 = Follow, 2 = Ami, -1 = Banni).
 // Fonctionne en cascade : RAM (Redis) -> Cold (Mongo) -> Source (Postgres).
 func RelationValue(ctx context.Context, targetID int64, callerID int64) int {
-	// Clé du Hash Redis : speed:relations:<targetID>
-	// Champ du Hash : <callerID>
-	key := fmt.Sprintf(RedisKeySpeedRelations, targetID)
 	strCallerID := strconv.FormatInt(callerID, 10)
 
-	// Étape 1 : Cache L1 (Speed Cache en RAM pure, ~0.1ms)
-	val, err := redisgo.Rdb.HGet(ctx, key, strCallerID).Result()
+	// Étape 1 : Vérification rapide en RAM (Speed Cache L1)
+	val, err := redis.SpeedRelations.HGet(ctx, targetID, strCallerID).Result()
 	if err == nil {
 		if state, errConv := strconv.Atoi(val); errConv == nil {
 			return state
@@ -42,7 +32,7 @@ func RelationValue(ctx context.Context, targetID int64, callerID int64) int {
 	state, errMongo := mongo.MongoGetRelationState(callerID, targetID)
 	if errMongo == nil {
 		// Réhydratation L1
-		_ = redisgo.Rdb.HSet(ctx, key, strCallerID, state).Err()
+		_ = redis.SpeedRelations.HSet(ctx, targetID, strCallerID, state)
 		return state
 	}
 
@@ -54,7 +44,7 @@ func RelationValue(ctx context.Context, targetID int64, callerID int64) int {
 	}
 
 	// Réhydratation L1 (Inclut le Cache Négatif : si statePg == 0, on le met en RAM quand même)
-	_ = redisgo.Rdb.HSet(ctx, key, strCallerID, statePg).Err()
+	_ = redis.SpeedRelations.HSet(ctx, targetID, strCallerID, statePg)
 
 	return statePg
 }
@@ -66,15 +56,13 @@ func RelationValue(ctx context.Context, targetID int64, callerID int64) int {
 // UpdateRelationState met à jour l'état de la relation (à appeler depuis les handlers de follow/unfollow/ban)
 func UpdateRelationState(ctx context.Context, targetID int64, callerID int64, newState int) error {
 	// 1. Met à jour le dictionnaire d'accès
-	keyRelations := fmt.Sprintf(RedisKeySpeedRelations, targetID)
-	err := redisgo.Rdb.HSet(ctx, keyRelations, strconv.FormatInt(callerID, 10), newState).Err()
+	err := redis.SpeedRelations.HSet(ctx, targetID, strconv.FormatInt(callerID, 10), newState)
 
 	// 2. Maintien de l'ancien Set pour le worker Fan-Out
-	keyFollowers := fmt.Sprintf(RedisKeySpeedFollowers, targetID)
 	if newState == 1 || newState == 2 {
-		_ = redisgo.Rdb.SAdd(ctx, keyFollowers, callerID).Err()
+		_ = redis.SpeedFollowers.SAdd(ctx, targetID, callerID)
 	} else {
-		_ = redisgo.Rdb.SRem(ctx, keyFollowers, callerID).Err()
+		_ = redis.SpeedFollowers.SRem(ctx, targetID, callerID)
 	}
 
 	return err
@@ -82,9 +70,7 @@ func UpdateRelationState(ctx context.Context, targetID int64, callerID int64, ne
 
 // GetSpeedFollowers récupère les abonnés pour le Fan-Out asynchrone (Worker).
 func GetSpeedFollowers(ctx context.Context, userID int64) ([]int64, error) {
-	key := fmt.Sprintf(RedisKeySpeedFollowers, userID)
-
-	followerStrings, err := redisgo.Rdb.SMembers(ctx, key).Result()
+	followerStrings, err := redis.SpeedFollowers.SMembers(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("erreur lecture speed cache followers: %w", err)
 	}
@@ -102,17 +88,14 @@ func GetSpeedFollowers(ctx context.Context, userID int64) ([]int64, error) {
 // GetFollowerCount retourne le nombre total d'abonnés d'un utilisateur en O(1).
 // Idéal pour la protection "Anti-Crash Justin Bieber" avant un Fan-Out.
 func GetFollowerCount(ctx context.Context, userID int64) int64 {
-	key := fmt.Sprintf(RedisKeySpeedFollowers, userID)
-	count, _ := redisgo.Rdb.SCard(ctx, key).Result()
+	count, _ := redis.SpeedFollowers.SCard(ctx, userID)
 	return count
 }
 
 // GetSpeedFriends récupère strictement la liste des amis (Relation = 2).
 // Utilisé pour le Fan-Out restreint des posts privés.
 func GetSpeedFriends(ctx context.Context, userID int64) ([]int64, error) {
-	key := fmt.Sprintf(RedisKeySpeedRelations, userID)
-
-	relations, err := redisgo.Rdb.HGetAll(ctx, key).Result()
+	relations, err := redis.SpeedRelations.HGetAll(ctx, userID).Result()
 	if err != nil {
 		return nil, fmt.Errorf("erreur lecture speed cache relations: %w", err)
 	}

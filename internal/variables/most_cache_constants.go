@@ -12,13 +12,6 @@ const (
 // REDIS KEYS - NOMENCLATURE UNIFIÉE
 // ============================================================================
 const (
-
-	// 4. Hashtags & Canonicalisation
-	RedisKeyActiveTagsSet = "most_cache:tags:active:set"
-
-	// 5. Vecteur de Contenu (Object Cache car donnée pure JSON/MsgPack)
-	RedisKeyContentVector = "object_cache:content:vec:%d"
-
 	// ================================================================
 	// LIMITES OPÉRATIONNELLES — TDD §6
 	// ================================================================
@@ -30,15 +23,12 @@ const (
 	// CLÉS REDIS — TDD §4.4
 	// ================================================================
 	// Note: RedisKeyContentVector = "content:vec:%d" est conservé dans constant.go
-	RedisKeyFeedPersonalized  = "feed_service:personalized:%d"
 	RedisKeyTrendGlobalHourly = "most_cache:trend:global:hourly:%s"
 	RedisKeyTrendGlobalDaily  = "most_cache:trend:global:daily:%s"
 	// On ajoute :%s à la fin pour injecter la date (YYYYMMDD) ou la semaine (YYYY-WXX)
 	RedisKeyTrendTagDaily      = "most_cache:trend:tag:%s:daily:%s"
 	RedisKeyTrendTagWeekly     = "most_cache:trend:tag:%s:weekly:%s"
 	RedisKeyHashtagLeaderboard = "most_cache:trend:hashtag:leaderboard"
-	RedisKeyHashtagCanonMap    = "most_cache:hashtag:canon:map"
-	RedisKeyLSHBucket          = "most_cache:lsh:bucket:%d"
 
 	// 2. Classements Stricts (Pour l'interface utilisateur uniquement)
 	RedisKeyStrictLikes  = "most_cache:strict:likes"

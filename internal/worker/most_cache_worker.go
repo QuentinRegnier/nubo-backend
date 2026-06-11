@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -36,18 +35,18 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 			}
 		}
 
-		// 2. SI C'EST UNE SUPPRESSION DE POST (Nettoyage ZSET)
+		// 2. SI C'EST UNE SUPPRESSION DE POST (Nettoyage ZSET via Pipeline Découplé L1)
 		if e.Type == redis.EntityPost && e.Action == redis.ActionDelete {
 			jsonBytes, err := json.Marshal(e.Payload)
 			if err == nil {
 				var post post_models.PostPayload
 				if err := json.Unmarshal(jsonBytes, &post); err == nil {
-					pipe := redisgo.Rdb.Pipeline()
+					pipe := redis.TrendGlobalDaily.Pipeline()
 					dateKey := post.CreatedAt.UTC().Format("20060102")
-					pipe.ZRem(ctx, fmt.Sprintf("trend:global:daily:%s", dateKey), post.ID)
+					pipe.ZRem(ctx, redis.TrendGlobalDaily.Key(dateKey), post.ID)
 
 					for _, tag := range post.Hashtags {
-						pipe.ZRem(ctx, fmt.Sprintf("trend:tag:%s:daily", tag), post.ID)
+						pipe.ZRem(ctx, redis.TrendTagDaily.Key(fmt.Sprintf("%s:daily", tag)), post.ID)
 					}
 					_, _ = pipe.Exec(ctx)
 				}

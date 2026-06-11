@@ -5,8 +5,7 @@ import (
 	"strings"
 	"unicode"
 
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/kljensen/snowball"
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
@@ -73,15 +72,15 @@ func GetTagFromKeyword(ctx context.Context, input string) (string, bool) {
 		return "", false
 	}
 
-	// 1. Vérification dans le mapping dynamique Redis (Fautes de frappe corrigées)
-	canonSlug, err := redisgo.Rdb.HGet(ctx, variables.RedisKeyHashtagCanonMap, cleanInput).Result()
+	// 1. Vérification dans le mapping dynamique Redis (Fautes de frappe corrigées via Collection)
+	canonSlug, err := redis.HashtagCanon.HGet(ctx, "map", cleanInput).Result()
 	if err == nil && canonSlug != "" {
 		return canonSlug, true
 	}
 
 	// 2. Si inconnu, le mot propre devient son propre tag (Nouveau Tag Communautaire)
 	// On l'ajoute silencieusement au SET des tags actifs pour que le Cron de nuit l'analyse.
-	_ = redisgo.Rdb.SAdd(ctx, variables.RedisKeyActiveTagsSet, cleanInput).Err()
+	_ = redis.Tags.SAdd(ctx, "active", cleanInput)
 
 	return cleanInput, true
 }
