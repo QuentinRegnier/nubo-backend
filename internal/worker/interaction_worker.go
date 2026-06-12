@@ -24,20 +24,6 @@ func init() {
 	go flushInteractionsPeriodically()
 }
 
-func RegisterLike(actorID, postID int64) {
-	select {
-	case interactionChan <- Interaction{
-		ActorID:   actorID,
-		TargetID:  postID,
-		Type:      "like",
-		Timestamp: time.Now().Unix(),
-	}:
-	default:
-		// BACKPRESSURE : Si le buffer est saturé, on lâche l'interaction.
-		// Règle d'or : Mieux vaut perdre un "Like" statistique que de crasher un nœud API.
-	}
-}
-
 func RegisterView(actorID, postID int64) {
 	select {
 	case interactionChan <- Interaction{

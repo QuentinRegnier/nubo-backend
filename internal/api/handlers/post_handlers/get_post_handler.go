@@ -37,7 +37,7 @@ import (
 // @Param        X-Signature   header string true "Signature HMAC de la requête"
 // @Param        X-Timestamp   header string true "Timestamp Unix de la requête"
 // @Param        ids           query  string true "Liste d'IDs séparés par des virgules (ex: ?ids=123,456)"
-// @Success      200  {array}   post_models.PostFetchResult "Liste des posts hydratés et/ou erreurs d'accès unitaires"
+// @Success      200  {array}   post_models.GetPostOutput "Liste des posts hydratés (avec médias et commentaires) et/ou erreurs d'accès unitaires"
 // @Failure      400  {object}  domain.ErrorResponse "Paramètre manquant ou limite de 50 IDs dépassée"
 // @Failure      401  {object}  domain.ErrorResponse "Session expirée ou utilisateur non identifié"
 // @Router       /post [get]

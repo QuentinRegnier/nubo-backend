@@ -21,6 +21,9 @@ func StartBackgroundWorkers(ctx context.Context) {
 	// Lancement du nettoyeur de Tags (Canonicalisation)
 	StartHashtagCanonCron(ctx)
 
+	// Lancement du calcul des Tendances de Hashtags (15m)
+	StartHashtagTrendCron(ctx)
+
 	// Lancement du Moteur de Warm-up Algorithmique (Génération asynchrone des flux)
 	StartFeedWarmupCron(ctx)
 

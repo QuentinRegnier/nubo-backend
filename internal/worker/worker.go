@@ -124,9 +124,10 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 	// ✅ ÉTAPE 2 : MISE À JOUR DES CACHES (Object Cache L1 & Most Cache)
 	// À cet instant, on est certain que le disque est à jour.
 	if len(validEvents) > 0 {
-		// On lance les deux métiers de cache en parallèle
+		// On lance les métiers de cache en parallèle
 		go updateCountersCache(ctx, validEvents) // Le Secrétaire (Object Cache)
 		go updateMostCache(ctx, validEvents)     // Le Cerveau (ZSETs et Recommandations)
+		go updateUserCache(ctx, validEvents)     // ✅ NOUVEAU : La Vitrine (Profil Utilisateur)
 	}
 
 	// Étape 3 : Fan-Out Social de masse (Distribution dans les boîtes aux lettres du Speed Cache)

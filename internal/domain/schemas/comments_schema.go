@@ -10,6 +10,7 @@ var CommentsSchema = map[string]reflect.Kind{
 	"content":    reflect.String,
 	"visibility": reflect.Int,
 	"like_count": reflect.Int, // ✅ NOUVEAU COMPTEUR
+	"score":      reflect.Int, // ✅ NOUVEAU SCORE UNIFIÉ
 	"created_at": reflect.Struct,
 	"updated_at": reflect.Struct,
 }

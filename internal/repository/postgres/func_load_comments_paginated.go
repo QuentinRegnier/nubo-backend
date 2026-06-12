@@ -13,7 +13,7 @@ import (
 func FuncLoadCommentsPaginated(ctx context.Context, postID int64, offset int64, limit int64) ([]comment_models.CommentPayload, error) {
 	var comments []comment_models.CommentPayload
 
-	query := `SELECT id, post_id, user_id, content, visibility, like_count, created_at, updated_at FROM content.func_load_comments_paginated($1, $2, $3)`
+	query := `SELECT id, post_id, user_id, content, visibility, like_count, score, created_at, updated_at FROM content.func_load_comments_paginated($1, $2, $3)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, postID, limit, offset)
 	if err != nil {
 		return nil, err
@@ -27,7 +27,7 @@ func FuncLoadCommentsPaginated(ctx context.Context, postID int64, offset int64, 
 
 	for rows.Next() {
 		var c comment_models.CommentPayload
-		if err := rows.Scan(&c.ID, &c.PostID, &c.UserID, &c.Content, &c.Visibility, &c.LikeCount, &c.CreatedAt, &c.UpdatedAt); err == nil {
+		if err := rows.Scan(&c.ID, &c.PostID, &c.UserID, &c.Content, &c.Visibility, &c.LikeCount, &c.Score, &c.CreatedAt, &c.UpdatedAt); err == nil {
 			comments = append(comments, c)
 		}
 	}

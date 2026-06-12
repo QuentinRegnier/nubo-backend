@@ -432,6 +432,7 @@ func updateCountersPostgres(ctx context.Context, events []redis.AsyncEvent) {
 		_, _ = postgres.PostgresDB.ExecContext(ctx, "UPDATE content.posts SET view_count = GREATEST(0, view_count + $1) WHERE id = $2", delta, id)
 	}
 	for id, delta := range commentLikeDeltas {
-		_, _ = postgres.PostgresDB.ExecContext(ctx, "UPDATE content.comments SET like_count = GREATEST(0, like_count + $1) WHERE id = $2", delta, id)
+		// ✅ Utilisation de la fonction SQL compilée pour maintenir le DDD et MAJ le Score et le Like
+		_, _ = postgres.PostgresDB.ExecContext(ctx, "SELECT content.func_increment_comment_metrics($1, $2)", id, delta)
 	}
 }

@@ -15,9 +15,9 @@ func MongoLoadCommentsPaginated(postID int64, offset int64, limit int64) ([]comm
 	}
 
 	// Tri compatible avec ton wrapper (map[string]any)
-	// -1 pour DESC (plus likés en premier), 1 pour ASC (plus anciens en premier)
+	// -1 pour DESC (plus hauts scores en premier), 1 pour ASC (plus anciens en premier)
 	sortMap := map[string]any{
-		"like_count": -1,
+		"score":      -1,
 		"created_at": 1,
 	}
 

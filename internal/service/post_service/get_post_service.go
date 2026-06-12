@@ -3,11 +3,13 @@ package post_service
 import (
 	"context"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/comment_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 )
 
@@ -103,11 +105,21 @@ func GetPosts(ctx context.Context, input post_models.GetPostInput) []post_models
 			}
 		}
 
+		// ⚡ HYDRATATION DES COMMENTAIRES (Via le service dédié optimisé)
+		commentInput := comment_models.GetCommentsInput{
+			PostID: id,
+			UserID: input.UserID,
+			Limit:  100, // On s'aligne sur notre Cap L1 ZSET !
+			Offset: 0,
+		}
+		comments, _ := comment_service.GetComments(ctx, commentInput)
+
 		val := post
 		results = append(results, post_models.GetPostOutput{
-			PostID: id,
-			Data:   &val,
-			Media:  mediaURLs, // Le client reçoit les URLs prêtes à l'emploi
+			PostID:   id,
+			Data:     &val,
+			Media:    mediaURLs, // Le client reçoit les URLs prêtes à l'emploi
+			Comments: comments,  // ✅ Injection instantanée de l'arbre des commentaires
 		})
 	}
 

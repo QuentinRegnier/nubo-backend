@@ -68,7 +68,9 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 	// 1. TENTATIVE L1 (VIP PARKING) : Le ZSET REDIS
 	// ─────────────────────────────────────────────────────────────────────────
 
-	if object_cache_service.IsPostInObjectCache(ctx, input.PostID) {
+	// ⚡ BOUCLIER DE PAGINATION : Si l'offset est supérieur ou égal au Cap (100),
+	// la donnée n'est mathématiquement pas dans L1. On by-pass pour taper Mongo directement.
+	if input.Offset < 100 && object_cache_service.IsPostInObjectCache(ctx, input.PostID) {
 
 		ids, _ := object_cache_service.GetTopCommentIDs(ctx, input.PostID, input.Offset, input.Limit)
 
@@ -103,7 +105,14 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 	comments, errMongo := mongo.MongoLoadCommentsPaginated(input.PostID, input.Offset, input.Limit)
 	if errMongo == nil && len(comments) > 0 {
 		for _, c := range comments {
+			// 1. Réhydratation du JSON
 			_ = object_cache_service.SetCommentInObjectCache(ctx, c)
+
+			// 2. ✅ RÉPARATION DE L'INDEX (Vrai Lazy Loading)
+			// Si on est dans le scope du Cap L1 (< 100), on reconstruit le ZSET pour les prochains.
+			if input.Offset < 100 {
+				_ = object_cache_service.AddCommentToZSET(ctx, c.PostID, c.ID, float64(c.Score))
+			}
 
 			val := c
 			results = append(results, comment_models.GetCommentOutput{
@@ -121,8 +130,12 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 		comments, errPg := postgres.FuncLoadCommentsPaginated(ctx, input.PostID, input.Offset, input.Limit)
 		if errPg == nil {
 			for _, c := range comments {
+				// Réparation L2
 				_ = mongo.MongoUpsertComment(c)
+				// Réparation L1 (JSON)
 				_ = object_cache_service.SetCommentInObjectCache(ctx, c)
+				// ✅ Réparation L1 (Index ZSET)
+				_ = object_cache_service.AddCommentToZSET(ctx, c.PostID, c.ID, float64(c.Score))
 
 				val := c
 				results = append(results, comment_models.GetCommentOutput{

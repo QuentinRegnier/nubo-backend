@@ -198,7 +198,8 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 
 	// Modèles pour COMMENTS
 	for id, delta := range commentLikeDeltas {
-		commentModels = append(commentModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"like_count": delta}}))
+		// ✅ Le score est incrémenté mathématiquement en même temps que le like_count
+		commentModels = append(commentModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"like_count": delta, "score": delta}}))
 	}
 
 	// Exécutions indépendantes

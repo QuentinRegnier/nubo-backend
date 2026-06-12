@@ -246,7 +246,7 @@ type CommentMapper struct{}
 
 func (m *CommentMapper) TableName() string { return "content.comments" }
 func (m *CommentMapper) Columns() []string {
-	return []string{"id", "post_id", "user_id", "content", "visibility", "created_at", "updated_at"}
+	return []string{"id", "post_id", "user_id", "content", "visibility", "like_count", "score", "created_at", "updated_at"}
 }
 
 func (m *CommentMapper) ToRow(data any) ([]any, error) {
@@ -258,7 +258,8 @@ func (m *CommentMapper) ToRow(data any) ([]any, error) {
 	if err := json.Unmarshal(jsonBytes, &c); err != nil {
 		return nil, err
 	}
-	return []any{c.ID, c.PostID, c.UserID, c.Content, c.Visibility, c.CreatedAt, c.UpdatedAt}, nil
+	// L'ordre doit être rigoureusement identique aux colonnes
+	return []any{c.ID, c.PostID, c.UserID, c.Content, c.Visibility, c.LikeCount, c.Score, c.CreatedAt, c.UpdatedAt}, nil
 }
 
 func (m *CommentMapper) BuildUpdateQuery(t string) string {

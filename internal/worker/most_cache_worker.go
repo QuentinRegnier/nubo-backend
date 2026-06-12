@@ -25,11 +25,8 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 			if err == nil {
 				var post post_models.PostPayload
 				if err := json.Unmarshal(jsonBytes, &post); err == nil {
+					// Uniquement de l'algorithmique (Global & Personnalisé)
 					cache_service.UpdatePostRecommendationScore(ctx, post)
-
-					// ✅ IGNORER L'ERREUR (_) ET CASTER EN float64
-					_ = cache_service.AddPostToUserProfile(ctx, post.UserID, post.ID, float64(post.CreatedAt.UnixMilli()))
-
 					algorithm_service.StoreContentVector(ctx, post)
 				}
 			}
