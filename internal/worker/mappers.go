@@ -9,7 +9,9 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/report_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/saved_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/lib/pq"
@@ -33,8 +35,8 @@ func GetMapper(entity redis.EntityType) EntityMapper {
 		return &SessionMapper{}
 	case redis.EntityUserSettings:
 		return &UserSettingsMapper{}
-	// case redis.EntityRelation:
-	// 	return &RelationMapper{}
+	case redis.EntityRelation:
+		return &RelationMapper{}
 
 	// --- CONTENT ---
 	case redis.EntityPost:
@@ -45,6 +47,8 @@ func GetMapper(entity redis.EntityType) EntityMapper {
 		return &MediaMapper{}
 	case redis.EntityLike:
 		return &LikeMapper{}
+	case redis.EntitySaved:
+		return &SavedMapper{}
 
 	// // --- MESSAGING ---
 	// case redis.EntityMessage:
@@ -135,7 +139,7 @@ func (m *UserSettingsMapper) ToRow(data any) ([]any, error) {
 		return nil, err
 	}
 
-	// Conversion des map en string (JSON) pour Postgres
+	// Conversion des structs en string (JSON) pour Postgres
 	privacyJSON, _ := json.Marshal(s.Privacy)
 	notifJSON, _ := json.Marshal(s.Notifications)
 
@@ -146,9 +150,9 @@ func (m *UserSettingsMapper) ToRow(data any) ([]any, error) {
 		string(notifJSON),
 		s.Language,
 		s.Theme,
-		pq.Array(s.TelemetryVector), // NOUVEAU : Conversion []float32 -> real[]
-		pq.Array(s.TelemetryTags),   // NOUVEAU : Conversion []string -> text[]
-		s.TelemetryTimestamp,        // NOUVEAU
+		pq.Array(s.TelemetryVector),
+		pq.Array(s.TelemetryTags),
+		s.TelemetryTimestamp,
 		s.CreatedAt,
 		s.UpdatedAt,
 	}, nil
@@ -197,28 +201,31 @@ func (m *SessionMapper) BuildUpdateQuery(tempTable string) string {
 	return buildGenericUpdateQuery(m.TableName(), tempTable, m.Columns())
 }
 
-// // --- RELATION MAPPER (auth.relations) ---
-// type RelationMapper struct{}
+// --- RELATION MAPPER (auth.relations) ---
+type RelationMapper struct{}
 
-// func (m *RelationMapper) TableName() string { return "auth.relations" }
-
-// func (m *RelationMapper) Columns() []string {
-// 	return []string{"id", "follower_id", "followed_id", "state", "created_at", "updated_at"}
-// }
-
-// func (m *RelationMapper) ToRow(data any) []any {
-// 	jsonBytes, _ := json.Marshal(data)
-// 	var r domain.Relation // Assure-toi d'avoir ce struct
-// 	json.Unmarshal(jsonBytes, &r)
-
-// 	return []any{
-// 		r.ID, r.FollowerID, r.FollowedID, r.State, r.CreatedAt, r.UpdatedAt,
-// 	}
-// }
-
-// func (m *RelationMapper) BuildUpdateQuery(tempTable string) string {
-// 	return buildGenericUpdateQuery(m.TableName(), tempTable, m.Columns())
-// }
+func (m *RelationMapper) TableName() string { return "auth.relations" }
+func (m *RelationMapper) Columns() []string {
+	return []string{"id", "primary_id", "secondary_id", "state", "created_at", "updated_at"}
+}
+func (m *RelationMapper) ToRow(data any) ([]any, error) {
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	var r relation_models.RelationPayload
+	if err := json.Unmarshal(jsonBytes, &r); err != nil {
+		return nil, err
+	}
+	return []any{r.ID, r.PrimaryID, r.SecondaryID, r.State, r.CreatedAt, r.UpdatedAt}, nil
+}
+func (m *RelationMapper) BuildUpdateQuery(tempTable string) string {
+	// Pour les relations, la mise à jour (UPDATE) se fait strictement sur la clé composite
+	return fmt.Sprintf(
+		"UPDATE %s SET state = %s.state, updated_at = %s.updated_at FROM %s WHERE %s.primary_id = %s.primary_id AND %s.secondary_id = %s.secondary_id",
+		m.TableName(), tempTable, tempTable, tempTable, m.TableName(), tempTable, m.TableName(), tempTable,
+	)
+}
 
 // ============================================================================
 //                                CONTENT SCHEMA
@@ -344,6 +351,28 @@ func (m *LikeMapper) ToRow(data any) ([]any, error) {
 
 // Pas d'update sur les likes (le paramètre requis par l'interface est ignoré via '_')
 func (m *LikeMapper) BuildUpdateQuery(_ string) string { return "" }
+
+// --- SAVED MAPPER (content.saved) ---
+type SavedMapper struct{}
+
+func (m *SavedMapper) TableName() string { return "content.saved" }
+func (m *SavedMapper) Columns() []string {
+	return []string{"id", "user_id", "post_id", "created_at"}
+}
+func (m *SavedMapper) ToRow(data any) ([]any, error) {
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	var s saved_models.SavedPayload
+	if err := json.Unmarshal(jsonBytes, &s); err != nil {
+		return nil, err
+	}
+	return []any{s.ID, s.UserID, s.PostID, s.CreatedAt}, nil
+}
+func (m *SavedMapper) BuildUpdateQuery(_ string) string {
+	return "" // On ne met jamais à jour un favori, on l'ajoute ou on le supprime
+}
 
 // // ============================================================================
 // //                                MESSAGING SCHEMA

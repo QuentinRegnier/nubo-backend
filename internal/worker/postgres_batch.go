@@ -328,6 +328,67 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 		return tx.Commit()
 	}
 
+	// CAS SPÉCIAL : LES RELATIONS (Suppression par clé composite)
+	if entity == redis.EntityRelation {
+		tx, err := postgres.PostgresDB.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		stmt, err := tx.Prepare("DELETE FROM auth.relations WHERE primary_id = $1 AND secondary_id = $2")
+		if err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		defer func(stmt *sql.Stmt) {
+			err := stmt.Close()
+			if err != nil {
+				fmt.Printf("  Erreur fermeture statement Delete Relations: %v\n", err)
+			}
+		}(stmt)
+
+		for _, e := range events {
+			jsonBytes, _ := json.Marshal(e.Payload)
+			var r map[string]interface{}
+			_ = json.Unmarshal(jsonBytes, &r)
+
+			// Extraction robuste
+			primaryID := int64(r["primary_id"].(float64))
+			secondaryID := int64(r["secondary_id"].(float64))
+			_, _ = stmt.Exec(primaryID, secondaryID)
+		}
+		return tx.Commit()
+	}
+
+	// CAS SPÉCIAL : LES FAVORIS (Suppression par clé composite)
+	if entity == redis.EntitySaved {
+		tx, err := postgres.PostgresDB.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		stmt, err := tx.Prepare("DELETE FROM content.saved WHERE user_id = $1 AND post_id = $2")
+		if err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		defer func(stmt *sql.Stmt) {
+			err := stmt.Close()
+			if err != nil {
+				fmt.Printf("  Erreur fermeture statement Delete Saved: %v\n", err)
+			}
+		}(stmt)
+
+		for _, e := range events {
+			jsonBytes, _ := json.Marshal(e.Payload)
+			var s map[string]interface{}
+			_ = json.Unmarshal(jsonBytes, &s)
+
+			userID := int64(s["user_id"].(float64))
+			postID := int64(s["post_id"].(float64))
+			_, _ = stmt.Exec(userID, postID)
+		}
+		return tx.Commit()
+	}
+
 	// COMPORTEMENT STANDARD (Par tableau d'IDs)
 	ids := make([]int64, len(events))
 	for i, e := range events {

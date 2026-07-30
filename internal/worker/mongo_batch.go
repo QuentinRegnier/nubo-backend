@@ -6,6 +6,8 @@ import (
 	"log"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/saved_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"go.mongodb.org/mongo-driver/bson"
@@ -48,6 +50,8 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 			c = mongo.ConversationMembers
 		case redis.EntityMessage:
 			c = mongo.Messages
+		case redis.EntitySaved:
+			c = mongo.Saved
 		// Ajoute ici tes autres mappings (Comments, Relations...)
 		default:
 			log.Printf("⚠️ Erreur: Pas de MongoCollection définie pour l'entité %s", entity)
@@ -75,10 +79,21 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 				models = append(models, libMongo.NewInsertOneModel().SetDocument(e.Payload))
 
 			case redis.ActionUpdate:
-				// UpdateOneModel ($set)
-				models = append(models, libMongo.NewUpdateOneModel().
-					SetFilter(bson.M{"_id": e.ID}).
-					SetUpdate(bson.M{"$set": e.Payload}))
+				if entity == redis.EntityRelation {
+					// UPDATE par clé composite pour les relations
+					var rel relation_models.RelationPayload
+					jsonBytes, _ := json.Marshal(e.Payload)
+					_ = json.Unmarshal(jsonBytes, &rel)
+
+					models = append(models, libMongo.NewUpdateOneModel().
+						SetFilter(bson.M{"primary_id": rel.PrimaryID, "secondary_id": rel.SecondaryID}).
+						SetUpdate(bson.M{"$set": bson.M{"state": rel.State, "updated_at": rel.UpdatedAt}}))
+				} else {
+					// Update classique par ID
+					models = append(models, libMongo.NewUpdateOneModel().
+						SetFilter(bson.M{"_id": e.ID}).
+						SetUpdate(bson.M{"$set": e.Payload}))
+				}
 
 			// ... dans la boucle switch e.Action de flushMongo ...
 
@@ -114,6 +129,21 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 					models = append(models, libMongo.NewUpdateOneModel().
 						SetFilter(bson.M{"id": e.ID}).
 						SetUpdate(bson.M{"$set": bson.M{"visibility": -1}}))
+				} else if entity == redis.EntityRelation {
+					// HARD DELETE pour les Relations effacées unitairement
+					var rel relation_models.RelationPayload
+					jsonBytes, _ := json.Marshal(e.Payload)
+					_ = json.Unmarshal(jsonBytes, &rel)
+
+					models = append(models, libMongo.NewDeleteOneModel().SetFilter(bson.M{"primary_id": rel.PrimaryID, "secondary_id": rel.SecondaryID}))
+				} else if entity == redis.EntitySaved {
+					// HARD DELETE des favoris
+					var sav saved_models.SavedPayload
+					jsonBytes, _ := json.Marshal(e.Payload)
+					_ = json.Unmarshal(jsonBytes, &sav)
+
+					models = append(models, libMongo.NewDeleteOneModel().
+						SetFilter(bson.M{"user_id": sav.UserID, "post_id": sav.PostID}))
 				} else {
 					// HARD DELETE pour les autres entités
 					models = append(models, libMongo.NewDeleteOneModel().

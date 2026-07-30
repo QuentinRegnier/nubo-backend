@@ -204,3 +204,8 @@ func ZScores(ctx context.Context, key string, members []string) ([]float64, erro
 	}
 	return scores, nil
 }
+
+// ZRevRangeCollection récupère une liste d'éléments triés du plus grand score au plus petit via la Collection.
+func (c *Collection) ZRevRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
+	return c.Client.ZRevRange(ctx, key, start, stop).Result()
+}

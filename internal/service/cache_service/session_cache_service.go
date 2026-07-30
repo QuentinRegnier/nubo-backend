@@ -65,3 +65,20 @@ func LoadSessionFromCache(ctx context.Context, userID int64, deviceToken string,
 
 	return s, nil
 }
+
+// DeleteSessionFromCache supprime la session et son index de recherche du cache L1
+func DeleteSessionFromCache(ctx context.Context, sessionID int64, userID int64, deviceToken string) error {
+	c, cancel := getShortCtx(ctx)
+	defer cancel()
+
+	// 1. Suppression de l'objet principal
+	_ = redis.Sessions.DeleteObject(c, sessionID)
+
+	// 2. Suppression de l'index de recherche associé
+	if userID != 0 && deviceToken != "" {
+		idxKey := fmt.Sprintf("%d:%s", userID, deviceToken)
+		_ = redis.SessionIndexes.DeletePrimitive(c, idxKey)
+	}
+
+	return nil
+}

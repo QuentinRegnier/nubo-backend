@@ -29,6 +29,7 @@ var (
 	ConversationsMeta   *MongoCollection
 	ConversationMembers *MongoCollection
 	Messages            *MongoCollection
+	Saved               *MongoCollection
 )
 
 // InitCacheDatabase initialise la structure logique de Redis pour les caches
@@ -46,6 +47,7 @@ func InitCacheDatabase() {
 	schemaConversations := schemas.ConversationsSchema
 	schemaMembers := schemas.MembersSchema
 	schemaMessages := schemas.MessagesSchema
+	schemaSaved := schemas.SavedSchema
 
 	// variables globales
 	Users = NewMongoCollection("nubo_mongo", "auth.users", schemaUsers)
@@ -59,6 +61,7 @@ func InitCacheDatabase() {
 	ConversationsMeta = NewMongoCollection("nubo_mongo", "messaging.conversations", schemaConversations)
 	ConversationMembers = NewMongoCollection("nubo_mongo", "messaging.members", schemaMembers)
 	Messages = NewMongoCollection("nubo_mongo", "messaging.messages", schemaMessages)
+	Saved = NewMongoCollection("nubo_mongo", "content.saved", schemaSaved)
 
 	log.Println("Structure MongoDB initialisée")
 }

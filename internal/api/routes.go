@@ -10,9 +10,12 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/feed_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/like_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/post_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/relation_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/report_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/saved_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/security_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/telemetry_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/user_settings_handlers"
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers"
@@ -84,6 +87,9 @@ func SetupRoutes(r *gin.Engine) {
 	secured.Use(middleware.JWTMiddleware())  // 1. Qui est-ce ? (Populate context with UserID & DeviceToken)
 	secured.Use(middleware.HMACMiddleware()) // 2. Est-ce authentique ? (Check Signature with Redis Secret)
 
+	// --- User ---
+	secured.POST("/logout", auth_handlers.LogoutHandler)
+
 	// --- Posts ---
 	secured.GET("/feed", feed_handlers.GetFeedHandler)
 	secured.GET("/feed/force", feed_handlers.GetFeedHandler)
@@ -109,24 +115,24 @@ func SetupRoutes(r *gin.Engine) {
 	secured.PATCH("/comment", comment_handlers.UpdateCommentHandler)
 	secured.DELETE("/comment", comment_handlers.DeleteCommentHandler) //regarder si on delete bien aussi les like du commentaire
 	secured.GET("/comment", comment_handlers.GetCommentsHandler)      //regarder si on get bien les like aussi du commentaire
-	secured.POST("/follow", FollowHandler)                            // ℹ️❌
-	secured.DELETE("/follow", UnFollowHandler)                        // ℹ️❌
-	secured.POST("/friend", FriendHandler)                            // ℹ️❌
-	secured.DELETE("/friend", UnFriendHandler)                        // ℹ️❌
-	secured.POST("/block", BlockHandler)                              // ℹ️❌
-	secured.DELETE("/block", UnBlockHandler)                          // ℹ️❌
-	secured.POST("/share", ShareHandler)                              // ℹ️❌
-	secured.POST("/save", SaveHandler)                                // ℹ️❌
-	secured.DELETE("/saved", UnSavedHandler)                          // ℹ️❌
-	secured.GET("/saveds", LoadSavedsHandler)                         // ℹ️❌
+	secured.POST("/follow", relation_handlers.FollowHandler)
+	secured.DELETE("/follow", relation_handlers.UnFollowHandler)
+	secured.POST("/friend", relation_handlers.FriendHandler)
+	secured.DELETE("/friend", relation_handlers.UnFriendHandler)
+	secured.POST("/block", relation_handlers.BlockHandler)
+	secured.DELETE("/block", relation_handlers.UnBlockHandler)
+	secured.POST("/saved", saved_handlers.SavePostHandler)
+	secured.DELETE("/saved", saved_handlers.UnsavePostHandler)
+	secured.GET("/saved", saved_handlers.GetSavedPostsHandler)
 
 	// --- Reglage ---
-	secured.PATCH("/profile", UpdateProfileHangler)            // ℹ️❌
-	secured.PATCH("/confidentials", UpdateConfidentialHandler) // ℹ️❌
-	secured.POST("/logout", LogoutHandler)                     // ℹ️❌
-	secured.GET("/sessions", LoadSessionsHandler)              // ℹ️❌
-	secured.DELETE("/sessions", DeleteSessionsHandler)         // ℹ️❌
-	secured.PATCH("/language", UpdateLanguageHandler)          // ℹ️❌
+	secured.GET("/check_username", user_settings_handlers.CheckUsernameHandler)
+	secured.PATCH("/profile", auth_handlers.UpdateProfileHandler)
+	secured.PATCH("/privacy", user_settings_handlers.UpdatePrivacyHandler)
+	secured.PATCH("/notifications", user_settings_handlers.UpdateNotificationsHandler)
+	secured.PATCH("/style", user_settings_handlers.UpdateStyleHandler)
+	secured.GET("/sessions", auth_handlers.GetSessionsHandler)
+	secured.DELETE("/sessions", auth_handlers.DeleteSessionHandler)
 
 	// --- Administration / Modération ---
 	secured.POST("/ban", BanHandler)                                            // ℹ️❌
@@ -174,86 +180,6 @@ func SetupRoutes(r *gin.Engine) {
 
 	// --- Report ---
 	secured.POST("/report", report_handlers.CreateReportHandler)
-}
-
-func FollowHandler(c *gin.Context) {
-	// TODO: gérer les relations d'amitié
-	c.JSON(http.StatusOK, gin.H{"message": "friendship managed"})
-}
-
-func UnFollowHandler(c *gin.Context) {
-	// TODO: retirer une relation d'amitié
-	c.JSON(http.StatusOK, gin.H{"message": "friendship removed"})
-}
-
-func FriendHandler(c *gin.Context) {
-	// TODO: gérer les relations d'amitié
-	c.JSON(http.StatusOK, gin.H{"message": "friendship managed"})
-}
-
-func UnFriendHandler(c *gin.Context) {
-	// TODO: retirer une relation d'amitié
-	c.JSON(http.StatusOK, gin.H{"message": "friendship removed"})
-}
-
-func BlockHandler(c *gin.Context) {
-	// TODO: gérer les relations d'amitié
-	c.JSON(http.StatusOK, gin.H{"message": "friendship managed"})
-}
-
-func UnBlockHandler(c *gin.Context) {
-	// TODO: retirer une relation d'amitié
-	c.JSON(http.StatusOK, gin.H{"message": "friendship removed"})
-}
-
-func ShareHandler(c *gin.Context) {
-	// TODO: retirer une relation d'amitié
-	c.JSON(http.StatusOK, gin.H{"message": "post_service shared"})
-}
-
-func SaveHandler(c *gin.Context) {
-	// TODO: retirer une relation d'amitié
-	c.JSON(http.StatusOK, gin.H{"message": "post_service saved"})
-}
-
-func UnSavedHandler(c *gin.Context) {
-	// TODO: retirer une relation d'amitié
-	c.JSON(http.StatusOK, gin.H{"message": "post_service saved deleted"})
-}
-
-func LoadSavedsHandler(c *gin.Context) {
-	// TODO: retirer une relation d'amitié
-	c.JSON(http.StatusOK, gin.H{"message": "post_service saved load"})
-}
-
-func UpdateProfileHangler(c *gin.Context) {
-	// TODO: gérer la mise à jour du profil
-	c.JSON(http.StatusOK, gin.H{"message": "profile updated"})
-}
-
-func UpdateConfidentialHandler(c *gin.Context) {
-	// TODO: gérer la mise à jour des informations confidentielles
-	c.JSON(http.StatusOK, gin.H{"message": "confidential updated"})
-}
-
-func LogoutHandler(c *gin.Context) {
-	// TODO: gérer la déconnexion
-	c.JSON(http.StatusOK, gin.H{"message": "logged out"})
-}
-
-func LoadSessionsHandler(c *gin.Context) {
-	// TODO: charger les sessions depuis la base
-	c.JSON(http.StatusOK, gin.H{"sessions": []string{"session 1", "session 2"}})
-}
-
-func DeleteSessionsHandler(c *gin.Context) {
-	// TODO: supprimer les sessions de la base
-	c.JSON(http.StatusOK, gin.H{"message": "sessions deleted"})
-}
-
-func UpdateLanguageHandler(c *gin.Context) {
-	// TODO: gérer la mise à jour de la langue
-	c.JSON(http.StatusOK, gin.H{"message": "language updated"})
 }
 
 func BanHandler(c *gin.Context) {

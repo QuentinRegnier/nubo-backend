@@ -126,15 +126,57 @@ func CreateUser(
 		return auth_models.SignUpResponse{}, fmt.Errorf("internal nubo_error (jwt generation): %w", err)
 	}
 
-	// C. Hydratation du Payload UserSettings (NOUVEAU)
+	// C. Hydratation du Payload UserSettings (Dynamique)
+
+	// Valeurs par défaut ultra-protectrices pour la plateforme
+	defaultPrivacy := user_settings_models.PrivacySettings{
+		ProfileVisibility:      0,     // Public par défaut pour l'esprit de la plateforme
+		PostVisibilityDefault:  0,     // Public par défaut
+		ConversationPermission: 0,     // Tout le monde
+		AllowTagging:           1,     // Réservé aux abonnés
+		AllowMentions:          0,     // Tout le monde
+		ShowOnlineStatus:       true,  // Dynamise la plateforme
+		ShowLocation:           false, // Masqué par défaut (sécurité physique)
+		SearchByEmailPhone:     false, // Non-trouvable (anonymat extérieur garanti)
+		AllowContentSharing:    false, // Interdiction de partager le contenu par défaut (sécurité naturiste)
+	}
+	if input.Privacy != nil {
+		defaultPrivacy = *input.Privacy
+	}
+
+	defaultNotifications := user_settings_models.NotificationSettings{
+		MasterPushEnabled:   true,
+		MasterEmailEnabled:  false,
+		NotifyNewFollower:   true,
+		NotifyFriendRequest: true,
+		NotifyMessages:      true,
+		NotifyLikes:         false, // Désactivé par défaut pour éviter le spam dopamine
+		NotifyComments:      true,
+		NotifyMentions:      true,
+		QuietHoursEnabled:   false,
+	}
+	if input.Notifications != nil {
+		defaultNotifications = *input.Notifications
+	}
+
+	lang := 0 // 0 = Auto/Système par défaut
+	if input.Language != nil {
+		lang = *input.Language
+	}
+
+	theme := 0 // 0 = Thème système par défaut
+	if input.Theme != nil {
+		theme = *input.Theme
+	}
+
 	settingsID := pkg.GenerateID()
 	settings := user_settings_models.UserSettingsPayload{
 		ID:                 settingsID,
 		UserID:             userID,
-		Privacy:            map[string]any{"profile_visibility": 0}, // Public par défaut
-		Notifications:      map[string]any{"push_enabled": true},
-		Language:           "fr",
-		Theme:              0,   // Thème système par défaut
+		Privacy:            defaultPrivacy,
+		Notifications:      defaultNotifications,
+		Language:           lang,
+		Theme:              theme,
 		TelemetryVector:    nil, // Profil vierge
 		TelemetryTags:      nil, // Profil vierge
 		TelemetryTimestamp: 0,

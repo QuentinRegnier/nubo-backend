@@ -53,6 +53,7 @@ var (
 	GraphEdges   *Collection
 	Tags         *Collection
 	HashtagCanon *Collection
+	Saved        *Collection
 
 	// --- INDEX & IDEMPOTENCE ---
 	SessionIndexes  *Collection
@@ -116,6 +117,7 @@ func InitCacheDatabase() {
 	GraphEdges = NewCollection("graph_cache:tag_edges", 0) // Remplace le formatage de clé manuel
 	Tags = NewCollection("tags", 0)
 	HashtagCanon = NewCollection("hashtag:canon", 0)
+	Saved = NewCollection("object_cache:saved", variables.StandardTTL)
 
 	// --- INDEX & IDEMPOTENCE ---
 	SessionIndexes = NewCollection("session_cache", variables.StandardTTL)
@@ -303,6 +305,11 @@ func (c *Collection) SCard(ctx context.Context, id any) (int64, error) {
 // SetPrimitive stocke une valeur brute sans MsgPack (utile pour les index pointant vers des IDs)
 func (c *Collection) SetPrimitive(ctx context.Context, id any, val any) error {
 	return c.Client.Set(ctx, c.Key(id), val, c.DefaultTTL).Err()
+}
+
+// DeletePrimitive supprime une valeur primitive brute (comme un index)
+func (c *Collection) DeletePrimitive(ctx context.Context, id any) error {
+	return c.Client.Del(ctx, c.Key(id)).Err()
 }
 
 // GetInt64 récupère une valeur primitive brute sous forme d'entier
