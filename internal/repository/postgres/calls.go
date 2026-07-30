@@ -12,46 +12,26 @@ import (
 // Elle lit les 16 colonnes (incluant view_count et vector) pour construire les PostRequests.
 func scanPosts(rows *sql.Rows) ([]post_models.PostPayload, error) {
 	var posts []post_models.PostPayload
-
 	for rows.Next() {
 		var p post_models.PostPayload
 		var location sql.NullString
-
 		err := rows.Scan(
-			&p.ID,
-			&p.UserID,
-			&p.Content,
-			pq.Array(&p.Hashtags),
-			pq.Array(&p.Identifiers),
-			pq.Array(&p.MediaIDs),
-			&p.Visibility,
-			&p.PriorityLevel,
-			&location,
-			&p.CreatedAt,
-			&p.UpdatedAt,
-			&p.LikeCount,
-			&p.CommentCount,
-			&p.ViewCount,
-			&p.HasMedia,
-			pq.Array(&p.Vector),
-			&p.VectorVersion,
+			&p.ID, &p.UserID, &p.Content, pq.Array(&p.Hashtags), pq.Array(&p.Identifiers), pq.Array(&p.MediaIDs),
+			&p.Visibility, &p.PriorityLevel, &location, &p.CreatedAt, &p.UpdatedAt, &p.LikeCount, &p.CommentCount,
+			&p.ViewCount, &p.HasMedia, pq.Array(&p.Vector), &p.VectorVersion,
+			&p.TelemetryDwellSum, &p.TelemetryDwellSq, &p.TelemetryClicks, // <-- NOUVEAU
 		)
-
 		if err != nil {
-			fmt.Printf("⚠️ Erreur lors du scan d'un post_service : %v\n", err)
+			fmt.Printf("  Erreur lors du scan d'un post : %v\n", err)
 			continue // On ignore la ligne corrompue et on passe à la suivante
 		}
-
 		if location.Valid {
 			p.Location = location.String
 		}
-
 		posts = append(posts, p)
 	}
-
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("erreur pendant l'itération des posts : %w", err)
 	}
-
 	return posts, nil
 }

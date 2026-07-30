@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
@@ -17,6 +18,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
@@ -124,6 +126,22 @@ func CreateUser(
 		return auth_models.SignUpResponse{}, fmt.Errorf("internal nubo_error (jwt generation): %w", err)
 	}
 
+	// C. Hydratation du Payload UserSettings (NOUVEAU)
+	settingsID := pkg.GenerateID()
+	settings := user_settings_models.UserSettingsPayload{
+		ID:                 settingsID,
+		UserID:             userID,
+		Privacy:            map[string]any{"profile_visibility": 0}, // Public par défaut
+		Notifications:      map[string]any{"push_enabled": true},
+		Language:           "fr",
+		Theme:              0,   // Thème système par défaut
+		TelemetryVector:    nil, // Profil vierge
+		TelemetryTags:      nil, // Profil vierge
+		TelemetryTimestamp: 0,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+
 	// 3. MISE EN CACHE IMMÉDIATE (Lecture instantanée L1 - USER & SPEED Caches)
 	// --------------------------------------------------------
 	ctx := context.Background()
@@ -141,6 +159,11 @@ func CreateUser(
 	// [SPEED CACHE] : Indexation de l'utilisateur pour l'auto-complétion O(1)
 	if err := cache_service.AddUserToSpeedCache(ctx, req); err != nil {
 		log.Printf("⚠️ Warning: Echec SPEED Cache Redis User: %v", err)
+	}
+
+	// [USER SETTINGS CACHE] : Ajout des paramètres pour éviter un fallback au premier /sync
+	if err := object_cache_service.SetUserSettings(ctx, settings); err != nil {
+		log.Printf("⚠️ Warning: Echec USER Cache Redis UserSettings: %v", err)
 	}
 
 	// 4. PERSISTANCE ASYNCHRONE (Le "Write-Behind" vers L2/L3)
@@ -177,6 +200,11 @@ func CreateUser(
 		}()
 	}
 
+	// D. Enqueue Création User Settings
+	if err := redis.EnqueueDB(ctx, settingsID, userID, redis.EntityUserSettings, redis.ActionCreate, settings, redis.TargetAll); err != nil {
+		log.Printf("⚠️ CRITICAL: Impossible d'enqueue les UserSettings %d : %v", settingsID, err)
+	}
+
 	// 5. CUCKOO FILTERS (Prévention O(1) Mémoire)
 	// --------------------------------------
 	if cuckoo.GlobalCuckoo != nil {
@@ -193,11 +221,14 @@ func CreateUser(
 	// 6. RÉPONSE DÉFINITIVE PRÊTE À ÊTRE SÉRIALISÉE
 	// --------------------------------------
 	return auth_models.SignUpResponse{
-		UserID:           userID,
-		MasterToken:      sessions.MasterToken,
-		JWT:              newJWT,
-		ExpiresAt:        sessions.ExpiresAt,
-		Message:          "User created successfully",
-		ProfilePictureID: req.ProfilePictureID, // On renvoie l'UUID généré au front
+		UserID:             userID,
+		MasterToken:        sessions.MasterToken,
+		JWT:                newJWT,
+		ExpiresAt:          sessions.ExpiresAt,
+		Message:            "User created successfully",
+		ProfilePictureID:   req.ProfilePictureID,
+		TelemetryVector:    nil, // Explicite pour le front
+		TelemetryTopTags:   nil, // Explicite pour le front
+		TelemetryTimestamp: 0,   // Explicite pour le front
 	}, nil
 }

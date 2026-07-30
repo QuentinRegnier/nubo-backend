@@ -376,6 +376,9 @@ func updateCountersPostgres(ctx context.Context, events []redis.AsyncEvent) {
 	commentDeltas := make(map[int64]int)
 	viewDeltas := make(map[int64]int)
 	commentLikeDeltas := make(map[int64]int)
+	telemetryDwellSum := make(map[int64]float64)
+	telemetryDwellSq := make(map[int64]float64)
+	telemetryClicks := make(map[int64]int)
 
 	for _, e := range events {
 		delta := 1
@@ -417,22 +420,52 @@ func updateCountersPostgres(ctx context.Context, events []redis.AsyncEvent) {
 				}
 				viewDeltas[p.TargetID] += delta
 			}
+		} else if e.Type == redis.EntityTelemetry {
+			// Note: on recrée localement la structure pour éviter les imports circulaires
+			// ou on utilise telemetry_models.TelemetryEvent si le package est importé.
+			var t struct {
+				PostID       int64 `json:"post_id"`
+				DwellTimeMs  int   `json:"dwell_time_ms"`
+				IsClicked    bool  `json:"is_clicked"`
+				DeepScroll   bool  `json:"deep_scroll"`
+				ProfileVisit bool  `json:"profile_visit"`
+			}
+			if err := json.Unmarshal(jsonBytes, &t); err == nil && t.PostID != 0 {
+				dwellVal := float64(t.DwellTimeMs)
+				telemetryDwellSum[t.PostID] += dwellVal
+				telemetryDwellSq[t.PostID] += (dwellVal * dwellVal)
+
+				// On transforme les actions booléennes en clics d'engagement
+				clicks := 0
+				if t.IsClicked {
+					clicks++
+				}
+				if t.DeepScroll {
+					clicks++
+				}
+				if t.ProfileVisit {
+					clicks++
+				}
+
+				telemetryClicks[t.PostID] += clicks
+			}
 		}
 	}
 
 	// Exécution des mises à jour
-	// L'utilisation de GREATEST(0, ...) est une sécurité mathématique SQL pour ne jamais avoir de compteurs négatifs.
 	for id, delta := range likeDeltas {
-		_, _ = postgres.PostgresDB.ExecContext(ctx, "UPDATE content.posts SET like_count = GREATEST(0, like_count + $1) WHERE id = $2", delta, id)
+		_, _ = postgres.PostgresDB.ExecContext(ctx, "SELECT content.func_increment_post_like($1, $2)", id, delta)
 	}
 	for id, delta := range commentDeltas {
-		_, _ = postgres.PostgresDB.ExecContext(ctx, "UPDATE content.posts SET comment_count = GREATEST(0, comment_count + $1) WHERE id = $2", delta, id)
+		_, _ = postgres.PostgresDB.ExecContext(ctx, "SELECT content.func_increment_post_comment($1, $2)", id, delta)
 	}
 	for id, delta := range viewDeltas {
-		_, _ = postgres.PostgresDB.ExecContext(ctx, "UPDATE content.posts SET view_count = GREATEST(0, view_count + $1) WHERE id = $2", delta, id)
+		_, _ = postgres.PostgresDB.ExecContext(ctx, "SELECT content.func_increment_post_view($1, $2)", id, delta)
 	}
 	for id, delta := range commentLikeDeltas {
-		// ✅ Utilisation de la fonction SQL compilée pour maintenir le DDD et MAJ le Score et le Like
 		_, _ = postgres.PostgresDB.ExecContext(ctx, "SELECT content.func_increment_comment_metrics($1, $2)", id, delta)
+	}
+	for id, sum := range telemetryDwellSum {
+		_, _ = postgres.PostgresDB.ExecContext(ctx, "SELECT content.func_increment_post_telemetry($1, $2, $3, $4)", id, sum, telemetryDwellSq[id], telemetryClicks[id])
 	}
 }

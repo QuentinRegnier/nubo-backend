@@ -140,6 +140,9 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 	commentLikeDeltas := make(map[int64]int) // ✅ NOUVEAU
 	commentDeltas := make(map[int64]int)
 	viewDeltas := make(map[int64]int)
+	telemetryDwellSum := make(map[int64]float64)
+	telemetryDwellSq := make(map[int64]float64)
+	telemetryClicks := make(map[int64]int)
 
 	for _, e := range events {
 		delta := 1
@@ -179,6 +182,32 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 				}
 				viewDeltas[p.TargetID] += delta
 			}
+		} else if e.Type == redis.EntityTelemetry {
+			var t struct {
+				PostID       int64 `json:"post_id"`
+				DwellTimeMs  int   `json:"dwell_time_ms"`
+				IsClicked    bool  `json:"is_clicked"`
+				DeepScroll   bool  `json:"deep_scroll"`
+				ProfileVisit bool  `json:"profile_visit"`
+			}
+			if err := json.Unmarshal(jsonBytes, &t); err == nil && t.PostID != 0 {
+				dwellVal := float64(t.DwellTimeMs)
+				telemetryDwellSum[t.PostID] += dwellVal
+				telemetryDwellSq[t.PostID] += (dwellVal * dwellVal)
+
+				clicks := 0
+				if t.IsClicked {
+					clicks++
+				}
+				if t.DeepScroll {
+					clicks++
+				}
+				if t.ProfileVisit {
+					clicks++
+				}
+
+				telemetryClicks[t.PostID] += clicks
+			}
 		}
 	}
 
@@ -195,11 +224,11 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 	for id, delta := range viewDeltas {
 		postModels = append(postModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"view_count": delta}}))
 	}
-
-	// Modèles pour COMMENTS
 	for id, delta := range commentLikeDeltas {
-		// ✅ Le score est incrémenté mathématiquement en même temps que le like_count
 		commentModels = append(commentModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"like_count": delta, "score": delta}}))
+	}
+	for id, sum := range telemetryDwellSum {
+		postModels = append(postModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"telemetry_dwell_sum": sum, "telemetry_dwell_sq": telemetryDwellSq[id], "telemetry_clicks": telemetryClicks[id]}}))
 	}
 
 	// Exécutions indépendantes

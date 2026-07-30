@@ -43,6 +43,7 @@ const (
 	EntityView         EntityType = "VIEW"
 	EntityFeed         EntityType = "Feeds"
 	EntityReport       EntityType = "Reports"
+	EntityTelemetry    EntityType = "Telemetry" // NOUVEAU : Pour router les Dwell Times et Clics
 )
 
 // DBTarget : Bitmask pour savoir où envoyer (Mongo, Postgres, ou les deux)

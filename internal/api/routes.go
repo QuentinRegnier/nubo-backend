@@ -12,6 +12,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/post_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/report_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/security_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/telemetry_handlers"
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers"
@@ -97,24 +98,27 @@ func SetupRoutes(r *gin.Engine) {
 	// --- Profils / Utilisateurs ---
 	secured.GET("/search/users/quick", handlers.UserSearchHandler) // ℹ️❌ à vérifier
 
+	// --- Télémétrie & Edge Computing ---
+	secured.PATCH("/telemetry/sync", telemetry_handlers.SyncHandler)
+
 	// --- Actions Sociales ---
 	secured.POST("/like/post", like_handlers.LikePostHandler)
 	secured.GET("/like/post", like_handlers.GetPostLikesHandler)
 	secured.POST("/like/comment", like_handlers.LikeCommentHandler)
 	secured.POST("/comment", comment_handlers.CreateCommentHandler)
 	secured.PATCH("/comment", comment_handlers.UpdateCommentHandler)
-	secured.DELETE("/comment", comment_handlers.DeleteCommentHandler)
-	secured.GET("/comment", comment_handlers.GetCommentsHandler)
-	secured.POST("/follow", FollowHandler)     // ℹ️❌
-	secured.DELETE("/follow", UnFollowHandler) // ℹ️❌
-	secured.POST("/friend", FriendHandler)     // ℹ️❌
-	secured.DELETE("/friend", UnFriendHandler) // ℹ️❌
-	secured.POST("/block", BlockHandler)       // ℹ️❌
-	secured.DELETE("/block", UnBlockHandler)   // ℹ️❌
-	secured.POST("/share", ShareHandler)       // ℹ️❌
-	secured.POST("/save", SaveHandler)         // ℹ️❌
-	secured.DELETE("/saved", UnSavedHandler)   // ℹ️❌
-	secured.GET("/saveds", LoadSavedsHandler)  // ℹ️❌
+	secured.DELETE("/comment", comment_handlers.DeleteCommentHandler) //regarder si on delete bien aussi les like du commentaire
+	secured.GET("/comment", comment_handlers.GetCommentsHandler)      //regarder si on get bien les like aussi du commentaire
+	secured.POST("/follow", FollowHandler)                            // ℹ️❌
+	secured.DELETE("/follow", UnFollowHandler)                        // ℹ️❌
+	secured.POST("/friend", FriendHandler)                            // ℹ️❌
+	secured.DELETE("/friend", UnFriendHandler)                        // ℹ️❌
+	secured.POST("/block", BlockHandler)                              // ℹ️❌
+	secured.DELETE("/block", UnBlockHandler)                          // ℹ️❌
+	secured.POST("/share", ShareHandler)                              // ℹ️❌
+	secured.POST("/save", SaveHandler)                                // ℹ️❌
+	secured.DELETE("/saved", UnSavedHandler)                          // ℹ️❌
+	secured.GET("/saveds", LoadSavedsHandler)                         // ℹ️❌
 
 	// --- Reglage ---
 	secured.PATCH("/profile", UpdateProfileHangler)            // ℹ️❌

@@ -49,22 +49,25 @@ func CreatePost(userID int64, input post_models.CreatePostInput, files []*multip
 
 	// 2. Création Objet
 	post := post_models.PostPayload{
-		ID:            postID,
-		UserID:        userID,
-		Content:       pkg.CleanStr(input.Content),
-		Hashtags:      input.Hashtags,
-		Identifiers:   input.Identifiers,
-		MediaIDs:      mediaIDs,
-		Visibility:    input.Visibility,
-		PriorityLevel: priorityLevel, // ✅ Injection de la priorité protégée
-		Location:      input.Location,
-		CreatedAt:     now,
-		UpdatedAt:     now,
-		LikeCount:     0,
-		CommentCount:  0,
-		ViewCount:     0,
-		HasMedia:      len(mediaIDs) > 0,
-		VectorVersion: 1, // On initialise la version du vecteur
+		ID:                postID,
+		UserID:            userID,
+		Content:           pkg.CleanStr(input.Content),
+		Hashtags:          input.Hashtags,
+		Identifiers:       input.Identifiers,
+		MediaIDs:          mediaIDs,
+		Visibility:        input.Visibility,
+		PriorityLevel:     priorityLevel, // ✅ Injection de la priorité protégée
+		Location:          input.Location,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+		LikeCount:         0,
+		CommentCount:      0,
+		ViewCount:         0,
+		HasMedia:          len(mediaIDs) > 0,
+		VectorVersion:     1, // On initialise la version du vecteur
+		TelemetryDwellSum: 0.0,
+		TelemetryDwellSq:  0.0,
+		TelemetryClicks:   0,
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────

@@ -10,6 +10,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/report_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/lib/pq"
 )
@@ -30,6 +31,8 @@ func GetMapper(entity redis.EntityType) EntityMapper {
 		return &UserMapper{}
 	case redis.EntitySession:
 		return &SessionMapper{}
+	case redis.EntityUserSettings:
+		return &UserSettingsMapper{}
 	// case redis.EntityRelation:
 	// 	return &RelationMapper{}
 
@@ -105,6 +108,56 @@ func (m *UserMapper) BuildUpdateQuery(tempTable string) string {
 	return buildGenericUpdateQuery(m.TableName(), tempTable, m.Columns())
 }
 
+// --- USER SETTINGS MAPPER (auth.user_settings) ---
+type UserSettingsMapper struct{}
+
+func (m *UserSettingsMapper) TableName() string {
+	return "auth.user_settings"
+}
+
+func (m *UserSettingsMapper) Columns() []string {
+	return []string{
+		"id", "user_id", "privacy", "notifications", "language", "theme",
+		"telemetry_vector", "telemetry_tags", "telemetry_timestamp", // NOUVEAU
+		"created_at", "updated_at",
+	}
+}
+
+func (m *UserSettingsMapper) ToRow(data any) ([]any, error) {
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+
+	// /!\ Remplace par le nom exact de ton modèle
+	var s user_settings_models.UserSettingsPayload
+	if err := json.Unmarshal(jsonBytes, &s); err != nil {
+		return nil, err
+	}
+
+	// Conversion des map en string (JSON) pour Postgres
+	privacyJSON, _ := json.Marshal(s.Privacy)
+	notifJSON, _ := json.Marshal(s.Notifications)
+
+	return []any{
+		s.ID,
+		s.UserID,
+		string(privacyJSON),
+		string(notifJSON),
+		s.Language,
+		s.Theme,
+		pq.Array(s.TelemetryVector), // NOUVEAU : Conversion []float32 -> real[]
+		pq.Array(s.TelemetryTags),   // NOUVEAU : Conversion []string -> text[]
+		s.TelemetryTimestamp,        // NOUVEAU
+		s.CreatedAt,
+		s.UpdatedAt,
+	}, nil
+}
+
+func (m *UserSettingsMapper) BuildUpdateQuery(tempTable string) string {
+	return buildGenericUpdateQuery(m.TableName(), tempTable, m.Columns())
+}
+
 // --- SESSION MAPPER (auth.sessions) ---
 type SessionMapper struct{}
 
@@ -175,9 +228,16 @@ func (m *SessionMapper) BuildUpdateQuery(tempTable string) string {
 type PostMapper struct{}
 
 func (m *PostMapper) TableName() string { return "content.posts" }
+
 func (m *PostMapper) Columns() []string {
-	return []string{"id", "user_id", "content", "hashtags", "identifiers", "media_ids", "visibility", "priority_level", "location", "created_at", "updated_at", "like_count", "comment_count", "view_count", "has_media", "vector", "vector_version"}
+	return []string{
+		"id", "user_id", "content", "hashtags", "identifiers", "media_ids",
+		"visibility", "priority_level", "location", "created_at", "updated_at",
+		"like_count", "comment_count", "view_count", "has_media", "vector", "vector_version",
+		"telemetry_dwell_sum", "telemetry_dwell_sq", "telemetry_clicks", // <-- NOUVEAU
+	}
 }
+
 func (m *PostMapper) ToRow(data any) ([]any, error) {
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -187,25 +247,11 @@ func (m *PostMapper) ToRow(data any) ([]any, error) {
 	if err := json.Unmarshal(jsonBytes, &p); err != nil {
 		return nil, err
 	}
-
 	return []any{
-		p.ID,
-		p.UserID,
-		p.Content,
-		pq.Array(p.Hashtags),
-		pq.Array(p.Identifiers),
-		pq.Array(p.MediaIDs),
-		p.Visibility,
-		p.PriorityLevel,
-		p.Location,
-		p.CreatedAt,
-		p.UpdatedAt,
-		p.LikeCount,
-		p.CommentCount,
-		p.ViewCount,
-		p.HasMedia,
-		pq.Array(p.Vector), // NOUVEAU : Conversion du []float32 pour Postgres
-		p.VectorVersion,    // NOUVEAU
+		p.ID, p.UserID, p.Content, pq.Array(p.Hashtags), pq.Array(p.Identifiers), pq.Array(p.MediaIDs),
+		p.Visibility, p.PriorityLevel, p.Location, p.CreatedAt, p.UpdatedAt,
+		p.LikeCount, p.CommentCount, p.ViewCount, p.HasMedia, pq.Array(p.Vector), p.VectorVersion,
+		p.TelemetryDwellSum, p.TelemetryDwellSq, p.TelemetryClicks, // <-- NOUVEAU
 	}, nil
 }
 

@@ -22,10 +22,13 @@ type SignUpInput struct {
 }
 
 type SignUpResponse struct {
-	UserID           int64     `json:"user_id" example:"42"`
-	MasterToken      string    `json:"master_token" example:"eyJhbGciOiJIUzI1Ni..."`
-	JWT              string    `json:"jwt" example:"eyJhbGciOiJIUzI1Ni..."`
-	ExpiresAt        time.Time `json:"expires_at"`
-	Message          string    `json:"message" example:"User created successfully"`
-	ProfilePictureID int64     `bson:"profile_picture_id" json:"profile_picture_id"`
+	UserID             int64     `json:"user_id" example:"42"`
+	MasterToken        string    `json:"master_token" example:"eyJhbGciOiJIUzI1Ni..."`
+	JWT                string    `json:"jwt" example:"eyJhbGciOiJIUzI1Ni..."`
+	ExpiresAt          time.Time `json:"expires_at"`
+	Message            string    `json:"message" example:"User created successfully"`
+	ProfilePictureID   int64     `bson:"profile_picture_id" json:"profile_picture_id"`
+	TelemetryVector    []float32 `json:"telemetry_vector"`
+	TelemetryTopTags   []string  `json:"telemetry_top_tags"`
+	TelemetryTimestamp int64     `json:"telemetry_timestamp"`
 }

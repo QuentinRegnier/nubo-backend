@@ -153,5 +153,54 @@ func updateCountersCache(ctx context.Context, events []redis.AsyncEvent) {
 				}
 			}
 		}
+
+		// --------------------------------------------------------------------
+		// 3. GESTION DE LA TÉLÉMÉTRIE (NOUVEAU)
+		// --------------------------------------------------------------------
+		if e.Type == redis.EntityTelemetry && e.Action == redis.ActionCreate {
+			jsonBytes, err := json.Marshal(e.Payload)
+			if err == nil {
+				// Structure miroir de TelemetryEvent
+				var t struct {
+					PostID       int64 `json:"post_id"`
+					DwellTimeMs  int   `json:"dwell_time_ms"`
+					IsClicked    bool  `json:"is_clicked"`
+					DeepScroll   bool  `json:"deep_scroll"`
+					ProfileVisit bool  `json:"profile_visit"`
+				}
+
+				if err := json.Unmarshal(jsonBytes, &t); err == nil && t.PostID != 0 {
+					// Lecture opportuniste (O(1)) dans le Cache L1
+					if p, err := object_cache_service.GetPostFromObjectCache(ctx, t.PostID); err == nil {
+
+						// 1. Incrémentation des statistiques en RAM
+						dwellVal := float64(t.DwellTimeMs)
+						p.TelemetryDwellSum += dwellVal
+						p.TelemetryDwellSq += (dwellVal * dwellVal)
+
+						clicks := 0
+						if t.IsClicked {
+							clicks++
+						}
+						if t.DeepScroll {
+							clicks++
+						}
+						if t.ProfileVisit {
+							clicks++
+						}
+						p.TelemetryClicks += clicks
+
+						// 2. Sauvegarde propre dans l'Object Cache (L1)
+						_ = object_cache_service.SetPostInObjectCache(ctx, p)
+
+						// 3. Déclenchement algorithmique : Score de Tendance (ZSETs)
+						cache_service.UpdatePostRecommendationScore(ctx, p)
+
+						// 4. Déclenchement algorithmique : ADN Vectoriel (TDD § 4.1)
+						algorithm_service.UpdatePostEngagementVector(ctx, p)
+					}
+				}
+			}
+		}
 	}
 }

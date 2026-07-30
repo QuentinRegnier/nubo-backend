@@ -72,6 +72,11 @@ var (
 
 	// --- Activity Feed ---
 	FeedSchedule *Collection
+
+	// --- TELEMETRY Cache Collections ---
+	TelemetryVectors    *Collection
+	TelemetryTags       *Collection
+	TelemetryTimestamps *Collection
 )
 
 func InitCacheDatabase() {
@@ -130,6 +135,11 @@ func InitCacheDatabase() {
 
 	// --- Activity Feed ---
 	FeedSchedule = NewCollection("feed:precompute:schedule", 0)
+
+	// --- TELEMETRY Cache Collections ---
+	TelemetryVectors = NewCollection("telemetry:vectors", variables.StandardTTL)
+	TelemetryTags = NewCollection("telemetry:tags", variables.StandardTTL)
+	TelemetryTimestamps = NewCollection("telemetry:timestamps", variables.StandardTTL)
 }
 
 // IsReady isole l'état de l'infrastructure pour les routines de maintenance administratives.

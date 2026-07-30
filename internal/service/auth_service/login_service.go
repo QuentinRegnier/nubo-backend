@@ -16,6 +16,7 @@ import (
 	postgresgo "github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
@@ -24,7 +25,7 @@ import (
 func Login(
 	input auth_models.LoginInput,
 	IPAddress []string,
-) (auth_models.UserPayload, models.SessionsRequest, string, string, error) {
+) (auth_models.UserPayload, models.SessionsRequest, string, string, []float32, []string, int64, error) {
 	fmt.Printf("\n🚀 SERVICE LOGIN APPELÉ pour l'identifiant : [%s]\n", input.Email)
 
 	var user auth_models.UserPayload
@@ -47,11 +48,11 @@ func Login(
 		fmt.Println("🔸 Passage de contrôle à PostgreSQL...")
 		user, err = postgresgo.FuncLoadUser(-1, "", input.Email, "")
 		if err != nil {
-			return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", fmt.Errorf("postgres critical failure: %w", err)
+			return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nil, nil, -1, fmt.Errorf("postgres critical failure: %w", err)
 		}
 
 		if user.ID == 0 {
-			return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nubo_error.ErrNotFound
+			return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nil, nil, -1, nubo_error.ErrNotFound
 		}
 
 		// Alignement de synchronisation asynchrone pour consolider le stockage Mongo
@@ -64,14 +65,14 @@ func Login(
 	// 2. CONTRÔLE SÉCURITÉ ET STATUT DU COMPTE
 	// -------------------------------------------------------------------------
 	if strings.TrimSpace(user.PasswordHash) != strings.TrimSpace(input.PasswordHash) {
-		return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nubo_error.ErrInvalidCredentials
+		return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nil, nil, -1, nubo_error.ErrInvalidCredentials
 	}
 
 	if user.Desactivated || user.Banned {
 		if user.Desactivated {
-			return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nubo_error.ErrDesactivated
+			return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nil, nil, -1, nubo_error.ErrDesactivated
 		}
-		return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nubo_error.ErrBanned
+		return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nil, nil, -1, nubo_error.ErrBanned
 	}
 
 	// -------------------------------------------------------------------------
@@ -107,7 +108,7 @@ func Login(
 		if len(IPAddress) > 0 {
 			sessions.IPHistory = []string{IPAddress[0]}
 		} else {
-			return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nubo_error.ErrInvalidIPAddress
+			return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nil, nil, -1, nubo_error.ErrInvalidIPAddress
 		}
 	}
 
@@ -115,7 +116,7 @@ func Login(
 	sessions.ExpiresAt = now.Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
 	sessions.MasterToken, err = pkg.GenerateToken(user.ID, deviceToken, variables.MasterTokenExpirationSeconds)
 	if err != nil {
-		return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", fmt.Errorf("token generation error: %w", err)
+		return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nil, nil, -1, fmt.Errorf("token generation error: %w", err)
 	}
 
 	sessions.CurrentSecret = security.DeriveNextSecret(sessions.DeviceToken, sessions.MasterToken, sessions.MasterToken, sessions.DeviceToken)
@@ -125,7 +126,7 @@ func Login(
 
 	newJWT, err := pkg.GenerateToken(user.ID, sessions.DeviceToken, variables.JWTExpirationSeconds)
 	if err != nil {
-		return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", fmt.Errorf("jwt generation error: %w", err)
+		return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nil, nil, -1, fmt.Errorf("jwt generation error: %w", err)
 	}
 
 	// -------------------------------------------------------------------------
@@ -183,11 +184,42 @@ func Login(
 	if isNewSession {
 		action = redis.ActionCreate
 	}
-
 	err = redis.EnqueueDB(ctx, sessions.ID, user.ID, redis.EntitySession, action, sessions, redis.TargetAll)
 	if err != nil {
-		log.Printf("❌ CRITICAL: Rupture du Write-Behind pour la session %d : %v", sessions.ID, err)
+		log.Printf("  CRITICAL: Rupture du Write-Behind pour la session %d : %v", sessions.ID, err)
 	}
 
-	return user, sessions, newJWT, profilePictureURL, nil
+	// -------------------------------------------------------------------------
+	// 6. RESTAURATION DU CONTEXTE DE RECOMMANDATION (Vecteur Edge-to-Cloud)
+	// -------------------------------------------------------------------------
+	var telemetryVector []float32
+	var telemetryTags []string
+	var telemetryTimestamp int64
+
+	// Tentative de récupération en cascade (L1 -> L2 -> L3) via les UserSettings
+	settings, errSettings := object_cache_service.GetUserSettingsCascade(ctx, user.ID)
+
+	if errSettings == nil && settings.ID != 0 {
+		// On restaure les données depuis la base
+		telemetryVector = settings.TelemetryVector
+		telemetryTags = settings.TelemetryTags
+		telemetryTimestamp = settings.TelemetryTimestamp
+
+		// On s'assure que les micro-caches L1 individuels de la télémétrie sont bien peuplés.
+		// C'est vital pour que les workers C/Go du Feed Algorithmique puissent les lire en O(1) !
+		if len(telemetryVector) > 0 {
+			_ = cache_service.SetTelemetryVector(ctx, user.ID, telemetryVector)
+		}
+		if len(telemetryTags) > 0 {
+			_ = cache_service.SetTelemetryTags(ctx, user.ID, telemetryTags)
+		}
+		if telemetryTimestamp > 0 {
+			_ = cache_service.SetTelemetryTimestamp(ctx, user.ID, telemetryTimestamp)
+		}
+	} else {
+		log.Printf("  Info: Cold Start algorithmique pour l'utilisateur %d (aucun vecteur trouvé)", user.ID)
+	}
+
+	// Retour du super-tuple de connexion
+	return user, sessions, newJWT, profilePictureURL, telemetryVector, telemetryTags, telemetryTimestamp, nil
 }

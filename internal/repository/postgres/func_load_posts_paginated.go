@@ -9,16 +9,8 @@ import (
 )
 
 func FuncLoadPostsPaginated(limit int, offset int) ([]post_models.PostPayload, error) {
-	query := `
-		SELECT 
-			p.id, p.user_id, p.content, p.hashtags, p.identifiers, p.media_ids, 
-			p.visibility, p.location, p.created_at, p.updated_at, p.like_count, 
-			p.comment_count, p.view_count, p.has_media, p.vector, p.vector_version
-		FROM content.posts p
-		WHERE p.visibility != 2
-		ORDER BY p.created_at DESC
-		LIMIT $1 OFFSET $2
-	`
+	// Le SQL est maintenant encapsulé et pur
+	query := `SELECT * FROM content.func_load_posts_paginated($1, $2)`
 
 	rows, err := postgres.PostgresDB.Query(query, limit, offset)
 	if err != nil {
