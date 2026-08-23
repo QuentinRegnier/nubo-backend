@@ -2,7 +2,6 @@ package object_cache_service
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -30,8 +29,6 @@ func DeletePostFromObjectCache(ctx context.Context, postID int64) error {
 
 // IsPostInObjectCache vérifie silencieusement et rapidement si un post est en RAM (O(1))
 func IsPostInObjectCache(ctx context.Context, postID int64) bool {
-	key := fmt.Sprintf("object:post:%d", postID)
-	// Ta fonction Exists renvoie déjà (bool, nubo_error), pas besoin de .Result() !
-	exists, _ := redis.Exists(ctx, key)
+	exists, _ := redis.Posts.Exists(ctx, postID)
 	return exists
 }

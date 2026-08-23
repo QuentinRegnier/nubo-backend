@@ -8,6 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 )
 
 // UpdateNotifications fusionne les nouveaux réglages de notifications et délègue la sauvegarde au Write-Behind
@@ -18,34 +19,16 @@ func UpdateNotifications(ctx context.Context, userID int64, input user_settings_
 		return errors.New("paramètres de l'utilisateur introuvables")
 	}
 
-	// 2. Fusion des champs (on écrase uniquement si le pointeur n'est pas nul)
-	if input.MasterPushEnabled != nil {
-		settings.Notifications.MasterPushEnabled = *input.MasterPushEnabled
-	}
-	if input.MasterEmailEnabled != nil {
-		settings.Notifications.MasterEmailEnabled = *input.MasterEmailEnabled
-	}
-	if input.NotifyNewFollower != nil {
-		settings.Notifications.NotifyNewFollower = *input.NotifyNewFollower
-	}
-	if input.NotifyFriendRequest != nil {
-		settings.Notifications.NotifyFriendRequest = *input.NotifyFriendRequest
-	}
-	if input.NotifyMessages != nil {
-		settings.Notifications.NotifyMessages = *input.NotifyMessages
-	}
-	if input.NotifyLikes != nil {
-		settings.Notifications.NotifyLikes = *input.NotifyLikes
-	}
-	if input.NotifyComments != nil {
-		settings.Notifications.NotifyComments = *input.NotifyComments
-	}
-	if input.NotifyMentions != nil {
-		settings.Notifications.NotifyMentions = *input.NotifyMentions
-	}
-	if input.QuietHoursEnabled != nil {
-		settings.Notifications.QuietHoursEnabled = *input.QuietHoursEnabled
-	}
+	// 2. Remplacement intégral des paramètres de notification
+	settings.Notifications.MasterPushEnabled = input.MasterPushEnabled
+	settings.Notifications.MasterEmailEnabled = input.MasterEmailEnabled
+	settings.Notifications.NotifyNewFollower = input.NotifyNewFollower
+	settings.Notifications.NotifyFriendRequest = input.NotifyFriendRequest
+	settings.Notifications.NotifyMessages = input.NotifyMessages
+	settings.Notifications.NotifyLikes = input.NotifyLikes
+	settings.Notifications.NotifyComments = input.NotifyComments
+	settings.Notifications.NotifyMentions = input.NotifyMentions
+	settings.Notifications.QuietHoursEnabled = input.QuietHoursEnabled
 
 	settings.UpdatedAt = time.Now().UTC()
 
@@ -54,6 +37,9 @@ func UpdateNotifications(ctx context.Context, userID int64, input user_settings_
 		return err
 	}
 
-	// 4. Persistance Asynchrone (Write-Behind)
+	// 4. Envoi notification
+	_ = realtime_service.DistributeToUsers(ctx, "user.settings_updated", settings, []int64{userID})
+
+	// 5. Persistance Asynchrone (Write-Behind)
 	return redis.EnqueueDB(ctx, settings.ID, userID, redis.EntityUserSettings, redis.ActionUpdate, settings, redis.TargetAll)
 }

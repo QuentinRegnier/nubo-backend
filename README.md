@@ -194,11 +194,11 @@ Le cœur de l'intégrité du système repose sur une rotation perpétuelle des c
 
 *   **Initialisation :** Lors de la connexion (`/login`) ou de l'inscription (`/signup`), le système initialise le cycle des secrets ainsi :
     *   $\displaystyle \text{Secret}_{0} = \text{MasterToken}$
-    *   $\displaystyle \text{Secret}_{1} = \text{DeviceToken}$
+    *   $\displaystyle \text{Secret}_{1} = \text{FirebaseInstallationIDs}$
 *   **Fonction de Dérivation :** À chaque appel à la route `/renew-jwt`, le client et le serveur calculent indépendamment le secret suivant ($N+2$) en hachant l'historique récent :
-    $$ \displaystyle \text{Secret}_{N+2} = \text{SHA256}(\text{Secret}_{N+1} \parallel \text{Secret}_{N} \parallel \text{MasterToken} \parallel \text{DeviceToken}) $$
+    $$ \displaystyle \text{Secret}_{N+2} = \text{SHA256}(\text{Secret}_{N+1} \parallel \text{Secret}_{N} \parallel \text{MasterToken} \parallel \text{FirebaseInstallationIDs}) $$
 *   **Implémentation Go :** Cette logique est codée dans `security.DeriveNextSecret` en utilisant `crypto/sha256` et `encoding/hex`.
-*   **Avantage :** Ce mécanisme offre une "Forward Secrecy" partielle. Si un attaquant intercepte un $\text{Secret}_{N}$, il ne peut pas forger les requêtes futures sans connaître le `MasterToken` et le `DeviceToken` de l'appareil légitime.
+*   **Avantage :** Ce mécanisme offre une "Forward Secrecy" partielle. Si un attaquant intercepte un $\text{Secret}_{N}$, il ne peut pas forger les requêtes futures sans connaître le `MasterToken` et le `FirebaseInstallationIDs` de l'appareil légitime.
 
 ### 4.2. Séparation des Privilèges (Tokens)
 
@@ -206,7 +206,7 @@ Nubo sépare strictement l'autorisation éphémère du stockage à long terme po
 
 *   **Le `JWT` (Autorisation Court Terme) :** C'est le ticket d'entrée standard pour les requêtes API.
     *   Il possède un TTL très court de $\displaystyle 900\text{ s}$ (15 minutes).
-    *   Il contient l'ID utilisateur (`sub`) et le `DeviceToken` (`dev`) pour lier la session à un appareil physique.
+    *   Il contient l'ID utilisateur (`sub`) et le `FirebaseInstallationIDs` (`dev`) pour lier la session à un appareil physique.
 *   **Le `MasterToken` (Stockage Long Terme) :** Stocké de manière ultra-sécurisée côté client, il possède un TTL de $\displaystyle 2592000\text{ s}$ (1 mois). Il n'est **jamais** envoyé dans les requêtes API standards, et sert uniquement à générer de nouveaux secrets ou à récupérer l'accès.
 *   **Le Processus de "Hard Refresh" (`/refresh-master`) :** Si le client et le serveur se désynchronisent (le Ratchet est cassé), le client utilise ce point de terminaison de la dernière chance.
     *   Il envoie une requête signée via HMAC avec l'ancien `MasterToken`.
@@ -306,7 +306,7 @@ erDiagram
         bigint id PK
         bigint user_id FK
         text master_token
-        text device_token
+        text firebase_installation_id
         jsonb device_info
         inet_array ip_history
     }
@@ -395,7 +395,7 @@ L'approche multi-schémas permet non seulement une clarté structurelle, mais of
 #### 🛡️ Schéma `auth` (Gestion des Identités et des Accès)
 Ce schéma gère le cycle de vie des utilisateurs et la sécurité des connexions.
 *   **`auth.users` :** C'est la table centrale. Elle intègre des contraintes `UNIQUE` matérielles sur l'email, le téléphone et le pseudo. Elle abrite l'état du compte (`banned`, `desactivated`, `grade`).
-*   **`auth.sessions` :** Stocke les tokens de l'algorithme Ratchet (`master_token`, `device_token`, `current_secret`, `last_secret`). Elle utilise des types avancés PostgreSQL comme `jsonb` pour le `device_info` et `inet[]` pour retracer de manière immuable l'historique des adresses IP.
+*   **`auth.sessions` :** Stocke les tokens de l'algorithme Ratchet (`master_token`, `firebase_installation_id`, `current_secret`, `last_secret`). Elle utilise des types avancés PostgreSQL comme `jsonb` pour le `device_info` et `inet[]` pour retracer de manière immuable l'historique des adresses IP.
 *   **`auth.relations` :** Modélise le graphe social (abonnements, blocages) via un duo de clés étrangères (`primary_id`, `secondary_id`) couplé à une machine à états (`state`).
 
 #### 📝 Schéma `content` (Contenus et Interactions)

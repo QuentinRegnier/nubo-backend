@@ -7,8 +7,12 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/auth_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/comment_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/conversation_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/feed_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/like_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/media_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/message_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/notification_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/post_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/relation_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/report_handlers"
@@ -16,11 +20,11 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/security_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/telemetry_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/user_settings_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/websocket"
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/middleware"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/websocket"
 	"github.com/gin-gonic/gin"
 )
 
@@ -48,6 +52,7 @@ func SetupRoutes(r *gin.Engine) {
 	// Authentification (Sécu interne spécifique)
 	r.POST("/signup", auth_handlers.SignUpHandler)
 	r.POST("/login", auth_handlers.LoginHandler)
+	r.POST("/check-username", user_settings_handlers.CheckUsernameHandler)
 
 	// Renouvellement de Tokens (Ratchet / Master)
 	// Ces routes gèrent leur propre sécurité (HMAC spécial, checks BDD...)
@@ -70,11 +75,6 @@ func SetupRoutes(r *gin.Engine) {
 		c.JSON(200, gin.H{"token": tokenString})
 	})
 
-	// WebSocket Connection (Sécu via Query param ou Header standard, géré par le handler WS)
-	// Note: Si tu veux JWT pour le WS, tu peux utiliser le middleware ici ou dans le handler.
-	// Pour l'instant, je le laisse avec le middleware JWT comme dans ton exemple.
-	r.GET("/ws", middleware.JWTMiddleware(), websocket.WSHandler)
-
 	// =========================================================================
 	// 2. ROUTES SÉCURISÉES (JWT + HMAC + RATCHET)
 	// Toutes les routes ci-dessous nécessitent :
@@ -84,55 +84,65 @@ func SetupRoutes(r *gin.Engine) {
 
 	// On crée un groupe "plat" qui applique les deux middlewares d'un coup
 	secured := r.Group("/")
-	secured.Use(middleware.JWTMiddleware())  // 1. Qui est-ce ? (Populate context with UserID & DeviceToken)
+	secured.Use(middleware.JWTMiddleware())  // 1. Qui est-ce ? (Populate context with UserID & FirebaseInstallationIDs)
 	secured.Use(middleware.HMACMiddleware()) // 2. Est-ce authentique ? (Check Signature with Redis Secret)
+
+	// --- Websocket ---
+	secured.GET("/ws", websocket.ServeWS)
 
 	// --- User ---
 	secured.POST("/logout", auth_handlers.LogoutHandler)
+	secured.GET("/sessions", auth_handlers.GetSessionsHandler) // Seule route GET car pas besoin de paramètres (juste callerID via JWT)
+	secured.DELETE("/session", auth_handlers.DeleteSessionHandler)
 
 	// --- Posts ---
-	secured.GET("/feed", feed_handlers.GetFeedHandler)
-	secured.GET("/feed/force", feed_handlers.GetFeedHandler)
-	secured.GET("/post", post_handlers.GetPostHandler)
-	secured.POST("/post", post_handlers.CreatePostHandler)
-	secured.PATCH("/post", post_handlers.UpdatePostHandler)
-	secured.DELETE("/post", post_handlers.DeletePostHandler)
+	secured.POST("/feed/set", feed_handlers.GetFeedHandler)            // L'option /force est désormais dans le JSON `{"force": true}`
+	secured.POST("/posts/set", post_handlers.GetPostHandler)           // Remplace le ?ids=x,y,z
+	secured.POST("/posts/user/get", post_handlers.GetUserPostsHandler) // Profil d'un utilisateur
+	secured.POST("/posts/set", post_handlers.CreatePostHandler)
+	secured.PUT("/posts/update", post_handlers.UpdatePostHandler)
+	secured.DELETE("/posts/delete", post_handlers.DeletePostHandler)
 	secured.POST("/views/batch", handlers.RegisterBatchViewsHandler) // ℹ️❌ à vérifier
-	secured.GET("/post/user", post_handlers.GetUserPostsHandler)
-	secured.GET("/post/user/force", post_handlers.GetUserPostsHandler)
 
 	// --- Profils / Utilisateurs ---
-	secured.GET("/search/users/quick", handlers.UserSearchHandler) // ℹ️❌ à vérifier
+	secured.POST("/search/users", handlers.UserSearchHandler) // ℹ️❌ à vérifier
 
-	// --- Télémétrie & Edge Computing ---
-	secured.PATCH("/telemetry/sync", telemetry_handlers.SyncHandler)
+	// --- Notifications ---
+	secured.POST("/notifications/get", notification_handlers.GetNotificationsHandler)
+	secured.POST("/notifications/read", notification_handlers.ReadNotificationsHandler)
+
+	// --- Sync ---
+	secured.PATCH("/sync/telemetry", telemetry_handlers.SyncTelemetryHandler) // PATCH est sémantiquement parfait ici
+	secured.POST("/sync/inbox", conversation_handlers.SyncInboxHandler)       // <-- NOUVEAU DELTA SYNC
+	secured.POST("/sync/identity", auth_handlers.SyncIdentityHandler)
+	secured.POST("/sync/activity", notification_handlers.SyncActivityHandler)
 
 	// --- Actions Sociales ---
-	secured.POST("/like/post", like_handlers.LikePostHandler)
-	secured.GET("/like/post", like_handlers.GetPostLikesHandler)
-	secured.POST("/like/comment", like_handlers.LikeCommentHandler)
-	secured.POST("/comment", comment_handlers.CreateCommentHandler)
-	secured.PATCH("/comment", comment_handlers.UpdateCommentHandler)
-	secured.DELETE("/comment", comment_handlers.DeleteCommentHandler) //regarder si on delete bien aussi les like du commentaire
-	secured.GET("/comment", comment_handlers.GetCommentsHandler)      //regarder si on get bien les like aussi du commentaire
-	secured.POST("/follow", relation_handlers.FollowHandler)
-	secured.DELETE("/follow", relation_handlers.UnFollowHandler)
-	secured.POST("/friend", relation_handlers.FriendHandler)
-	secured.DELETE("/friend", relation_handlers.UnFriendHandler)
-	secured.POST("/block", relation_handlers.BlockHandler)
-	secured.DELETE("/block", relation_handlers.UnBlockHandler)
-	secured.POST("/saved", saved_handlers.SavePostHandler)
-	secured.DELETE("/saved", saved_handlers.UnsavePostHandler)
-	secured.GET("/saved", saved_handlers.GetSavedPostsHandler)
+	secured.POST("/like/post/set", like_handlers.LikePostHandler)
+	secured.POST("/like/post/get", like_handlers.GetPostLikesHandler)
+	secured.POST("/like/comment/set", like_handlers.LikeCommentHandler)
+
+	secured.POST("/comment/get", comment_handlers.GetCommentsHandler) //regarder si on get bien les like aussi du commentaire
+	secured.POST("/comment/set", comment_handlers.CreateCommentHandler)
+	secured.PUT("/comment/update", comment_handlers.UpdateCommentHandler)
+	secured.DELETE("/comment/delete", comment_handlers.DeleteCommentHandler) //regarder si on delete bien aussi les like du commentaire
+
+	secured.POST("/follow/set", relation_handlers.FollowHandler)
+	secured.DELETE("/follow/delete", relation_handlers.UnFollowHandler)
+	secured.POST("/friend/set", relation_handlers.FriendHandler)
+	secured.DELETE("/friend/delete", relation_handlers.UnFriendHandler)
+	secured.POST("/block/set", relation_handlers.BlockHandler)
+	secured.DELETE("/block/delete", relation_handlers.UnBlockHandler)
+
+	secured.POST("/saved/get", saved_handlers.GetSavedPostsHandler)
+	secured.POST("/saved/set", saved_handlers.SavePostHandler)
+	secured.DELETE("/saved/delete", saved_handlers.UnsavePostHandler)
 
 	// --- Reglage ---
-	secured.GET("/check_username", user_settings_handlers.CheckUsernameHandler)
-	secured.PATCH("/profile", auth_handlers.UpdateProfileHandler)
-	secured.PATCH("/privacy", user_settings_handlers.UpdatePrivacyHandler)
-	secured.PATCH("/notifications", user_settings_handlers.UpdateNotificationsHandler)
-	secured.PATCH("/style", user_settings_handlers.UpdateStyleHandler)
-	secured.GET("/sessions", auth_handlers.GetSessionsHandler)
-	secured.DELETE("/sessions", auth_handlers.DeleteSessionHandler)
+	secured.PUT("settings/profile/update", auth_handlers.UpdateProfileHandler)
+	secured.PATCH("settings/privacy/update", user_settings_handlers.UpdatePrivacyHandler)
+	secured.PATCH("settings/notifications/update", user_settings_handlers.UpdateNotificationsHandler)
+	secured.PATCH("settings/style/update", user_settings_handlers.UpdateStyleHandler)
 
 	// --- Administration / Modération ---
 	secured.POST("/ban", BanHandler)                                            // ℹ️❌
@@ -140,7 +150,7 @@ func SetupRoutes(r *gin.Engine) {
 	secured.POST("/warning", WarningHandler)                                    // ℹ️❌
 	secured.GET("/reports", LoadReportHandler)                                  // ℹ️❌
 	secured.DELETE("/report", CloseReportHandler)                               // ℹ️❌
-	secured.PATCH("/report", UpdateManagerReportHandler)                        // ℹ️❌
+	secured.PUT("/report", UpdateManagerReportHandler)                          // ℹ️❌
 	secured.GET("/information-user", LoadAdminInformationUserHandler)           // ℹ️❌
 	secured.GET("/information-group", LoadAdminInformationGroupHandler)         // ℹ️❌
 	secured.GET("/information-community", LoadAdminInformationCommunityHandler) // ℹ️❌
@@ -149,26 +159,23 @@ func SetupRoutes(r *gin.Engine) {
 	secured.GET("/information-message", LoadAdminInformationMessageHandler)     // ℹ️❌
 
 	// --- Messagerie / Groupes ---
-	secured.GET("/inbox", handlers.InboxHandler)                       // <--- SPEED Cache: Démarrage Inbox
-	secured.POST("/conversation", ConversationHandler)                 // ℹ️❌
-	secured.DELETE("/conversation", DeleteConversationHandler)         // ℹ️❌
-	secured.PATCH("/conversation", ModifyConversationHandler)          // ℹ️❌
-	secured.GET("/conversations", LoadConversationHandler)             // ℹ️❌
-	secured.POST("/message", MessageHandler)                           // ℹ️❌
-	secured.GET("/messages", LoadNewMessagesHandler)                   // ℹ️❌
-	secured.DELETE("/messages", DeleteMessagesHandler)                 // ℹ️❌
-	secured.PATCH("/message", UpdateMessageHandler)                    // ℹ️❌
-	secured.POST("/user-group", AddUserGroupHandler)                   // ℹ️❌
-	secured.DELETE("/user-group", DeleteUserGroupHandler)              // ℹ️❌
-	secured.POST("/promote-group", SetAdminGroupHandler)               // ℹ️❌
-	secured.DELETE("/promote-group", DeleteAdminGroupHandler)          // ℹ️❌
-	secured.GET("/images-conversation", LoadImagesConversationHandler) // ℹ️❌
-	secured.GET("/community", LoadCommunityHandler)                    // ℹ️❌
-	secured.PATCH("/community", UpdateCommunityHandler)                // ℹ️❌
-	secured.POST("/community", CreateCommunityHandler)                 // ℹ️❌
-	secured.DELETE("/community", DeleteCommunityHandler)               // ℹ️❌
-	secured.POST("/join", JoinGroupHandler)                            // ℹ️❌
-	secured.POST("/quit", QuitGroupHandler)                            // ℹ️❌
+	secured.POST("/conversations/get", conversation_handlers.GetConversationHandler)
+	secured.POST("/conversation/set", conversation_handlers.CreateConversationHandler)
+	secured.PUT("/conversation/update", conversation_handlers.UpdateConversationHandler)
+	secured.DELETE("/conversation/delete", conversation_handlers.LeaveConversationHandler)
+
+	secured.POST("/messages/get", message_handlers.GetMessagesHandler)
+	secured.POST("/read", conversation_handlers.ReadReceiptHandler)
+
+	secured.POST("/group/addable", relation_handlers.GetAddableHandler)
+	secured.POST("/group/user/set", conversation_handlers.AddMemberHandler)
+	secured.DELETE("/group/user/delete", conversation_handlers.BanMemberHandler)
+	secured.POST("/group/promote/set", conversation_handlers.PromoteMemberHandler)
+	secured.DELETE("/group/promote/delete", conversation_handlers.DemoteMemberHandler)
+	secured.POST("/group/join", conversation_handlers.JoinGroupHandler)
+
+	// --- Media ---
+	secured.POST("/upload", media_handlers.UploadMediaHandler)
 
 	// --- Recherche ---
 	secured.POST("/search/user", SearchUserHandler)           // ℹ️❌
@@ -177,6 +184,7 @@ func SetupRoutes(r *gin.Engine) {
 	secured.POST("/search/message", SearchMessageHandler)     // ℹ️❌
 	secured.POST("/search/group", SearchGroupHandler)         // ℹ️❌
 	secured.POST("/search/tag", SearchTagHandler)             // ℹ️❌
+	secured.POST("/search/user-addable")
 
 	// --- Report ---
 	secured.POST("/report", report_handlers.CreateReportHandler)
@@ -240,101 +248,6 @@ func LoadAdminInformationCommentHandler(c *gin.Context) {
 func LoadAdminInformationMessageHandler(c *gin.Context) {
 	// TODO: charger les informations d'un message
 	c.JSON(http.StatusOK, gin.H{"message": "information message"})
-}
-
-func ConversationHandler(c *gin.Context) {
-	// TODO: gérer la création d'une nouvelle conversation
-	c.JSON(http.StatusOK, gin.H{"message": "new conversation created"})
-}
-
-func DeleteConversationHandler(c *gin.Context) {
-	// TODO: supprimer une conversation
-	c.JSON(http.StatusOK, gin.H{"message": "conversation deleted"})
-}
-
-func ModifyConversationHandler(c *gin.Context) {
-	// TODO: gérer la modification d'une conversation
-	c.JSON(http.StatusOK, gin.H{"message": "conversation updated"})
-}
-
-func LoadConversationHandler(c *gin.Context) {
-	// TODO: charger les conversations depuis la base
-	c.JSON(http.StatusOK, gin.H{"conversations": []string{"conversation 1", "conversation 2", "conversation 3"}})
-}
-
-func MessageHandler(c *gin.Context) {
-	// TODO: gérer l'envoi d'un message
-	c.JSON(http.StatusOK, gin.H{"message": "message sent"})
-}
-
-func LoadNewMessagesHandler(c *gin.Context) {
-	// TODO: gérer le chargement des nouveaux messages
-	c.JSON(http.StatusOK, gin.H{"messages": []string{"new message 1", "new message 2"}})
-}
-
-func DeleteMessagesHandler(c *gin.Context) {
-	// TODO: gérer la suppression des messages
-	c.JSON(http.StatusOK, gin.H{"message": "messages deleted"})
-}
-
-func UpdateMessageHandler(c *gin.Context) {
-	// TODO: gérer la mise à jour d'un message
-	c.JSON(http.StatusOK, gin.H{"message": "message updated"})
-}
-
-func AddUserGroupHandler(c *gin.Context) {
-	// TODO: gérer l'ajout d'un utilisateur à un groupe
-	c.JSON(http.StatusOK, gin.H{"message": "user added to group"})
-}
-
-func DeleteUserGroupHandler(c *gin.Context) {
-	// TODO: gérer la suppression d'un utilisateur d'un groupe
-	c.JSON(http.StatusOK, gin.H{"message": "user deleted from group"})
-}
-
-func SetAdminGroupHandler(c *gin.Context) {
-	// TODO: gérer la mise en admin d'un utilisateur
-	c.JSON(http.StatusOK, gin.H{"message": "user promoted to admin"})
-}
-
-func DeleteAdminGroupHandler(c *gin.Context) {
-	// TODO: gérer la suppression de l'admin d'un utilisateur
-	c.JSON(http.StatusOK, gin.H{"message": "admin deleted from group"})
-}
-
-func LoadImagesConversationHandler(c *gin.Context) {
-	// TODO: charger les images des conversations depuis la base
-	c.JSON(http.StatusOK, gin.H{"images": []string{"image 1", "image 2"}})
-}
-
-func LoadCommunityHandler(c *gin.Context) {
-	// TODO: charger les communautés depuis la base
-	c.JSON(http.StatusOK, gin.H{"communities": []string{"community 1", "community 2"}})
-}
-
-func UpdateCommunityHandler(c *gin.Context) {
-	// TODO: gérer la mise à jour d'une communauté
-	c.JSON(http.StatusOK, gin.H{"message": "community updated"})
-}
-
-func CreateCommunityHandler(c *gin.Context) {
-	// TODO: gérer la création d'une nouvelle communauté
-	c.JSON(http.StatusOK, gin.H{"message": "community created"})
-}
-
-func DeleteCommunityHandler(c *gin.Context) {
-	// TODO: gérer la suppression d'une communauté
-	c.JSON(http.StatusOK, gin.H{"message": "community deleted"})
-}
-
-func JoinGroupHandler(c *gin.Context) {
-	// TODO: gérer l'ajout d'un utilisateur à un groupe
-	c.JSON(http.StatusOK, gin.H{"message": "group joined"})
-}
-
-func QuitGroupHandler(c *gin.Context) {
-	// TODO: gérer la sortie d'un utilisateur d'un groupe
-	c.JSON(http.StatusOK, gin.H{"message": "group left"})
 }
 
 func SearchUserHandler(c *gin.Context) {

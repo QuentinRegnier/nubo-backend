@@ -2,12 +2,10 @@ package object_cache_service
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
 // --- GESTION DES COMMENTAIRES (CACHE L1) ---
@@ -33,10 +31,7 @@ func DeleteCommentFromObjectCache(ctx context.Context, commentID int64) error {
 
 // GetTopCommentIDs récupère les IDs des meilleurs commentaires depuis le ZSET (O(log(N) + M))
 func GetTopCommentIDs(ctx context.Context, postID int64, offset int64, limit int64) ([]int64, error) {
-	zsetKey := fmt.Sprintf("object:comments:zset:%d", postID)
-
-	// ✅ Utilisation de ton abstrait
-	idStrings, err := redis.ZRevRange(ctx, zsetKey, offset, offset+limit-1)
+	idStrings, err := redis.PostComments.ZRevRange(ctx, postID, offset, offset+limit-1)
 	if err != nil {
 		return nil, err
 	}
@@ -50,54 +45,30 @@ func GetTopCommentIDs(ctx context.Context, postID int64, offset int64, limit int
 	return ids, nil
 }
 
-// AddCommentToZSET insère un commentaire à la base de l'index des meilleurs commentaires
 func AddCommentToZSET(ctx context.Context, postID int64, commentID int64, score float64) error {
-	zsetKey := fmt.Sprintf("object:comments:zset:%d", postID)
-
-	// ✅ Utilisation du Lua Script pour Capper à 100
-	err := redis.ZAddWithCap(ctx, zsetKey, score, strconv.FormatInt(commentID, 10), 100)
-
-	// ✅ TTL Glissant : Empêche la création de ZSET orphelins (7 jours)
-	_ = redis.Expire(ctx, zsetKey, variables.StandardTTL)
-
+	err := redis.PostComments.ZAddWithCap(ctx, postID, score, strconv.FormatInt(commentID, 10), 100)
+	_ = redis.PostComments.RefreshTTL(ctx, postID)
 	return err
 }
 
-// RemoveCommentFromZSET retire un commentaire de l'index lors d'une suppression
 func RemoveCommentFromZSET(ctx context.Context, postID int64, commentID int64) error {
-	zsetKey := fmt.Sprintf("object:comments:zset:%d", postID)
-
-	// ✅ Utilisation de la nouvelle primitive ZRem
-	return redis.ZRem(ctx, zsetKey, strconv.FormatInt(commentID, 10))
+	return redis.PostComments.ZRem(ctx, postID, strconv.FormatInt(commentID, 10))
 }
 
-// IncrementCommentScoreInZSET ajoute ou retire 1 point de popularité
 func IncrementCommentScoreInZSET(ctx context.Context, postID int64, commentID int64, increment float64) error {
-	zsetKey := fmt.Sprintf("object:comments:zset:%d", postID)
-
-	err := redis.ZIncrBy(ctx, zsetKey, increment, strconv.FormatInt(commentID, 10))
-
-	// ✅ TTL Glissant : On prolonge la vie du ZSET car le post est actif
-	_ = redis.Expire(ctx, zsetKey, variables.StandardTTL)
-
+	err := redis.PostComments.ZIncrBy(ctx, postID, increment, strconv.FormatInt(commentID, 10))
+	_ = redis.PostComments.RefreshTTL(ctx, postID)
 	return err
 }
 
-// PurgePostCommentsFromL1 supprime le ZSET et purge physiquement tous les objets JSON des commentaires associés en RAM.
 func PurgePostCommentsFromL1(ctx context.Context, postID int64) {
-	zsetKey := fmt.Sprintf("object:comments:zset:%d", postID)
-
-	// 1. Récupération de tous les IDs via l'abstrait
-	ids, err := redis.ZRevRange(ctx, zsetKey, 0, -1)
+	ids, err := redis.PostComments.ZRevRange(ctx, postID, 0, -1)
 	if err == nil {
 		for _, idStr := range ids {
 			if commentID, err := strconv.ParseInt(idStr, 10, 64); err == nil {
-				// 2. Suppression physique de l'objet JSON en L1
 				_ = DeleteCommentFromObjectCache(ctx, commentID)
 			}
 		}
 	}
-
-	// 3. Atomisation du ZSET en respectant strictement le DDD
-	_ = redis.Del(ctx, zsetKey)
+	_ = redis.PostComments.DeleteObject(ctx, postID) // Atomise le ZSET
 }

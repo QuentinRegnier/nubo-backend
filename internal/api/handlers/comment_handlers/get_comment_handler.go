@@ -46,33 +46,30 @@ import (
 // @Failure      500  {object}  domain.ErrorResponse "Erreur interne lors de la récupération des données"
 // @Router       /comment [get]
 func GetCommentsHandler(c *gin.Context) {
-	// 1. Sécurité
-	callerID, err := pkg.GetUserIDFromContext(c) // ✅ On récupère le vrai CallerID
+	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
 		return
 	}
 
-	// 2. Récupération des données (Binding des Query Params)
 	var input comment_models.GetCommentsInput
 	if err := c.ShouldBindQuery(&input); err != nil {
 		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Paramètres de requête (post_id) invalides ou manquants"})
 		return
 	}
 
-	// Protection structurelle de la pagination
-	if input.Limit > 100 {
-		input.Limit = 100
+	// 🛡️ BOUCLIER DE PAGINATION
+	if input.Limit <= 0 || input.Limit > 100 {
+		input.Limit = 50
 	}
-	input.UserID = callerID // ✅ On injecte l'identité pour la matrice de visibilité
 
-	// 3. Appel au service synchrone
+	input.UserID = callerID
+
 	comments, err := comment_service.GetComments(c.Request.Context(), input)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"nubo_error": "Erreur lors de la récupération des commentaires"})
 		return
 	}
 
-	// 4. Renvoi au client
 	c.JSON(http.StatusOK, comments)
 }

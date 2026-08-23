@@ -165,7 +165,8 @@ func SeedSpeedCache() error {
 		}
 
 		for _, u := range users {
-			_ = AddUserToSpeedCache(ctx, u)
+			// CORRECTION : Appel de la fonction appropriée pour un objet Lite
+			_ = StoreUserLiteInSpeedCache(ctx, u)
 		}
 
 		offsetUsers += len(users)
@@ -195,6 +196,11 @@ func SeedSpeedCache() error {
 		}
 	}
 	log.Printf("✅ SPEED Cache Relations terminées (%d chargées).", offsetRels)
+
+	// --- 3. Messagerie (Inbox & Conversations) ---
+	if err := SeedMessagingSpeedCache(ctx); err != nil {
+		log.Printf("  Avertissement lors du seeding de la messagerie: %v", err)
+	}
 
 	return nil
 }

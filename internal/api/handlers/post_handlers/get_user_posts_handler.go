@@ -2,7 +2,6 @@ package post_handlers
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/gin-gonic/gin"
@@ -44,34 +43,23 @@ import (
 // @Failure      500  {object}  domain.ErrorResponse "Erreur interne lors de la récupération"
 // @Router       /post/user [get]
 func GetUserPostsHandler(c *gin.Context) {
-	// 1. Sécurité
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
 		return
 	}
 
-	// 2. Extraction & Validation des Query Params
 	var input post_models.GetUserPostsInput
-	if err := c.ShouldBindQuery(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Paramètres de requête (user_id) invalides ou manquants"})
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide ou user_id manquant"})
 		return
 	}
 
-	// Protection structurelle de la pagination
-	if input.Limit > 100 {
-		input.Limit = 100
+	if input.Limit <= 0 || input.Limit > 100 {
+		input.Limit = 50 // Default
 	}
 	input.CallerID = callerID
 
-	// ✅ DÉTECTION DU MODE FORCE via l'URL
-	if strings.HasSuffix(c.Request.URL.Path, "/force") {
-		input.Force = true
-	}
-
-	// 3. Appel au service métier hybride
 	posts := post_service.GetUserPosts(c.Request.Context(), input)
-
-	// 4. Succès
 	c.JSON(http.StatusOK, posts)
 }

@@ -9,7 +9,7 @@ type GetCommentsInput struct {
 
 // GetCommentOutput représente la réponse pour un ID spécifique (Soit le comment, soit une erreur d'accès).
 type GetCommentOutput struct {
-	CommentID int64           `json:"comment_id"` // ✅ Correction du tag JSON
-	Data      *CommentPayload `json:"data,omitempty"`
-	Error     string          `json:"nubo_error,omitempty"`
+	CommentID int64          `json:"comment_id"` // ✅ Correction du tag JSON
+	Data      CommentPayload `json:"data,omitempty"`
+	Error     string         `json:"nubo_error,omitempty"`
 }

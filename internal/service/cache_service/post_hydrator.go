@@ -18,10 +18,10 @@ import (
 // 3. ROUTINES PRIVÉES D'ACCÈS AUX DONNÉES
 // ============================================================================
 
-func fetchAndHydrateFromZSET(ctx context.Context, key string, offset int64, limit int64) ([]post_models.PostPayload, error) {
-	idStrings, err := redis.ZRevRange(ctx, key, offset, offset+limit-1)
+func fetchAndHydrateFromCollection(ctx context.Context, col *redis.Collection, id any, offset int64, limit int64) ([]post_models.PostPayload, error) {
+	idStrings, err := col.ZRevRange(ctx, id, offset, offset+limit-1)
 	if err != nil {
-		return nil, fmt.Errorf("erreur lecture ZSET %s: %w", key, err)
+		return nil, fmt.Errorf("erreur lecture ZSET %s: %w", err)
 	}
 
 	if len(idStrings) == 0 {
@@ -102,57 +102,4 @@ func getPostsFromPostgresPaginated(ctx context.Context, rankType string, offset 
 	}
 
 	return object_cache_service.GetPostsView(ids)
-}
-
-// ============================================================================
-// 4. HYDRATATION FINALE DU FEED (Étape 5.3)
-// ============================================================================
-
-// HydrateFeed prend les IDs bruts d'une page de buffer (générée par le Distributeur)
-// et les transforme en objets complets prêts pour le frontend.
-// C'est ICI que l'on applique le filtrage de dernière minute (Visibility, Banned).
-func HydrateFeed(ctx context.Context, postIDs []int64) ([]post_models.PostPayload, error) {
-	// Pré-allocation pour optimiser la mémoire
-	hydratedPosts := make([]post_models.PostPayload, 0, len(postIDs))
-
-	for _, id := range postIDs {
-		var post post_models.PostPayload
-
-		// 1. Tentative de récupération depuis le cache_service LFU (Object Cache Redis)
-		// C'est le même cache_service que tu initialises dans CreatePost.
-		p, err := object_cache_service.GetPostFromObjectCache(ctx, id)
-		if err == nil {
-			post = p
-		} else {
-			// FALLBACK : Si le post_service a été évincé du cache_service Redis, on va le chercher en base
-			// (En réutilisant ta méthode GetPostsView existante qui tape sur la BDD)
-			postsFromDB, errDB := object_cache_service.GetPostsView([]int64{id})
-			if errDB == nil && len(postsFromDB) > 0 {
-				post = postsFromDB[0]
-				// Réhydratation silencieuse du cache_service LFU pour les prochains appels
-				_ = object_cache_service.SetPostInObjectCache(ctx, post)
-			} else {
-				continue // Post totalement introuvable (Hard Delete), on l'ignore
-			}
-		}
-
-		// ─────────────────────────────────────────────────────────────────────
-		// 2. ÉTAPE 5.3 : GESTION "A LA VOLÉE" DES ÉTATS CRITIQUES
-		// ─────────────────────────────────────────────────────────────────────
-		// Si le post_service a été modéré, ou l'auteur banni entre la création du buffer et la lecture.
-		// On s'aligne sur ta logique Postgres où la visibilité '2' équivaut à un post_service supprimé/masqué.
-		if post.Visibility == -1 {
-			// Le post_service est ignoré silencieusement côté backend.
-			// Le frontend ne le recevra même pas, ce qui économise de la bande passante
-			// et garantit qu'aucune donnée d'un utilisateur banni ne fuite.
-			continue
-		}
-
-		// (Optionnel) : Tu pourrais aussi vérifier le statut de l'auteur ici
-		// via un appel ultra-rapide au cache_service Utilisateur si nécessaire.
-
-		hydratedPosts = append(hydratedPosts, post)
-	}
-
-	return hydratedPosts, nil
 }

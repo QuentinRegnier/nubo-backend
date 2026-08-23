@@ -3,25 +3,21 @@ package cache_service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
 // GetTopUserPostIDs récupère la timeline, gère les profils vides, et prévient les cache miss
 func GetTopUserPostIDs(ctx context.Context, userID int64, offset int64, limit int64) ([]int64, error) {
-	zsetKey := fmt.Sprintf("user_cache:posts:zset:%d", userID) // ✅ CORRECTION : Unification stricte de la clé
-
 	// ✅ 1. Utilisation de l'abstrait booléen pour vérifier le Cache Miss
-	exists, err := redis.Exists(ctx, zsetKey)
-	if err != nil || !exists { // Vérification propre du booléen
+	exists, err := redis.UserTimeline.Exists(ctx, userID)
+	if err != nil || !exists {
 		return nil, errors.New("cache miss")
 	}
 
 	// ✅ 2. Utilisation de l'abstrait (ZRevRange)
-	idStrings, err := redis.ZRevRange(ctx, zsetKey, offset, offset+limit-1)
+	idStrings, err := redis.UserTimeline.ZRevRange(ctx, userID, offset, offset+limit-1)
 	if err != nil {
 		return nil, err
 	}
@@ -39,39 +35,21 @@ func GetTopUserPostIDs(ctx context.Context, userID int64, offset int64, limit in
 	return ids, nil
 }
 
-// MarkUserTimelineEmpty crée un ZSET "bouchon" avec l'ID -1 pour empêcher le martèlement de Postgres
 func MarkUserTimelineEmpty(ctx context.Context, userID int64) error {
-	zsetKey := fmt.Sprintf("user_cache:posts:zset:%d", userID)
-
-	// ✅ Adieu la structure redisgo.Z ! On passe par la méthode abstraite ZAdd
-	err := redis.ZAdd(ctx, zsetKey, 0, "-1")
-
-	// ✅ Utilisation de la primitive abstraite Expire
-	_ = redis.Expire(ctx, zsetKey, 10*time.Minute)
-
+	err := redis.UserTimeline.ZAdd(ctx, userID, 0, "-1")
+	_ = redis.UserTimeline.RefreshTTL(ctx, userID)
 	return err
 }
 
-// PurgeUserTimeline atomise le ZSET d'un utilisateur pour préparer une réhydratation propre
 func PurgeUserTimeline(ctx context.Context, userID int64) error {
-	zsetKey := fmt.Sprintf("user_cache:posts:zset:%d", userID)
-	return redis.Del(ctx, zsetKey) // ✅ C'était déjà parfait ici
+	return redis.UserTimeline.DeleteObject(ctx, userID) // DeleteObject encapsule le DEL de la clé
 }
 
-// AddPostToUserProfile ajoute un post au ZSET de l'utilisateur avec un score chronologique
 func AddPostToUserProfile(ctx context.Context, userID int64, postID int64, score float64) error {
-	zsetKey := fmt.Sprintf("user_cache:posts:zset:%d", userID)
-
-	// ✅ SÉCURITÉ : On pulvérise l'éventuel marqueur de profil vide avant l'insertion
-	_ = redis.ZRem(ctx, zsetKey, "-1")
-
-	return redis.ZAdd(ctx, zsetKey, score, strconv.FormatInt(postID, 10))
+	_ = redis.UserTimeline.ZRem(ctx, userID, "-1")
+	return redis.UserTimeline.ZAdd(ctx, userID, score, strconv.FormatInt(postID, 10))
 }
 
-// RemovePostFromUserProfile retire un post du ZSET de l'utilisateur (utilisé lors d'un Delete)
 func RemovePostFromUserProfile(ctx context.Context, userID int64, postID int64) error {
-	zsetKey := fmt.Sprintf("user_cache:posts:zset:%d", userID)
-
-	// ✅ Utilisation de l'abstrait ZRem
-	return redis.ZRem(ctx, zsetKey, strconv.FormatInt(postID, 10))
+	return redis.UserTimeline.ZRem(ctx, userID, strconv.FormatInt(postID, 10))
 }

@@ -121,8 +121,6 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 				}
 			}
 		}
-
-		updateSpeedCache(ctx, e)
 	}
 }
 

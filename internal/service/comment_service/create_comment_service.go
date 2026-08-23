@@ -2,6 +2,7 @@ package comment_service
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
@@ -9,6 +10,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
 )
 
 func CreateComment(ctx context.Context, input comment_models.CreateCommentInput) error {
@@ -47,11 +49,32 @@ func CreateComment(ctx context.Context, input comment_models.CreateCommentInput)
 	}
 
 	// 5. CACHE HYBRIDE (ZSET + RAM)
+	var postAuthorID int64
 	if object_cache_service.IsPostInObjectCache(ctx, comment.PostID) {
 		_ = object_cache_service.AddCommentToZSET(ctx, comment.PostID, comment.ID, float64(comment.Score))
 		_ = object_cache_service.SetCommentInObjectCache(ctx, comment)
+
+		// === NOUVEAU : MISE À JOUR DU POST PARENT (TEMPS RÉEL) ===
+		if p, err := object_cache_service.GetPostFromObjectCache(ctx, comment.PostID); err == nil {
+			postAuthorID = p.UserID
+			p.CommentCount += 1
+			_ = object_cache_service.SetPostInObjectCache(ctx, p)
+			cache_service.UpdatePostRecommendationScore(ctx, p)
+		}
 	}
 
 	// 6. Envoi Asynchrone
-	return redis.EnqueueDB(ctx, comment.ID, 0, redis.EntityComment, redis.ActionCreate, comment, redis.TargetAll)
+	err := redis.EnqueueDB(ctx, comment.ID, 0, redis.EntityComment, redis.ActionCreate, comment, redis.TargetAll)
+
+	// 7. Envoie notification (Non bloquant et sécurisé)
+	if err == nil && postAuthorID != 0 {
+		go func(authorID int64) {
+			err := notification_service.DispatchNotification(context.Background(), authorID, input.UserID, "comment_added", comment.ID)
+			if err != nil {
+				fmt.Printf("CreateComment: failed to dispatch notification: %v\n", err)
+			}
+		}(postAuthorID)
+	}
+
+	return err
 }

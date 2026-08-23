@@ -2,7 +2,6 @@ package like_handlers
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/like_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/like_service"
@@ -36,32 +35,19 @@ import (
 // @Failure      401  {object}  domain.ErrorResponse "Utilisateur non identifié"
 // @Router       /post/{id}/like [post]
 func LikePostHandler(c *gin.Context) {
-	// 1. Sécurité
 	callerUserID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
 		return
 	}
 
-	// 2. Extraction du PostID
-	postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil || postID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "ID de publication invalide"})
-		return
-	}
-
-	// 3. Binding du payload et empaquetage
 	var input like_models.LikePostInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "L'action doit être 'like' ou 'unlike'"})
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Format JSON invalide. 'post_id' et 'action' requis."})
 		return
 	}
 	input.UserID = callerUserID
-	input.PostID = postID
 
-	// 4 & 5. Envoi au service (Ultra rapide)
 	_ = like_service.TogglePostLike(c.Request.Context(), input)
-
-	// 6. Confirmation instantanée
 	c.JSON(http.StatusOK, gin.H{"message": "Action prise en compte"})
 }

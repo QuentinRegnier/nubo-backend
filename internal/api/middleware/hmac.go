@@ -61,9 +61,9 @@ func HMACMiddleware() gin.HandlerFunc {
 
 		// 2. Contexte (placé par JWT Middleware)
 		userIDRaw, existsUID := c.Get("userID")
-		deviceTokenRaw, existsDev := c.Get("deviceToken")
+		firebaseInstallationIDRaw, existsDev := c.Get("firebase_installation_id")
 
-		fmt.Println("🔐 HMAC Middleware: Extracted Context -", "userID:", userIDRaw, "deviceToken:", deviceTokenRaw)
+		fmt.Println("🔐 HMAC Middleware: Extracted Context -", "userID:", userIDRaw, "firebaseInstallationID:", firebaseInstallationIDRaw)
 
 		if !existsUID || !existsDev {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Contexte d'authentification manquant"})
@@ -88,14 +88,14 @@ func HMACMiddleware() gin.HandlerFunc {
 			fmt.Printf("❌ Type userID inconnu: %T\n", v)
 		}
 
-		deviceToken := fmt.Sprintf("%v", deviceTokenRaw)
+		firebaseInstallationID := fmt.Sprintf("%v", firebaseInstallationIDRaw)
 
-		fmt.Printf("🔐 HMAC Middleware: userID=%d, deviceToken=%s\n", userID, deviceToken)
+		fmt.Printf("🔐 HMAC Middleware: userID=%d, firebaseInstallationID=%s\n", userID, firebaseInstallationID)
 
 		// 3. Récupération Session Redis
 		//filter := map[string]any{
 		//	"user_id":      map[string]any{"$eq": userID},
-		//	"device_token": map[string]any{"$eq": deviceToken},
+		//	"firebase_installation_id": map[string]any{"$eq": firebaseInstallationID},
 		//}
 
 		//sessionsData, err := redis.Sessions.Get(c, filter)
@@ -108,17 +108,17 @@ func HMACMiddleware() gin.HandlerFunc {
 		var sessionFound bool = false
 
 		// A. Essai Cache L1 (Vitesse absolue pour 99% des requêtes)
-		session, err := cache_service.LoadSessionFromCache(c, userID, deviceToken, "")
+		session, err := cache_service.LoadSessionFromCache(c, userID, firebaseInstallationID, "")
 		if err == nil && session.ID != 0 {
 			sessionFound = true
 		} else {
 			// En production, tu pourras retirer ce log pour ne pas spammer la console lors d'un cache miss
-			fmt.Printf("⚠️ Cache L1 Miss: %v (UserID: %d, Device: %s)\n", err, userID, deviceToken)
+			fmt.Printf("⚠️ Cache L1 Miss: %v (UserID: %d, Device: %s)\n", err, userID, firebaseInstallationID)
 		}
 
 		if !sessionFound {
 			// B. Essai Mongo L2 (Stockage Documentaire)
-			session, errMongo := mongo.MongoLoadSession(userID, deviceToken, "", "")
+			session, errMongo := mongo.MongoLoadSession(userID, firebaseInstallationID, "", "")
 			if errMongo == nil && session.ID != 0 {
 				fmt.Println("✅ Session trouvée dans Mongo L2, réhydratation du cache L1...")
 				sessionFound = true
@@ -129,7 +129,7 @@ func HMACMiddleware() gin.HandlerFunc {
 
 		if !sessionFound {
 			// C. Essai Postgres L3 (Le filet de sécurité absolu)
-			session, errPg := postgres.FuncLoadSession(-1, userID, deviceToken, "")
+			session, errPg := postgres.FuncLoadSession(-1, userID, firebaseInstallationID, "")
 			if errPg == nil && session.ID != 0 {
 				fmt.Println("✅ Session trouvée dans Postgres L3, réhydratation massive...")
 				sessionFound = true

@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/docs"
 	"github.com/QuentinRegnier/nubo-backend/internal/api"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/websocket"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/mongo"
@@ -20,7 +21,6 @@ import (
 	mongogo "github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/QuentinRegnier/nubo-backend/internal/worker"
@@ -82,7 +82,7 @@ func main() {
 	}
 
 	// Initialiser le Hub et lancer sa boucle
-	//websocket.InitHub()
+	websocket.InitHub()
 
 	// Initiatiser MinIO
 	minio.InitMinio()
@@ -117,13 +117,6 @@ func main() {
 	} else {
 		log.Printf("✅ Cache Redis déjà peuplé (%d éléments). Seeding ignoré, démarrage éclair !", count)
 	}
-
-	// ✅ INITIALISATION DU DISTRIBUTEUR GLOBAL
-	// Assure-toi que NewFeedDistributor et NewProtoFeedBuilder correspondent bien à tes constructeurs
-	// Si ton constructeur prend d'autres paramètres (comme rng ou rdb), injecte-les ici.
-	algorithm_service.GlobalDistributor = algorithm_service.NewFeedDistributor(
-		algorithm_service.NewProtoFeedBuilder(),
-	)
 
 	// Lance le moteur V12
 	worker.StartBackgroundWorkers(context.Background())

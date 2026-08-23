@@ -25,11 +25,28 @@ func GetPostLikes(ctx context.Context, input post_models.GetPostLikesInput) (pos
 		post = p
 		found = true
 	} else {
-		// Fallback BDD si le post n'est plus en RAM
-		pgPosts, errPg := postgres.FuncLoadPosts([]int64{input.PostID}, 1, 0)
-		if errPg == nil && len(pgPosts) > 0 {
-			post = pgPosts[0]
+		// TENTATIVE L2 (MongoDB)
+		mongoPosts, errMongo := mongo.MongoLoadPosts([]int64{input.PostID})
+		if errMongo == nil && len(mongoPosts) > 0 {
+			post = mongoPosts[0]
 			found = true
+
+			go func(p post_models.PostPayload) {
+				_ = object_cache_service.SetPostInObjectCache(context.Background(), p)
+			}(post)
+
+		} else {
+			// TENTATIVE L3 (PostgreSQL)
+			pgPosts, errPg := postgres.FuncLoadPosts([]int64{input.PostID}, 1, 0)
+			if errPg == nil && len(pgPosts) > 0 {
+				post = pgPosts[0]
+				found = true
+
+				go func(p post_models.PostPayload) {
+					_ = mongo.MongoUpsertPost(p)
+					_ = object_cache_service.SetPostInObjectCache(context.Background(), p)
+				}(post)
+			}
 		}
 	}
 

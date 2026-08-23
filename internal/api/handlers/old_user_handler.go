@@ -2,9 +2,9 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -29,41 +29,30 @@ import (
 // @Failure      500  {object}  domain.ErrorResponse "Erreur interne de récupération Redis"
 // @Router       /search/users/quick [get]
 func UserSearchHandler(c *gin.Context) {
-	// 1. Identification (assurée par le middleware JWT)
 	_, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
 		return
 	}
 
-	// 2. Paramètre de recherche
-	prefix := c.Query("q")
-	if prefix == "" {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Le paramètre de recherche 'q' est requis"})
+	var input auth_models.UserSearchInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide ou paramètre 'q' manquant"})
 		return
 	}
 
-	// 3. Limite (avec bornes de sécurité)
-	limitStr := c.DefaultQuery("limit", "10")
-	limit, err := strconv.ParseInt(limitStr, 10, 64)
-	if err != nil || limit <= 0 {
-		limit = 10
-	}
-	if limit > 50 {
-		limit = 50
+	if input.Limit <= 0 || input.Limit > 50 {
+		input.Limit = 10
 	}
 
-	// 4. Appel du service
-	users, err := cache_service.SearchUserByPrefix(c.Request.Context(), prefix, limit)
+	users, err := cache_service.SearchUserByPrefix(c.Request.Context(), input.Prefix, input.Limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur lors de la recherche d'utilisateurs"})
+		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur serveur"})
 		return
 	}
 
-	// Garantie JSON tableau vide [] plutôt que 'null'
 	if users == nil {
 		users = []models.UserLiteRequest{}
 	}
-
 	c.JSON(http.StatusOK, users)
 }

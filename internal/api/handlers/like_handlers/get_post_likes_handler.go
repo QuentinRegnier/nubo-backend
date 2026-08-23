@@ -2,7 +2,6 @@ package like_handlers
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/service/like_service"
 	"github.com/gin-gonic/gin"
@@ -39,51 +38,30 @@ import (
 // @Failure      500  {object}  domain.ErrorResponse "Erreur interne lors de la récupération des likes"
 // @Router       /post/{id}/likes [get]
 func GetPostLikesHandler(c *gin.Context) {
-	// 1. Authentification
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
 		return
 	}
 
-	// 2. Extraction du PostID depuis l'URL
-	postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil || postID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "ID de publication invalide"})
+	var input post_models.GetPostLikesInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Format JSON invalide"})
 		return
 	}
 
-	// 3. Extraction de la pagination avec valeurs par défaut
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	if limit < 1 || limit > 100 {
-		limit = 20
+	input.CallerID = callerID
+
+	// 🛡️ BOUCLIER DE PAGINATION
+	if input.Limit <= 0 || input.Limit > 100 {
+		input.Limit = 20
 	}
 
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	if offset < 0 {
-		offset = 0
-	}
-
-	// 4. Empaquetage de l'input strict
-	input := post_models.GetPostLikesInput{
-		CallerID: callerID,
-		PostID:   postID,
-		Limit:    limit,
-		Offset:   offset,
-	}
-
-	// 5. Appel au service métier (qui inclut la vérification des droits L1->L2->L3)
 	output, err := like_service.GetPostLikes(c.Request.Context(), input)
 	if err != nil {
-		if err.Error() == "not found" || err.Error() == "forbidden" || err.Error() == "banned" {
-			// On maintient le mode furtif
-			c.JSON(http.StatusNotFound, gin.H{"nubo_error": "Post introuvable ou inaccessible"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"nubo_error": "Erreur interne lors de la récupération"})
+		c.JSON(http.StatusNotFound, gin.H{"nubo_error": "Post introuvable ou inaccessible"})
 		return
 	}
 
-	// 6. Succès
 	c.JSON(http.StatusOK, output)
 }

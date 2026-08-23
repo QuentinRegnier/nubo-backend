@@ -47,8 +47,9 @@ func InitMongo() {
 }
 
 func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
+	// 1. Déclaration des collections
 	users := db.Collection("auth.users")
-	user_settings := db.Collection("auth.user_settings")
+	userSettings := db.Collection("auth.user_settings")
 	sessions := db.Collection("auth.sessions")
 	relations := db.Collection("auth.relations")
 	posts := db.Collection("content.posts")
@@ -58,10 +59,14 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 	conversations := db.Collection("messaging.conversations")
 	members := db.Collection("messaging.conversation_members")
 	messages := db.Collection("messaging.messages")
+	saved := db.Collection("content.saved")
 
+	notifications := db.Collection("activity.notifications")
+
+	// 2. Index de recherche vitaux (comme avant)
 	_, err1 := users.Indexes().CreateMany(ctx, []mongo.IndexModel{{Keys: bson.D{{Key: "username", Value: 1}, {Key: "email", Value: 1}, {Key: "phone", Value: 1}}}})
-	_, err2 := user_settings.Indexes().CreateMany(ctx, []mongo.IndexModel{{Keys: bson.D{{Key: "user_id", Value: 1}}}})
-	_, err3 := sessions.Indexes().CreateMany(ctx, []mongo.IndexModel{{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "device_token", Value: 1}}}})
+	_, err2 := userSettings.Indexes().CreateMany(ctx, []mongo.IndexModel{{Keys: bson.D{{Key: "user_id", Value: 1}}}})
+	_, err3 := sessions.Indexes().CreateMany(ctx, []mongo.IndexModel{{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "firebase_installation_id", Value: 1}}}})
 	_, err4 := relations.Indexes().CreateMany(ctx, []mongo.IndexModel{{Keys: bson.D{{Key: "primary_id", Value: 1}, {Key: "secondary_id", Value: 1}}}})
 	_, err5 := posts.Indexes().CreateMany(ctx, []mongo.IndexModel{{Keys: bson.D{{Key: "hashtags", Value: 1}, {Key: "identifiers", Value: 1}, {Key: "user_id", Value: 1}, {Key: "created_at", Value: -1}}}})
 	_, err6 := comments.Indexes().CreateMany(ctx, []mongo.IndexModel{{Keys: bson.D{{Key: "post_id", Value: 1}, {Key: "created_at", Value: -1}}}})
@@ -70,5 +75,37 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 	_, err9 := conversations.Indexes().CreateMany(ctx, []mongo.IndexModel{{Keys: bson.D{{Key: "last_message_id", Value: 1}, {Key: "created_at", Value: -1}, {Key: "state", Value: 1}}}})
 	_, err10 := members.Indexes().CreateMany(ctx, []mongo.IndexModel{{Keys: bson.D{{Key: "conversation_id", Value: 1}, {Key: "user_id", Value: 1}}}})
 	_, err11 := messages.Indexes().CreateMany(ctx, []mongo.IndexModel{{Keys: bson.D{{Key: "conversation_id", Value: 1}, {Key: "created_at", Value: -1}}}})
-	return errors.Join(err1, err2, err3, err4, err5, err6, err7, err8, err9, err10, err11)
+
+	// Index pagination pour les notifications
+	_, err12 := notifications.Indexes().CreateMany(ctx, []mongo.IndexModel{{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "created_at", Value: -1}}}})
+
+	// 3. APPLICATION DES INDEX TTL (LA PURGE AUTOMATIQUE)
+	ttl30Days := int32(30 * 24 * 60 * 60)
+
+	// A. Notifications : Expiration STRICTE basée sur la date de création
+	_, err13 := notifications.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    bson.D{{Key: "created_at", Value: 1}},
+		Options: options.Index().SetExpireAfterSeconds(ttl30Days),
+	})
+
+	// B. Tout le reste du L2 : Expiration GLISSANTE basée sur le last_use
+	slidingTTLIndex := mongo.IndexModel{
+		Keys:    bson.D{{Key: "last_use", Value: 1}},
+		Options: options.Index().SetExpireAfterSeconds(ttl30Days),
+	}
+
+	slidingCollections := []*mongo.Collection{
+		users, userSettings, sessions, relations, posts, comments,
+		likes, media, conversations, members, messages, saved,
+	}
+
+	var ttlErrs []error
+	for _, coll := range slidingCollections {
+		_, err := coll.Indexes().CreateOne(ctx, slidingTTLIndex)
+		if err != nil {
+			ttlErrs = append(ttlErrs, err)
+		}
+	}
+
+	return errors.Join(err1, err2, err3, err4, err5, err6, err7, err8, err9, err10, err11, err12, err13, errors.Join(ttlErrs...))
 }

@@ -15,7 +15,9 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 )
 
 // UpdateProfile modifie l'identité, vérifie l'unicité, gère l'avatar et envoie au Write-Behind.
@@ -33,55 +35,45 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 	oldUsername, oldEmail, oldPhone := "", "", ""
 	newUsername, newEmail, newPhone := "", "", ""
 
-	// 2. Vérification d'unicité et application
-	if input.Username != nil && *input.Username != user.Username {
-		if service.IsUnique(mongo.Users, "username", *input.Username) == 0 {
+	// 2. Vérification d'unicité uniquement si la valeur a changé
+	if input.Username != user.Username {
+		if service.IsUnique(mongo.Users, "username", input.Username) == 0 {
 			return errors.New("ce nom d'utilisateur est déjà pris")
 		}
 		oldUsername = user.Username
-		newUsername = *input.Username
-		user.Username = *input.Username
+		newUsername = input.Username
+		user.Username = input.Username
 	}
 
-	if input.Email != nil && *input.Email != user.Email {
-		if service.IsUnique(mongo.Users, "email", *input.Email) == 0 {
+	if input.Email != user.Email {
+		if service.IsUnique(mongo.Users, "email", input.Email) == 0 {
 			return errors.New("cet email est déjà utilisé")
 		}
 		oldEmail = user.Email
-		newEmail = *input.Email
-		user.Email = *input.Email
+		newEmail = input.Email
+		user.Email = input.Email
 		user.EmailVerified = false // Nécessite une nouvelle vérification
 	}
 
-	if input.Phone != nil && *input.Phone != user.Phone {
-		if service.IsUnique(mongo.Users, "phone", *input.Phone) == 0 {
+	// === NOUVEAU BLOC : GESTION DU TÉLÉPHONE ===
+	if input.Phone != user.Phone {
+		// Le téléphone est optionnel (omitempty), on ne vérifie l'unicité que s'il n'est pas vide
+		if input.Phone != "" && service.IsUnique(mongo.Users, "phone", input.Phone) == 0 {
 			return errors.New("ce numéro de téléphone est déjà utilisé")
 		}
 		oldPhone = user.Phone
-		newPhone = *input.Phone
-		user.Phone = *input.Phone
-		user.PhoneVerified = false // Nécessite une nouvelle vérification
+		newPhone = input.Phone
+		user.Phone = input.Phone
+		user.PhoneVerified = false // Nécessite une nouvelle vérification SMS
 	}
 
-	// 3. Application des autres champs non-uniques
-	if input.FirstName != nil {
-		user.FirstName = *input.FirstName
-	}
-	if input.LastName != nil {
-		user.LastName = *input.LastName
-	}
-	if input.Bio != nil {
-		user.Bio = pkg.CleanStr(*input.Bio)
-	}
-	if input.Location != nil {
-		user.Location = *input.Location
-	}
-	if input.School != nil {
-		user.School = *input.School
-	}
-	if input.Work != nil {
-		user.Work = *input.Work
-	}
+	// 3. Remplacement intégral des autres champs
+	user.FirstName = input.FirstName
+	user.LastName = input.LastName
+	user.Bio = pkg.CleanStr(input.Bio)
+	user.Location = input.Location
+	user.School = input.School
+	user.Work = input.Work
 
 	// 4. Gestion de la photo de profil (MinIO S3)
 	if fileHeader != nil {
@@ -100,7 +92,7 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 		newMediaID := pkg.GenerateID()
 
 		// Délégation de l'upload au domaine Média
-		if errUpload := media_service.UploadMedia(file, userID, newMediaID); errUpload != nil {
+		if errUpload := media_service.UploadMedia(file, userID, newMediaID, true); errUpload != nil {
 			return fmt.Errorf("erreur upload avatar: %w", errUpload)
 		}
 		user.ProfilePictureID = newMediaID
@@ -114,7 +106,9 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 	user.UpdatedAt = time.Now().UTC()
 
 	// 5. Mise à jour immédiate du Speed Cache L1 (Auto-complétion et Profil Lite)
-	_ = cache_service.AddUserToSpeedCache(ctx, user)
+	// CORRECTION : Récupération asynchrone/rapide des settings pour construire l'objet Lite
+	settings, _ := object_cache_service.GetUserSettingsCascade(ctx, userID)
+	_ = cache_service.AddUserToSpeedCache(ctx, user, settings)
 
 	// 6. Mise à jour du Cuckoo Filter via Flux Redis (Asynchrone et Distribué)
 	if newUsername != "" {
@@ -130,6 +124,9 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 		cuckoo.BroadcastCuckooUpdate(cuckoo.ActionDel, "phone", oldPhone)
 	}
 
-	// 7. Persistance Asynchrone (Write-Behind vers Mongo et Postgres avec l'objet complet)
+	// 7. Envoi notification
+	_ = realtime_service.DistributeToUsers(ctx, "user.profile_updated", user, []int64{userID})
+
+	// 8. Persistance Asynchrone (Write-Behind vers Mongo et Postgres avec l'objet complet)
 	return redis.EnqueueDB(ctx, user.ID, 0, redis.EntityUser, redis.ActionUpdate, user, redis.TargetAll)
 }

@@ -87,11 +87,9 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 						Error:     "Commentaire introuvable ou supprimé",
 					})
 				} else {
-					// On copie la valeur pour avoir un pointeur sain
-					val := c
 					results = append(results, comment_models.GetCommentOutput{
 						CommentID: id,
-						Data:      &val,
+						Data:      c, // Affectation directe de l'objet
 					})
 				}
 			}
@@ -114,10 +112,9 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 				_ = object_cache_service.AddCommentToZSET(ctx, c.PostID, c.ID, float64(c.Score))
 			}
 
-			val := c
 			results = append(results, comment_models.GetCommentOutput{
 				CommentID: c.ID,
-				Data:      &val,
+				Data:      c,
 			})
 		}
 		return results, nil // ✅ RETOUR RAPIDE
@@ -137,10 +134,9 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 				// ✅ Réparation L1 (Index ZSET)
 				_ = object_cache_service.AddCommentToZSET(ctx, c.PostID, c.ID, float64(c.Score))
 
-				val := c
 				results = append(results, comment_models.GetCommentOutput{
 					CommentID: c.ID,
-					Data:      &val,
+					Data:      c,
 				})
 			}
 			return results, nil

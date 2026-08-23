@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
 )
@@ -23,10 +24,18 @@ func DeleteComment(ctx context.Context, input comment_models.DeleteCommentInput)
 	// ─────────────────────────────────────────────────────────────────────────
 	// 2. PURGE DU CACHE L1 ET PRÉPARATION DU SOFT DELETE
 	// ─────────────────────────────────────────────────────────────────────────
-
-	// Disparition immédiate de la RAM pour les prochains lecteurs
 	_ = object_cache_service.DeleteCommentFromObjectCache(ctx, comment.ID)
 	_ = object_cache_service.RemoveCommentFromZSET(ctx, comment.PostID, comment.ID)
+
+	// === NOUVEAU : DÉCRÉMENTATION DU POST PARENT (TEMPS RÉEL) ===
+	if p, err := object_cache_service.GetPostFromObjectCache(ctx, comment.PostID); err == nil {
+		p.CommentCount -= 1
+		if p.CommentCount < 0 {
+			p.CommentCount = 0
+		}
+		_ = object_cache_service.SetPostInObjectCache(ctx, p)
+		cache_service.UpdatePostRecommendationScore(ctx, p)
+	}
 
 	comment.Visibility = -1
 

@@ -12,21 +12,21 @@ import (
 	"github.com/lib/pq"
 )
 
-func FuncLoadSession(ID int64, UserId int64, DeviceToken string, MasterToken string) (models.SessionsRequest, error) {
-	fmt.Println("FuncLoadSession called with:", ID, UserId, DeviceToken, MasterToken)
+func FuncLoadSession(ID int64, UserId int64, FirebaseInstallationID string, MasterToken string) (models.SessionsRequest, error) {
+	fmt.Println("FuncLoadSession called with:", ID, UserId, FirebaseInstallationID, MasterToken)
 	const functionID = 3
 
 	// 1. Vérification que les champs sont non nuls
-	if ID == -1 && UserId == -1 && DeviceToken == "" && MasterToken == "" {
+	if ID == -1 && UserId == -1 && FirebaseInstallationID == "" && MasterToken == "" {
 		return models.SessionsRequest{}, fmt.Errorf("erreur: champs requis manquants pour FuncLoadSession (ID %d)", functionID)
 	}
 
 	// 2. Préparation des arguments (gestion des types spéciaux)
 	args := make([]any, 4)
-	args[0] = ID          // p_session_id (ex: UUID)
-	args[1] = UserId      // p_user_id (ex: UUID)
-	args[2] = DeviceToken // p_device_token (ex: "token_string")
-	args[3] = MasterToken // p_master_token (ex: "master_token_string")
+	args[0] = ID                     // p_session_id (ex: UUID)
+	args[1] = UserId                 // p_user_id (ex: UUID)
+	args[2] = FirebaseInstallationID // p_firebase_installation_id (ex: "token_string")
+	args[3] = MasterToken            // p_master_token (ex: "master_token_string")
 
 	if ID == -1 {
 		args[0] = nil
@@ -34,7 +34,7 @@ func FuncLoadSession(ID int64, UserId int64, DeviceToken string, MasterToken str
 	if UserId == -1 {
 		args[1] = nil
 	}
-	if DeviceToken == "" {
+	if FirebaseInstallationID == "" {
 		args[2] = nil
 	}
 	if MasterToken == "" {
@@ -50,7 +50,7 @@ func FuncLoadSession(ID int64, UserId int64, DeviceToken string, MasterToken str
 	//    Nous utilisons QueryRow car la fonction SQL retourne une seule valeur (le UUID)
 	var res models.SessionsRequest
 	var deviceInfoBytes []byte
-	var deviceToken sql.NullString // Le token peut être NULL en base (stocké en JSON string ou NULL)
+	var firebaseInstallationID sql.NullString // Le token peut être NULL en base (stocké en JSON string ou NULL)
 
 	// not used variable
 	res.CurrentSecret = ""
@@ -62,7 +62,7 @@ func FuncLoadSession(ID int64, UserId int64, DeviceToken string, MasterToken str
 		&res.ID,
 		&res.UserID,
 		&res.MasterToken,
-		&deviceToken, // <-- Scan sécurisé
+		&firebaseInstallationID, // <-- Scan sécurisé
 		&deviceInfoBytes,
 		pq.Array(&res.IPHistory), // <-- pq.Array obligatoire
 		&res.CreatedAt,
@@ -82,8 +82,8 @@ func FuncLoadSession(ID int64, UserId int64, DeviceToken string, MasterToken str
 	}
 
 	// Traitement des données
-	if deviceToken.Valid {
-		res.DeviceToken = deviceToken.String
+	if firebaseInstallationID.Valid {
+		res.FirebaseInstallationID = firebaseInstallationID.String
 	}
 
 	if len(deviceInfoBytes) > 0 {

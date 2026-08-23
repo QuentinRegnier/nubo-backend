@@ -4,89 +4,178 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/go-redis/redis/v8"
 )
 
 // ============================================================================
-// PRIMITIVES ZSET (SORTED SETS) - Pour le MOST Cache
+// 1. LUA SCRIPTS
+// ============================================================================
+
+// zaddCapScript garantit l'atomicité de l'insertion et du nettoyage d'éléments.
+// TDD §3.3 : Utilise un script Lua pour éviter toute race condition.
+const zaddCapScript = `
+local key = KEYS[1]
+local score = tonumber(ARGV[1])
+local member = ARGV[2]
+local max_size = tonumber(ARGV[3])
+
+redis.call('ZADD', key, score, member)
+local current_size = redis.call('ZCARD', key)
+
+if current_size > max_size then
+   redis.call('ZREMRANGEBYRANK', key, 0, current_size - max_size - 1)
+end
+
+return redis.call('ZSCORE', key, member)
+`
+
+// ============================================================================
+// 2. MÉTHODES DDD DE LA STRUCTURE "Collection" (Nouvelle Architecture)
 // ============================================================================
 
 // ZAdd ajoute un élément avec un score (ou met à jour son score).
-// Complexité : O(log(N))
-// Utilisé pour :
-// - Ajouter un Post dans un Tag (Score = Timestamp)
-// - Ajouter un Post sur le Profil User (Score = Timestamp)
-func ZAdd(ctx context.Context, key string, score float64, member interface{}) error {
-	return redisgo.Rdb.ZAdd(ctx, key, &redis.Z{
+func (c *Collection) ZAdd(ctx context.Context, id any, score float64, member any) error {
+	return c.Client.ZAdd(ctx, c.Key(id), &redis.Z{
 		Score:  score,
 		Member: member,
 	}).Err()
 }
 
+// ZAddWithCap insère un élément et plafonne le ZSET en une seule passe atomique via Lua.
+func (c *Collection) ZAddWithCap(ctx context.Context, id any, score float64, member any, maxSize int) error {
+	return c.Client.Eval(ctx, zaddCapScript, []string{c.Key(id)}, score, member, maxSize).Err()
+}
+
 // ZIncrBy incrémente le score d'un membre existant.
-// Complexité : O(log(N))
-// Utilisé pour :
-// - Augmenter le compteur de Vues ou Likes (Score = Compteur)
-func ZIncrBy(ctx context.Context, key string, increment float64, member interface{}) error {
-	// On convertit le member en string de manière sécurisée (gère les int64, string, etc.)
+func (c *Collection) ZIncrBy(ctx context.Context, id any, increment float64, member any) error {
 	memberStr := fmt.Sprintf("%v", member)
-	return redisgo.Rdb.ZIncrBy(ctx, key, increment, memberStr).Err()
+	return c.Client.ZIncrBy(ctx, c.Key(id), increment, memberStr).Err()
 }
 
-// ZRevRange récupère une liste d'éléments triés du plus grand score au plus petit.
-// Complexité : O(log(N) + M)
-// Utilisé pour :
-// - Récupérer les posts les plus récents (Timeline)
-// - Récupérer les posts les plus populaires (Top Trending)
-// Retourne : []string (les IDs des posts)
-func ZRevRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
-	return redisgo.Rdb.ZRevRange(ctx, key, start, stop).Result()
-}
-
-// ZRange récupère une liste d'éléments triés du plus petit score au plus grand (Ordre chronologique naturel).
-func ZRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
-	return redisgo.Rdb.ZRange(ctx, key, start, stop).Result()
+// ZRem supprime un ou plusieurs membres d'un ZSET.
+func (c *Collection) ZRem(ctx context.Context, id any, members ...any) error {
+	return c.Client.ZRem(ctx, c.Key(id), members...).Err()
 }
 
 // ZRemRangeByRank supprime les éléments selon leur position (rang) dans le tri.
-// Complexité : O(log(N) + M)
-// C'est la fonction CLÉ pour le "Capping" (Nettoyage automatique).
-//
-// NOTE : Dans Redis, le rang 0 est le plus petit score.
-// Pour ne garder que les 5000 meilleurs (les plus gros scores),
-// il faut supprimer du rang 0 jusqu'au rang -5001.
-func ZRemRangeByRank(ctx context.Context, key string, start, stop int64) error {
-	return redisgo.Rdb.ZRemRangeByRank(ctx, key, start, stop).Err()
+func (c *Collection) ZRemRangeByRank(ctx context.Context, id any, start, stop int64) error {
+	return c.Client.ZRemRangeByRank(ctx, c.Key(id), start, stop).Err()
+}
+
+// ZRevRange récupère une liste d'éléments triés du plus grand score au plus petit.
+func (c *Collection) ZRevRange(ctx context.Context, id any, start, stop int64) ([]string, error) {
+	return c.Client.ZRevRange(ctx, c.Key(id), start, stop).Result()
+}
+
+// ZRange récupère une liste d'éléments triés du plus petit score au plus grand.
+func (c *Collection) ZRange(ctx context.Context, id any, start, stop int64) ([]string, error) {
+	return c.Client.ZRange(ctx, c.Key(id), start, stop).Result()
+}
+
+// ZRangeByScoreWithLimit extrait les membres dont le score est inférieur ou égal à un seuil maximum (Batching).
+func (c *Collection) ZRangeByScoreWithLimit(ctx context.Context, id any, maxScore int64, limit int64) ([]string, error) {
+	return c.Client.ZRangeByScore(ctx, c.Key(id), &redis.ZRangeBy{
+		Min:    "-inf",
+		Max:    strconv.FormatInt(maxScore, 10),
+		Offset: 0,
+		Count:  limit,
+	}).Result()
+}
+
+// ZRevRangeByScore extrait les membres triés par score décroissant avec limite.
+func (c *Collection) ZRevRangeByScore(ctx context.Context, id any, max string, min string, limit int64) ([]string, error) {
+	return c.Client.ZRevRangeByScore(ctx, c.Key(id), &redis.ZRangeBy{
+		Max:    max,
+		Min:    min,
+		Offset: 0,
+		Count:  limit,
+	}).Result()
+}
+
+// ZRangeByScore extrait les membres triés par score croissant avec limite.
+func (c *Collection) ZRangeByScore(ctx context.Context, id any, min string, max string, limit int64) ([]string, error) {
+	return c.Client.ZRangeByScore(ctx, c.Key(id), &redis.ZRangeBy{
+		Min:    min,
+		Max:    max,
+		Offset: 0,
+		Count:  limit,
+	}).Result()
+}
+
+// ZAddLex ajoute un élément avec un score absolu de 0 pour un tri purement lexicographique.
+func (c *Collection) ZAddLex(ctx context.Context, id any, member any) error {
+	return c.Client.ZAdd(ctx, c.Key(id), &redis.Z{
+		Score:  0,
+		Member: member,
+	}).Err()
+}
+
+// ZRangeByLex cherche des éléments par préfixe (Auto-complétion).
+func (c *Collection) ZRangeByLex(ctx context.Context, id any, prefix string, limit int64) ([]string, error) {
+	if prefix == "" {
+		return []string{}, nil
+	}
+	opt := &redis.ZRangeBy{
+		Min:   "[" + prefix,
+		Max:   "[" + prefix + "\xff",
+		Count: limit,
+	}
+	return c.Client.ZRangeByLex(ctx, c.Key(id), opt).Result()
 }
 
 // ZScore récupère le score actuel d'un membre.
-// Utile pour vérifier si un post_service est déjà classé ou connaître son nombre de vues exact.
-func ZScore(ctx context.Context, key string, member interface{}) (float64, error) {
-	// fmt.Sprintf("%v") permet de gérer int64 ou string de façon transparente
-	return redisgo.Rdb.ZScore(ctx, key, fmt.Sprintf("%v", member)).Result()
+func (c *Collection) ZScore(ctx context.Context, id any, member any) (float64, error) {
+	return c.Client.ZScore(ctx, c.Key(id), fmt.Sprintf("%v", member)).Result()
+}
+
+// ZScores abstrait la récupération de plusieurs scores en un seul aller-retour TCP (Pipeline).
+func (c *Collection) ZScores(ctx context.Context, id any, members []string) ([]float64, error) {
+	if len(members) == 0 {
+		return nil, nil
+	}
+
+	pipe := c.Client.Pipeline()
+	for _, member := range members {
+		pipe.ZScore(ctx, c.Key(id), member)
+	}
+
+	cmds, err := pipe.Exec(ctx)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+
+	scores := make([]float64, len(members))
+	for i, cmd := range cmds {
+		if fCmd, ok := cmd.(*redis.FloatCmd); ok {
+			val, _ := fCmd.Result()
+			scores[i] = val
+		}
+	}
+	return scores, nil
 }
 
 // ZCount compte le nombre d'éléments entre min et max score.
-func ZCount(ctx context.Context, key, min, max string) (int64, error) {
-	return redisgo.Rdb.ZCount(ctx, key, min, max).Result()
+func (c *Collection) ZCount(ctx context.Context, id any, min, max string) (int64, error) {
+	return c.Client.ZCount(ctx, c.Key(id), min, max).Result()
 }
 
 // ZCard donne la taille totale du set (nombre d'éléments).
-func ZCard(ctx context.Context, key string) (int64, error) {
-	return redisgo.Rdb.ZCard(ctx, key).Result()
+func (c *Collection) ZCard(ctx context.Context, id any) (int64, error) {
+	return c.Client.ZCard(ctx, c.Key(id)).Result()
 }
 
-// ZRevRangeByRanks utilise un Pipeline Redis pour récupérer une liste de rangs spécifiques
-// en un seul aller-retour TCP. Idéal pour extraire des éléments précis sans polluer la RAM.
-func ZRevRangeByRanks(ctx context.Context, key string, ranks []int64) ([]string, error) {
+// ZRevRangeByRanks utilise un Pipeline Redis pour récupérer une liste de rangs spécifiques.
+func (c *Collection) ZRevRangeByRanks(ctx context.Context, id any, ranks []int64) ([]string, error) {
 	if len(ranks) == 0 {
 		return nil, nil
 	}
 
-	pipe := redisgo.Rdb.Pipeline()
+	pipe := c.Client.Pipeline()
 	cmds := make([]*redis.StringSliceCmd, 0, len(ranks))
+	key := c.Key(id)
 
 	for _, rank := range ranks {
 		cmds = append(cmds, pipe.ZRevRange(ctx, key, rank, rank))
@@ -104,83 +193,107 @@ func ZRevRangeByRanks(ctx context.Context, key string, ranks []int64) ([]string,
 			results = append(results, res[0])
 		}
 	}
-
 	return results, nil
 }
 
-// zaddCapScript garantit l'atomicité de l'insertion et du nettoyage à X éléments.
-// TDD §3.3 : Utilise un script Lua pour éviter toute race condition.
-const zaddCapScript = `
-	local key = KEYS[1]
-	local score = tonumber(ARGV[1])
-	local member = ARGV[2]
-	local max_size = tonumber(ARGV[3])
+// ZRevRangeWithScores récupère une liste d'éléments triés avec leurs scores respectifs.
+func (c *Collection) ZRevRangeWithScores(ctx context.Context, id any, start, stop int64) ([]redis.Z, error) {
+	return c.Client.ZRevRangeWithScores(ctx, c.Key(id), start, stop).Result()
+}
 
-	redis.call('ZADD', key, score, member)
-	
-	local current_size = redis.call('ZCARD', key)
-	if current_size > max_size then
-	   redis.call('ZREMRANGEBYRANK', key, 0, current_size - max_size - 1)
-	end
-	
-	return redis.call('ZSCORE', key, member)
-`
+// ============================================================================
+// 3. FONCTIONS GLOBALES (LEGACY)
+// Ces fonctions sont maintenues temporairement pour ne pas casser la compilation
+// des Workers non-migrés. Elles devront être supprimées à l'Étape 6.
+// ============================================================================
 
-// ZAddWithCap insère un élément et plafonne le ZSET en une seule passe atomique via Lua.
+func ZAdd(ctx context.Context, key string, score float64, member interface{}) error {
+	return redisgo.Rdb.ZAdd(ctx, key, &redis.Z{Score: score, Member: member}).Err()
+}
+
+func ZIncrBy(ctx context.Context, key string, increment float64, member interface{}) error {
+	return redisgo.Rdb.ZIncrBy(ctx, key, increment, fmt.Sprintf("%v", member)).Err()
+}
+
+func ZRevRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
+	return redisgo.Rdb.ZRevRange(ctx, key, start, stop).Result()
+}
+
+func ZRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
+	return redisgo.Rdb.ZRange(ctx, key, start, stop).Result()
+}
+
+func ZRemRangeByRank(ctx context.Context, key string, start, stop int64) error {
+	return redisgo.Rdb.ZRemRangeByRank(ctx, key, start, stop).Err()
+}
+
+func ZScore(ctx context.Context, key string, member interface{}) (float64, error) {
+	return redisgo.Rdb.ZScore(ctx, key, fmt.Sprintf("%v", member)).Result()
+}
+
+func ZCount(ctx context.Context, key, min, max string) (int64, error) {
+	return redisgo.Rdb.ZCount(ctx, key, min, max).Result()
+}
+
+func ZCard(ctx context.Context, key string) (int64, error) {
+	return redisgo.Rdb.ZCard(ctx, key).Result()
+}
+
+func ZRevRangeByRanks(ctx context.Context, key string, ranks []int64) ([]string, error) {
+	if len(ranks) == 0 {
+		return nil, nil
+	}
+	pipe := redisgo.Rdb.Pipeline()
+	cmds := make([]*redis.StringSliceCmd, 0, len(ranks))
+	for _, rank := range ranks {
+		cmds = append(cmds, pipe.ZRevRange(ctx, key, rank, rank))
+	}
+	_, err := pipe.Exec(ctx)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	results := make([]string, 0, len(ranks))
+	for _, cmd := range cmds {
+		res, _ := cmd.Result()
+		if len(res) > 0 {
+			results = append(results, res[0])
+		}
+	}
+	return results, nil
+}
+
 func ZAddWithCap(ctx context.Context, key string, score float64, member any, maxSize int) error {
 	return redisgo.Rdb.Eval(ctx, zaddCapScript, []string{key}, score, member, maxSize).Err()
 }
 
-// ZRevRangeWithScores récupère une liste d'éléments triés avec leurs scores respectifs.
 func ZRevRangeWithScores(ctx context.Context, key string, start, stop int64) ([]redis.Z, error) {
 	return redisgo.Rdb.ZRevRangeWithScores(ctx, key, start, stop).Result()
 }
 
-// ============================================================================
-// PRIMITIVES LEXICOGRAPHIQUES - Pour la recherche / Auto-complétion
-// ============================================================================
-
-// ZAddLex ajoute un élément avec un score absolu de 0.
-// Indispensable pour que Redis trie uniquement sur la valeur de la chaîne (alphabétique).
 func ZAddLex(ctx context.Context, key string, member interface{}) error {
-	return redisgo.Rdb.ZAdd(ctx, key, &redis.Z{
-		Score:  0,
-		Member: member,
-	}).Err()
+	return redisgo.Rdb.ZAdd(ctx, key, &redis.Z{Score: 0, Member: member}).Err()
 }
 
-// ZRangeByLex cherche des éléments par préfixe (Auto-complétion).
-// Le préfixe "quent" cherchera de "[quent" jusqu'à "[quent\xff" (le caractère max).
 func ZRangeByLex(ctx context.Context, key string, prefix string, limit int64) ([]string, error) {
 	if prefix == "" {
 		return []string{}, nil
 	}
-
-	// Configuration de la recherche lexicographique pour Go-Redis
 	opt := &redis.ZRangeBy{
 		Min:   "[" + prefix,
 		Max:   "[" + prefix + "\xff",
 		Count: limit,
 	}
-
 	return redisgo.Rdb.ZRangeByLex(ctx, key, opt).Result()
 }
 
-// ZRem supprime un ou plusieurs membres d'un ZSET.
-// Complexité : O(M * log(N))
-// Utilisé pour retirer un commentaire supprimé du classement.
 func ZRem(ctx context.Context, key string, members ...interface{}) error {
 	return redisgo.Rdb.ZRem(ctx, key, members...).Err()
 }
 
-// Del supprime une ou plusieurs clés brutes de Redis.
-// Utilisé pour atomiser entièrement un ZSET, un SET d'idempotence, etc.
 func Del(ctx context.Context, keys ...string) error {
 	return redisgo.Rdb.Del(ctx, keys...).Err()
 }
 
-// ZScores abstrait la récupération de plusieurs scores en un seul aller-retour TCP (Pipeline).
-// Retourne un tableau de scores (0 si le membre n'existe pas).
 func ZScores(ctx context.Context, key string, members []string) ([]float64, error) {
 	if len(members) == 0 {
 		return nil, nil
@@ -193,19 +306,12 @@ func ZScores(ctx context.Context, key string, members []string) ([]float64, erro
 	if err != nil && err != redis.Nil {
 		return nil, err
 	}
-
 	scores := make([]float64, len(members))
 	for i, cmd := range cmds {
-		// Cast sécurisé pour extraire la valeur du FloatCmd
 		if fCmd, ok := cmd.(*redis.FloatCmd); ok {
 			val, _ := fCmd.Result()
 			scores[i] = val
 		}
 	}
 	return scores, nil
-}
-
-// ZRevRangeCollection récupère une liste d'éléments triés du plus grand score au plus petit via la Collection.
-func (c *Collection) ZRevRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
-	return c.Client.ZRevRange(ctx, key, start, stop).Result()
 }

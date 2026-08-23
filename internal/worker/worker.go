@@ -56,7 +56,6 @@ func runWorker(ctx context.Context, shardID int) {
 		// 2. Blocage absolu (0 CPU) via BLMPOP / BLPOP
 		// On limite la taille via MaxBatchSize (dynamique)
 		events, err := redis.PopSmartBatchBlocking(ctx, shardID, MaxBatchSize)
-
 		if err != nil {
 			log.Printf("⚠️ Worker %d: Erreur Redis: %v", shardID, err)
 			time.Sleep(1 * time.Second) // Protection anti-boucle infinie si Redis crashe
@@ -79,7 +78,7 @@ func runWorker(ctx context.Context, shardID int) {
 	}
 }
 
-// processBatch trie les événements et les envoie aux bases ET au cache_service
+// processBatch trie les événements et les envoie aux bases ET au cache algorithmique
 func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 
 	// 🛡️ BOUCLIER DE SÉCURITÉ ASYNCHRONE
@@ -100,7 +99,6 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 
 	// Étape 1 : Exécution Parallèle des bases de données (Mongo & Postgres)
 	done := make(chan bool)
-
 	go func() {
 		if len(mongoEvents) > 0 {
 			flushMongo(ctx, mongoEvents)
@@ -115,33 +113,32 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 		done <- true
 	}()
 
-	// 🛑 BARRIÈRE DE SYNCHRONISATION
+	// BARRIÈRE DE SYNCHRONISATION
 	// On DOIT attendre que la BDD ait validé les transactions sur le disque
-	// avant de mettre à jour le cache, sinon on lira des valeurs périmées.
+	// avant de mettre à jour le cache, sinon on lira des valeurs périmées !
 	<-done
 	<-done
 
-	// ✅ ÉTAPE 2 : MISE À JOUR DES CACHES (Object Cache L1 & Most Cache)
+	// ÉTAPE 2 : MISE À JOUR DES CACHES ALGORITHMIQUES
 	// À cet instant, on est certain que le disque est à jour.
 	if len(validEvents) > 0 {
-		// On lance les métiers de cache en parallèle
-		go updateCountersCache(ctx, validEvents) // Le Secrétaire (Object Cache)
-		go updateMostCache(ctx, validEvents)     // Le Cerveau (ZSETs et Recommandations)
-		go updateUserCache(ctx, validEvents)     // ✅ NOUVEAU : La Vitrine (Profil Utilisateur)
+
+		// Le Cerveau (ZSETs et Recommandations)
+		go updateMostCache(ctx, validEvents)
+
+		// Étape 3 : Fan-Out Social de masse (Distribution dans les boîtes aux lettres du Speed Cache)
+		// S'exécute de manière ultra-rapide en RAM juste après la validation BDD
+		handleSocialFanOut(ctx, validEvents)
+
+		// Étape 4 : Mise à jour du Graphe Sémantique (Émergence Collective)
+		// Crée les segments (arêtes) entre les tags co-occurrents via le modèle de Markov
+		handleGraphUpdate(ctx, validEvents)
 	}
-
-	// Étape 3 : Fan-Out Social de masse (Distribution dans les boîtes aux lettres du Speed Cache)
-	// S'exécute de manière ultra-rapide en RAM juste après la validation BDD
-	handleSocialFanOut(ctx, validEvents)
-
-	// Étape 4 : Mise à jour du Graphe Sémantique (Émergence Collective)
-	// Crée les segments (arêtes) entre les tags co-occurrents via le modèle de Markov
-	handleGraphUpdate(ctx, validEvents)
 }
 
 // purifyBatch agit comme un pare-feu asynchrone.
 // Il élimine les événements illégaux (ex: un Like sur un post privé) pour protéger
-// Postgres, Mongo, l'Object Cache et le Most Cache en un seul point de contrôle.
+// Postgres, Mongo, et le Most Cache en un seul point de contrôle.
 func purifyBatch(ctx context.Context, events []redis.AsyncEvent) []redis.AsyncEvent {
 	validEvents := make([]redis.AsyncEvent, 0, len(events))
 
@@ -158,7 +155,6 @@ func purifyBatch(ctx context.Context, events []redis.AsyncEvent) []redis.AsyncEv
 				TargetID int64 `json:"target_id"` // Historique
 				UserID   int64 `json:"user_id"`
 			}
-
 			if err := json.Unmarshal(jsonBytes, &payload); err == nil {
 				targetID := payload.TargetID
 				if payload.PostID != 0 {
@@ -167,7 +163,7 @@ func purifyBatch(ctx context.Context, events []redis.AsyncEvent) []redis.AsyncEv
 
 				if targetID != 0 && payload.UserID != 0 {
 					// VÉRIFICATION DES DROITS (Cascade L1 -> L2 -> L3)
-					// (getPostWithFallback est déjà défini dans most_cache_worker.go et accessible ici)
+					// (getPostWithFallback est défini dans most_cache_worker.go et accessible ici)
 					p, err := getPostWithFallback(ctx, targetID)
 
 					// Règle 1 : Post supprimé ou introuvable
@@ -192,6 +188,7 @@ func purifyBatch(ctx context.Context, events []redis.AsyncEvent) []redis.AsyncEv
 				}
 			}
 		}
+
 		// Si l'événement survit au pare-feu (ou si ce n'est pas une interaction), on l'accepte
 		validEvents = append(validEvents, e)
 	}

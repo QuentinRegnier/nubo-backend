@@ -58,13 +58,11 @@ func CreateUser(
 	}
 
 	var req auth_models.UserPayload
-	if input.Gender != nil {
-		g := *input.Gender
-		if g < 0 || g > 2 {
-			return auth_models.SignUpResponse{}, nubo_error.ErrInvalidGender
-		}
-		req.Sex = g
+
+	if input.Gender < 0 || input.Gender > 2 {
+		return auth_models.SignUpResponse{}, nubo_error.ErrInvalidGender
 	}
+	req.Sex = input.Gender // Affectation directe
 
 	// 2. GÉNÉRATION DES DONNÉES (La "Vérité" absolue)
 	// ---------------------------------------------------------
@@ -105,7 +103,7 @@ func CreateUser(
 	var sessions models.SessionsRequest
 	sessions.ID = sessionID
 	sessions.UserID = userID
-	sessions.DeviceToken = input.DeviceToken
+	sessions.FirebaseInstallationID = input.FirebaseInstallationID
 	sessions.DeviceInfo = input.DeviceInfo
 	sessions.IPHistory = []string{ipAddress}
 	sessions.LastJWT = ""
@@ -114,69 +112,28 @@ func CreateUser(
 	sessions.ToleranceTime = now.Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second)
 
 	// Génération des Tokens
-	sessions.MasterToken, err = pkg.GenerateToken(req.ID, sessions.DeviceToken, variables.MasterTokenExpirationSeconds)
+	sessions.MasterToken, err = pkg.GenerateToken(req.ID, sessions.FirebaseInstallationID, variables.MasterTokenExpirationSeconds)
 	if err != nil {
 		return auth_models.SignUpResponse{}, fmt.Errorf("internal nubo_error (token generation): %w", err)
 	}
-	sessions.CurrentSecret = security.DeriveNextSecret(sessions.DeviceToken, sessions.MasterToken, sessions.MasterToken, sessions.DeviceToken)
-	sessions.LastSecret = sessions.DeviceToken
+	sessions.CurrentSecret = security.DeriveNextSecret(sessions.FirebaseInstallationID, sessions.MasterToken, sessions.MasterToken, sessions.FirebaseInstallationID)
+	sessions.LastSecret = sessions.FirebaseInstallationID
 
-	newJWT, err := pkg.GenerateToken(req.ID, sessions.DeviceToken, variables.JWTExpirationSeconds)
+	newJWT, err := pkg.GenerateToken(req.ID, sessions.FirebaseInstallationID, variables.JWTExpirationSeconds)
 	if err != nil {
 		return auth_models.SignUpResponse{}, fmt.Errorf("internal nubo_error (jwt generation): %w", err)
 	}
 
-	// C. Hydratation du Payload UserSettings (Dynamique)
-
-	// Valeurs par défaut ultra-protectrices pour la plateforme
-	defaultPrivacy := user_settings_models.PrivacySettings{
-		ProfileVisibility:      0,     // Public par défaut pour l'esprit de la plateforme
-		PostVisibilityDefault:  0,     // Public par défaut
-		ConversationPermission: 0,     // Tout le monde
-		AllowTagging:           1,     // Réservé aux abonnés
-		AllowMentions:          0,     // Tout le monde
-		ShowOnlineStatus:       true,  // Dynamise la plateforme
-		ShowLocation:           false, // Masqué par défaut (sécurité physique)
-		SearchByEmailPhone:     false, // Non-trouvable (anonymat extérieur garanti)
-		AllowContentSharing:    false, // Interdiction de partager le contenu par défaut (sécurité naturiste)
-	}
-	if input.Privacy != nil {
-		defaultPrivacy = *input.Privacy
-	}
-
-	defaultNotifications := user_settings_models.NotificationSettings{
-		MasterPushEnabled:   true,
-		MasterEmailEnabled:  false,
-		NotifyNewFollower:   true,
-		NotifyFriendRequest: true,
-		NotifyMessages:      true,
-		NotifyLikes:         false, // Désactivé par défaut pour éviter le spam dopamine
-		NotifyComments:      true,
-		NotifyMentions:      true,
-		QuietHoursEnabled:   false,
-	}
-	if input.Notifications != nil {
-		defaultNotifications = *input.Notifications
-	}
-
-	lang := 0 // 0 = Auto/Système par défaut
-	if input.Language != nil {
-		lang = *input.Language
-	}
-
-	theme := 0 // 0 = Thème système par défaut
-	if input.Theme != nil {
-		theme = *input.Theme
-	}
-
+	// C. Hydratation du Payload UserSettings
+	// L'application envoie toujours l'objet Privacy et Notifications en entier (identités complètes)
 	settingsID := pkg.GenerateID()
 	settings := user_settings_models.UserSettingsPayload{
 		ID:                 settingsID,
 		UserID:             userID,
-		Privacy:            defaultPrivacy,
-		Notifications:      defaultNotifications,
-		Language:           lang,
-		Theme:              theme,
+		Privacy:            input.Privacy,
+		Notifications:      input.Notifications,
+		Language:           input.Language,
+		Theme:              input.Theme,
 		TelemetryVector:    nil, // Profil vierge
 		TelemetryTags:      nil, // Profil vierge
 		TelemetryTimestamp: 0,
@@ -195,17 +152,18 @@ func CreateUser(
 
 	// [SESSION CACHE] : Ajout de la session pour une validation rapide des futurs tokens
 	if err := cache_service.SetSessionInCache(ctx, sessions); err != nil {
-		log.Printf("⚠️ Warning: Echec USER Cache Redis Session: %v", err)
+		log.Printf("  Warning: Echec USER Cache Redis Session: %v", err)
 	}
 
 	// [SPEED CACHE] : Indexation de l'utilisateur pour l'auto-complétion O(1)
-	if err := cache_service.AddUserToSpeedCache(ctx, req); err != nil {
-		log.Printf("⚠️ Warning: Echec SPEED Cache Redis User: %v", err)
+	// CORRECTION : On passe l'objet `settings` fraîchement généré !
+	if err := cache_service.AddUserToSpeedCache(ctx, req, settings); err != nil {
+		log.Printf("  Warning: Echec SPEED Cache Redis User: %v", err)
 	}
 
 	// [USER SETTINGS CACHE] : Ajout des paramètres pour éviter un fallback au premier /sync
 	if err := object_cache_service.SetUserSettings(ctx, settings); err != nil {
-		log.Printf("⚠️ Warning: Echec USER Cache Redis UserSettings: %v", err)
+		log.Printf("  Warning: Echec USER Cache Redis UserSettings: %v", err)
 	}
 
 	// 4. PERSISTANCE ASYNCHRONE (Le "Write-Behind" vers L2/L3)
@@ -235,7 +193,7 @@ func CreateUser(
 					fmt.Println(err)
 				}
 			}(file)
-			err = media_service.UploadMedia(file, userID, mediaID)
+			err = media_service.UploadMedia(file, userID, mediaID, true)
 			if err != nil {
 				log.Printf("internal nubo_error (image upload): %v", err)
 			}

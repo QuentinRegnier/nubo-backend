@@ -6,6 +6,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
 )
@@ -25,6 +26,9 @@ func DeletePost(ctx context.Context, input post_models.DeletePostInput) error {
 	// ─────────────────────────────────────────────────────────────────────────
 	// A. Suppression du Post en RAM
 	_ = object_cache_service.DeletePostFromObjectCache(ctx, input.PostID)
+
+	// === NOUVEAU : PURGE DE LA TIMELINE UTILISATEUR ===
+	_ = cache_service.RemovePostFromUserProfile(ctx, post.UserID, input.PostID)
 
 	// B. Purge des Commentaires en RAM (ZSET + JSON L1)
 	object_cache_service.PurgePostCommentsFromL1(ctx, input.PostID)

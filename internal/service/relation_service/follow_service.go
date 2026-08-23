@@ -3,12 +3,14 @@ package relation_service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
 )
 
 // ToggleFollow gère l'abonnement et le désabonnement avec idempotence en RAM
@@ -63,5 +65,16 @@ func ToggleFollow(ctx context.Context, callerID int64, targetID int64, action st
 	}
 
 	// PartitionKey = targetID pour centraliser les requêtes sur le shard de la cible
-	return redis.EnqueueDB(ctx, payload.ID, targetID, redis.EntityRelation, dbAction, payload, redis.TargetAll)
+	err := redis.EnqueueDB(ctx, payload.ID, targetID, redis.EntityRelation, dbAction, payload, redis.TargetAll)
+
+	if err == nil && newState == 1 && currentState == 0 {
+		go func() {
+			err := notification_service.DispatchNotification(context.Background(), targetID, callerID, "relation_followed", callerID)
+			if err != nil {
+				_ = fmt.Errorf("ToggleFollow: failed to dispatch notification for follow from %d to %d: %v", callerID, targetID, err)
+			}
+		}()
+	}
+
+	return err
 }

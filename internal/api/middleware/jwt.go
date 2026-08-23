@@ -52,7 +52,7 @@ func JWTMiddleware() gin.HandlerFunc {
 		c.Set("userID", claims["sub"]) // ID de l'utilisateur
 
 		if dev, ok := claims["dev"].(string); ok {
-			c.Set("deviceToken", dev) // Identifiant unique de la session
+			c.Set("firebaseInstallationID", dev) // Identifiant unique de la session
 		} else {
 			// Si c'est un vieux token sans claim 'dev', on rejette par sécurité
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"nubo_error": "Token format obsolete (missing device info)"})

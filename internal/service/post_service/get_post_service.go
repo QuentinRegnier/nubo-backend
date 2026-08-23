@@ -85,27 +85,10 @@ func GetPosts(ctx context.Context, input post_models.GetPostInput) []post_models
 		// Règle D : Public (Visibility = 0) ou accès validé
 		// ─────────────────────────────────────────────────────────────────
 
-		var mediaURLs []string
+		// HYDRATATION DES MEDIAS ET SIGNATURE HMAC VIA LE DOMAINE DÉDIÉ
+		mediaURLs := media_service.FormatMediaViewsCascade(ctx, post.MediaIDs, post.UserID, post.ID, input.UserID)
 
-		// ⚡ HYDRATATION DES MEDIAS ET SIGNATURE HMAC
-		for _, mediaID := range post.MediaIDs {
-			// On récupère le fameux storage_path
-			mediaPayload, err := media_service.GetMediaCascade(ctx, mediaID)
-
-			// Si le média existe et n'a pas été supprimé par l'auteur
-			if err == nil && mediaPayload.Visibility {
-				// On génère l'URL avec le vrai storage_path !
-				signedURL := media_service.GenerateWatermarkedURL(
-					mediaPayload.StoragePath, // "users/12/posts/45/uuid.avif"
-					post.UserID,              // L'auteur
-					post.ID,                  // Le Post
-					input.UserID,             // Le Lecteur
-				)
-				mediaURLs = append(mediaURLs, signedURL)
-			}
-		}
-
-		// ⚡ HYDRATATION DES COMMENTAIRES (Via le service dédié optimisé)
+		// HYDRATATION DES COMMENTAIRES (Via le service dédié optimisé)
 		commentInput := comment_models.GetCommentsInput{
 			PostID: id,
 			UserID: input.UserID,
@@ -114,10 +97,9 @@ func GetPosts(ctx context.Context, input post_models.GetPostInput) []post_models
 		}
 		comments, _ := comment_service.GetComments(ctx, commentInput)
 
-		val := post
 		results = append(results, post_models.GetPostOutput{
 			PostID:   id,
-			Data:     &val,
+			Data:     post,      // Affectation directe, plus de pointeur
 			Media:    mediaURLs, // Le client reçoit les URLs prêtes à l'emploi
 			Comments: comments,  // ✅ Injection instantanée de l'arbre des commentaires
 		})

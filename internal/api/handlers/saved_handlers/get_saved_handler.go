@@ -23,23 +23,24 @@ import (
 // @Failure      401 {object} nubo_error.ErrorResponse "Non autorisé"
 // @Router       /saved [get]
 func GetSavedPostsHandler(c *gin.Context) {
-	// 1. Extraction sécurisée de l'appelant
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Non autorisé"})
 		return
 	}
 
-	// 2. Récupération des paramètres Query String
 	var input saved_models.GetSavedInput
 	if err := c.ShouldBindQuery(&input); err != nil {
 		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Invalid query parameters: " + err.Error()})
 		return
 	}
 
-	// 3. Appel au service métier (Cascade d'IDs puis Pipeline GetPosts)
+	// 🛡️ BOUCLIER DE PAGINATION
+	if input.Limit <= 0 || input.Limit > 100 {
+		input.Limit = 50
+	}
+
 	results := saved_service.GetSavedPosts(c.Request.Context(), userID, input.Limit, input.Offset)
 
-	// 4. Succès
 	c.JSON(http.StatusOK, results)
 }

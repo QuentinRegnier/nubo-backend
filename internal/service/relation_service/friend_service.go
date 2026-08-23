@@ -3,12 +3,14 @@ package relation_service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
 )
 
 // ToggleFriend gère les ajouts et retraits d'amis
@@ -66,5 +68,17 @@ func ToggleFriend(ctx context.Context, callerID int64, targetID int64, action st
 	}
 
 	// PartitionKey = targetID pour assurer l'ordre chronologique des requêtes sur ce profil
-	return redis.EnqueueDB(ctx, payload.ID, targetID, redis.EntityRelation, dbAction, payload, redis.TargetAll)
+	err := redis.EnqueueDB(ctx, payload.ID, targetID, redis.EntityRelation, dbAction, payload, redis.TargetAll)
+
+	// 5. Envoi notification (Sécurisé et uniquement si c'est un ajout d'ami)
+	if err == nil && action == "friend" {
+		go func() {
+			err := notification_service.DispatchNotification(context.Background(), targetID, callerID, "friendship_established", callerID)
+			if err != nil {
+				_ = fmt.Errorf("ToggleFriend: failed to dispatch notification for friendship from %d to %d: %v", callerID, targetID, err)
+			}
+		}()
+	}
+
+	return err
 }

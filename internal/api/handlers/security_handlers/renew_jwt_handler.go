@@ -107,10 +107,10 @@ func RenewJWT(c *gin.Context) {
 		return
 	}
 
-	// B. Récupération DeviceToken ("dev")
-	deviceToken, ok := claims["dev"].(string)
-	if !ok || deviceToken == "" {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "DeviceToken manquant dans le token"})
+	// B. Récupération firebaseInstallationIDs ("dev")
+	firebaseInstallationID, ok := claims["dev"].(string)
+	if !ok || firebaseInstallationID == "" {
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "FirebaseInstallationID manquant dans le token"})
 		return
 	}
 
@@ -125,8 +125,8 @@ func RenewJWT(c *gin.Context) {
 	}
 
 	// 5. Génération Nouveau JWT (Action Serveur)
-	// IMPORTANT : On remet le deviceToken dans le nouveau JWT pour la suite !
-	newJWT, err := pkg.GenerateToken(userID, deviceToken, variables.JWTExpirationSeconds)
+	// IMPORTANT : On remet le firebaseInstallationID dans le nouveau JWT pour la suite !
+	newJWT, err := pkg.GenerateToken(userID, firebaseInstallationID, variables.JWTExpirationSeconds)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur génération token"})
 		return
@@ -134,7 +134,7 @@ func RenewJWT(c *gin.Context) {
 
 	// 6. Rotation du Ratchet & Mise à jour Session
 	// On utilise le userID extrait du token et le authHeader comme "LastJWT"
-	if err := security.RotateRatchet(c, userID, clientSecret, authHeader); err != nil {
+	if err := security.RotateRatchet(c, userID, firebaseInstallationID, clientSecret, authHeader); err != nil {
 		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Session invalide ou Secret incorrect"})
 		return
 	}

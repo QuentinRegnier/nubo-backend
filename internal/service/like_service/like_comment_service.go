@@ -3,6 +3,7 @@ package like_service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
@@ -13,6 +14,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
 )
 
 // ToggleLike agit comme un routeur hybride : Tri synchrone en RAM + Persistance asynchrone.
@@ -50,6 +52,14 @@ func ToggleCommentLike(ctx context.Context, input like_models.LikeCommentInput) 
 		action = redis.ActionDelete
 	}
 
+	// === NOUVEAU : MISE À JOUR SYNCHRONE DE L'OBJET L1 ===
+	comment.LikeCount += int(delta)
+	if comment.LikeCount < 0 {
+		comment.LikeCount = 0
+	}
+	comment.Score += int(delta)
+	_ = object_cache_service.SetCommentInObjectCache(ctx, comment)
+
 	// On vérifie de manière opportuniste si le post est toujours Viral (en RAM)
 	if object_cache_service.IsPostInObjectCache(ctx, comment.PostID) {
 		// Magie Redis : Incrémentation atomique sans conflit possible
@@ -68,7 +78,18 @@ func ToggleCommentLike(ctx context.Context, input like_models.LikeCommentInput) 
 	}
 
 	// Envoi à la file d'attente (Le counter_worker fera le +1 sur le JSON, Mongo/Postgres sur le disque)
-	return redis.EnqueueDB(ctx, payload.ID, comment.PostID, redis.EntityLike, action, payload, redis.TargetAll)
+	err = redis.EnqueueDB(ctx, payload.ID, comment.PostID, redis.EntityLike, action, payload, redis.TargetAll)
+
+	if err == nil && input.Action == "like" {
+		go func() {
+			err := notification_service.DispatchNotification(context.Background(), comment.UserID, input.UserID, "comment_liked", comment.ID)
+			if err != nil {
+				_ = fmt.Errorf("ToggleCommentLike: failed to dispatch notification for comment %s: %v", comment.ID, err)
+			}
+		}()
+	}
+
+	return err
 }
 
 // getCommentCascade est le fallback local ultra-rapide pour hydrater l'objet métier

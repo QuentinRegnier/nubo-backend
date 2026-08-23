@@ -1,145 +1,142 @@
 package websocket
 
 import (
-	"crypto/rand"
-	"encoding/hex"
-	"log"
-	"sync"
+	"context"
+	"fmt"
+	"strings"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/gorilla/websocket"
+	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/go-redis/redis/v8"
 )
 
-// generateMessageID crée un ID unique pour chaque message
-func generateMessageID() string {
-	b := make([]byte, 8) // 8 octets → 16 caractères hex
-	if _, err := rand.Read(b); err != nil {
-		return "msg-fallback" // fallback si erreur improbable
-	}
-	return hex.EncodeToString(b)
+// BroadcastMessage est l'enveloppe interne pour transférer l'écoute Redis vers la boucle locale
+type BroadcastMessage struct {
+	ChannelType string // "user" ou "community"
+	TargetID    int64
+	Payload     []byte
 }
 
-// ---------------- Clients ----------------
-
-type Client struct {
-	conn *websocket.Conn
-	send chan []byte
+type CommunitySubscription struct {
+	Client      *Client
+	CommunityID int64
 }
-
-// ---------------- Hub ----------------
 
 type Hub struct {
-	clients    map[*Client]bool
-	register   chan *Client
-	unregister chan *Client
-	broadcast  chan []byte
-	mu         sync.Mutex
+	// Mode "Fan-out" (Multi-Device)
+	Clients map[int64]map[*Client]bool
 
-	channel string
+	// Mode "Twitch" (Duplication RAM)
+	Communities map[int64]map[*Client]bool
+
+	Register           chan *Client
+	Unregister         chan *Client
+	SubscribeCommunity chan CommunitySubscription
+
+	// SEULE voie autorisée pour ordonner l'envoi d'un message (Anti Race-Condition)
+	BroadcastRoute chan BroadcastMessage
+
+	PubSub *redis.PubSub
 }
 
-// NewHub crée un nouveau Hub et lance l'écoute du flux Redis
-func NewHub() *Hub {
-	h := &Hub{
-		clients:    make(map[*Client]bool),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-		broadcast:  make(chan []byte),
-		channel:    "nubo-websocket",
+var GlobalHub *Hub
+
+func InitHub() {
+	GlobalHub = &Hub{
+		Clients:            make(map[int64]map[*Client]bool),
+		Communities:        make(map[int64]map[*Client]bool),
+		Register:           make(chan *Client),
+		Unregister:         make(chan *Client),
+		SubscribeCommunity: make(chan CommunitySubscription),
+		BroadcastRoute:     make(chan BroadcastMessage, 2048), // Buffer haute capacité
+		PubSub:             redisgo.Rdb.Subscribe(context.Background()),
 	}
 
-	// Utilise la fonction SubscribeFlux pour recevoir les messages
-	go h.listenFlux()
-	return h
+	go GlobalHub.Run()
+	go GlobalHub.ListenRedis()
 }
 
-// listenFlux s'abonne au flux Redis et distribue les messages aux clients
-func (h *Hub) listenFlux() {
-	ch, cancel := redisgo.SubscribeFlux(redis.Rdb, h.channel)
-	defer cancel()
-
+// ListenRedis capte les événements du réseau global et les pousse dans le sas d'attente
+func (h *Hub) ListenRedis() {
+	ch := h.PubSub.Channel()
 	for msg := range ch {
-		h.mu.Lock()
-		for client := range h.clients {
-			select {
-			case client.send <- msg:
-			default:
-				close(client.send)
-				delete(h.clients, client)
-			}
+		parts := strings.Split(msg.Channel, ":")
+		if len(parts) != 3 {
+			continue
 		}
-		h.mu.Unlock()
+
+		channelType := parts[1] // "user" ou "community"
+		var targetID int64
+		_, _ = fmt.Sscanf(parts[2], "%d", &targetID)
+
+		h.BroadcastRoute <- BroadcastMessage{
+			ChannelType: channelType,
+			TargetID:    targetID,
+			Payload:     []byte(msg.Payload),
+		}
 	}
 }
 
-// Run démarre la boucle principale du hub pour gérer l'inscription/désinscription et la diffusion
+// Run est l'unique boucle autorisée à muter les maps et écrire dans client.Send
 func (h *Hub) Run() {
 	for {
 		select {
-		case client := <-h.register:
-			h.mu.Lock()
-			h.clients[client] = true
-			h.mu.Unlock()
-			log.Println("Client registered")
-
-		case client := <-h.unregister:
-			h.mu.Lock()
-			if _, ok := h.clients[client]; ok {
-				delete(h.clients, client)
-				close(client.send)
-				log.Println("Client unregistered")
+		case client := <-h.Register:
+			if _, ok := h.Clients[client.UserID]; !ok {
+				h.Clients[client.UserID] = make(map[*Client]bool)
+				// Abonnement dynamique au cluster
+				channel := fmt.Sprintf("channel:user:%d", client.UserID)
+				_ = h.PubSub.Subscribe(context.Background(), channel)
 			}
-			h.mu.Unlock()
+			h.Clients[client.UserID][client] = true
 
-		case message := <-h.broadcast:
-			// Publie le message sur le flux Redis avec TTL individuel (ex: 1s)
-			messageID := generateMessageID() // fonction pour créer un ID unique
-			err := redisgo.PushFluxWithTTL(redis.Rdb, h.channel, messageID, message, redisgo.DefaultFluxTTL)
-			if err != nil {
-				log.Println("Erreur PushFluxWithTTL:", err)
+		case client := <-h.Unregister:
+			if connections, ok := h.Clients[client.UserID]; ok {
+				if _, ok := connections[client]; ok {
+					delete(connections, client)
+					close(client.Send)
+
+					if len(connections) == 0 {
+						delete(h.Clients, client.UserID)
+						// Désabonnement réseau pour économiser le CPU Redis
+						channel := fmt.Sprintf("channel:user:%d", client.UserID)
+						_ = h.PubSub.Unsubscribe(context.Background(), channel)
+					}
+				}
+			}
+
+		case sub := <-h.SubscribeCommunity:
+			if _, ok := h.Communities[sub.CommunityID]; !ok {
+				h.Communities[sub.CommunityID] = make(map[*Client]bool)
+				channel := fmt.Sprintf("channel:community:%d", sub.CommunityID)
+				_ = h.PubSub.Subscribe(context.Background(), channel)
+			}
+			h.Communities[sub.CommunityID][sub.Client] = true
+
+		case msg := <-h.BroadcastRoute:
+			if msg.ChannelType == "user" {
+				if connections, ok := h.Clients[msg.TargetID]; ok {
+					for client := range connections {
+						select {
+						case client.Send <- msg.Payload:
+						default:
+							// Le client a un buffer plein (plantage réseau), on le coupe
+							close(client.Send)
+							delete(connections, client)
+						}
+					}
+				}
+			} else if msg.ChannelType == "community" {
+				if connections, ok := h.Communities[msg.TargetID]; ok {
+					for client := range connections {
+						select {
+						case client.Send <- msg.Payload:
+						default:
+							close(client.Send)
+							delete(connections, client)
+						}
+					}
+				}
 			}
 		}
-	}
-}
-
-// ---------------- Clients WS ----------------
-
-// ReadPump lit les messages d’un client et les envoie au hub
-func (c *Client) ReadPump(hub *Hub) {
-	defer func() {
-		hub.unregister <- c
-		err := c.conn.Close()
-		if err != nil {
-			return
-		}
-	}()
-
-	for {
-		_, msg, err := c.conn.ReadMessage()
-		if err != nil {
-			log.Println("Read nubo_error:", err)
-			break
-		}
-
-		// TODO: sauvegarder msg en base (Postgres/Mongo)
-
-		// Envoie le message aux autres clients via le hub
-		hub.broadcast <- msg
-	}
-}
-
-// WritePump envoie les messages du hub au client
-func (c *Client) WritePump() {
-	for msg := range c.send {
-		err := c.conn.WriteMessage(websocket.TextMessage, msg)
-		if err != nil {
-			log.Println("Write nubo_error:", err)
-			break
-		}
-	}
-	err := c.conn.Close()
-	if err != nil {
-		return
 	}
 }

@@ -17,15 +17,14 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// Login prend désormais en charge le tuple de retour incluant l'URL de l'avatar
+// Login retourne uniquement les tokens et l'ID utilisateur. Les métadonnées sont déléguées à /sync.
 func Login(
 	input auth_models.LoginInput,
 	IPAddress []string,
-) (auth_models.UserPayload, models.SessionsRequest, string, string, []float32, []string, int64, error) {
+) (int64, models.SessionsRequest, string, error) {
 	fmt.Printf("\n🚀 SERVICE LOGIN APPELÉ pour l'identifiant : [%s]\n", input.Email)
 
 	var user auth_models.UserPayload
@@ -34,28 +33,23 @@ func Login(
 	ctx := context.Background()
 
 	// -------------------------------------------------------------------------
-	// 1. CHARGEMENT DE L'UTILISATEUR (Bases de Persistance uniquement)
+	// 1. CHARGEMENT DE L'UTILISATEUR (L2 -> L3)
 	// -------------------------------------------------------------------------
-
-	// A. Requête vers MongoDB (Niveau L2)
 	user, err = mongo.MongoLoadUser(-1, "", input.Email, "")
 	if err != nil {
 		fmt.Printf("🔸 Mongo: utilisateur absent ou erreur (%v)\n", err)
 	}
 
-	// B. Fallback vers PostgreSQL (Niveau L3)
 	if user.ID == 0 {
-		fmt.Println("🔸 Passage de contrôle à PostgreSQL...")
 		user, err = postgresgo.FuncLoadUser(-1, "", input.Email, "")
 		if err != nil {
-			return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nil, nil, -1, fmt.Errorf("postgres critical failure: %w", err)
+			return -1, models.SessionsRequest{}, "", fmt.Errorf("postgres critical failure: %w", err)
 		}
 
 		if user.ID == 0 {
-			return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nil, nil, -1, nubo_error.ErrNotFound
+			return -1, models.SessionsRequest{}, "", nubo_error.ErrNotFound
 		}
 
-		// Alignement de synchronisation asynchrone pour consolider le stockage Mongo
 		if errQueue := redis.EnqueueDB(ctx, user.ID, 0, redis.EntityUser, redis.ActionCreate, &user, redis.TargetMongo); errQueue != nil {
 			log.Printf("⚠️ Warning: Échec de la mise en file d'attente MongoDB pour l'utilisateur: %v", errQueue)
 		}
@@ -65,14 +59,14 @@ func Login(
 	// 2. CONTRÔLE SÉCURITÉ ET STATUT DU COMPTE
 	// -------------------------------------------------------------------------
 	if strings.TrimSpace(user.PasswordHash) != strings.TrimSpace(input.PasswordHash) {
-		return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nil, nil, -1, nubo_error.ErrInvalidCredentials
+		return -1, models.SessionsRequest{}, "", nubo_error.ErrInvalidCredentials
 	}
 
 	if user.Desactivated || user.Banned {
 		if user.Desactivated {
-			return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nil, nil, -1, nubo_error.ErrDesactivated
+			return -1, models.SessionsRequest{}, "", nubo_error.ErrDesactivated
 		}
-		return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nil, nil, -1, nubo_error.ErrBanned
+		return -1, models.SessionsRequest{}, "", nubo_error.ErrBanned
 	}
 
 	// -------------------------------------------------------------------------
@@ -80,18 +74,16 @@ func Login(
 	// -------------------------------------------------------------------------
 	now := time.Now().UTC()
 	isNewSession := false
-	deviceToken := input.DeviceToken
+	firebaseInstallationID := input.FirebaseInstallationID
 
-	// Recherche de session active (User Cache L1 -> Mongo L2 -> Postgres L3)
-	sessions, _ = cache_service.LoadSessionFromCache(ctx, user.ID, deviceToken, "")
+	sessions, _ = cache_service.LoadSessionFromCache(ctx, user.ID, firebaseInstallationID, "")
 	if sessions.ID == 0 {
-		sessions, _ = mongo.MongoLoadSession(user.ID, deviceToken, "", "")
+		sessions, _ = mongo.MongoLoadSession(user.ID, firebaseInstallationID, "", "")
 		if sessions.ID == 0 {
-			sessions, _ = postgresgo.FuncLoadSession(-1, user.ID, deviceToken, "")
+			sessions, _ = postgresgo.FuncLoadSession(-1, user.ID, firebaseInstallationID, "")
 		}
 	}
 
-	// Traitement structurel de la session
 	if sessions.ID != 0 {
 		sessions.DeviceInfo = input.DeviceInfo
 		if len(IPAddress) > 0 && !pkg.Exists(sessions.IPHistory, IPAddress[0]) {
@@ -102,55 +94,49 @@ func Login(
 		sessions.ID = pkg.GenerateID()
 		sessions.UserID = user.ID
 		sessions.CreatedAt = now
-		sessions.DeviceToken = deviceToken
+		sessions.FirebaseInstallationID = firebaseInstallationID
 		sessions.DeviceInfo = input.DeviceInfo
 
 		if len(IPAddress) > 0 {
 			sessions.IPHistory = []string{IPAddress[0]}
 		} else {
-			return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nil, nil, -1, nubo_error.ErrInvalidIPAddress
+			return -1, models.SessionsRequest{}, "", nubo_error.ErrInvalidIPAddress
 		}
 	}
 
-	// Algorithme de rotation Ratchet (Cryptographie)
 	sessions.ExpiresAt = now.Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
-	sessions.MasterToken, err = pkg.GenerateToken(user.ID, deviceToken, variables.MasterTokenExpirationSeconds)
+	sessions.MasterToken, err = pkg.GenerateToken(user.ID, firebaseInstallationID, variables.MasterTokenExpirationSeconds)
 	if err != nil {
-		return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nil, nil, -1, fmt.Errorf("token generation error: %w", err)
+		return -1, models.SessionsRequest{}, "", fmt.Errorf("token generation error: %w", err)
 	}
 
-	sessions.CurrentSecret = security.DeriveNextSecret(sessions.DeviceToken, sessions.MasterToken, sessions.MasterToken, sessions.DeviceToken)
-	sessions.LastSecret = sessions.DeviceToken
+	sessions.CurrentSecret = security.DeriveNextSecret(sessions.FirebaseInstallationID, sessions.MasterToken, sessions.MasterToken, sessions.FirebaseInstallationID)
+	sessions.LastSecret = sessions.FirebaseInstallationID
 	sessions.LastJWT = ""
 	sessions.ToleranceTime = time.Time{}
 
-	newJWT, err := pkg.GenerateToken(user.ID, sessions.DeviceToken, variables.JWTExpirationSeconds)
+	newJWT, err := pkg.GenerateToken(user.ID, sessions.FirebaseInstallationID, variables.JWTExpirationSeconds)
 	if err != nil {
-		return auth_models.UserPayload{}, models.SessionsRequest{}, "", "", nil, nil, -1, fmt.Errorf("jwt generation error: %w", err)
+		return -1, models.SessionsRequest{}, "", fmt.Errorf("jwt generation error: %w", err)
 	}
 
 	// -------------------------------------------------------------------------
 	// 4. SYNCHRONISATION DES COUCHES DE CACHE L1 & ALIGNEMENT DE VITESSE
 	// -------------------------------------------------------------------------
-
-	// A. [SESSION CACHE] : Sauvegarde immédiate en RAM
 	if errSet := cache_service.SetSessionInCache(ctx, sessions); errSet != nil {
 		log.Printf("⚠️ Warning: Échec mise en cache de la Session %d : %v", sessions.ID, errSet)
 	}
 
-	// B. [USER CACHE TIMELINE] : Validation systématique de l'existence de la grille de posts (ZSET)
-	// Utilisation de la clé d'index "profile" pour correspondre au moteur de lecture
 	timelineKey := fmt.Sprintf("profile:posts:zset:%d", user.ID)
 	timelineExists, errTimeline := redis.Exists(ctx, timelineKey)
 	if errTimeline != nil || !timelineExists {
-		// Initialisation du bouchon anti-martèlement (-1) en cas d'absence
 		_ = cache_service.MarkUserTimelineEmpty(ctx, user.ID)
 	}
 
-	// C. [SPEED CACHE] : Garantie de la présence des métadonnées compressées publiques (UserLite)
+	settings, _ := object_cache_service.GetUserSettingsCascade(ctx, user.ID)
+
 	var liteUser models.UserLiteRequest
 	if errSpeed := redis.UsersLite.GetObject(ctx, user.ID, &liteUser); errSpeed != nil {
-		// Reconstruction instantanée de la structure Lite en cas de nettoyage ou d'expulsion de la RAM
 		uReq := auth_models.UserPayload{
 			ID:               user.ID,
 			Username:         user.Username,
@@ -158,23 +144,7 @@ func Login(
 			LastName:         user.LastName,
 			ProfilePictureID: user.ProfilePictureID,
 		}
-		_ = cache_service.AddUserToSpeedCache(ctx, uReq)
-	}
-
-	// 🔐 D. [PROFILE PICTURE URL] : Extraction du storage path et signature du lien
-	var profilePictureURL string
-	if user.ProfilePictureID != 0 {
-		// On interroge la cascade L1->L2->L3 pour obtenir le storage path de l'avatar
-		mediaPayload, errMedia := media_service.GetMediaCascade(ctx, user.ProfilePictureID)
-		if errMedia == nil && mediaPayload.Visibility {
-			// On génère l'URL signée avec le lecteur, l'auteur (lui-même) et l'ID de post à 0
-			profilePictureURL = media_service.GenerateWatermarkedURL(
-				mediaPayload.StoragePath,
-				user.ID,
-				0,
-				user.ID,
-			)
-		}
+		_ = cache_service.AddUserToSpeedCache(ctx, uReq, settings)
 	}
 
 	// -------------------------------------------------------------------------
@@ -189,37 +159,5 @@ func Login(
 		log.Printf("  CRITICAL: Rupture du Write-Behind pour la session %d : %v", sessions.ID, err)
 	}
 
-	// -------------------------------------------------------------------------
-	// 6. RESTAURATION DU CONTEXTE DE RECOMMANDATION (Vecteur Edge-to-Cloud)
-	// -------------------------------------------------------------------------
-	var telemetryVector []float32
-	var telemetryTags []string
-	var telemetryTimestamp int64
-
-	// Tentative de récupération en cascade (L1 -> L2 -> L3) via les UserSettings
-	settings, errSettings := object_cache_service.GetUserSettingsCascade(ctx, user.ID)
-
-	if errSettings == nil && settings.ID != 0 {
-		// On restaure les données depuis la base
-		telemetryVector = settings.TelemetryVector
-		telemetryTags = settings.TelemetryTags
-		telemetryTimestamp = settings.TelemetryTimestamp
-
-		// On s'assure que les micro-caches L1 individuels de la télémétrie sont bien peuplés.
-		// C'est vital pour que les workers C/Go du Feed Algorithmique puissent les lire en O(1) !
-		if len(telemetryVector) > 0 {
-			_ = cache_service.SetTelemetryVector(ctx, user.ID, telemetryVector)
-		}
-		if len(telemetryTags) > 0 {
-			_ = cache_service.SetTelemetryTags(ctx, user.ID, telemetryTags)
-		}
-		if telemetryTimestamp > 0 {
-			_ = cache_service.SetTelemetryTimestamp(ctx, user.ID, telemetryTimestamp)
-		}
-	} else {
-		log.Printf("  Info: Cold Start algorithmique pour l'utilisateur %d (aucun vecteur trouvé)", user.ID)
-	}
-
-	// Retour du super-tuple de connexion
-	return user, sessions, newJWT, profilePictureURL, telemetryVector, telemetryTags, telemetryTimestamp, nil
+	return user.ID, sessions, newJWT, nil
 }

@@ -7,7 +7,9 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 )
 
 // UpdatePrivacy modifie les paramètres de confidentialité et délègue la sauvegarde au Write-Behind
@@ -18,34 +20,17 @@ func UpdatePrivacy(ctx context.Context, userID int64, input user_settings_models
 		return errors.New("paramètres de l'utilisateur introuvables")
 	}
 
-	// 2. Fusion des champs (on écrase uniquement si le pointeur n'est pas nul)
-	if input.ProfileVisibility != nil {
-		settings.Privacy.ProfileVisibility = *input.ProfileVisibility
-	}
-	if input.PostVisibilityDefault != nil {
-		settings.Privacy.PostVisibilityDefault = *input.PostVisibilityDefault
-	}
-	if input.ConversationPermission != nil {
-		settings.Privacy.ConversationPermission = *input.ConversationPermission
-	}
-	if input.AllowTagging != nil {
-		settings.Privacy.AllowTagging = *input.AllowTagging
-	}
-	if input.AllowMentions != nil {
-		settings.Privacy.AllowMentions = *input.AllowMentions
-	}
-	if input.ShowOnlineStatus != nil {
-		settings.Privacy.ShowOnlineStatus = *input.ShowOnlineStatus
-	}
-	if input.ShowLocation != nil {
-		settings.Privacy.ShowLocation = *input.ShowLocation
-	}
-	if input.SearchByEmailPhone != nil {
-		settings.Privacy.SearchByEmailPhone = *input.SearchByEmailPhone
-	}
-	if input.AllowContentSharing != nil {
-		settings.Privacy.AllowContentSharing = *input.AllowContentSharing
-	}
+	// 2. Remplacement intégral (Méthode PUT)
+	settings.Privacy.ProfileVisibility = input.ProfileVisibility
+	settings.Privacy.PostVisibilityDefault = input.PostVisibilityDefault
+	settings.Privacy.ConversationPermission = input.ConversationPermission
+	settings.Privacy.AddGroupPermission = input.AddGroupPermission
+	settings.Privacy.AllowTagging = input.AllowTagging
+	settings.Privacy.AllowMentions = input.AllowMentions
+	settings.Privacy.ShowOnlineStatus = input.ShowOnlineStatus
+	settings.Privacy.ShowLocation = input.ShowLocation
+	settings.Privacy.SearchByEmailPhone = input.SearchByEmailPhone
+	settings.Privacy.AllowContentSharing = input.AllowContentSharing
 
 	settings.UpdatedAt = time.Now().UTC()
 
@@ -54,6 +39,17 @@ func UpdatePrivacy(ctx context.Context, userID int64, input user_settings_models
 		return err
 	}
 
-	// 4. Persistance Asynchrone (Write-Behind vers Mongo et Postgres avec l'objet complet)
+	// === NOUVEAU : MISE À JOUR SYNCHRONE DU SPEED CACHE ===
+	_ = cache_service.UpdateUserSpeedCachePrivacy(
+		ctx,
+		settings.UserID,
+		settings.Privacy.ConversationPermission,
+		settings.Privacy.AddGroupPermission,
+	)
+
+	// 4. Envoi notification
+	_ = realtime_service.DistributeToUsers(ctx, "user.settings_updated", settings, []int64{userID})
+
+	// 5. Persistance Asynchrone (Write-Behind vers Mongo et Postgres avec l'objet complet)
 	return redis.EnqueueDB(ctx, settings.ID, userID, redis.EntityUserSettings, redis.ActionUpdate, settings, redis.TargetAll)
 }

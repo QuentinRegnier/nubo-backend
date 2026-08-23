@@ -1,10 +1,7 @@
 package post_handlers
 
 import (
-	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
@@ -42,53 +39,32 @@ import (
 // @Failure      401  {object}  domain.ErrorResponse "Session expirée ou utilisateur non identifié"
 // @Router       /post [get]
 func GetPostHandler(c *gin.Context) {
-	// 1. Authentification
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		fmt.Printf("❌ Erreur authentification : %v\n", err)
 		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
 		return
 	}
 
-	// 2. Récupération des données (Parsing du query param 'ids')
-	idsParam := c.Query("ids")
-	if idsParam == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Le paramètre 'ids' est requis"})
+	var input post_models.GetPostInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Format JSON invalide ou post_ids manquants"})
 		return
 	}
 
-	// Extraction et conversion de la liste des IDs
-	strIDs := strings.Split(idsParam, ",")
-	if len(strIDs) > 50 {
-		// Bouclier statique : on empêche de demander 10 000 posts d'un coup
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Limite maximum fixée à 50 IDs par requête"})
+	input.PostIDs = pkg.SliceUniqueInt64(input.PostIDs)
+
+	// 🛡️ BOUCLIER DE BATCH (Max 50 IDs d'un coup)
+	if len(input.PostIDs) > 50 {
+		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Limite de 50 posts simultanés dépassée"})
+		return
+	}
+	if len(input.PostIDs) == 0 {
+		c.JSON(http.StatusOK, []post_models.GetPostOutput{})
 		return
 	}
 
-	var postIDs []int64
-	for _, strID := range strIDs {
-		id, errParse := strconv.ParseInt(strings.TrimSpace(strID), 10, 64)
-		if errParse == nil && id > 0 {
-			postIDs = append(postIDs, id)
-		}
-	}
+	input.UserID = userID
 
-	if len(postIDs) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Aucun ID valide fourni"})
-		return
-	}
-
-	// Nettoyage des doublons potentiels envoyés par le client
-	postIDs = pkg.SliceUniqueInt64(postIDs)
-
-	input := post_models.GetPostInput{
-		UserID:  userID,
-		PostIDs: postIDs,
-	}
-
-	// 3. 4. 5. & 6. Envoi dans le service, vérification des droits et empaquetage
 	results := post_service.GetPosts(c.Request.Context(), input)
-
-	// 7. Renvoi des données
 	c.JSON(http.StatusOK, results)
 }

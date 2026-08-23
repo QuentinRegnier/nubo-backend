@@ -84,8 +84,7 @@ func GetRankedPosts(ctx context.Context, rankType string, offset int64, limit in
 	}
 
 	// NOUVEAU : La clé est générée dynamiquement avec la nomenclature stricte ou algorithmique
-	key := fmt.Sprintf("most_cache:%s", rankType)
-	return fetchAndHydrateFromZSET(ctx, key, offset, limit)
+	return fetchAndHydrateFromCollection(ctx, redis.RankedPosts, rankType, offset, limit)
 }
 func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([]post_models.PostPayload, error) {
 	if offset >= variables.MaxTagElements {
@@ -116,22 +115,19 @@ func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([
 		return posts, nil
 	}
 
-	key := fmt.Sprintf("most_cache:idx:tag:%s", slug)
-	return fetchAndHydrateFromZSET(ctx, key, offset, limit)
+	return fetchAndHydrateFromCollection(ctx, redis.TagPosts, slug, offset, limit)
 }
 
 // UpdateTrendZSETs distribue le score de tendance global dans les différents rayons (buckets) Redis.
 // C'est le bras armé de la persistance algorithmique (TDD §3.4).
 func UpdateTrendZSETs(ctx context.Context, postID int64, score float64, hashtags []string, date, hour, week string) error {
 	// 1. Bucket Horaire Global
-	hourlyKey := fmt.Sprintf(variables.RedisKeyTrendGlobalHourly, hour)
-	if err := redis.ZAddWithCap(ctx, hourlyKey, score, postID, variables.TDDMaxZSET); err != nil {
+	if err := redis.TrendGlobalHourly.ZAddWithCap(ctx, hour, score, postID, variables.TDDMaxZSET); err != nil {
 		return fmt.Errorf("zadd hourly: %w", err)
 	}
 
 	// 2. Bucket Journalier Global
-	dailyKey := fmt.Sprintf(variables.RedisKeyTrendGlobalDaily, date)
-	if err := redis.ZAddWithCap(ctx, dailyKey, score, postID, variables.TDDMaxZSET); err != nil {
+	if err := redis.TrendGlobalDaily.ZAddWithCap(ctx, date, score, postID, variables.TDDMaxZSET); err != nil {
 		return fmt.Errorf("zadd daily: %w", err)
 	}
 
@@ -145,16 +141,10 @@ func UpdateTrendZSETs(ctx context.Context, postID int64, score float64, hashtags
 		}
 
 		for slug := range officialTags {
-			// Bucket Journalier du Tag (Injection de slug + date)
-			tagDailyKey := fmt.Sprintf(variables.RedisKeyTrendTagDaily, slug, date)
-			_ = redis.ZAddWithCap(ctx, tagDailyKey, score, postID, variables.TDDMaxZSET)
-
-			// Bucket Hebdomadaire du Tag (Injection de slug + week)
-			tagWeeklyKey := fmt.Sprintf(variables.RedisKeyTrendTagWeekly, slug, week)
-			_ = redis.ZAddWithCap(ctx, tagWeeklyKey, score, postID, variables.TDDMaxZSET)
-
-			// Leaderboard Global des Hashtags (Le slug est le membre, le score pousse le hashtag)
-			_ = redis.ZAddWithCap(ctx, variables.RedisKeyHashtagLeaderboard, score, slug, variables.TDDMaxZSET)
+			// On utilise l'ID composite propre (slug:date) que la Collection encapsulera
+			_ = redis.TrendTagDaily.ZAddWithCap(ctx, fmt.Sprintf("%s:%s", slug, date), score, postID, variables.TDDMaxZSET)
+			_ = redis.TrendTagWeekly.ZAddWithCap(ctx, fmt.Sprintf("%s:%s", slug, week), score, postID, variables.TDDMaxZSET)
+			_ = redis.HashtagLeaderboard.ZAddWithCap(ctx, "global", score, slug, variables.TDDMaxZSET)
 		}
 	}
 

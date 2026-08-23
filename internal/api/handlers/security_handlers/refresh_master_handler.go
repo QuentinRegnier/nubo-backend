@@ -38,7 +38,7 @@ import (
 // @Description
 // @Description  **Actions Serveur :**
 // @Description  * Génération de `NewMasterToken` et `NewJWT`.
-// @Description  * Reset du Ratchet (Secret 0 = NewMaster, Secret 1 = DeviceToken).
+// @Description  * Reset du Ratchet (Secret 0 = NewMaster, Secret 1 = FirebaseInstallationID).
 // @Description  * Mise à jour asynchrone de Postgres et Mongo pour persister le nouveau MasterToken.
 // @Description
 // @Tags         auth
@@ -110,7 +110,7 @@ func RefreshMaster(c *gin.Context) {
 	var sessionFound bool
 
 	// A. Essai Cache L1
-	// Note: LoadSessionFromCache prend (ctx, userID, deviceToken, masterToken, currentSecret)
+	// Note: LoadSessionFromCache prend (ctx, userID, firebaseInstallationID, masterToken, currentSecret)
 	if s, err := cache_service.LoadSessionFromCache(c, input.UserID, "", input.MasterToken); err == nil && s.ID != 0 {
 		sessionRaw = s
 		sessionFound = true
@@ -155,20 +155,20 @@ func RefreshMaster(c *gin.Context) {
 	}
 
 	// 6. Génération des Nouveaux Credentials
-	newMasterToken, err := pkg.GenerateToken(input.UserID, sessionRaw.DeviceToken, variables.MasterTokenExpirationSeconds)
+	newMasterToken, err := pkg.GenerateToken(input.UserID, sessionRaw.FirebaseInstallationID, variables.MasterTokenExpirationSeconds)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur génération MasterToken"})
 		return
 	}
 
-	newJWT, err := pkg.GenerateToken(input.UserID, sessionRaw.DeviceToken, variables.JWTExpirationSeconds)
+	newJWT, err := pkg.GenerateToken(input.UserID, sessionRaw.FirebaseInstallationID, variables.JWTExpirationSeconds)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur génération JWT"})
 		return
 	}
 
 	// 7. Reset du Ratchet dans Redis
-	if sessionRaw.CurrentSecret, err = security.ResetRatchet(c, sessionRaw.ID, newMasterToken, sessionRaw.DeviceToken, authHeader); err != nil {
+	if sessionRaw.CurrentSecret, err = security.ResetRatchet(newMasterToken, sessionRaw.FirebaseInstallationID); err != nil {
 		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur reset Ratchet"})
 		return
 	}
@@ -177,7 +177,7 @@ func RefreshMaster(c *gin.Context) {
 
 	// Mise à jour de l'objet local
 	sessionRaw.MasterToken = newMasterToken
-	sessionRaw.LastSecret = sessionRaw.DeviceToken
+	sessionRaw.LastSecret = sessionRaw.FirebaseInstallationID
 	sessionRaw.LastJWT = authHeader
 	sessionRaw.ToleranceTime = time.Now().Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second)
 	sessionRaw.ExpiresAt = time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)

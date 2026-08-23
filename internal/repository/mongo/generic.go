@@ -18,18 +18,20 @@ import (
 // ---------------- Initialisation ----------------
 // declarations globales
 var (
-	Users               *MongoCollection
-	UserSettings        *MongoCollection
-	Sessions            *MongoCollection
-	Relations           *MongoCollection
-	Posts               *MongoCollection
-	Comments            *MongoCollection
-	Likes               *MongoCollection
-	Media               *MongoCollection
-	ConversationsMeta   *MongoCollection
-	ConversationMembers *MongoCollection
-	Messages            *MongoCollection
-	Saved               *MongoCollection
+	Users         *MongoCollection
+	UserSettings  *MongoCollection
+	Sessions      *MongoCollection
+	Relations     *MongoCollection
+	Posts         *MongoCollection
+	Comments      *MongoCollection
+	Likes         *MongoCollection
+	Media         *MongoCollection
+	Conversations *MongoCollection
+	Members       *MongoCollection
+	Messages      *MongoCollection
+	Saved         *MongoCollection
+
+	Notifications *MongoCollection
 )
 
 // InitCacheDatabase initialise la structure logique de Redis pour les caches
@@ -49,6 +51,8 @@ func InitCacheDatabase() {
 	schemaMessages := schemas.MessagesSchema
 	schemaSaved := schemas.SavedSchema
 
+	schemaNotifications := schemas.NotificationsSchema
+
 	// variables globales
 	Users = NewMongoCollection("nubo_mongo", "auth.users", schemaUsers)
 	UserSettings = NewMongoCollection("nubo_mongo", "auth.user_settings", schemaUserSettings)
@@ -58,10 +62,12 @@ func InitCacheDatabase() {
 	Comments = NewMongoCollection("nubo_mongo", "content.comments", schemaComments)
 	Likes = NewMongoCollection("nubo_mongo", "content.likes", schemaLikes)
 	Media = NewMongoCollection("nubo_mongo", "content.media", schemaMedia)
-	ConversationsMeta = NewMongoCollection("nubo_mongo", "messaging.conversations", schemaConversations)
-	ConversationMembers = NewMongoCollection("nubo_mongo", "messaging.members", schemaMembers)
+	Conversations = NewMongoCollection("nubo_mongo", "messaging.conversations", schemaConversations)
+	Members = NewMongoCollection("nubo_mongo", "messaging.members", schemaMembers)
 	Messages = NewMongoCollection("nubo_mongo", "messaging.messages", schemaMessages)
 	Saved = NewMongoCollection("nubo_mongo", "content.saved", schemaSaved)
+
+	Notifications = NewMongoCollection("nubo_mongo", "activity.notifications", schemaNotifications)
 
 	log.Println("Structure MongoDB initialisée")
 }
@@ -116,6 +122,9 @@ func (c *MongoCollection) Set(obj map[string]any) error {
 	if err := c.validate(obj, false); err != nil {
 		return err
 	}
+
+	// AUTOMATISATION DU SLIDING TTL
+	obj["last_use"] = time.Now().UTC()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -178,6 +187,9 @@ func (c *MongoCollection) Update(filter map[string]any, update map[string]any) e
 	if err := c.validate(update, true); err != nil {
 		return err
 	}
+
+	// AUTOMATISATION DU SLIDING TTL (Y compris pour les Soft Deletes)
+	update["last_use"] = time.Now().UTC()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

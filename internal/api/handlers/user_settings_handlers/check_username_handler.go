@@ -3,6 +3,7 @@ package user_settings_handlers
 import (
 	"net/http"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/user_settings_service"
 	"github.com/gin-gonic/gin"
 )
@@ -23,20 +24,16 @@ import (
 // @Failure 409 "Le nom d'utilisateur est déjà pris"
 // @Router /check/usernames [get]
 func CheckUsernameHandler(c *gin.Context) {
-	// Le handler ne fait que lire la requête HTTP (ici une query string)
-	username := c.Query("username")
-	if username == "" {
-		c.Status(http.StatusBadRequest) // 400 Bad Request
+	var input user_settings_models.CheckUsernameInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.Status(http.StatusBadRequest)
 		return
 	}
 
-	// Délégation stricte au service (aucune logique métier ou base de données ici)
-	isAvailable := user_settings_service.CheckUsernameAvailability(username)
-
-	// Réponses HTTP simples, comme demandé
+	isAvailable := user_settings_service.CheckUsernameAvailability(input.Username)
 	if isAvailable {
-		c.Status(http.StatusOK) // 200 OK (Disponible)
+		c.Status(http.StatusOK)
 	} else {
-		c.Status(http.StatusConflict) // 409 Conflict (Déjà pris)
+		c.Status(http.StatusConflict)
 	}
 }

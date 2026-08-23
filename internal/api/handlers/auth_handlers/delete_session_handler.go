@@ -2,8 +2,8 @@ package auth_handlers
 
 import (
 	"net/http"
-	"strconv"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/auth_service"
@@ -23,28 +23,19 @@ import (
 // @Failure      403 {object} nubo_error.ErrorResponse "Accès refusé"
 // @Router       /sessions [delete]
 func DeleteSessionHandler(c *gin.Context) {
-	// 1. Identification de l'appelant
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Non autorisé"})
 		return
 	}
 
-	// 2. Extraction via Query String (pas de /:id)
-	sessionIDStr := c.Query("id")
-	if sessionIDStr == "" {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Le paramètre 'id' est requis"})
+	var input auth_models.DeleteSessionInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide ou session_id manquant"})
 		return
 	}
 
-	sessionID, err := strconv.ParseInt(sessionIDStr, 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format d'ID invalide"})
-		return
-	}
-
-	// 3. Appel du service de révocation
-	if err := auth_service.RevokeSession(c.Request.Context(), callerID, sessionID); err != nil {
+	if err := auth_service.RevokeSession(c.Request.Context(), callerID, input.SessionID); err != nil {
 		c.JSON(http.StatusForbidden, nubo_error.ErrorResponse{Error: err.Error()})
 		return
 	}

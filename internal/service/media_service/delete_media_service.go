@@ -16,14 +16,10 @@ func DeleteMedia(ctx context.Context, mediaID int64, ownerID int64) error {
 	// 1. Récupération du chemin de stockage (Cascade L1 -> L2 -> L3)
 	media, err := GetMediaCascade(ctx, mediaID)
 
-	// 2. Destruction asynchrone sur le stockage S3 (Le L4)
+	// 2. Destruction asynchrone sur le stockage S3 (Le L4) via la fonction dédiée
 	if err == nil && media.StoragePath != "" {
 		go func(path string) {
-			bucketName := os.Getenv("MINIO_BUCKET_NAME")
-			if bucketName == "" {
-				bucketName = "nubo-bucket"
-			}
-			_ = minio.MinioClient.RemoveObject(context.Background(), bucketName, path, miniogo.RemoveObjectOptions{})
+			_ = RemovePhysicalMedia(context.Background(), path)
 		}(media.StoragePath)
 	}
 
@@ -33,4 +29,17 @@ func DeleteMedia(ctx context.Context, mediaID int64, ownerID int64) error {
 	// 4. Purge des bases de données (L2/L3) via la file d'attente asynchrone
 	mediaPayload := models.MediaRequest{ID: mediaID, OwnerID: ownerID}
 	return redis.EnqueueDB(ctx, mediaID, ownerID, redis.EntityMedia, redis.ActionDelete, mediaPayload, redis.TargetAll)
+}
+
+// RemovePhysicalMedia détruit physiquement le fichier sur MinIO (Respect du DDD).
+// Utilisé par les suppressions unitaires et le Garbage Collector.
+func RemovePhysicalMedia(ctx context.Context, storagePath string) error {
+	if storagePath == "" {
+		return nil
+	}
+	bucketName := os.Getenv("MINIO_BUCKET_NAME")
+	if bucketName == "" {
+		bucketName = "nubo-bucket"
+	}
+	return minio.MinioClient.RemoveObject(ctx, bucketName, storagePath, miniogo.RemoveObjectOptions{})
 }

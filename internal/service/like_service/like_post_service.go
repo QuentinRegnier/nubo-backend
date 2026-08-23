@@ -2,12 +2,15 @@ package like_service
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/like_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
 )
 
 // ToggleLike agit comme un simple routeur asynchrone ultra-rapide (Fire and Forget).
@@ -25,13 +28,33 @@ func TogglePostLike(ctx context.Context, input like_models.LikePostInput) error 
 		}
 	}
 
+	// === NOUVEAU : MISE À JOUR SYNCHRONE DU L1 (TEMPS RÉEL) ===
+	delta := 1
+	action := redis.ActionCreate
+	if input.Action == "unlike" {
+		delta = -1
+		action = redis.ActionDelete
+	}
+
+	// Lecture opportuniste en L1
+	var postAuthorID int64
+	if p, err := object_cache_service.GetPostFromObjectCache(ctx, input.PostID); err == nil {
+		postAuthorID = p.UserID
+		p.LikeCount += delta
+		if p.LikeCount < 0 {
+			p.LikeCount = 0
+		}
+		_ = object_cache_service.SetPostInObjectCache(ctx, p)
+
+		// Routage intelligent vers l'IA de Classement (Most Cache)
+		if input.Action == "like" {
+			cache_service.EvaluatePostAfterLike(ctx, p)
+		}
+	}
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// 2. ENVOI AU WORKER ASYNCHRONE
 	// ─────────────────────────────────────────────────────────────────────────
-	action := redis.ActionCreate
-	if input.Action == "unlike" {
-		action = redis.ActionDelete
-	}
 
 	payload := like_models.LikePayload{
 		ID:         pkg.GenerateID(),
@@ -41,5 +64,16 @@ func TogglePostLike(ctx context.Context, input like_models.LikePostInput) error 
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 
-	return redis.EnqueueDB(ctx, payload.ID, 0, redis.EntityLike, action, payload, redis.TargetAll)
+	err := redis.EnqueueDB(ctx, payload.ID, 0, redis.EntityLike, action, payload, redis.TargetAll)
+
+	if err == nil && input.Action == "like" && postAuthorID != 0 {
+		go func(authorID int64) {
+			err := notification_service.DispatchNotification(context.Background(), authorID, input.UserID, "post_liked", input.PostID)
+			if err != nil {
+				fmt.Printf("TogglePostLike: failed to dispatch notification: %v\n", err)
+			}
+		}(postAuthorID)
+	}
+
+	return err
 }

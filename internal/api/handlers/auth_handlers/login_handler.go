@@ -46,7 +46,6 @@ import (
 func LoginHandler(c *gin.Context) {
 	var input auth_models.LoginInput
 
-	// --- 1. RÉCUPÉRATION DU PAYLOAD ---
 	jsonData := c.PostForm("data")
 	if jsonData == "" {
 		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "The 'data' field containing the JSON is required"})
@@ -58,15 +57,12 @@ func LoginHandler(c *gin.Context) {
 		return
 	}
 
-	// --- 2. 🛡️ BOUCLIER STATIQUE : Validation O(1) ---
 	if err := pkg.ValidateStruct(&input); err != nil {
 		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Validation failed: " + err.Error()})
 		return
 	}
 
-	// --- 3. APPEL AU SERVICE MÉTIER ---
-	// Réception de la nouvelle variable de chaîne représentant l'URL signée
-	user, sessions, jwtToken, profilePicURL, err := auth_service.Login(input, []string{c.ClientIP()})
+	userID, sessions, jwtToken, err := auth_service.Login(input, []string{c.ClientIP()})
 	if err != nil {
 		if errors.Is(err, nubo_error.ErrInvalidCredentials) || errors.Is(err, nubo_error.ErrNotFound) {
 			c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Invalid email or password"})
@@ -86,35 +82,11 @@ func LoginHandler(c *gin.Context) {
 		return
 	}
 
-	// --- 4. SUCCÈS : CONSTRUCTION DE LA RÉPONSE COMPLÈTE ---
 	c.JSON(http.StatusOK, auth_models.LoginResponse{
-		UserID:            user.ID,
-		Username:          user.Username,
-		Email:             user.Email,
-		EmailVerified:     user.EmailVerified,
-		Phone:             user.Phone,
-		PhoneVerified:     user.PhoneVerified,
-		FirstName:         user.FirstName,
-		LastName:          user.LastName,
-		Birthdate:         user.Birthdate,
-		Sex:               user.Sex,
-		Bio:               user.Bio,
-		Grade:             user.Grade,
-		Location:          user.Location,
-		School:            user.School,
-		Work:              user.Work,
-		Badges:            user.Badges,
-		Desactivated:      user.Desactivated,
-		Banned:            user.Banned,
-		BanReason:         user.BanReason,
-		BanExpiresAt:      user.BanExpiresAt,
-		CreatedAt:         user.CreatedAt,
-		UpdatedAt:         user.UpdatedAt,
-		ProfilePictureID:  user.ProfilePictureID,
-		ProfilePictureURL: profilePicURL, // Injection de la clé signée directement exploitable par le front
-		MasterToken:       sessions.MasterToken,
-		JWT:               jwtToken,
-		ExpiresAt:         sessions.ExpiresAt,
-		Message:           "Login successful",
+		UserID:      userID,
+		MasterToken: sessions.MasterToken,
+		JWT:         jwtToken,
+		ExpiresAt:   sessions.ExpiresAt,
+		Message:     "Login successful",
 	})
 }

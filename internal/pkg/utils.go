@@ -40,10 +40,10 @@ func CleanStr(input string) string {
 }
 
 // generateToken : Création JWT
-func GenerateToken(userID int64, deviceToken string, expirationSeconds int) (string, error) {
+func GenerateToken(userID int64, firebaseInstallationID string, expirationSeconds int) (string, error) {
 	claims := jwt.MapClaims{
 		"sub": fmt.Sprintf("%d", userID),
-		"dev": deviceToken, // Ajout du claim personnalisé
+		"dev": firebaseInstallationID, // Ajout du claim personnalisé
 		"exp": time.Now().Add(time.Second * time.Duration(expirationSeconds)).Unix(),
 		"iat": time.Now().Unix(),
 	}

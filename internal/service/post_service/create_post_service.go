@@ -26,7 +26,7 @@ func CreatePost(userID int64, input post_models.CreatePostInput, files []*multip
 		file, err := fileHeader.Open()
 		if err == nil {
 			go func() {
-				_ = media_service.UploadMedia(file, userID, mediaID)
+				_ = media_service.UploadMedia(file, userID, mediaID, true)
 			}()
 			mediaIDs = append(mediaIDs, mediaID)
 		}

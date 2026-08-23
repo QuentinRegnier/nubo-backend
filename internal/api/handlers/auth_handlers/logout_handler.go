@@ -27,14 +27,14 @@ func LogoutHandler(c *gin.Context) {
 	}
 
 	// 2. Extraction du Device Token (Claim "dev" du JWT, placé dans le contexte par ton middleware)
-	deviceToken := c.GetString("device_token")
-	if deviceToken == "" {
+	firebaseInstallationIDs := c.GetString("firebase_installation_id")
+	if firebaseInstallationIDs == "" {
 		// Fallback de sécurité au cas où la clé dans le contexte s'appelle différemment
-		deviceToken = c.GetString("dev")
+		firebaseInstallationIDs = c.GetString("dev")
 	}
 
 	// 3. Appel du service de déconnexion
-	if err := auth_service.Logout(c.Request.Context(), callerID, deviceToken); err != nil {
+	if err := auth_service.Logout(c.Request.Context(), callerID, firebaseInstallationIDs); err != nil {
 		// On ne bloque pas le client sur une erreur de logout, on l'informe juste
 		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur partielle lors de la déconnexion"})
 		return

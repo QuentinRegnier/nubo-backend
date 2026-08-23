@@ -6,6 +6,7 @@ type PrivacySettings struct {
 	ProfileVisibility      int  `json:"profile_visibility" bson:"profile_visibility"`           // 0: Public, 1: Abonnés, 2: Amis
 	PostVisibilityDefault  int  `json:"post_visibility_default" bson:"post_visibility_default"` // Visibilité par défaut à la création
 	ConversationPermission int  `json:"conversation_permission" bson:"conversation_permission"` // 0: Tout le monde, 1: Abonnés, 2: Amis
+	AddGroupPermission     bool `json:"add_group_permission" bson:"add_group_permission"`       // On peut m'ajouter automatiquement à un groupe
 	AllowTagging           int  `json:"allow_tagging" bson:"allow_tagging"`                     // Qui peut m'identifier (photo)
 	AllowMentions          int  `json:"allow_mentions" bson:"allow_mentions"`                   // Qui peut me mentionner (@pseudo)
 	ShowOnlineStatus       bool `json:"show_online_status" bson:"show_online_status"`           // Afficher le point vert

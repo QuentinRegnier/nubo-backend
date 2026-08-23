@@ -34,8 +34,8 @@ func GetFeedHandler(c *gin.Context) {
 
 	// 2. Extraction des paramètres
 	var input feed_models.GetFeedInput
-	if err := c.ShouldBindQuery(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Paramètres de pagination invalides"})
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide"})
 		return
 	}
 	input.UserID = userID
@@ -48,17 +48,15 @@ func GetFeedHandler(c *gin.Context) {
 	// 3. Délégation complète au service
 	postOutput, endIndex, activeFeed, err := feed_service.GetFeed(c.Request.Context(), input)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur interne lors de la génération du feed"})
+		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur interne"})
 		return
 	}
 
 	// 4. RETOUR AU CLIENT
-	feedOutput := feed_models.GetFeedOutput{
+	c.JSON(http.StatusOK, feed_models.GetFeedOutput{
 		Status:        "Feed généré et hydraté avec succès",
 		ActiveFeed:    activeFeed,
-		LastSeenIndex: endIndex, // Le client nous renverra cet index au prochain appel
+		LastSeenIndex: endIndex,
 		Posts:         postOutput,
-	}
-
-	c.JSON(http.StatusOK, feedOutput)
+	})
 }

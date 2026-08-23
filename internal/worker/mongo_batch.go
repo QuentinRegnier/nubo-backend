@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
@@ -16,15 +17,15 @@ import (
 )
 
 func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
-	// Groupe par EntityType
 	grouped := make(map[redis.EntityType][]redis.AsyncEvent)
 	for _, e := range events {
 		grouped[e.Type] = append(grouped[e.Type], e)
 	}
 
-	for entity, evts := range grouped {
+	// Définition de la date courante pour rafraîchir le Sliding TTL de Mongo
+	now := time.Now().UTC()
 
-		// --- RECUPERATION DU WRAPPER C (*MongoCollection) ---
+	for entity, evts := range grouped {
 		var c *mongo.MongoCollection
 
 		switch entity {
@@ -45,131 +46,130 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 		case redis.EntityMedia:
 			c = mongo.Media
 		case redis.EntityConversation:
-			c = mongo.ConversationsMeta
+			c = mongo.Conversations
 		case redis.EntityMembers:
-			c = mongo.ConversationMembers
+			c = mongo.Members
 		case redis.EntityMessage:
 			c = mongo.Messages
 		case redis.EntitySaved:
 			c = mongo.Saved
-		// Ajoute ici tes autres mappings (Comments, Relations...)
+		case redis.EntityNotification:
+			c = mongo.Notifications
 		default:
 			log.Printf("⚠️ Erreur: Pas de MongoCollection définie pour l'entité %s", entity)
 			continue
 		}
 
-		// Sécurité : si la collection n'est pas initialisée
 		if c == nil {
 			log.Printf("⚠️ Erreur: La collection Mongo pour %s est nil", entity)
 			continue
 		}
 
-		// --- ACCÈS AU DRIVER OFFICIEL VIA TON WRAPPER ---
-		// C'est ici qu'on applique ta logique : c.DB.Collection(c.Name)
-		// On suppose que c.DB est accessible (public) et c.Name aussi
 		coll := c.DB.Collection(c.Name)
-
-		// --- PREPARATION DU BULK ---
 		var models []libMongo.WriteModel
 
 		for _, e := range evts {
 			switch e.Action {
 			case redis.ActionCreate:
-				// InsertOneModel
-				models = append(models, libMongo.NewInsertOneModel().SetDocument(e.Payload))
+				// Extraction en BSON pour injecter le champ `last_use`
+				var doc bson.M
+				dataBytes, _ := bson.Marshal(e.Payload)
+				_ = bson.Unmarshal(dataBytes, &doc)
+				doc["last_use"] = now
+
+				models = append(models, libMongo.NewInsertOneModel().SetDocument(doc))
 
 			case redis.ActionUpdate:
 				if entity == redis.EntityRelation {
-					// UPDATE par clé composite pour les relations
 					var rel relation_models.RelationPayload
 					jsonBytes, _ := json.Marshal(e.Payload)
 					_ = json.Unmarshal(jsonBytes, &rel)
 
+					// Mise à jour de la relation avec rafraîchissement du TTL
 					models = append(models, libMongo.NewUpdateOneModel().
 						SetFilter(bson.M{"primary_id": rel.PrimaryID, "secondary_id": rel.SecondaryID}).
-						SetUpdate(bson.M{"$set": bson.M{"state": rel.State, "updated_at": rel.UpdatedAt}}))
+						SetUpdate(bson.M{"$set": bson.M{
+							"state":      rel.State,
+							"updated_at": rel.UpdatedAt,
+							"last_use":   now,
+						}}))
 				} else {
-					// Update classique par ID
-					models = append(models, libMongo.NewUpdateOneModel().
-						SetFilter(bson.M{"_id": e.ID}).
-						SetUpdate(bson.M{"$set": e.Payload}))
-				}
+					// Extraction en BSON pour injecter le champ `last_use`
+					var doc bson.M
+					dataBytes, _ := bson.Marshal(e.Payload)
+					_ = bson.Unmarshal(dataBytes, &doc)
+					doc["last_use"] = now
 
-			// ... dans la boucle switch e.Action de flushMongo ...
+					models = append(models, libMongo.NewUpdateOneModel().
+						SetFilter(bson.M{"id": e.ID}). // Modification de _id en id (Snowflake)
+						SetUpdate(bson.M{"$set": doc}))
+				}
 
 			case redis.ActionDelete:
 				if entity == redis.EntityPost {
-					// On doit décoder le payload pour récupérer la liste des MediaIDs
 					var post post_models.PostPayload
 					jsonBytes, _ := json.Marshal(e.Payload)
 					_ = json.Unmarshal(jsonBytes, &post)
 
-					// 1. SOFT DELETE du Post
+					// SOFT DELETE du Post + Refresh du TTL
 					models = append(models, libMongo.NewUpdateOneModel().
 						SetFilter(bson.M{"id": e.ID}).
-						SetUpdate(bson.M{"$set": bson.M{"visibility": -1}}))
+						SetUpdate(bson.M{"$set": bson.M{"visibility": -1, "last_use": now}}))
 
-					// 2. HARD DELETE des Commentaires
 					if mongo.Comments != nil {
 						_, _ = mongo.Comments.DB.Collection(mongo.Comments.Name).DeleteMany(ctx, bson.M{"post_id": e.ID})
 					}
-
-					// 3. HARD DELETE des Likes
 					if mongo.Likes != nil {
 						_, _ = mongo.Likes.DB.Collection(mongo.Likes.Name).DeleteMany(ctx, bson.M{"target_id": e.ID, "target_type": 0})
 					}
-
-					// ✅ 4. HARD DELETE des Médias dans Mongo
 					if mongo.Media != nil && len(post.MediaIDs) > 0 {
 						models = append(models, libMongo.NewDeleteManyModel().
 							SetFilter(bson.M{"id": bson.M{"$in": post.MediaIDs}}))
 					}
 				} else if entity == redis.EntityComment {
-					// SOFT DELETE pour les Commentaires effacés unitairement
+					// SOFT DELETE pour les Commentaires effacés unitairement + Refresh du TTL
 					models = append(models, libMongo.NewUpdateOneModel().
 						SetFilter(bson.M{"id": e.ID}).
-						SetUpdate(bson.M{"$set": bson.M{"visibility": -1}}))
+						SetUpdate(bson.M{"$set": bson.M{"visibility": -1, "last_use": now}}))
 				} else if entity == redis.EntityRelation {
-					// HARD DELETE pour les Relations effacées unitairement
+					// HARD DELETE (On n'a pas besoin de TTL sur un élément détruit)
 					var rel relation_models.RelationPayload
 					jsonBytes, _ := json.Marshal(e.Payload)
 					_ = json.Unmarshal(jsonBytes, &rel)
-
 					models = append(models, libMongo.NewDeleteOneModel().SetFilter(bson.M{"primary_id": rel.PrimaryID, "secondary_id": rel.SecondaryID}))
 				} else if entity == redis.EntitySaved {
-					// HARD DELETE des favoris
+					// HARD DELETE
 					var sav saved_models.SavedPayload
 					jsonBytes, _ := json.Marshal(e.Payload)
 					_ = json.Unmarshal(jsonBytes, &sav)
-
 					models = append(models, libMongo.NewDeleteOneModel().
 						SetFilter(bson.M{"user_id": sav.UserID, "post_id": sav.PostID}))
 				} else {
-					// HARD DELETE pour les autres entités
+					// HARD DELETE
 					models = append(models, libMongo.NewDeleteOneModel().
 						SetFilter(bson.M{"id": e.ID}))
 				}
 			}
 		}
 
-		// --- EXECUTION ---
 		if len(models) > 0 {
 			opts := options.BulkWrite().SetOrdered(true)
 			_, err := coll.BulkWrite(ctx, models, opts)
 			if err != nil {
-				log.Printf("❌ Erreur Mongo BulkWrite %s: %v", c.Name, err)
+				log.Printf("⚠️ Erreur Mongo BulkWrite %s: %v", c.Name, err)
 			}
 		}
 	}
+
 	updateCountersMongo(ctx, events)
 }
 
-// updateCountersMongo regroupe les événements et met à jour les documents Posts dans le stockage à froid L2.
 func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 	postLikeDeltas := make(map[int64]int)
-	commentLikeDeltas := make(map[int64]int) // ✅ NOUVEAU
+	commentLikeDeltas := make(map[int64]int)
 	commentDeltas := make(map[int64]int)
 	viewDeltas := make(map[int64]int)
+
 	telemetryDwellSum := make(map[int64]float64)
 	telemetryDwellSq := make(map[int64]float64)
 	telemetryClicks := make(map[int64]int)
@@ -179,6 +179,7 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 		if e.Action == redis.ActionDelete {
 			delta = -1
 		}
+
 		jsonBytes, _ := json.Marshal(e.Payload)
 
 		if e.Type == redis.EntityLike {
@@ -187,10 +188,11 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 				TargetID   int64 `json:"target_id"`
 			}
 			_ = json.Unmarshal(jsonBytes, &p)
+
 			if p.TargetType == 0 && p.TargetID != 0 {
-				postLikeDeltas[p.TargetID] += delta // Like sur un Post
+				postLikeDeltas[p.TargetID] += delta
 			} else if p.TargetType == 1 && p.TargetID != 0 {
-				commentLikeDeltas[p.TargetID] += delta // ✅ Like sur un Commentaire
+				commentLikeDeltas[p.TargetID] += delta
 			}
 		} else if e.Type == redis.EntityComment {
 			var p struct {
@@ -235,33 +237,56 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 				if t.ProfileVisit {
 					clicks++
 				}
-
 				telemetryClicks[t.PostID] += clicks
 			}
 		}
 	}
 
 	var postModels []libMongo.WriteModel
-	var commentModels []libMongo.WriteModel // ✅ NOUVEAU
+	var commentModels []libMongo.WriteModel
 
-	// Modèles pour POSTS
+	now := time.Now().UTC()
+
+	// Application simultanée de $inc et du $set pour rafraîchir le `last_use` de l'élément lu
 	for id, delta := range postLikeDeltas {
-		postModels = append(postModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"like_count": delta}}))
-	}
-	for id, delta := range commentDeltas {
-		postModels = append(postModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"comment_count": delta}}))
-	}
-	for id, delta := range viewDeltas {
-		postModels = append(postModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"view_count": delta}}))
-	}
-	for id, delta := range commentLikeDeltas {
-		commentModels = append(commentModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"like_count": delta, "score": delta}}))
-	}
-	for id, sum := range telemetryDwellSum {
-		postModels = append(postModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{"$inc": bson.M{"telemetry_dwell_sum": sum, "telemetry_dwell_sq": telemetryDwellSq[id], "telemetry_clicks": telemetryClicks[id]}}))
+		postModels = append(postModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{
+			"$inc": bson.M{"like_count": delta},
+			"$set": bson.M{"last_use": now},
+		}))
 	}
 
-	// Exécutions indépendantes
+	for id, delta := range commentDeltas {
+		postModels = append(postModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{
+			"$inc": bson.M{"comment_count": delta},
+			"$set": bson.M{"last_use": now},
+		}))
+	}
+
+	for id, delta := range viewDeltas {
+		postModels = append(postModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{
+			"$inc": bson.M{"view_count": delta},
+			"$set": bson.M{"last_use": now},
+		}))
+	}
+
+	for id, sum := range telemetryDwellSum {
+		postModels = append(postModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{
+			"$inc": bson.M{
+				"telemetry_dwell_sum": sum,
+				"telemetry_dwell_sq":  telemetryDwellSq[id],
+				"telemetry_clicks":    telemetryClicks[id],
+			},
+			"$set": bson.M{"last_use": now},
+		}))
+	}
+
+	for id, delta := range commentLikeDeltas {
+		commentModels = append(commentModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{
+			"$inc": bson.M{"like_count": delta, "score": delta},
+			"$set": bson.M{"last_use": now},
+		}))
+	}
+
 	if len(postModels) > 0 && mongo.Posts != nil {
 		_, _ = mongo.Posts.DB.Collection(mongo.Posts.Name).BulkWrite(ctx, postModels, options.BulkWrite().SetOrdered(false))
 	}

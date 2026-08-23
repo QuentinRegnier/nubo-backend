@@ -7,8 +7,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 )
 
-func MongoLoadSession(ID int64, DeviceToken string, MasterToken string, CurrentSecret string) (models.SessionsRequest, error) {
-	fmt.Println("MongoLoadSession called with:", ID, DeviceToken, MasterToken, CurrentSecret)
+func MongoLoadSession(ID int64, FirebaseInstallationID string, MasterToken string, CurrentSecret string) (models.SessionsRequest, error) {
+	fmt.Println("MongoLoadSession called with:", ID, FirebaseInstallationID, MasterToken, CurrentSecret)
 	var s models.SessionsRequest
 
 	// Construction du filtre de recherche (uniquement les valeurs valides)
@@ -20,10 +20,10 @@ func MongoLoadSession(ID int64, DeviceToken string, MasterToken string, CurrentS
 		filter["user_id"] = nil
 	}
 
-	if DeviceToken != "" {
-		filter["device_token"] = DeviceToken
+	if FirebaseInstallationID != "" {
+		filter["firebase_installation_id"] = FirebaseInstallationID
 	} else {
-		filter["device_token"] = nil
+		filter["firebase_installation_id"] = nil
 	}
 
 	if MasterToken != "" {
@@ -39,7 +39,7 @@ func MongoLoadSession(ID int64, DeviceToken string, MasterToken string, CurrentS
 	}
 
 	if len(filter) == 0 {
-		return s, fmt.Errorf("MongoLoadSession: no research criteria (id, device_token, master_token) provided")
+		return s, fmt.Errorf("MongoLoadSession: no research criteria (id, firebase_installation_id, master_token) provided")
 	}
 
 	// Appel à la fonction utilitaire

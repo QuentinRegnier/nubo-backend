@@ -27,6 +27,12 @@ func StartBackgroundWorkers(ctx context.Context) {
 	// Lancement du Moteur de Warm-up Algorithmique (Génération asynchrone des flux)
 	StartFeedWarmupCron(ctx)
 
+	// NOUVEAU : Lancement du Garbage Collector de Médias
+	StartMediaCleanupCron(ctx)
+
+	// === NOUVEAU : Lancement du Worker de Push Notifications ===
+	StartPushNotificationWorker(ctx)
+
 	// On lance 64 goroutines (une par shard Redis)
 	for i := 0; i < redis.QueueShards; i++ {
 		wg.Add(1)
