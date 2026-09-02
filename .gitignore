@@ -1,0 +1,16 @@
+# IDEs et OS
+/.idea/
+.DS_Store
+
+# Données et Infrastructure (Bases de données, certs, configs locales)
+/mongo/
+/mongo-data/
+/sql/
+/wireguard/
+
+# Documentation générée
+/docs/
+
+# Outils de développement et CI
+qodana.yaml
+.air.toml
