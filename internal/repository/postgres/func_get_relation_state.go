@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
@@ -17,9 +17,9 @@ func FuncGetRelationState(ctx context.Context, callerID int64, targetID int64) (
 	err := postgres.PostgresDB.QueryRowContext(ctx, query, callerID, targetID).Scan(&state)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, nil // Techniquement impossible car la fonction SQL gère le NOT FOUND, mais on sécurise.
+			return 0, nil
 		}
-		return 0, fmt.Errorf("erreur postgres FuncGetRelationState: %w", err)
+		return 0, nubo_error.NewInternal(err)
 	}
 
 	return state, nil

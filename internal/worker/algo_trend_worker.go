@@ -3,10 +3,10 @@ package worker
 import (
 	"context"
 	"fmt"
-	"log"
 	"strconv"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
@@ -15,7 +15,7 @@ import (
 // StartHashtagTrendCron lance l'évaluation des tendances mondiales de hashtags (TDD §3.3).
 // Il tourne toutes les 15 minutes pour maintenir le Top 100 des tags sans saturer le CPU.
 func StartHashtagTrendCron(ctx context.Context) {
-	log.Println("📈 Démarrage du Moteur de Tendances Hashtags (15m)...")
+	logger.Log.Info().Msg("Démarrage du Moteur de Tendances Hashtags (15m)...")
 	go func() {
 		ticker := time.NewTicker(15 * time.Minute)
 		defer ticker.Stop()
@@ -111,9 +111,9 @@ func processHashtagTrends(ctx context.Context) {
 
 		_, err = pipe.Exec(ctx)
 		if err != nil {
-			log.Printf("❌ [Hashtag Trends] Échec de la sauvegarde L1 : %v", err)
+			logger.Log.Error().Err(err).Msg("Hashtag Trends : Échec de la sauvegarde L1")
 		} else {
-			log.Printf("✅ [Hashtag Trends] Mise à jour du Top 100 réussie.")
+			logger.Log.Info().Msg("Hashtag Trends : Mise à jour du Top 100 réussie.")
 		}
 	}
 }

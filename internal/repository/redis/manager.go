@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	variables "github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/go-redis/redis/v8"
 	"github.com/vmihailenco/msgpack/v5"
@@ -66,10 +67,11 @@ var (
 	HashtagCanon *Collection
 
 	// --- INDEX & IDEMPOTENCE ---
-	SessionIndexes  *Collection
-	PostLikesSet    *Collection
-	CommentLikesSet *Collection
-	SystemStatus    *Collection
+	SessionIndexes   *Collection
+	SessionBlacklist *Collection
+	PostLikesSet     *Collection
+	CommentLikesSet  *Collection
+	SystemStatus     *Collection
 
 	// --- CUCKOO FILTER ---
 	CuckooSeen *Collection
@@ -154,6 +156,7 @@ func InitCacheDatabase() {
 
 	// --- INDEX & IDEMPOTENCE ---
 	SessionIndexes = NewCollection("session_cache", variables.StandardTTL)
+	SessionBlacklist = NewCollection("blacklist:session", 24*time.Hour)
 	PostLikesSet = NewCollection("post:likes_set", 0)
 	CommentLikesSet = NewCollection("comment:likes_set", 0)
 	SystemStatus = NewCollection("system:status", 0)
@@ -243,7 +246,7 @@ func (c *Collection) Exists(ctx context.Context, id any) (bool, error) {
 func (c *Collection) SetObject(ctx context.Context, id any, data any) error {
 	msgpackBytes, err := msgpack.Marshal(data)
 	if err != nil {
-		return fmt.Errorf("redis marshal nubo_error: %w", err)
+		return nubo_error.NewInternal(fmt.Errorf("redis marshal: %w", err))
 	}
 	return c.Client.Set(ctx, c.Key(id), msgpackBytes, c.DefaultTTL).Err()
 }
@@ -444,7 +447,7 @@ func SubscribeFlux(rdb *redis.Client, nodeName string) (<-chan []byte, context.C
 		defer func(pubsub *redis.PubSub) {
 			err := pubsub.Close()
 			if err != nil {
-				log.Printf("Erreur fermeture pubsub: %v", err)
+				logger.Log.Error().Err(err).Msg("Erreur fermeture pubsub")
 			}
 		}(pubsub)
 		defer close(ch)
@@ -458,7 +461,7 @@ func SubscribeFlux(rdb *redis.Client, nodeName string) (<-chan []byte, context.C
 			if errors.Is(redis.Nil, err) {
 				continue
 			} else if err != nil {
-				log.Printf("  Erreur flux %s : impossible de lire %s : %v", nodeName, messageID, err)
+				logger.Log.Error().Err(err).Str("node_name", nodeName).Str("message_id", messageID).Msg("Erreur de lecture sur le flux Pub/Sub")
 				continue
 			}
 

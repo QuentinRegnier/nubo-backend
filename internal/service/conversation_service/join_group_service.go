@@ -2,13 +2,13 @@ package conversation_service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -28,7 +28,7 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 		if err != nil || conv.ID == 0 {
 			conv, err = postgres.FuncGetConversation(ctx, input.ConversationID)
 			if err != nil || conv.ID == 0 {
-				return errors.New("la conversation n'existe pas ou a été supprimée")
+				return nubo_error.NewNotFound("CONV_NOT_FOUND", "La conversation n'existe pas ou a été supprimée.", err)
 			}
 			_ = mongo.MongoUpsertConversation(conv)
 		}
@@ -37,38 +37,31 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 
 	// 2. RÈGLE MÉTIER : On ne rejoint pas un MP.
 	if conv.Type == 0 {
-		return errors.New("impossible de rejoindre un message privé")
+		return nubo_error.NewForbidden("INVALID_CONV_TYPE", "Impossible de rejoindre un message privé.", nil)
 	}
 
-	// ========================================================================
-	// 3. LA BARRIÈRE DE SÉCURITÉ (Protection IDOR & Access Control)
-	// ========================================================================
-	// Type 1 = Groupe, Type 2 = Communauté Privée, Type 3 = Communauté Publique
+	// 3. LA BARRIÈRE DE SÉCURITÉ
 	if conv.Type == 1 || conv.Type == 2 {
 		if input.InviteMsgID == 0 {
-			return errors.New("une invitation est requise pour rejoindre ce groupe privé")
+			return nubo_error.NewForbidden("INVITE_REQUIRED", "Une invitation est requise pour rejoindre ce groupe privé.", nil)
 		}
 
-		// A. On s'assure que le caller a bien LE DROIT de lire ce message (c'est le sien)
 		inviteMsg, errSec := security_service.LeftMessage(ctx, input.InviteMsgID, callerID)
 		if errSec != nil {
-			return errors.New("invitation introuvable ou vous n'en êtes pas le destinataire")
+			return nubo_error.NewNotFound("INVITE_NOT_FOUND", "Invitation introuvable ou vous n'en êtes pas le destinataire.", errSec)
 		}
 
-		// B. On vérifie que c'est bien une invitation (Type 6)
 		if inviteMsg.MessageType != 6 {
-			return errors.New("le message fourni n'est pas une invitation valide")
+			return nubo_error.NewBadRequest("INVALID_INVITE", "Le message fourni n'est pas une invitation valide.", nil)
 		}
 
-		// C. On vérifie que l'invitation correspond bien au groupe ciblé (Prévention d'usurpation)
 		if inviteMsg.Attachments == nil {
-			return errors.New("invitation corrompue (aucune cible)")
+			return nubo_error.NewBadRequest("CORRUPT_INVITE", "Invitation corrompue (aucune cible).", nil)
 		}
 
-		// Extraction robuste du JSONB qui désérialise souvent les nombres en float64
 		targetConvRaw, exists := inviteMsg.Attachments["conversation_id"]
 		if !exists {
-			return errors.New("invitation invalide (cible manquante)")
+			return nubo_error.NewBadRequest("MISSING_INVITE_TARGET", "Invitation invalide (cible manquante).", nil)
 		}
 
 		var targetConvID int64
@@ -80,7 +73,7 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 		}
 
 		if targetConvID != input.ConversationID {
-			return errors.New("cette invitation ne correspond pas à ce groupe")
+			return nubo_error.NewForbidden("INVITE_MISMATCH", "Cette invitation ne correspond pas à ce groupe.", nil)
 		}
 	}
 	// Si Type == 3, la porte est ouverte, on passe directement à la suite.
@@ -101,10 +94,10 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 
 	if mem.ID != 0 {
 		if mem.Role == -2 {
-			return errors.New("vous êtes banni de ce groupe")
+			return nubo_error.NewForbidden("USER_BANNED", "Vous êtes banni de ce groupe.", nil)
 		}
 		if mem.Role >= 0 {
-			return errors.New("vous faites déjà partie de ce groupe")
+			return nubo_error.NewBadRequest("ALREADY_MEMBER", "Vous faites déjà partie de ce groupe.", nil)
 		}
 		// Role = -1 : L'utilisateur revient après avoir quitté.
 		isUpdate = true

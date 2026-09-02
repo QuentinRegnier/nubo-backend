@@ -2,10 +2,10 @@ package telemetry_service
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/telemetry_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -63,10 +63,14 @@ func ProcessSyncTelemetry(ctx context.Context, input telemetry_models.SyncTeleme
 			// partitionKey = input.UserID pour atterrir dans le bon shard et garantir l'ordre
 			err = redis.EnqueueDB(ctx, settings.ID, input.UserID, redis.EntityUserSettings, redis.ActionUpdate, settings, redis.TargetAll)
 			if err != nil {
-				log.Printf("  CRITICAL: Échec EnqueueDB pour la sauvegarde du vecteur utilisateur %d: %v", input.UserID, err)
+				logger.Log.Error().Err(err).
+					Int64("user_id", input.UserID).
+					Msg("Échec EnqueueDB pour la sauvegarde du vecteur utilisateur")
 			}
 		} else {
-			log.Printf("  WARNING: Impossible de charger les UserSettings pour sauvegarder le vecteur de l'utilisateur %d", input.UserID)
+			logger.Log.Warn().Err(err).
+				Int64("user_id", input.UserID).
+				Msg("Impossible de charger les UserSettings pour sauvegarder le vecteur")
 		}
 
 	} else {

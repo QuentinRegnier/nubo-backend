@@ -35,8 +35,8 @@ import (
 // @Param        X-Timestamp   header string true "Timestamp Unix de la requête"
 // @Param        ids           query  string true "Liste d'IDs séparés par des virgules (ex: ?ids=123,456)"
 // @Success      200  {array}   post_models.GetPostOutput "Liste des posts hydratés (avec médias et commentaires) et/ou erreurs d'accès unitaires"
-// @Failure      400  {object}  domain.ErrorResponse "Paramètre manquant ou limite de 50 IDs dépassée"
-// @Failure      401  {object}  domain.ErrorResponse "Session expirée ou utilisateur non identifié"
+// @Failure      400  {object}  nubo_error.PublicErrorResponse "Paramètre manquant ou limite de 50 IDs dépassée"
+// @Failure      401  {object}  nubo_error.PublicErrorResponse "Session expirée ou utilisateur non identifié"
 // @Router       /post [get]
 func GetPostHandler(c *gin.Context) {
 	userID, err := pkg.GetUserIDFromContext(c)

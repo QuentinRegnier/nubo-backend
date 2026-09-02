@@ -2,11 +2,11 @@ package worker
 
 import (
 	"context"
-	"log"
 	"strconv"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/feed_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -16,7 +16,7 @@ import (
 // StartFeedWarmupCron orchestre l'auto-génération des flux d'actualités par lots pour les utilisateurs inactifs.
 // S'exécute à intervalles réguliers sans jamais scanner l'intégralité de la base de données (O(log(N) + M)).
 func StartFeedWarmupCron(ctx context.Context) {
-	log.Println("🚀 Démarrage du Moteur de Warm-up Algorithmique (Cron 5m)...")
+	logger.Log.Info().Msg("Démarrage du Moteur de Warm-up Algorithmique (Cron 5m)...")
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
@@ -41,7 +41,7 @@ func processScheduledWarmups(ctx context.Context) {
 		return
 	}
 
-	log.Printf("🔄 [Warm-up] Analyse d'un lot de %d utilisateurs éligibles.", len(expiredUserIDs))
+	logger.Log.Info().Int("count", len(expiredUserIDs)).Msg("Warm-up : Analyse d'un lot d'utilisateurs éligibles.")
 
 	for _, idStr := range expiredUserIDs {
 		userID, err := strconv.ParseInt(idStr, 10, 64)
@@ -80,7 +80,7 @@ func processScheduledWarmups(ctx context.Context) {
 			// --- NIVEAU 3 : Mode Dormant (>= 7 jours d'inactivity) ---
 			// L'utilisateur a probablement désinstallé ou abandonné l'app.
 			// Protection RAM absolue : On l'exclut de la boucle et on vide ses structures volatiles.
-			log.Printf("💤 [Warm-up] Utilisateur %d classé comme DORMANT. Éviction de la RAM L1 en cours.", userID)
+			logger.Log.Info().Int64("user_id", userID).Msg("Warm-up : Utilisateur classé comme DORMANT. Éviction de la RAM L1 en cours.")
 
 			// Invalidation et destruction complète de son orchestrateur d'état via la couche Domaine
 			_ = algorithm_service.DeleteUserFeedState(ctx, userID)
@@ -93,7 +93,7 @@ func processScheduledWarmups(ctx context.Context) {
 
 // executeBackgroundGeneration réutilise la route de service officielle pour éviter la duplication de code
 func executeBackgroundGeneration(ctx context.Context, userID int64) {
-	log.Printf("⚡ [Warm-up] Pré-calcul d'un flux frais pour l'utilisateur inactif %d", userID)
+	logger.Log.Info().Int64("user_id", userID).Msg("Warm-up : Pré-calcul d'un flux frais pour l'utilisateur inactif.")
 
 	// Simulation de l'input d'un Pull-to-refresh destructif forcé
 	input := feed_models.GetFeedInput{
@@ -143,7 +143,10 @@ func handleSocialFanOut(ctx context.Context, events []redis.AsyncEvent) {
 				// (Assure-toi d'avoir implémenté GetFollowerCount dans cache_service, via un ZCARD par exemple)
 				followerCount := cache_service.GetFollowerCount(ctx, authorID)
 				if followerCount > 50000 {
-					log.Printf("🛡️ [FanOut] Annulé pour le VIP %d (%d abonnés). Délégation au Most Cache Global.", authorID, followerCount)
+					logger.Log.Info().
+						Int64("author_id", authorID).
+						Int64("follower_count", followerCount).
+						Msg("FanOut annulé pour VIP. Délégation au Most Cache Global.")
 					continue
 				}
 
@@ -151,7 +154,7 @@ func handleSocialFanOut(ctx context.Context, events []redis.AsyncEvent) {
 			}
 
 			if err != nil {
-				log.Printf("⚠️ [FanOut] Impossible de lire le graphe de l'user %d: %v", authorID, err)
+				logger.Log.Warn().Err(err).Int64("author_id", authorID).Msg("FanOut : Impossible de lire le graphe utilisateur.")
 				continue
 			}
 
@@ -180,7 +183,7 @@ func handleSocialFanOut(ctx context.Context, events []redis.AsyncEvent) {
 			// Exécution atomique du lot de distribution
 			_, err = pipe.Exec(ctx)
 			if err != nil {
-				log.Printf("❌ [FanOut] Échec de l'exécution du pipeline de distribution pour le post_service %d: %v", postID, err)
+				logger.Log.Error().Err(err).Int64("post_id", postID).Msg("FanOut : Échec de l'exécution du pipeline de distribution.")
 			}
 		}
 	}

@@ -3,10 +3,11 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 // FuncLoadUserPosts est le fallback absolu. Il ramène le payload complet depuis L3 pour hydrater la RAM.
@@ -15,12 +16,12 @@ func FuncLoadUserPosts(ctx context.Context, userID int64, limit int64, offset in
 
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, userID, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(err)
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			fmt.Println(err)
+			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
 		}
 	}(rows)
 

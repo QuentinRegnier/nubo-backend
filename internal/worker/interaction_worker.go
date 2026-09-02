@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
@@ -26,7 +27,7 @@ func init() {
 }
 
 // RegisterView met en file d'attente une incrémentation de vue qualitative
-func RegisterView(actorID, postID int64) {
+func RegisterView(actorID int64, postID int64) {
 	select {
 	case interactionChan <- Interaction{
 		ActorID:   actorID,
@@ -144,14 +145,17 @@ func processCacheUpdates(ctx context.Context, batch []Interaction) {
 			partitionKey = payloadMap["target_id"].(int64)
 		}
 
-		_ = redis.EnqueueDB(
+		err := redis.EnqueueDB(
 			ctx,
-			event.ID, // Peut être généré ou vide pour un compteur pur
+			event.ID,
 			partitionKey,
 			event.Type,
 			event.Action,
 			event.Payload,
 			event.Targets,
 		)
+		if err != nil {
+			logger.Log.Error().Err(err).Interface("event_type", event.Type).Msg("Interaction Worker : Impossible d'enqueue l'événement")
+		}
 	}
 }

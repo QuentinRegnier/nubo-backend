@@ -2,10 +2,10 @@ package algorithm_service
 
 import (
 	"context"
-	"log"
 	"math"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
@@ -68,13 +68,13 @@ func StoreContentVector(ctx context.Context, post post_models.PostPayload) {
 
 	// TDD §4.1 : Stockage découplé via la couche L1 Repository au format binaire MsgPack
 	if err := redis.ContentVectors.SetObject(ctx, post.ID, payload); err != nil {
-		log.Printf("⚠️ [vect] Redis SET content:vec:%d via Collection: %v", post.ID, err)
+		logger.Log.Error().Err(err).Int64("post_id", post.ID).Msg("Échec Redis SET content:vec via Collection")
 		return
 	}
 
 	// TDD §4.5: Mise à jour du bucket LSH pour le pré-filtrage
 	if err := StoreLSHBucket(ctx, post.ID, payload.LSHHash); err != nil {
-		log.Printf("⚠️ [vect] Redis LSH bucket post_service %d: %v", post.ID, err)
+		logger.Log.Error().Err(err).Int64("post_id", post.ID).Msg("Échec mise à jour Redis LSH bucket")
 	}
 }
 
@@ -88,7 +88,7 @@ func UpdatePostEngagementVector(ctx context.Context, post post_models.PostPayloa
 
 	// Récupération et désérialisation MsgPack unifiée via l'Object Cache
 	if err := redis.ContentVectors.GetObject(ctx, post.ID, &payload); err != nil || len(payload.V) != variables.VectorDimTotal {
-		log.Printf("⚠️ [vect-update] Redis GET content:vec:%d absent ou corrompu: %v", post.ID, err)
+		logger.Log.Warn().Err(err).Int64("post_id", post.ID).Msg("Vecteur absent ou corrompu en RAM, recalcul complet déclenché")
 		// Recalcul complet si le payload est absent ou corrompu (Graceful Degradation)
 		StoreContentVector(ctx, post)
 		return
@@ -110,7 +110,7 @@ func UpdatePostEngagementVector(ctx context.Context, post post_models.PostPayloa
 
 	// Sauvegarde atomique de la mise à jour via la Collection
 	if err := redis.ContentVectors.SetObject(ctx, post.ID, payload); err != nil {
-		log.Printf("⚠️ [vect-update] Échec de la mise à jour du vecteur pour le post %d: %v", post.ID, err)
+		logger.Log.Error().Err(err).Int64("post_id", post.ID).Msg("Échec de la mise à jour asynchrone du vecteur")
 	}
 }
 

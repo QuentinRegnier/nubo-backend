@@ -22,20 +22,20 @@ import (
 // @Param        offset        query  int    false "Décalage pour la pagination (défaut: 0)"
 // @Param        limit         query  int    false "Nombre maximum de conversations (défaut: 50, bridé à 100)"
 // @Success      200  {object} conversation_models.GetInboxOutput
-// @Failure      400  {object} nubo_error.ErrorResponse "Paramètres de requête invalides"
-// @Failure      401  {object} nubo_error.ErrorResponse "Session expirée ou utilisateur non identifié"
-// @Failure      500  {object} nubo_error.ErrorResponse "Erreur interne serveur"
+// @Failure      400  {object} nubo_error.PublicErrorResponse "Paramètres de requête invalides"
+// @Failure      401  {object} nubo_error.PublicErrorResponse "Session expirée ou utilisateur non identifié"
+// @Failure      500  {object} nubo_error.PublicErrorResponse "Erreur interne serveur"
 // @Router       /conversations [get]
 func GetConversationHandler(c *gin.Context) {
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input conversation_models.GetConversationInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide.", err))
 		return
 	}
 
@@ -45,7 +45,7 @@ func GetConversationHandler(c *gin.Context) {
 
 	inbox, err := conversation_service.GetUserConversationPaginated(c.Request.Context(), callerID, input)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Impossible de charger la boîte de réception"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, inbox)

@@ -25,7 +25,6 @@ func StartPushNotificationWorker(ctx context.Context) {
 	log.Println("📱 Démarrage du Worker Firebase Cloud Messaging...")
 
 	// 1. Initialisation SANS "WithCredentialsFile" (DÉPRÉCIÉ)
-	// Firebase lira nativement la variable d'environnement GOOGLE_APPLICATION_CREDENTIALS
 	app, err := firebase.NewApp(ctx, nil)
 	if err != nil {
 		log.Printf("⚠️ Firebase non initialisé : %v", err)

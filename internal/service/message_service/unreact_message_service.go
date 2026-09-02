@@ -2,12 +2,12 @@ package message_service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
@@ -16,17 +16,17 @@ import (
 
 // UnreactToMessage gère le retrait ciblé d'une réaction sur un message.
 func UnreactToMessage(ctx context.Context, callerID int64, input message_models.UnreactMessageInput) error {
-	// 1. RÉCUPÉRATION DU MESSAGE (Auto-Guérison L1 -> L2 -> L3)[cite: 39]
+	// 1. RÉCUPÉRATION DU MESSAGE (Auto-Guérison L1 -> L2 -> L3)
 	messages, err := object_cache_service.GetMessagesView(ctx, []int64{input.MessageID})
 	if err != nil || len(messages) == 0 {
-		return errors.New("message introuvable ou supprimé")
+		return nubo_error.NewNotFound("MESSAGE_NOT_FOUND", "Message introuvable ou supprimé.", err)
 	}
 	msg := messages[0]
 
-	// 2. SÉCURITÉ : Vérification de l'appartenance à la conversation[cite: 39]
+	// 2. SÉCURITÉ : Vérification de l'appartenance à la conversation
 	mem, err := security_service.LeftMember(ctx, msg.ConversationID, callerID)
 	if err != nil || mem.Role < 0 {
-		return errors.New("accès refusé : vous ne faites pas partie de cette conversation")
+		return nubo_error.NewForbidden("ACCESS_DENIED", "Accès refusé : vous ne faites pas partie de cette conversation.", err)
 	}
 
 	// 3. MANIPULATION DU JSONB (Attachments)[cite: 39]

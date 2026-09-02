@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -32,5 +33,5 @@ func MongoUpsertPost(post post_models.PostPayload) error {
 	opts := options.Update().SetUpsert(true)
 
 	_, err := Posts.DB.Collection(Posts.Name).UpdateOne(ctx, filter, update, opts)
-	return err
+	return nubo_error.NewInternal(err)
 }

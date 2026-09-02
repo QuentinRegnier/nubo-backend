@@ -41,20 +41,20 @@ import (
 // @Param        offset        query  int    false "Décalage pour la pagination (défaut: 0)"
 // @Param        limit         query  int    false "Nombre maximum de commentaires (défaut: 50, bridé à 100)"
 // @Success      200  {array}   comment_models.CommentPayload "Liste paginée et triée des commentaires"
-// @Failure      400  {object}  domain.ErrorResponse "Paramètre manquant ou limite de pagination dépassée"
-// @Failure      401  {object}  domain.ErrorResponse "Session expirée ou utilisateur non identifié"
-// @Failure      500  {object}  domain.ErrorResponse "Erreur interne lors de la récupération des données"
+// @Failure      400  {object}  nubo_error.PublicErrorResponse "Paramètre manquant ou limite de pagination dépassée"
+// @Failure      401  {object}  nubo_error.PublicErrorResponse "Session expirée ou utilisateur non identifié"
+// @Failure      500  {object}  nubo_error.PublicErrorResponse "Erreur interne lors de la récupération des données"
 // @Router       /comment [get]
 func GetCommentsHandler(c *gin.Context) {
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input comment_models.GetCommentsInput
 	if err := c.ShouldBindQuery(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Paramètres de requête (post_id) invalides ou manquants"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_QUERY", "Paramètres de requête (post_id) invalides ou manquants.", err))
 		return
 	}
 
@@ -67,7 +67,7 @@ func GetCommentsHandler(c *gin.Context) {
 
 	comments, err := comment_service.GetComments(c.Request.Context(), input)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"nubo_error": "Erreur lors de la récupération des commentaires"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

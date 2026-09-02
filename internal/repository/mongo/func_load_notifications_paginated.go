@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 )
 
@@ -13,7 +14,7 @@ func MongoLoadNotificationsPaginated(userID int64, limit int64, offset int64) ([
 
 	docs, err := Notifications.GetPaginated(filter, sort, offset, limit)
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	var notifs []notification_models.NotificationPayload

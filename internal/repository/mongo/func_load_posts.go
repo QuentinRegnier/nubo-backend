@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 )
 
@@ -17,7 +18,7 @@ func MongoLoadPosts(ids []int64) ([]post_models.PostPayload, error) {
 
 	docs, err := Posts.Get(filter, nil)
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	var posts []post_models.PostPayload

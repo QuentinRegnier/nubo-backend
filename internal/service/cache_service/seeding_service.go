@@ -2,11 +2,11 @@ package cache_service
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"strconv"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -25,12 +25,12 @@ func SeedMostCache() error {
 	// ---------------------------------------------------------
 	// PHASE 1 : RESTAURATION DU SYSTÈME DE TAGS
 	// ---------------------------------------------------------
-	log.Println("♻️ Restauration des tags communautaires depuis SQL...")
+	logger.Log.Info().Msg("Restauration des tags communautaires depuis SQL...")
 
 	// Appel unique et propre !
 	tagsToSync, err := postgres.FuncLoadAllTags()
 	if err != nil {
-		log.Printf("⚠️ Erreur lors du chargement des tags : %v", err)
+		logger.Log.Error().Err(err).Msg("Erreur lors du chargement des tags")
 	} else if len(tagsToSync) > 0 {
 		// On utilise SAdd pour restaurer le SET Redis (Source pour le Cron Canoniseur)
 		// On convertit en []interface{} pour le driver Redis
@@ -44,7 +44,7 @@ func SeedMostCache() error {
 	// ---------------------------------------------------------
 	// PHASE 2 : HYDRATATION DES POSTS ET CLASSEMENTS (PAR BLOCS)
 	// ---------------------------------------------------------
-	log.Println("♻️ Hydratation du MOST Cache depuis SQL (Mode Paginated)...")
+	logger.Log.Info().Msg("Hydratation du MOST Cache depuis SQL (Mode Paginated)...")
 
 	limit := 10000 // Blocs de 10 000 posts pour préserver la RAM
 	offset := 0
@@ -53,7 +53,7 @@ func SeedMostCache() error {
 	for {
 		posts, err := postgres.FuncLoadPostsPaginated(limit, offset)
 		if err != nil {
-			return fmt.Errorf("erreur requête seeding (offset %d): %w", offset, err)
+			return nubo_error.NewInternal(err)
 		}
 
 		if len(posts) == 0 {
@@ -77,14 +77,14 @@ func SeedMostCache() error {
 		}
 
 		totalProcessed += len(posts)
-		log.Printf("⏳ Seeding en cours... %d posts traités.", totalProcessed)
+		logger.Log.Info().Int("posts_processed", totalProcessed).Msg("Seeding en cours...")
 		offset += limit
 	}
 
 	// ---------------------------------------------------------
 	// PHASE 3 : HYDRATATION INVERSÉE (PRE-WARMING FINAL)
 	// ---------------------------------------------------------
-	log.Println("🔥 Lancement de l'hydratation inversée (Pre-warming L1/L2)...")
+	logger.Log.Info().Msg("Lancement de l'hydratation inversée (Pre-warming L1/L2)...")
 
 	// 1. Collecte des IDs gagnants dans tous les rayons trend:*
 	winnerIDsMap := make(map[int64]bool)
@@ -120,12 +120,12 @@ func SeedMostCache() error {
 					_ = mongo.Posts.Set(doc)
 				}
 			}
-			log.Printf("💎 %d posts d'élite sanctuarisés dans le cache_service L1.", len(winners))
+			logger.Log.Info().Int("count", len(winners)).Msg("Posts d'élite sanctuarisés dans l'Object Cache L1.")
 		}
 	}
 
 	// 3. Synchronisation MongoDB (L2) pour le dernier mois
-	log.Println("📦 Synchronisation MongoDB pour les posts des 30 derniers jours...")
+	logger.Log.Info().Msg("Synchronisation MongoDB pour les posts des 30 derniers jours...")
 	recentPosts, err := postgres.FuncLoadRecentPosts(30)
 	if err == nil {
 		for _, p := range recentPosts {
@@ -134,13 +134,12 @@ func SeedMostCache() error {
 				_ = mongo.Posts.Set(doc)
 			}
 		}
-		log.Printf("✅ %d posts récents synchronisés dans MongoDB.", len(recentPosts))
+		logger.Log.Info().Int("count", len(recentPosts)).Msg("Posts récents synchronisés dans MongoDB.")
 	}
 
 	// 4. Désactivation du flag de maintenance
-	// On utilise une clé Redis dédiée pour que toutes les instances de l'API s'ouvrent en même temps (via Collection)
 	_ = redis.SystemStatus.SetPrimitive(ctx, "maintenance", "off")
-	log.Println("🚀 Mode maintenance désactivé. L'API est opérationnelle.")
+	logger.Log.Info().Msg("Mode maintenance désactivé. L'API est opérationnelle.")
 
 	return nil
 }
@@ -155,12 +154,12 @@ func SeedSpeedCache() error {
 	limit := 10000
 
 	// --- 1. Utilisateurs ---
-	log.Println("⚡ Amorçage SPEED Cache: Chargement des utilisateurs...")
+	logger.Log.Info().Msg("Amorçage SPEED Cache: Chargement des utilisateurs...")
 	offsetUsers := 0
 	for {
 		users, err := postgres.FuncLoadUsersPaginated(limit, offsetUsers)
 		if err != nil {
-			log.Printf("⚠️ Avertissement: Erreur DB lors du chargement des users: %v", err)
+			logger.Log.Warn().Err(err).Msg("Erreur DB lors du chargement des users")
 			break
 		}
 
@@ -174,15 +173,15 @@ func SeedSpeedCache() error {
 			break
 		}
 	}
-	log.Printf("✅ SPEED Cache Users: %d chargés.", offsetUsers)
+	logger.Log.Info().Int("count", offsetUsers).Msg("SPEED Cache Users chargés.")
 
 	// --- 2. Relations ---
-	log.Println("⚡ Amorçage SPEED Cache: Chargement des relations...")
+	logger.Log.Info().Msg("Amorçage SPEED Cache: Chargement des relations...")
 	offsetRels := 0
 	for {
 		relations, err := postgres.FuncLoadRelationsPaginated(limit, offsetRels)
 		if err != nil {
-			log.Printf("⚠️ Avertissement: Erreur DB lors du chargement des relations: %v", err)
+			logger.Log.Warn().Err(err).Msg("Erreur DB lors du chargement des relations")
 			break
 		}
 
@@ -195,13 +194,12 @@ func SeedSpeedCache() error {
 			break
 		}
 	}
-	log.Printf("✅ SPEED Cache Relations terminées (%d chargées).", offsetRels)
+	logger.Log.Info().Int("count", offsetRels).Msg("SPEED Cache Relations chargées.")
 
 	// --- 3. Messagerie (Inbox & Conversations) ---
 	if err := SeedMessagingSpeedCache(ctx); err != nil {
-		log.Printf("  Avertissement lors du seeding de la messagerie: %v", err)
+		logger.Log.Warn().Err(err).Msg("Avertissement lors du seeding de la messagerie")
 	}
-
 	return nil
 }
 
@@ -215,11 +213,11 @@ func SeedUserCache() error {
 	limit := 10000
 	offset := 0
 
-	log.Println("👤 Amorçage USER Cache: Construction des timelines (ZSETs)...")
+	logger.Log.Info().Msg("Amorçage USER Cache: Construction des timelines (ZSETs)...")
 	for {
 		seeds, err := postgres.FuncLoadTimelineSeedPaginated(limit, offset)
 		if err != nil {
-			log.Printf("⚠️ Avertissement: Erreur DB lors du chargement des timelines: %v", err)
+			logger.Log.Warn().Err(err).Msg("Erreur DB lors du chargement des timelines")
 			break
 		}
 
@@ -233,6 +231,6 @@ func SeedUserCache() error {
 		}
 	}
 
-	log.Printf("✅ USER Cache: Timelines reconstruites (%d posts assignés).", offset)
+	logger.Log.Info().Int("count", offset).Msg("USER Cache: Timelines reconstruites.")
 	return nil
 }

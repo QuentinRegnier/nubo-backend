@@ -3,6 +3,7 @@ package like_handlers
 import (
 	"net/http"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/like_service"
 	"github.com/gin-gonic/gin"
 
@@ -32,34 +33,33 @@ import (
 // @Param        limit         query  int    false "Nombre de résultats (Défaut: 20, Max: 100)"
 // @Param        offset        query  int    false "Décalage pour la pagination (Défaut: 0)"
 // @Success      200  {object}  post_models.GetPostLikesOutput "Liste des identifiants des utilisateurs ayant liké"
-// @Failure      400  {object}  domain.ErrorResponse "Paramètres de requête invalides"
-// @Failure      401  {object}  domain.ErrorResponse "Utilisateur non identifié"
-// @Failure      404  {object}  domain.ErrorResponse "Post introuvable ou inaccessible"
-// @Failure      500  {object}  domain.ErrorResponse "Erreur interne lors de la récupération des likes"
+// @Failure      400  {object}  nubo_error.PublicErrorResponse "Paramètres de requête invalides"
+// @Failure      401  {object}  nubo_error.PublicErrorResponse "Utilisateur non identifié"
+// @Failure      404  {object}  nubo_error.PublicErrorResponse "Post introuvable ou inaccessible"
+// @Failure      500  {object}  nubo_error.PublicErrorResponse "Erreur interne lors de la récupération des likes"
 // @Router       /post/{id}/likes [get]
 func GetPostLikesHandler(c *gin.Context) {
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input post_models.GetPostLikesInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Format JSON invalide"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide.", err))
 		return
 	}
 
 	input.CallerID = callerID
 
-	// 🛡️ BOUCLIER DE PAGINATION
 	if input.Limit <= 0 || input.Limit > 100 {
 		input.Limit = 20
 	}
 
 	output, err := like_service.GetPostLikes(c.Request.Context(), input)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"nubo_error": "Post introuvable ou inaccessible"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

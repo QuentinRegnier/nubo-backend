@@ -3,8 +3,10 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
@@ -19,11 +21,16 @@ func FuncGetMember(ctx context.Context, convID int64, userID int64) (conversatio
 		&m.ID, &m.ConversationID, &m.UserID, &m.Role, &m.JoinedAt, &m.UnreadCount, &frozenID, &m.CreatedAt, &m.UpdatedAt,
 	)
 
-	if err == nil {
-		if frozenID.Valid {
-			m.FrozenMessageID = frozenID.Int64
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return m, nubo_error.NewNotFound("MEMBER_NOT_FOUND", "Membre introuvable.", err)
 		}
+		return m, nubo_error.NewInternal(err)
 	}
 
-	return m, err
+	if frozenID.Valid {
+		m.FrozenMessageID = frozenID.Int64
+	}
+
+	return m, nil
 }

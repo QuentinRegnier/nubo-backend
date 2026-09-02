@@ -19,25 +19,25 @@ import (
 // @Security     ApiKeyAuth
 // @Param        payload body user_settings_models.UpdateStyleInput true "Réglages de style à mettre à jour"
 // @Success      200 {object} map[string]string "Message de succès"
-// @Failure      400 {object} nubo_error.ErrorResponse "JSON invalide"
-// @Failure      401 {object} nubo_error.ErrorResponse "Non autorisé"
-// @Failure      500 {object} nubo_error.ErrorResponse "Erreur interne"
+// @Failure      400 {object} nubo_error.PublicErrorResponse "JSON invalide"
+// @Failure      401 {object} nubo_error.PublicErrorResponse "Non autorisé"
+// @Failure      500 {object} nubo_error.PublicErrorResponse "Erreur interne"
 // @Router       /style [patch]
 func UpdateStyleHandler(c *gin.Context) {
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Non autorisé"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input user_settings_models.UpdateStyleInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Invalid JSON: " + err.Error()})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou paramètres manquants.", err))
 		return
 	}
 
 	if err := user_settings_service.UpdateStyle(c.Request.Context(), userID, input); err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Impossible de mettre à jour le style"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

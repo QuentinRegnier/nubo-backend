@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models" // ✅ Le bon import
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
@@ -24,14 +25,14 @@ func FuncGetMedia(ctx context.Context, mediaID int64) (models.MediaRequest, erro
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return m, errors.New("media not found")
+			return m, nubo_error.NewNotFound("MEDIA_NOT_FOUND", "Média introuvable.", err)
 		}
-		return m, err
+		return m, nubo_error.NewInternal(err)
 	}
 
-	// ✅ Rejet si le média a été supprimé
+	// ✅ Rejet si le média a été supprimé (Soft-Delete)
 	if !m.Visibility {
-		return m, errors.New("media deleted")
+		return m, nubo_error.NewNotFound("MEDIA_DELETED", "Ce média a été supprimé.", nil)
 	}
 
 	return m, nil

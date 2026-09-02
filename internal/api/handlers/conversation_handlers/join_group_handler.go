@@ -38,29 +38,29 @@ import (
 // @Param X-Timestamp header string true "Timestamp Unix de la requête"
 // @Param data body conversation_models.JoinGroupInput true "Données pour rejoindre"
 // @Success 200 {object} map[string]string "Message de succès"
-// @Failure 400 {object} nubo_error.ErrorResponse "Données invalides"
-// @Failure 401 {object} nubo_error.ErrorResponse "Session expirée ou utilisateur non identifié"
-// @Failure 403 {object} nubo_error.ErrorResponse "Accès refusé"
-// @Failure 500 {object} nubo_error.ErrorResponse "Erreur interne de persistance"
+// @Failure 400 {object} nubo_error.PublicErrorResponse "Données invalides"
+// @Failure 401 {object} nubo_error.PublicErrorResponse "Session expirée ou utilisateur non identifié"
+// @Failure 403 {object} nubo_error.PublicErrorResponse "Accès refusé"
+// @Failure 500 {object} nubo_error.PublicErrorResponse "Erreur interne de persistance"
 // @Router /group/join [post]
 func JoinGroupHandler(c *gin.Context) {
 	// 1. Extraction sécurisée de l'identité
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	// 2. Récupération et validation du Body
 	var input conversation_models.JoinGroupInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide ou données manquantes"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou paramètres manquants.", err))
 		return
 	}
 
 	// 3. Délégation au Service Métier (Cascade L1->L2->L3 et Write-Behind)
 	if err := conversation_service.JoinGroup(c.Request.Context(), callerID, input); err != nil {
-		c.JSON(http.StatusForbidden, nubo_error.ErrorResponse{Error: err.Error()})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

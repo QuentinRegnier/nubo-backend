@@ -2,16 +2,15 @@ package postgres
 
 import (
 	"database/sql"
-	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/lib/pq"
 )
 
 func FuncLoadPosts(postIDs []int64, limit int, offset int) ([]post_models.PostPayload, error) {
-	fmt.Println("FuncLoadPosts called with IDs count:", len(postIDs), "Limit:", limit, "Offset:", offset)
-
 	// 1. Préparation de l'argument des IDs
 	var pPostIDs any
 	if len(postIDs) > 0 {
@@ -38,12 +37,12 @@ func FuncLoadPosts(postIDs []int64, limit int, offset int) ([]post_models.PostPa
 	// 3. Exécution de la requête
 	rows, err := postgres.PostgresDB.Query(sqlStatement, pPostIDs, limit, offset)
 	if err != nil {
-		return nil, fmt.Errorf("erreur lors de l'exécution de FuncLoadPosts: %w", err)
+		return nil, nubo_error.NewInternal(err)
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			fmt.Println("⚠️ Erreur lors de la fermeture des rows dans FuncLoadPosts:", err)
+			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
 		}
 	}(rows)
 

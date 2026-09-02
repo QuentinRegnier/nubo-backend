@@ -2,11 +2,11 @@ package message_service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -19,18 +19,18 @@ func UpdateMessage(ctx context.Context, callerID int64, input message_models.Upd
 	// 1. SÉCURITÉ : Récupération du message complet et vérification d'appartenance
 	msg, err := security_service.LeftMessage(ctx, input.MessageID, callerID)
 	if err != nil {
-		return err
+		return err // L'erreur est déjà formatée par LeftMessage
 	}
 
 	// 2. RÈGLE MÉTIER STRICTE : Seul le type 0 (Texte) est modifiable
 	if msg.MessageType != 0 {
-		return errors.New("unsupported type")
+		return nubo_error.NewBadRequest("UNSUPPORTED_MESSAGE_TYPE", "Seul un message de type texte peut être modifié.", nil)
 	}
 
 	// 3. APPLICATION DES MODIFICATIONS
 	msg.Content = pkg.CleanStr(input.Content)
 	if msg.Content == "" {
-		return errors.New("le message ne peut pas être vide")
+		return nubo_error.NewBadRequest("EMPTY_MESSAGE", "Le message ne peut pas être vide.", nil)
 	}
 	msg.UpdatedAt = time.Now().UTC()
 

@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 )
 
@@ -11,7 +12,7 @@ func MongoLoadNotificationsByIDs(ids []int64) ([]notification_models.Notificatio
 
 	docs, err := Notifications.Get(filter, nil)
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	var notifs []notification_models.NotificationPayload

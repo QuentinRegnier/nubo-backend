@@ -2,9 +2,9 @@ package auth_service
 
 import (
 	"context"
-	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -19,17 +19,16 @@ func RevokeSession(ctx context.Context, callerID int64, sessionID int64) error {
 	err := redis.Sessions.GetObject(ctx, sessionID, &s)
 	if err != nil || s.ID == 0 {
 		// FALLBACK L3 : Si la session n'est plus en RAM, on vérifie en BDD
-		// Utilisation de la fonction générique d'origine pour récupérer l'objet complet
 		sessionsPg, errPg := postgres.FuncLoadSession(sessionID, callerID, "", "")
 		if errPg != nil || sessionsPg.ID == 0 {
-			return errors.New("session introuvable ou accès refusé")
+			return nubo_error.NewNotFound("SESSION_NOT_FOUND", "Session introuvable ou accès refusé.", errPg)
 		}
 		s = sessionsPg
 	}
 
 	// 2. SÉCURITÉ ABSOLUE : Vérification de la propriété
 	if s.UserID != callerID {
-		return errors.New("accès refusé : cette session ne vous appartient pas")
+		return nubo_error.NewForbidden("ACCESS_DENIED", "Cette session ne vous appartient pas.", nil)
 	}
 
 	// 3. PURGE DU CACHE L1 (Object + Index) via le service dédié (Pur DDD)

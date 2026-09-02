@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/like_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/like_service"
 	"github.com/gin-gonic/gin"
 
@@ -31,23 +32,24 @@ import (
 // @Param        id            path   int    true "ID du post"
 // @Param        data          body   post_models.LikePostInput true "Action (like ou unlike)"
 // @Success      200  {object}  map[string]string "message: Action prise en compte"
-// @Failure      400  {object}  domain.ErrorResponse "Format JSON invalide ou ID invalide"
-// @Failure      401  {object}  domain.ErrorResponse "Utilisateur non identifié"
+// @Failure      400  {object}  nubo_error.PublicErrorResponse "Format JSON invalide ou ID invalide"
+// @Failure      401  {object}  nubo_error.PublicErrorResponse "Utilisateur non identifié"
 // @Router       /post/{id}/like [post]
 func LikePostHandler(c *gin.Context) {
 	callerUserID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input like_models.LikePostInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Format JSON invalide. 'post_id' et 'action' requis."})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide. 'post_id' et 'action' requis.", err))
 		return
 	}
 	input.UserID = callerUserID
 
 	_ = like_service.TogglePostLike(c.Request.Context(), input)
+
 	c.JSON(http.StatusOK, gin.H{"message": "Action prise en compte"})
 }

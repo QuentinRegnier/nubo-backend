@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/report_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/report_service"
 	"github.com/gin-gonic/gin"
@@ -37,33 +38,29 @@ import (
 // @Param        X-Timestamp   header string true "Timestamp Unix de la requête"
 // @Param        data          body   moderation_models.CreateReportInput true "Payload détaillé du signalement"
 // @Success      200  {object}  map[string]string "message: Votre signalement a été pris en compte..."
-// @Failure      400  {object}  domain.ErrorResponse "Données invalides : vérifiez le format, le type de cible et la catégorie."
-// @Failure      401  {object}  domain.ErrorResponse "Utilisateur non identifié"
-// @Failure      500  {object}  domain.ErrorResponse "Erreur interne lors de la mise en file d'attente"
+// @Failure      400  {object}  nubo_error.PublicErrorResponse "Données invalides : vérifiez le format, le type de cible et la catégorie."
+// @Failure      401  {object}  nubo_error.PublicErrorResponse "Utilisateur non identifié"
+// @Failure      500  {object}  nubo_error.PublicErrorResponse "Erreur interne lors de la mise en file d'attente"
 // @Router       /report [post]
 func CreateReportHandler(c *gin.Context) {
-	// 1. Sécurité (JWT)
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	// 2. Binding du JSON
 	var input report_models.CreateReportInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Données invalides : vérifiez le format, le type de cible et la catégorie."})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Données invalides : vérifiez le format, le type de cible et la catégorie.", err))
 		return
 	}
 
 	input.UserID = userID
 
-	// 3. Appel au service asynchrone
 	if err := report_service.SubmitReport(c.Request.Context(), input); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"nubo_error": "Impossible de traiter le signalement pour le moment."})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	// 4. Réponse de succès instantanée
 	c.JSON(http.StatusOK, gin.H{"message": "Votre signalement a été pris en compte et sera étudié par nos équipes."})
 }

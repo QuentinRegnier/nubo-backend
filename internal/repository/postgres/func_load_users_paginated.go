@@ -4,7 +4,9 @@ import (
 	"database/sql"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 // FuncLoadUsersPaginated appelle la fonction SQL auth.func_load_users_paginated pour le Seeding L1
@@ -12,10 +14,13 @@ func FuncLoadUsersPaginated(limit, offset int) ([]models.UserLiteRequest, error)
 	query := `SELECT id, username, first_name, last_name, profile_picture_id, bio, grade, conversation_permission, add_group_permission FROM auth.func_load_users_paginated($1, $2)`
 	rows, err := postgres.PostgresDB.Query(query, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(err)
 	}
 	defer func(rows *sql.Rows) {
-		_ = rows.Close()
+		err := rows.Close()
+		if err != nil {
+			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
+		}
 	}(rows)
 
 	var users []models.UserLiteRequest

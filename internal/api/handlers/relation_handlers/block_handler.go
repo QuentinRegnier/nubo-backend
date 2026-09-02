@@ -19,9 +19,9 @@ import (
 // @Security     ApiKeyAuth
 // @Param        payload body relation_models.RelationActionInput true "ID de l'utilisateur à bloquer"
 // @Success      200 {object} map[string]string "Message de succès"
-// @Failure      400 {object} nubo_error.ErrorResponse "JSON invalide"
-// @Failure      401 {object} nubo_error.ErrorResponse "Non autorisé"
-// @Failure      409 {object} nubo_error.ErrorResponse "Conflit métier"
+// @Failure      400 {object} nubo_error.PublicErrorResponse "JSON invalide"
+// @Failure      401 {object} nubo_error.PublicErrorResponse "Non autorisé"
+// @Failure      409 {object} nubo_error.PublicErrorResponse "Conflit métier"
 // @Router       /relation/block [post]
 func BlockHandler(c *gin.Context) {
 	handleBlockAction(c, "block")
@@ -44,18 +44,18 @@ func UnBlockHandler(c *gin.Context) {
 func handleBlockAction(c *gin.Context, action string) {
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Non autorisé"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input relation_models.RelationActionInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Invalid JSON: " + err.Error()})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou paramètres manquants.", err))
 		return
 	}
 
 	if err := relation_service.ToggleBlock(c.Request.Context(), callerID, input.TargetID, action); err != nil {
-		c.JSON(http.StatusConflict, nubo_error.ErrorResponse{Error: err.Error()})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

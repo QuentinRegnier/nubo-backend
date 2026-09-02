@@ -104,9 +104,6 @@ func SetupRoutes(r *gin.Engine) {
 	secured.DELETE("/posts/delete", post_handlers.DeletePostHandler)
 	secured.POST("/views/batch", handlers.RegisterBatchViewsHandler) // ℹ️❌ à vérifier
 
-	// --- Profils / Utilisateurs ---
-	secured.POST("/search/users", handlers.UserSearchHandler) // ℹ️❌ à vérifier
-
 	// --- Notifications ---
 	secured.POST("/notifications/get", notification_handlers.GetNotificationsHandler)
 	secured.POST("/notifications/read", notification_handlers.ReadNotificationsHandler)

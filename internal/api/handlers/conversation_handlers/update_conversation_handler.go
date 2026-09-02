@@ -23,25 +23,25 @@ import (
 // @Param        id            path   int    true  "ID de la conversation"
 // @Param        data          body   conversation_models.UpdateConversationInput true "Champs à modifier"
 // @Success      200  {object} map[string]string "Message de succès"
-// @Failure      400  {object} nubo_error.ErrorResponse "Données ou ID invalides"
-// @Failure      401  {object} nubo_error.ErrorResponse "Session expirée ou utilisateur non identifié"
-// @Failure      403  {object} nubo_error.ErrorResponse "Droits d'administration insuffisants"
+// @Failure      400  {object} nubo_error.PublicErrorResponse "Données ou ID invalides"
+// @Failure      401  {object} nubo_error.PublicErrorResponse "Session expirée ou utilisateur non identifié"
+// @Failure      403  {object} nubo_error.PublicErrorResponse "Droits d'administration insuffisants"
 // @Router       /conversations/{id} [patch]
 func UpdateConversationHandler(c *gin.Context) {
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input conversation_models.UpdateConversationInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide ou conversation_id manquant"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou paramètres manquants.", err))
 		return
 	}
 
 	if err := conversation_service.UpdateConversation(c.Request.Context(), callerID, input.ConversationID, input); err != nil {
-		c.JSON(http.StatusForbidden, nubo_error.ErrorResponse{Error: err.Error()})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Conversation mise à jour avec succès"})

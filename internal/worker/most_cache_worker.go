@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -148,5 +149,5 @@ func getPostWithFallback(ctx context.Context, postID int64) (post_models.PostPay
 		return p, nil
 	}
 
-	return post_models.PostPayload{}, fmt.Errorf("post_service %d introuvable", postID)
+	return post_models.PostPayload{}, nubo_error.NewNotFound("POST_NOT_FOUND", "Post introuvable", nil)
 }

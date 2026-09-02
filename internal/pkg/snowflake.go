@@ -1,10 +1,11 @@
 package pkg
 
 import (
-	"errors"
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
@@ -34,7 +35,7 @@ type Node struct {
 // nodeID : Un identifiant unique pour ce serveur (entre 0 et 1023).
 func NewNode(nodeID int64) (*Node, error) {
 	if nodeID < 0 || nodeID > variables.NodeMax {
-		return nil, errors.New("node ID must be between 0 and 1023")
+		return nil, nubo_error.NewInternal(fmt.Errorf("node ID must be between 0 and %d", variables.NodeMax))
 	}
 
 	return &Node{

@@ -2,9 +2,9 @@ package object_cache_service
 
 import (
 	"context"
-	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
@@ -23,7 +23,7 @@ func GetMediaFromObjectCache(ctx context.Context, mediaID int64) (models.MediaRe
 
 	// ✅ Rejet immédiat si le média est soft-deleted
 	if err == nil && !m.Visibility {
-		return m, errors.New("media deleted")
+		return m, nubo_error.NewNotFound("MEDIA_DELETED", "Ce média a été supprimé.", nil)
 	}
 
 	return m, err

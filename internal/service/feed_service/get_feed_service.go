@@ -2,11 +2,11 @@ package feed_service
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/feed_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/post_service"
@@ -69,7 +69,8 @@ func GetFeed(ctx context.Context, input feed_models.GetFeedInput) ([]post_models
 
 		// Filtrage absolu des posts inaccessibles (visibilité privée, suppressions, erreurs Média)
 		for _, p := range postsOutput {
-			if p.Error == "" && p.Data != nil {
+			// CORRECTION : On vérifie l'ID de la structure au lieu de comparer à nil
+			if p.Error == "" && p.Data.ID != 0 {
 				validPosts = append(validPosts, p)
 			}
 		}
@@ -80,7 +81,7 @@ func GetFeed(ctx context.Context, input feed_models.GetFeedInput) ([]post_models
 	}
 
 	if len(validPosts) == 0 {
-		return []post_models.GetPostOutput{}, input.LastSeenIndex, "A", errors.New("aucun post disponible ou visible")
+		return []post_models.GetPostOutput{}, input.LastSeenIndex, "A", nubo_error.NewNotFound("FEED_EMPTY", "Aucun post disponible ou visible.", nil)
 	}
 
 	// 5. Finalisation des métadonnées de pagination

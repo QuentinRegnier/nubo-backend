@@ -2,10 +2,10 @@ package saved_service
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/saved_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -15,7 +15,7 @@ import (
 func ToggleSaved(ctx context.Context, userID int64, postID int64, action string) error {
 	// 1. Vérification que le post existe bien (L1) - Évite de sauvegarder un fantôme
 	if !object_cache_service.IsPostInObjectCache(ctx, postID) {
-		return errors.New("post introuvable ou indisponible")
+		return nubo_error.NewNotFound("POST_NOT_FOUND", "Post introuvable ou indisponible.", nil)
 	}
 
 	now := time.Now().UTC()
@@ -30,7 +30,7 @@ func ToggleSaved(ctx context.Context, userID int64, postID int64, action string)
 		dbAction = redis.ActionDelete
 		_ = object_cache_service.RemoveSavedFromZSET(ctx, userID, postID)
 	} else {
-		return errors.New("action non reconnue")
+		return nubo_error.NewBadRequest("INVALID_ACTION", "Action non reconnue.", nil)
 	}
 
 	// 3. Traitement L2/L3 Asynchrone (Write-Behind)

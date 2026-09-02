@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 )
 
@@ -16,11 +17,11 @@ func MongoGetMember(convID int64, userID int64) (conversation_models.MemberPaylo
 	filter := map[string]any{"conversation_id": convID, "user_id": userID}
 	docs, err := Members.Get(filter, nil)
 	if err != nil || len(docs) == 0 {
-		return mem, fmt.Errorf("member not found")
+		return mem, nubo_error.NewNotFound("MEMBER_NOT_FOUND", "Membre introuvable.", err)
 	}
 
 	if err := pkg.ToStruct(docs[0], &mem); err != nil {
-		return mem, err
+		return mem, nubo_error.NewInternal(fmt.Errorf("conversion document to struct: %w", err))
 	}
 
 	// SMART RE-COUNT : Si le compteur est à 0 ou qu'on a plus de 5s de retard

@@ -2,12 +2,12 @@ package media_service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 )
 
@@ -27,7 +27,7 @@ func GenerateWatermarkedURL(mediaKey string, authorID, postID, readerID int64) s
 func GenerateMediaViewCascade(ctx context.Context, mediaID, authorID, targetID, readerID int64) (media_models.MediaView, error) {
 	mediaPayload, err := GetMediaCascade(ctx, mediaID)
 	if err != nil || !mediaPayload.Visibility {
-		return media_models.MediaView{}, errors.New("media introuvable ou supprimé")
+		return media_models.MediaView{}, nubo_error.NewNotFound("MEDIA_NOT_FOUND", "Média introuvable ou supprimé.", err)
 	}
 
 	signedURL := GenerateWatermarkedURL(mediaPayload.StoragePath, authorID, targetID, readerID)

@@ -4,18 +4,18 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 // FuncLoadAllTags récupère tous les slugs actifs depuis la base de données.
 func FuncLoadAllTags() ([]string, error) {
-	fmt.Println("FuncLoadAllTags called")
-
 	sqlStatement := `SELECT slug FROM content.func_load_all_tags()`
 
 	rows, err := postgres.PostgresDB.Query(sqlStatement)
 	if err != nil {
-		return nil, fmt.Errorf("erreur lors de l'exécution de FuncLoadAllTags: %w", err)
+		return nil, nubo_error.NewInternal(err)
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
@@ -31,12 +31,12 @@ func FuncLoadAllTags() ([]string, error) {
 		if err := rows.Scan(&slug); err == nil {
 			tags = append(tags, slug)
 		} else {
-			fmt.Printf("⚠️ Erreur lors du scan d'un tag : %v\n", err)
+			logger.Log.Error().Err(err).Msg("Erreur lors du scan d'un tag")
 		}
 	}
 
 	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("erreur pendant l'itération de FuncLoadAllTags: %w", err)
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	return tags, nil

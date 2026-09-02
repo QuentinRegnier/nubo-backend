@@ -1,7 +1,6 @@
 package auth_handlers
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
@@ -44,43 +43,26 @@ import (
 // @Param        data            formData string false "Données JSON (auth_models.UpdateProfileInput) si multipart"
 // @Param        payload         body     auth_models.UpdateProfileInput false "Données JSON classiques si pas d'image"
 // @Success      200 {object} map[string]string "Profil mis à jour avec succès"
-// @Failure      400 {object} nubo_error.ErrorResponse "JSON invalide"
-// @Failure      401 {object} nubo_error.ErrorResponse "Non autorisé"
-// @Failure      409 {object} nubo_error.ErrorResponse "Conflit d'identifiant (Username, Email, Phone)"
-// @Failure      500 {object} nubo_error.ErrorResponse "Erreur interne (Upload S3, etc.)"
+// @Failure      400 {object} nubo_error.PublicErrorResponse "JSON invalide"
+// @Failure      401 {object} nubo_error.PublicErrorResponse "Non autorisé"
+// @Failure      409 {object} nubo_error.PublicErrorResponse "Conflit d'identifiant (Username, Email, Phone)"
+// @Failure      500 {object} nubo_error.PublicErrorResponse "Erreur interne (Upload S3, etc.)"
 // @Router       /profile [patch]
 func UpdateProfileHandler(c *gin.Context) {
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Non autorisé"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input auth_models.UpdateProfileInput
-
-	// Gestion Hybride : Multipart (avec image) ou JSON classique
-	if c.ContentType() == "multipart/form-data" {
-		data := c.PostForm("data") // Le JSON est dans le champ 'data'
-		if data != "" {
-			if err := json.Unmarshal([]byte(data), &input); err != nil {
-				c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Invalid JSON in form data: " + err.Error()})
-				return
-			}
-		}
-	} else {
-		// Requête JSON classique sans avatar
-		if err := c.ShouldBindJSON(&input); err != nil {
-			c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Invalid JSON: " + err.Error()})
-			return
-		}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide.", err))
+		return
 	}
 
-	// Extraction du fichier si présent
-	fileHeader, _ := c.FormFile("profile_picture")
-
-	// Appel du service
-	if err := auth_service.UpdateProfile(c.Request.Context(), userID, input, fileHeader); err != nil {
-		c.JSON(http.StatusConflict, nubo_error.ErrorResponse{Error: err.Error()}) // On renvoie l'erreur métier (ex: "Pseudo déjà pris")
+	if err := auth_service.UpdateProfile(c.Request.Context(), userID, input); err != nil {
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

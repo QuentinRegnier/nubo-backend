@@ -24,21 +24,21 @@ import (
 // @Param offset query int false "Décalage pour pagination (défaut 0)"
 // @Param force query bool false "Forcer le rafraîchissement du cache"
 // @Success 200 {object} conversation_models.GetAddableOutput
-// @Failure 400 {object} nubo_error.ErrorResponse "Paramètres invalides"
-// @Failure 401 {object} nubo_error.ErrorResponse "Session expirée ou utilisateur non identifié"
-// @Failure 500 {object} nubo_error.ErrorResponse "Erreur interne"
+// @Failure 400 {object} nubo_error.PublicErrorResponse "Paramètres invalides"
+// @Failure 401 {object} nubo_error.PublicErrorResponse "Session expirée ou utilisateur non identifié"
+// @Failure 500 {object} nubo_error.PublicErrorResponse "Erreur interne"
 // @Router /group/addable [get]
 // @Router /group/addable/force [get]
 func GetAddableHandler(c *gin.Context) {
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input relation_models.GetAddableInput
 	if err := c.ShouldBindQuery(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Paramètres de pagination invalides"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_QUERY", "Paramètres de pagination invalides.", err))
 		return
 	}
 
@@ -53,7 +53,7 @@ func GetAddableHandler(c *gin.Context) {
 
 	output, err := relation_service.GetAddableUsers(c.Request.Context(), callerID, input)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur lors de la récupération des suggestions"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

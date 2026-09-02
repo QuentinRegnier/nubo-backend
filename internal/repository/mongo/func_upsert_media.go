@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -23,5 +24,5 @@ func MongoUpsertMedia(media models.MediaRequest) error {
 	opts := options.Update().SetUpsert(true)
 
 	_, err := Media.DB.Collection(Media.Name).UpdateOne(ctx, filter, update, opts)
-	return err
+	return nubo_error.NewInternal(err)
 }

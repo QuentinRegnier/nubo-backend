@@ -23,18 +23,18 @@ import (
 // @Param        offset_id       query  int    false "L'ID du dernier message reçu"
 // @Param        direction       query  string false "Direction (top ou bottom)"
 // @Success      200  {object} message_models.GetMessagesOutput
-// @Failure      401  {object} nubo_error.ErrorResponse "Utilisateur non identifié"
+// @Failure      401  {object} nubo_error.PublicErrorResponse "Utilisateur non identifié"
 // @Router       /messages [get]
 func GetMessagesHandler(c *gin.Context) {
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input message_models.GetMessagesInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide.", err))
 		return
 	}
 
@@ -44,7 +44,7 @@ func GetMessagesHandler(c *gin.Context) {
 
 	messages, err := message_service.GetMessages(c.Request.Context(), callerID, input)
 	if err != nil {
-		c.JSON(http.StatusForbidden, nubo_error.ErrorResponse{Error: err.Error()})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

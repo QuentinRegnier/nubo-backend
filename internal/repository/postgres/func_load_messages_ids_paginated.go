@@ -3,9 +3,10 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"fmt"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 // FuncLoadMessageIDsPaginated récupère uniquement l'Index depuis le B-Tree Postgres (0.1ms) en appliquant le gel de l'historique.
@@ -19,12 +20,12 @@ func FuncLoadMessageIDsPaginated(ctx context.Context, convID int64, offsetID int
 
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, convID, offsetID, limit, direction, pFrozenID)
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(err)
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			fmt.Println(err)
+			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
 		}
 	}(rows)
 

@@ -22,31 +22,26 @@ import (
 // @Param        X-Timestamp   header string true "Timestamp Unix de la requête"
 // @Param        data          body   conversation_models.DemoteMemberInput true "ID du groupe et de l'administrateur à destituer"
 // @Success      200  {object} map[string]string "message: Administrateur destitué avec succès"
-// @Failure      400  {object} nubo_error.ErrorResponse "Format JSON invalide ou champs manquants"
-// @Failure      401  {object} nubo_error.ErrorResponse "Utilisateur non identifié"
-// @Failure      403  {object} nubo_error.ErrorResponse "Action refusée"
+// @Failure      400  {object} nubo_error.PublicErrorResponse "Format JSON invalide ou champs manquants"
+// @Failure      401  {object} nubo_error.PublicErrorResponse "Utilisateur non identifié"
+// @Failure      403  {object} nubo_error.PublicErrorResponse "Action refusée"
 // @Router       /conversations/promote [delete]
 func DemoteMemberHandler(c *gin.Context) {
-	// 1. Authentification
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	// 2. Validation du JSON
 	var input conversation_models.DemoteMemberInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide ou paramètres manquants"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou paramètres manquants.", err))
 		return
 	}
 
-	// 3. Appel du Service
 	if err := conversation_service.DemoteMember(c.Request.Context(), callerID, input); err != nil {
-		c.JSON(http.StatusForbidden, nubo_error.ErrorResponse{Error: err.Error()})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
-
-	// 4. Succès
-	c.JSON(http.StatusOK, gin.H{"message": "Administrateur destitué avec succès"})
+	c.JSON(http.StatusOK, gin.H{"message": "Membre promu avec succès"})
 }

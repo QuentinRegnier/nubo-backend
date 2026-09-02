@@ -2,12 +2,12 @@ package algorithm_service
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"math/rand"
 	"strconv"
 	"sync"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 )
@@ -36,17 +36,17 @@ type Quotas struct {
 // Validate s'assure de l'exactitude mathématique et de la cohérence des quotas injectés.
 func (fq *Quotas) Validate() error {
 	if fq.MaxCandidates <= 0 {
-		return fmt.Errorf("le nombre maximum de candidats doit être strictement positif")
+		return nubo_error.NewBadRequest("INVALID_QUOTA_MAX", "Le nombre maximum de candidats doit être strictement positif.", nil)
 	}
 
 	// Tolérance aux imprécisions microscopiques d'arrondi des float
 	sum := fq.SocialRatio + fq.TagRatio + fq.GlobalRatio
 	if math.Abs(sum-1.0) > 1e-6 {
-		return fmt.Errorf("la somme des ratios de distribution doit être strictement égale à 1.0 (actuellement: %f)", sum)
+		return nubo_error.NewBadRequest("INVALID_QUOTA_SUM", "La somme des ratios de distribution doit être strictement égale à 1.0.", nil)
 	}
 
 	if fq.SocialRatio < 0 || fq.TagRatio < 0 || fq.GlobalRatio < 0 {
-		return fmt.Errorf("les ratios de distribution ne peuvent pas être négatifs")
+		return nubo_error.NewBadRequest("NEGATIVE_QUOTA_RATIO", "Les ratios de distribution ne peuvent pas être négatifs.", nil)
 	}
 
 	return nil

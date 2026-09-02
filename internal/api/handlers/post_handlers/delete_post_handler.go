@@ -1,10 +1,10 @@
 package post_handlers
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/gin-gonic/gin"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
@@ -32,46 +32,32 @@ import (
 // @Param        X-Timestamp   header string true "Timestamp Unix de la requête"
 // @Param        data          body   post_models.DeletePostInput true "ID du post à supprimer"
 // @Success      200  {object}  map[string]string "message: Post supprimé avec succès"
-// @Failure      400  {object}  domain.ErrorResponse "Format JSON invalide ou post_id manquant"
-// @Failure      401  {object}  domain.ErrorResponse "Session expirée ou utilisateur non identifié"
-// @Failure      403  {object}  domain.ErrorResponse "Vous n'êtes pas autorisé à supprimer ce post"
-// @Failure      404  {object}  domain.ErrorResponse "Post introuvable"
-// @Failure      500  {object}  domain.ErrorResponse "Erreur interne lors de la suppression"
+// @Failure      400  {object}  nubo_error.PublicErrorResponse "Format JSON invalide ou post_id manquant"
+// @Failure      401  {object}  nubo_error.PublicErrorResponse "Session expirée ou utilisateur non identifié"
+// @Failure      403  {object}  nubo_error.PublicErrorResponse "Vous n'êtes pas autorisé à supprimer ce post"
+// @Failure      404  {object}  nubo_error.PublicErrorResponse "Post introuvable"
+// @Failure      500  {object}  nubo_error.PublicErrorResponse "Erreur interne lors de la suppression"
 // @Router       /post [delete]
 func DeletePostHandler(c *gin.Context) {
-	// 1. Authentification
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		fmt.Printf("❌ Erreur authentification : %v\n", err)
-		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	// 2. Parsing de la requête
 	var input post_models.DeletePostInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Format JSON invalide ou post_id manquant"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou post_id manquant.", err))
 		return
 	}
 
-	// 2.5 Sécurisation de l'input
 	input.UserID = userID
 
-	// 3. Appel au service métier
 	err = post_service.DeletePost(c.Request.Context(), input)
 	if err != nil {
-		if err.Error() == "unauthorized" {
-			c.JSON(http.StatusForbidden, gin.H{"nubo_error": "Vous n'êtes pas autorisé à supprimer ce post"})
-			return
-		}
-		if err.Error() == "not found" {
-			c.JSON(http.StatusNotFound, gin.H{"nubo_error": "Post introuvable"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"nubo_error": "Erreur lors de la suppression"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	// 4. Succès
 	c.JSON(http.StatusOK, gin.H{"message": "Post supprimé avec succès"})
 }

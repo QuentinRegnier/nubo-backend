@@ -2,13 +2,13 @@ package conversation_service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -22,16 +22,16 @@ func DemoteMember(ctx context.Context, callerID int64, input conversation_models
 	// 1. SÉCURITÉ : Vérification des droits du Caller (L1 -> L2 -> L3)
 	callerMem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
 	if err != nil {
-		return errors.New("conversation introuvable ou accès refusé")
+		return nubo_error.NewForbidden("ACCESS_DENIED", "Conversation introuvable ou accès refusé.", err)
 	}
 	if callerMem.Role != 2 {
-		return errors.New("action refusée : seul le propriétaire peut destituer un administrateur")
+		return nubo_error.NewForbidden("INSUFFICIENT_PERMISSIONS", "Seul le propriétaire peut destituer un administrateur.", nil)
 	}
 
 	// 2. RÉCUPÉRATION DU MEMBRE CIBLE
 	targetMem, err := security_service.LeftMember(ctx, input.ConversationID, input.TargetUserID)
 	if err != nil || targetMem.Role < 0 {
-		return errors.New("l'utilisateur ciblé n'est pas membre de ce groupe")
+		return nubo_error.NewBadRequest("USER_NOT_MEMBER", "L'utilisateur ciblé n'est pas membre de ce groupe.", err)
 	}
 
 	// 3. RÈGLES MÉTIER ET IDEMPOTENCE
@@ -39,7 +39,7 @@ func DemoteMember(ctx context.Context, callerID int64, input conversation_models
 		return nil // Déjà membre normal, on valide silencieusement
 	}
 	if targetMem.Role == 2 {
-		return errors.New("impossible de destituer le propriétaire, transférez d'abord la propriété")
+		return nubo_error.NewForbidden("CANNOT_DEMOTE_OWNER", "Impossible de destituer le propriétaire, transférez d'abord la propriété.", nil)
 	}
 
 	// 4. APPLICATION DE LA MODIFICATION

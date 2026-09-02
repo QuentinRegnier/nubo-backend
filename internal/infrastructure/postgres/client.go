@@ -3,9 +3,9 @@ package postgres
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"os"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	_ "github.com/lib/pq"
 )
 
@@ -33,10 +33,10 @@ func InitPostgres() {
 	var err error
 	PostgresDB, err = sql.Open("postgres", connStr)
 	if err != nil {
-		log.Fatal("Erreur connexion PostgreSQL :", err)
+		logger.Log.Fatal().Err(err).Msg("Erreur connexion PostgreSQL")
 	}
 
 	if err := PostgresDB.Ping(); err != nil {
-		log.Fatal("Ping PostgreSQL échoué :", err)
+		logger.Log.Fatal().Err(err).Msg("Ping PostgreSQL échoué")
 	}
 }

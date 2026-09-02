@@ -2,13 +2,13 @@ package conversation_service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -23,18 +23,18 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 	// 1. SÉCURITÉ : Le caller doit être membre actif du groupe (Role >= 0)
 	callerMem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
 	if err != nil || callerMem.Role < 0 {
-		return conversation_models.AddMemberOutput{}, errors.New("accès refusé : vous ne faites pas partie de cette conversation")
+		return conversation_models.AddMemberOutput{}, nubo_error.NewForbidden("NOT_A_MEMBER", "Accès refusé : vous ne faites pas partie de cette conversation.", err)
 	}
 
 	// 2. RÉCUPÉRATION DU GROUPE
 	conv, err := object_cache_service.GetConversationFromObjectCache(ctx, input.ConversationID)
 	if err != nil || conv.State != 0 {
-		return conversation_models.AddMemberOutput{}, errors.New("conversation introuvable ou inactive")
+		return conversation_models.AddMemberOutput{}, nubo_error.NewNotFound("CONV_NOT_FOUND", "Conversation introuvable ou inactive.", err)
 	}
 
 	// Interdiction d'ajouter des membres dans un Message Privé (Type 0)
 	if conv.Type == 0 {
-		return conversation_models.AddMemberOutput{}, errors.New("impossible d'ajouter des membres à une conversation privée à deux")
+		return conversation_models.AddMemberOutput{}, nubo_error.NewForbidden("INVALID_CONV_TYPE", "Impossible d'ajouter des membres à une conversation privée à deux.", nil)
 	}
 
 	output := conversation_models.AddMemberOutput{

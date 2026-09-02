@@ -3,10 +3,11 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 // FuncLoadActiveConversations récupère les métadonnées pour le Seeding
@@ -14,12 +15,12 @@ func FuncLoadActiveConversations(ctx context.Context) ([]models.ConvLiteRequest,
 	query := `SELECT id, type, title, last_message_id FROM messaging.func_load_active_conversations()`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query)
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(err)
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			fmt.Println(err)
+			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres)")
 		}
 	}(rows)
 

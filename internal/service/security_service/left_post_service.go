@@ -2,9 +2,9 @@ package security_service
 
 import (
 	"context"
-	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -47,12 +47,12 @@ func LeftPost(ctx context.Context, postID int64, userID int64) (post_models.Post
 	}
 
 	if !found {
-		return post_models.PostPayload{}, errors.New("not found")
+		return post_models.PostPayload{}, nubo_error.NewNotFound("POST_NOT_FOUND", "Post introuvable ou supprimé.", nil)
 	}
 
 	// 2. CONTRÔLE D'AUTORISATION
 	if post.UserID != userID {
-		return post_models.PostPayload{}, errors.New("unauthorized")
+		return post_models.PostPayload{}, nubo_error.NewForbidden("ACCESS_DENIED", "Vous n'êtes pas autorisé à réaliser cette action sur ce post.", nil)
 	}
 
 	return post, nil

@@ -2,10 +2,10 @@ package user_settings_service
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -17,7 +17,7 @@ func UpdatePrivacy(ctx context.Context, userID int64, input user_settings_models
 	// 1. Récupération des paramètres actuels (Cascade L1 -> L2 -> L3 garantie par ce service)
 	settings, err := object_cache_service.GetUserSettingsCascade(ctx, userID)
 	if err != nil || settings.ID == 0 {
-		return errors.New("paramètres de l'utilisateur introuvables")
+		return nubo_error.NewNotFound("SETTINGS_NOT_FOUND", "Paramètres de l'utilisateur introuvables.", err)
 	}
 
 	// 2. Remplacement intégral (Méthode PUT)

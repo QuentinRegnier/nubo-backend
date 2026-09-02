@@ -3,12 +3,12 @@ package worker
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/saved_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"go.mongodb.org/mongo-driver/bson"
@@ -56,12 +56,12 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 		case redis.EntityNotification:
 			c = mongo.Notifications
 		default:
-			log.Printf("⚠️ Erreur: Pas de MongoCollection définie pour l'entité %s", entity)
+			logger.Log.Error().Interface("entity", entity).Msg("Pas de MongoCollection définie pour l'entité")
 			continue
 		}
 
 		if c == nil {
-			log.Printf("⚠️ Erreur: La collection Mongo pour %s est nil", entity)
+			logger.Log.Error().Interface("entity", entity).Msg("La collection Mongo est nil")
 			continue
 		}
 
@@ -156,7 +156,7 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 			opts := options.BulkWrite().SetOrdered(true)
 			_, err := coll.BulkWrite(ctx, models, opts)
 			if err != nil {
-				log.Printf("⚠️ Erreur Mongo BulkWrite %s: %v", c.Name, err)
+				logger.Log.Error().Err(err).Str("collection", c.Name).Msg("Erreur Mongo BulkWrite")
 			}
 		}
 	}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/docs"
 	"github.com/QuentinRegnier/nubo-backend/internal/api"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/middleware"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/websocket"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
@@ -18,6 +19,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	mongogo "github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
@@ -36,6 +38,14 @@ import (
 //
 // @BasePath        /api/v12
 func main() {
+	// 1. Initialise le logger avant toute chose
+	logger.InitLogger()
+	// 2. Le 'defer' garantit que même si le serveur crashe (panic),
+	// le buffer de logs sera vidé sur le disque avant de mourir.
+	defer logger.CloseLogger()
+
+	logger.Log.Info().Msg("🚀 Démarrage de l'API Nubo V12")
+
 	// --- INITIALISATION SNOWFLAKE ---
 
 	// 1. On récupère la variable définie dans le docker-compose
@@ -121,7 +131,15 @@ func main() {
 	// Lance le moteur V12
 	worker.StartBackgroundWorkers(context.Background())
 
-	r := gin.Default()
+	// On passe de gin.Default() à gin.New() pour retirer les vieux middlewares
+	r := gin.New()
+
+	// 1. On branche NOTRE générateur de TraceID en premier
+	r.Use(middleware.TraceIDMiddleware())
+
+	// 2. On branche NOTRE Recovery Anti-Crash en second
+	r.Use(middleware.CustomRecoveryMiddleware())
+
 	api.SetupRoutes(r)
 
 	// Initialiser la documentation

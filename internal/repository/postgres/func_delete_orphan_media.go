@@ -3,9 +3,10 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"fmt"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 type OrphanMediaResult struct {
@@ -18,12 +19,12 @@ func FuncDeleteOrphanMedia(ctx context.Context) ([]OrphanMediaResult, error) {
 	query := `SELECT id, storage_path FROM content.func_delete_orphan_media()`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("erreur purge orphan media: %w", err)
+		return nil, nubo_error.NewInternal(err)
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			fmt.Println("Erreur lors de la fermeture des lignes :", err)
+			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres)")
 		}
 	}(rows)
 

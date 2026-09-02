@@ -2,10 +2,10 @@ package worker
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/lib/pq"
@@ -14,7 +14,7 @@ import (
 // StartHashtagCanonCron lance un worker qui calcule les similarités (Levenshtein)
 // entre les tags communautaires toutes les 24h pour absorber les fautes de frappe.
 func StartHashtagCanonCron(ctx context.Context) {
-	log.Println("🔤 Démarrage du Canoniseur de Hashtags (24h)...")
+	logger.Log.Info().Msg("Démarrage du Canoniseur de Hashtags (24h)...")
 	go func() {
 		// En production, utiliser un vrai cron pour viser 03:00 AM
 		ticker := time.NewTicker(24 * time.Hour)
@@ -44,7 +44,7 @@ func processHashtagCanonicalization(ctx context.Context) {
 		return // Pas assez de tags pour faire un calcul de distance
 	}
 
-	log.Printf("🔍 Canonicalisation de %d tags communautaires en cours...", len(tags))
+	logger.Log.Info().Int("count", len(tags)).Msg("Canonicalisation de tags communautaires en cours...")
 	aliasMap := make(map[string]string)
 
 	// Algorithme O(N^2) : Comparaison par paires.
@@ -82,7 +82,9 @@ func processHashtagCanonicalization(ctx context.Context) {
 		}
 		_, err := pipe.Exec(ctx)
 		if err == nil {
-			log.Printf("✅ Canonicalisation terminée : %d fautes de frappes mappées.", len(aliasMap))
+			logger.Log.Info().Int("alias_count", len(aliasMap)).Msg("Canonicalisation terminée (Fautes de frappes mappées)")
+		} else {
+			logger.Log.Error().Err(err).Msg("Échec de la canonicalisation Redis")
 		}
 	}
 }
@@ -174,8 +176,8 @@ func persistCommunityTags(ctx context.Context, tags []string) {
 	// Exécution atomique
 	_, err := postgres.PostgresDB.ExecContext(ctx, query, pq.Array(tags))
 	if err != nil {
-		log.Printf("⚠️ Erreur lors de la persistance SQL des tags : %v", err)
+		logger.Log.Error().Err(err).Msg("Erreur lors de la persistance SQL des tags")
 	} else {
-		log.Printf("💾 Persistance SQL : vérification/insertion de %d tags communautaires terminée.", len(tags))
+		logger.Log.Info().Int("count", len(tags)).Msg("Persistance SQL des tags communautaires terminée.")
 	}
 }

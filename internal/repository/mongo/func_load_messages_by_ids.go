@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 )
 
@@ -14,7 +15,7 @@ func MongoLoadMessagesByIDs(messageIDs []int64) ([]message_models.MessagePayload
 	filter := map[string]any{"id": map[string]any{"$in": messageIDs}}
 	docs, err := Messages.Get(filter, nil)
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	var messages []message_models.MessagePayload

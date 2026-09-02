@@ -8,17 +8,15 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/lib/pq"
 )
 
 func FuncLoadSession(ID int64, UserId int64, FirebaseInstallationID string, MasterToken string) (models.SessionsRequest, error) {
-	fmt.Println("FuncLoadSession called with:", ID, UserId, FirebaseInstallationID, MasterToken)
-	const functionID = 3
-
 	// 1. Vérification que les champs sont non nuls
 	if ID == -1 && UserId == -1 && FirebaseInstallationID == "" && MasterToken == "" {
-		return models.SessionsRequest{}, fmt.Errorf("erreur: champs requis manquants pour FuncLoadSession (ID %d)", functionID)
+		return models.SessionsRequest{}, nubo_error.NewInternal(fmt.Errorf("champs requis manquants pour FuncLoadSession"))
 	}
 
 	// 2. Préparation des arguments (gestion des types spéciaux)
@@ -70,15 +68,10 @@ func FuncLoadSession(ID int64, UserId int64, FirebaseInstallationID string, Mast
 	)
 
 	if err != nil {
-		// --- CORRECTION : Gérer le cas où aucune session n'est trouvée ---
 		if errors.Is(err, sql.ErrNoRows) {
-			// Ce n'est pas une erreur technique, juste qu'il n'y a pas de session.
-			// On renvoie une structure vide et "pas d'erreur".
 			return models.SessionsRequest{}, nil
 		}
-		// ---------------------------------------------------------------
-
-		return models.SessionsRequest{}, fmt.Errorf("erreur lors de l'exécution de FuncLoadSession (ID %d): %w", functionID, err)
+		return models.SessionsRequest{}, nubo_error.NewInternal(err)
 	}
 
 	// Traitement des données

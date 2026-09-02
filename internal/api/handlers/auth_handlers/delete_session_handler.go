@@ -18,25 +18,25 @@ import (
 // @Security     ApiKeyAuth
 // @Param        id query string true "ID de la session à révoquer"
 // @Success      200 {object} map[string]string "Message de succès"
-// @Failure      400 {object} nubo_error.ErrorResponse "ID manquant ou invalide"
-// @Failure      401 {object} nubo_error.ErrorResponse "Non autorisé"
-// @Failure      403 {object} nubo_error.ErrorResponse "Accès refusé"
+// @Failure      400 {object} nubo_error.PublicErrorResponse "ID manquant ou invalide"
+// @Failure      401 {object} nubo_error.PublicErrorResponse "Non autorisé"
+// @Failure      403 {object} nubo_error.PublicErrorResponse "Accès refusé"
 // @Router       /sessions [delete]
 func DeleteSessionHandler(c *gin.Context) {
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Non autorisé"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input auth_models.DeleteSessionInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide ou session_id manquant"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou session_id manquant.", err))
 		return
 	}
 
 	if err := auth_service.RevokeSession(c.Request.Context(), callerID, input.SessionID); err != nil {
-		c.JSON(http.StatusForbidden, nubo_error.ErrorResponse{Error: err.Error()})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

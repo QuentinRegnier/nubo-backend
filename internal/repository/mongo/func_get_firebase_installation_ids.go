@@ -1,6 +1,9 @@
 package mongo
 
-import "go.mongodb.org/mongo-driver/bson"
+import (
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"go.mongodb.org/mongo-driver/bson"
+)
 
 // MongoGetfirebaseInstallationIDs récupère tous les tokens de notification d'un utilisateur dans le stockage à froid
 func MongoGetFirebaseInstallationIDs(userID int64) ([]string, error) {
@@ -11,7 +14,7 @@ func MongoGetFirebaseInstallationIDs(userID int64) ([]string, error) {
 	filter := bson.M{"user_id": userID}
 	docs, err := Sessions.Get(filter, nil)
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	var tokens []string

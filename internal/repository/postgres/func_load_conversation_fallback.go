@@ -3,11 +3,11 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/lib/pq"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 type InboxFallbackResult struct {
@@ -18,15 +18,14 @@ type InboxFallbackResult struct {
 // FuncLoadConversationFallback appelle la fonction SQL pour réparer les trous du SPEED Cache (Inbox)
 func FuncLoadConversationFallback(ctx context.Context, userID int64, convIDs []int64) ([]InboxFallbackResult, error) {
 	query := `SELECT conversation_id, title, type, last_message_id, role, unread_count, frozen_message_id FROM messaging.func_load_conversation_fallback($1, $2)`
-
-	rows, err := postgres.PostgresDB.QueryContext(ctx, query, userID, pq.Array(convIDs))
+	rows, err := postgres.PostgresDB.QueryContext(ctx, query, userID, convIDs)
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(err)
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			fmt.Println(err)
+			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres)")
 		}
 	}(rows)
 

@@ -7,6 +7,7 @@ import (
 	"log"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
@@ -21,7 +22,7 @@ import (
 func fetchAndHydrateFromCollection(ctx context.Context, col *redis.Collection, id any, offset int64, limit int64) ([]post_models.PostPayload, error) {
 	idStrings, err := col.ZRevRange(ctx, id, offset, offset+limit-1)
 	if err != nil {
-		return nil, fmt.Errorf("erreur lecture ZSET %s: %w", err)
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	if len(idStrings) == 0 {

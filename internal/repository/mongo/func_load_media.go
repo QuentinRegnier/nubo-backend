@@ -2,10 +2,10 @@ package mongo
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models" // ✅ Le bon import
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 )
@@ -31,7 +31,7 @@ func MongoLoadMedia(mediaIDs []int64) ([]models.MediaRequest, error) {
 	defer func(cursor *mongo.Cursor, ctx context.Context) {
 		err := cursor.Close(ctx)
 		if err != nil {
-			fmt.Println(err)
+			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture du curseur Mongo (Media)")
 		}
 	}(cursor, ctx)
 

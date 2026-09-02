@@ -19,28 +19,28 @@ import (
 // @Security     ApiKeyAuth
 // @Param        payload body user_settings_models.UpdatePrivacyInput true "Champs de confidentialité à mettre à jour"
 // @Success      200 {object} map[string]string "Message de succès"
-// @Failure      400 {object} nubo_error.ErrorResponse "JSON invalide"
-// @Failure      401 {object} nubo_error.ErrorResponse "Non autorisé"
-// @Failure      500 {object} nubo_error.ErrorResponse "Erreur interne"
+// @Failure      400 {object} nubo_error.PublicErrorResponse "JSON invalide"
+// @Failure      401 {object} nubo_error.PublicErrorResponse "Non autorisé"
+// @Failure      500 {object} nubo_error.PublicErrorResponse "Erreur interne"
 // @Router       /privacy [patch]
 func UpdatePrivacyHandler(c *gin.Context) {
 	// 1. Extraction sécurisée de l'ID utilisateur
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Non autorisé"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	// 2. Parsage du JSON plat
 	var input user_settings_models.UpdatePrivacyInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Invalid JSON: " + err.Error()})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou paramètres manquants.", err))
 		return
 	}
 
 	// 3. Appel du service
 	if err := user_settings_service.UpdatePrivacy(c.Request.Context(), userID, input); err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Impossible de mettre à jour la confidentialité"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

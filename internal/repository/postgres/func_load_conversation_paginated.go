@@ -3,10 +3,11 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/lib/pq"
 )
 
@@ -26,12 +27,12 @@ func FuncLoadConversationPaginated(ctx context.Context, userID int64, limit int6
 
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, userID, limit, offset)
 	if err != nil {
-		return nil, fmt.Errorf("erreur lors de FuncLoadConversationPaginated: %w", err)
+		return nil, nubo_error.NewInternal(err)
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			_ = fmt.Errorf("erreur lors de la fermeture des lignes: %w", err)
+			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
 		}
 	}(rows)
 
@@ -66,7 +67,7 @@ func FuncLoadConversationPaginated(ctx context.Context, userID int64, limit int6
 				Member:       m,
 			})
 		} else {
-			fmt.Printf("  Erreur de scan FuncLoadConversationPaginated: %v\n", err)
+			logger.Log.Error().Err(err).Msg("Erreur de scan des lignes Postgres")
 		}
 	}
 	return results, nil

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/vmihailenco/msgpack/v5"
@@ -69,7 +70,7 @@ func BuildPersonalizedFeed(ctx context.Context, opts PersonalizedFeedOptions) ([
 	// ── ÉTAPE B: Récupération des vecteurs de contenu via Pipeline MGET Typé ─────────────────────
 	vecResult, err := redis.ContentVectors.GetMany(ctx, postIDs)
 	if err != nil {
-		return nil, fmt.Errorf("[personalized] GetMany content vectors: %w", err)
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	allCandidates := make([]PostCandidate, 0, len(postIDs))

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 	"github.com/go-playground/validator/v10"
@@ -25,18 +26,14 @@ func ValidateStruct(obj any) error {
 	if v, ok := binding.Validator.Engine().(*validator.Validate); ok {
 		return v.Struct(obj)
 	}
-	return fmt.Errorf("impossible de charger le validateur")
+	return nubo_error.NewInternal(fmt.Errorf("impossible de charger le validateur"))
 }
 
-// cleanStr : Nettoyage anti-XSS et SQL simple
+// CleanStr : Nettoyage anti-XSS et suppression des espaces superflus.
+// NOTE : La protection contre les injections SQL est déléguée aux requêtes préparées (Postgres/database/sql).
 func CleanStr(input string) string {
 	cleaned := strings.TrimSpace(input)
-	cleaned = html.EscapeString(cleaned)
-	replacer := strings.NewReplacer(
-		"DROP TABLE", "", "DELETE FROM", "", "INSERT INTO", "",
-		";", "", "--", "",
-	)
-	return replacer.Replace(cleaned)
+	return html.EscapeString(cleaned)
 }
 
 // generateToken : Création JWT
@@ -52,9 +49,8 @@ func GenerateToken(userID int64, firebaseInstallationID string, expirationSecond
 
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		return "", fmt.Errorf("JWT_SECRET manquant")
+		return "", nubo_error.NewInternal(fmt.Errorf("JWT_SECRET manquant dans les variables d'environnement"))
 	}
-
 	return token.SignedString([]byte(secret))
 }
 
@@ -68,7 +64,7 @@ func ToMap(in any) (map[string]any, error) {
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("ToMap: attend une struct, reçu %T", in)
+		return nil, nubo_error.NewInternal(fmt.Errorf("ToMap: attend une struct, reçu %T", in))
 	}
 
 	t := v.Type()
@@ -146,25 +142,23 @@ func SliceUniqueStr(slice []string) []string {
 func GetUserIDFromContext(c *gin.Context) (int64, error) {
 	val, exists := c.Get("userID")
 	if !exists {
-		return 0, fmt.Errorf("userID non trouvé dans le contexte")
+		return 0, nubo_error.NewForbidden("UNAUTHORIZED", "Utilisateur non identifié dans le contexte.", nil)
 	}
 
 	switch v := val.(type) {
 	case int64:
 		return v, nil
 	case string:
-		// Cas fréquent : le 'sub' du JWT est souvent une string
 		id, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
-			return 0, fmt.Errorf("format userID string invalide: %w", err)
+			return 0, nubo_error.NewBadRequest("INVALID_USER_ID", "Le format de l'ID utilisateur est invalide.", err)
 		}
 		return id, nil
 	case float64:
-		// Cas fréquent : JSON unmarshal transforme les nombres en float64
 		return int64(v), nil
 	case int:
 		return int64(v), nil
 	default:
-		return 0, fmt.Errorf("type userID inconnu: %T", v)
+		return 0, nubo_error.NewInternal(fmt.Errorf("type userID inconnu: %T", v))
 	}
 }

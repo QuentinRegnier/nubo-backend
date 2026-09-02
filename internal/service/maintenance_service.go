@@ -2,10 +2,10 @@ package service
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/mongo"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"go.mongodb.org/mongo-driver/bson"
 )
@@ -19,7 +19,7 @@ func CleanMongo() {
 	// Récupère toutes les collections de la DB
 	collections, err := dbRecent.ListCollectionNames(ctx, bson.D{})
 	if err != nil {
-		log.Printf("❌ Erreur récupération collections Mongo: %v", err)
+		logger.Log.Error().Err(err).Msg("Erreur récupération collections Mongo")
 		return
 	}
 
@@ -38,18 +38,18 @@ func CleanMongo() {
 
 		res, err := coll.DeleteMany(ctx, filter)
 		if err != nil {
-			log.Printf("❌ Erreur suppression dans %s: %v", collName, err)
+			logger.Log.Error().Err(err).Str("collection", collName).Msg("Erreur de suppression du cache glissant Mongo")
 			continue
 		}
 
-		log.Printf("🧹 Nettoyage Mongo [%s] → %d documents supprimés", collName, res.DeletedCount)
+		logger.Log.Info().Str("collection", collName).Int64("deleted_count", res.DeletedCount).Msg("Nettoyage Mongo réussi")
 	}
 }
 
 func CleanRedis() {
 	// Sécurité anti-crash unifiée via la couche d'accès
 	if !redis.IsReady() {
-		log.Println("⚠️ Redis n'est pas initialisé (Rdb est nil), nettoyage ignoré.")
+		logger.Log.Warn().Msg("Redis n'est pas initialisé (Rdb est nil), nettoyage ignoré.")
 		return
 	}
 
@@ -58,15 +58,15 @@ func CleanRedis() {
 
 	err := redis.FlushDB(ctx)
 	if err != nil {
-		log.Printf("❌ Erreur flush Redis: %v", err)
+		logger.Log.Error().Err(err).Msg("Erreur flush Redis")
 		return
 	}
-	log.Println("🧹 Redis vidé avec succès ✅")
+	logger.Log.Info().Msg("Redis vidé avec succès")
 }
 
 func InitData() {
-	log.Println("=== Initialisation: Nettoyage Mongo + Redis ===")
+	logger.Log.Info().Msg("Début de l'initialisation : Nettoyage Mongo + Redis")
 	CleanMongo()
 	CleanRedis()
-	log.Println("=== Initialisation terminée ✅ ===")
+	logger.Log.Info().Msg("Initialisation terminée avec succès")
 }

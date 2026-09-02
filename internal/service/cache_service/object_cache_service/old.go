@@ -2,10 +2,10 @@ package object_cache_service
 
 import (
 	"context"
-	"log"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -27,7 +27,7 @@ func GetPostsView(ids []int64) ([]post_models.PostPayload, error) {
 	// ========================================================================
 	result, err := redis.Posts.GetMany(ctx, ids)
 	if err != nil {
-		log.Printf("⚠️ Redis MGET nubo_error: %v (fallback vers L2)", err)
+		logger.Log.Warn().Err(err).Msg("Redis MGET error (fallback vers L2 déclenché)")
 		result = &redis.GetManyResult{MissingIDs: ids}
 	} else {
 		for id, data := range result.Found {
@@ -70,7 +70,7 @@ func GetPostsView(ids []int64) ([]post_models.PostPayload, error) {
 				}
 			}
 		} else {
-			log.Printf("⚠️ Mongo Fallback nubo_error: %v", err)
+			logger.Log.Error().Err(err).Msg("Mongo Fallback error (fallback total vers Postgres)")
 			stillMissingIDs = result.MissingIDs // Si Mongo plante, on cherchera tout dans Postgres
 		}
 	}
@@ -79,13 +79,13 @@ func GetPostsView(ids []int64) ([]post_models.PostPayload, error) {
 	// NIVEAU 3 : POSTGRES FALLBACK (La Source de Vérité Absolue)
 	// ========================================================================
 	if len(stillMissingIDs) > 0 {
-		log.Printf("🛡️ Postgres Fallback déclenché pour %d posts manquants", len(stillMissingIDs))
+		logger.Log.Info().Int("missing_count", len(stillMissingIDs)).Msg("Postgres Fallback déclenché")
 
 		// 1. Appel de ta NOUVELLE FONCTION (on met limit = taille du tableau)
 		posts, err := postgres.FuncLoadPosts(stillMissingIDs, len(stillMissingIDs), 0)
 
 		if err != nil {
-			log.Printf("⚠️ Postgres Fallback nubo_error: %v", err)
+			logger.Log.Error().Err(err).Msg("Postgres Fallback error")
 		} else {
 			// 2. Boucle sur les posts propres retournés par la fonction
 			for _, p := range posts {

@@ -2,11 +2,11 @@ package conversation_service
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -18,30 +18,30 @@ import (
 func CreateConversation(ctx context.Context, callerID int64, input conversation_models.CreateConversationInput) (conversation_models.CreateConversationOutput, error) {
 	// 1. VALIDATION MÉTIER
 	if input.Type == 2 || input.Type == 3 {
-		return conversation_models.CreateConversationOutput{}, errors.New("la création manuelle de communautés est réservée au système ou aux administrateurs")
+		return conversation_models.CreateConversationOutput{}, nubo_error.NewForbidden("COMMUNITY_CREATION_DENIED", "La création manuelle de communautés est réservée au système ou aux administrateurs.", nil)
 	}
 	if input.Type == 0 && len(input.ParticipantIDs) != 1 {
-		return conversation_models.CreateConversationOutput{}, errors.New("un message privé doit comporter exactement un participant cible")
+		return conversation_models.CreateConversationOutput{}, nubo_error.NewBadRequest("INVALID_PARTICIPANT_COUNT", "Un message privé doit comporter exactement un participant cible.", nil)
 	}
 	if input.Type == 1 && input.Title == "" {
-		return conversation_models.CreateConversationOutput{}, errors.New("les groupes nécessitent un titre")
+		return conversation_models.CreateConversationOutput{}, nubo_error.NewBadRequest("MISSING_TITLE", "Les groupes nécessitent un titre.", nil)
 	}
 
 	// 2. VÉRIFICATION DE LA CONFIDENTIALITÉ POUR LES MP (Type 0)
 	if input.Type == 0 {
 		targetID := input.ParticipantIDs[0]
 		if targetID == callerID {
-			return conversation_models.CreateConversationOutput{}, errors.New("vous ne pouvez pas créer de conversation avec vous-même")
+			return conversation_models.CreateConversationOutput{}, nubo_error.NewBadRequest("CANNOT_MESSAGE_SELF", "Vous ne pouvez pas créer de conversation avec vous-même.", nil)
 		}
 
 		targetLite, err := cache_service.GetUserLite(ctx, targetID)
 		if err != nil || targetLite.ID == 0 {
-			return conversation_models.CreateConversationOutput{}, errors.New("utilisateur cible introuvable")
+			return conversation_models.CreateConversationOutput{}, nubo_error.NewNotFound("USER_NOT_FOUND", "Utilisateur cible introuvable.", err)
 		}
 
 		relationState := cache_service.RelationValue(ctx, callerID, targetID)
 		if relationState == -1 {
-			return conversation_models.CreateConversationOutput{}, errors.New("action impossible : utilisateur bloqué")
+			return conversation_models.CreateConversationOutput{}, nubo_error.NewForbidden("USER_BLOCKED", "Action impossible : utilisateur bloqué.", nil)
 		}
 
 		canCommunicate := false
@@ -55,7 +55,7 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 		}
 
 		if !canCommunicate {
-			return conversation_models.CreateConversationOutput{}, errors.New("cet utilisateur n'accepte pas les messages directs")
+			return conversation_models.CreateConversationOutput{}, nubo_error.NewForbidden("DM_NOT_ACCEPTED", "Cet utilisateur n'accepte pas les messages directs.", nil)
 		}
 	}
 

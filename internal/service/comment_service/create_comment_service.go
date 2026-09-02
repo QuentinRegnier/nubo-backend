@@ -2,11 +2,12 @@ package comment_service
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -36,14 +37,19 @@ func CreateComment(ctx context.Context, input comment_models.CreateCommentInput)
 	initialScore := priorityLevel * 10000
 
 	// 4. Préparation
+	cleanContent := pkg.CleanStr(input.Content)
+	if cleanContent == "" {
+		return nubo_error.NewBadRequest("EMPTY_COMMENT", "Le commentaire ne peut pas être vide.", nil)
+	}
+
 	comment := comment_models.CommentPayload{
 		ID:         pkg.GenerateID(),
 		PostID:     input.PostID,
 		UserID:     input.UserID,
-		Content:    input.Content,
+		Content:    cleanContent, // Utilisation de la version propre
 		Visibility: 0,
-		LikeCount:  0,            // ✅ Doit être à 0 explicitement
-		Score:      initialScore, // ✅ Injection du score calculé
+		LikeCount:  0,
+		Score:      initialScore,
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
@@ -71,7 +77,7 @@ func CreateComment(ctx context.Context, input comment_models.CreateCommentInput)
 		go func(authorID int64) {
 			err := notification_service.DispatchNotification(context.Background(), authorID, input.UserID, "comment_added", comment.ID)
 			if err != nil {
-				fmt.Printf("CreateComment: failed to dispatch notification: %v\n", err)
+				logger.Log.Error().Err(err).Int64("comment_id", comment.ID).Msg("Échec de l'envoi de la notification de commentaire")
 			}
 		}(postAuthorID)
 	}

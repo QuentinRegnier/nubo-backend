@@ -3,10 +3,10 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
@@ -41,13 +41,11 @@ func MarkAsSeen(ctx context.Context, userID int64, postID int64) {
 	// CF.ADD crée automatiquement le filtre s'il n'existe pas via notre abstraction L1.
 	err := redis.CuckooSeen.CFAdd(ctx, userID, postID)
 	if err != nil {
-		// ---------------------------------------------------------
-		// FALLBACK & ALERTE SILENCIEUSE
-		// ---------------------------------------------------------
-		// Si le filtre est plein ("Cuckoo filter is full"), on ne bloque pas.
-		// On log l'erreur pour la supervision (Kibana/Grafana) afin d'indiquer
-		// qu'il faudra utiliser CF.RESERVE avec une plus grande capacité à l'avenir.
-		log.Printf("⚠️ [MarkAsSeen] Impossible d'ajouter au CF (user: %d, post_service: %d) : %v", userID, postID, err)
+		logger.Log.Warn().
+			Err(err).
+			Int64("user_id", userID).
+			Int64("post_id", postID).
+			Msg("Impossible d'ajouter au Cuckoo Filter")
 		return
 	}
 
@@ -98,8 +96,7 @@ func IsUnique(collection *mongo.MongoCollection, field string, value any) int {
 	// (Assure-toi d'utiliser la méthode Exists ou Get adaptée à ton package redis/calls.go)
 	exists, err := redis.Exists(ctx, redisKey)
 	if err != nil {
-		log.Printf("Erreur IsUnique (Redis) : %v", err)
-		// En cas d'erreur Redis, on ne bloque pas, on laisse Mongo/Postgres faire le travail
+		logger.Log.Warn().Err(err).Str("key", redisKey).Msg("Erreur IsUnique (Redis)")
 	} else if exists {
 		return 0 // Existe déjà (Hit confirmé)
 	}
@@ -116,7 +113,7 @@ func IsUnique(collection *mongo.MongoCollection, field string, value any) int {
 	// Get est dans generic.go dans le package mongo
 	results, err := collection.Get(filter, projection)
 	if err != nil {
-		log.Printf("Erreur IsUnique (Mongo Get) : %v", err)
+		logger.Log.Error().Err(err).Str("collection", collection.Name).Msg("Erreur IsUnique (Mongo Get)")
 		return 0 // Sécurité
 	}
 
@@ -131,7 +128,7 @@ func IsUnique(collection *mongo.MongoCollection, field string, value any) int {
 	var countSQL int
 	err = postgres.PostgresDB.QueryRow(query, value).Scan(&countSQL)
 	if err != nil {
-		log.Printf("Erreur IsUnique (Postgres) : %v", err)
+		logger.Log.Error().Err(err).Str("collection", collection.Name).Msg("Erreur IsUnique (Postgres)")
 	}
 
 	if countSQL > 0 {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/gin-gonic/gin"
@@ -20,31 +21,36 @@ var upgrader = websocket.Upgrader{
 
 // ServeWS gère la requête HTTP de la PWA et la transforme en WebSocket
 func ServeWS(c *gin.Context) {
-	// L'identité est extraite du JWT validé par le Middleware !
+	// L'identité est extraite du JWT validé par le Middleware
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil || userID == 0 {
-		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Non autorisé"})
+		nubo_error.RespondWithError(c, nubo_error.NewUnauthorized("UNAUTHORIZED", "Non autorisé.", err))
+		return
+	}
+
+	// NOUVEAU : Récupération du Device ID injecté par le JWTMiddleware
+	deviceIDRaw, exists := c.Get("firebaseInstallationID")
+	if !exists {
+		nubo_error.RespondWithError(c, nubo_error.NewUnauthorized("MISSING_DEVICE_ID", "Device ID introuvable dans le contexte.", nil))
 		return
 	}
 
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		return // L'erreur est gérée par upgrader et renvoyée au client
+		return // L'erreur est gérée par upgrader et renvoyée au client via HTTP
 	}
 
 	client := &Client{
-		Hub:    GlobalHub,
-		Conn:   conn,
-		UserID: userID,
-		Send:   make(chan []byte, 256), // Buffer de 256 messages max avant d'expulser le client lent
+		Hub:      GlobalHub,
+		Conn:     conn,
+		UserID:   userID,
+		DeviceID: deviceIDRaw.(string),
+		Send:     make(chan []byte, 256),
 	}
 
 	client.Hub.Register <- client
-
-	// Marque la présence initiale en RAM
 	_ = cache_service.MarkUserOnline(context.Background(), userID)
 
-	// Démarrage des pompes asynchrones !
 	go client.WritePump()
 	go client.ReadPump()
 }

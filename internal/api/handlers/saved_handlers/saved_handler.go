@@ -19,9 +19,9 @@ import (
 // @Security     ApiKeyAuth
 // @Param        payload body saved_models.SaveActionInput true "ID du post à sauvegarder"
 // @Success      200 {object} map[string]string "Message de succès"
-// @Failure      400 {object} nubo_error.ErrorResponse "JSON invalide"
-// @Failure      401 {object} nubo_error.ErrorResponse "Non autorisé"
-// @Failure      404 {object} nubo_error.ErrorResponse "Post introuvable"
+// @Failure      400 {object} nubo_error.PublicErrorResponse "JSON invalide"
+// @Failure      401 {object} nubo_error.PublicErrorResponse "Non autorisé"
+// @Failure      404 {object} nubo_error.PublicErrorResponse "Post introuvable"
 // @Router       /saved [post]
 func SavePostHandler(c *gin.Context) {
 	handleSavedAction(c, "save")
@@ -44,18 +44,18 @@ func UnsavePostHandler(c *gin.Context) {
 func handleSavedAction(c *gin.Context, action string) {
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Non autorisé"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input saved_models.SaveActionInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Invalid JSON: " + err.Error()})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou paramètres manquants.", err))
 		return
 	}
 
 	if err := saved_service.ToggleSaved(c.Request.Context(), userID, input.PostID, action); err != nil {
-		c.JSON(http.StatusNotFound, nubo_error.ErrorResponse{Error: err.Error()})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

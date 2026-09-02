@@ -23,31 +23,27 @@ import (
 // @Param        X-Timestamp   header string true "Timestamp Unix de la requête"
 // @Param        data          body   conversation_models.BanMemberInput true "ID du groupe et de l'utilisateur à bannir"
 // @Success      200  {object} map[string]string "message: Membre banni avec succès"
-// @Failure      400  {object} nubo_error.ErrorResponse "Format JSON invalide ou paramètres manquants"
-// @Failure      401  {object} nubo_error.ErrorResponse "Utilisateur non identifié"
-// @Failure      403  {object} nubo_error.ErrorResponse "Droits insuffisants pour bannir ce membre"
+// @Failure      400  {object} nubo_error.PublicErrorResponse "Format JSON invalide ou paramètres manquants"
+// @Failure      401  {object} nubo_error.PublicErrorResponse "Utilisateur non identifié"
+// @Failure      403  {object} nubo_error.PublicErrorResponse "Droits insuffisants pour bannir ce membre"
 // @Router       /group/user [delete]
 func BanMemberHandler(c *gin.Context) {
-	// 1. Authentification
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	// 2. Validation du JSON
 	var input conversation_models.BanMemberInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide ou paramètres manquants"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou paramètres manquants.", err))
 		return
 	}
 
-	// 3. Appel du Service
 	if err := conversation_service.BanMember(c.Request.Context(), callerID, input); err != nil {
-		c.JSON(http.StatusForbidden, nubo_error.ErrorResponse{Error: err.Error()})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	// 4. Succès
 	c.JSON(http.StatusOK, gin.H{"message": "Membre banni avec succès"})
 }

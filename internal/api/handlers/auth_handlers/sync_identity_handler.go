@@ -21,28 +21,28 @@ import (
 // @Param        X-Timestamp   header string true  "Timestamp Unix de la requête"
 // @Param        data body auth_models.SyncIdentityInput true "Payload de synchronisation (Vecteur, Tags, Timestamps)"
 // @Success      200  {object} auth_models.SyncIdentityOutput
-// @Failure      400  {object} nubo_error.ErrorResponse "Format JSON invalide"
-// @Failure      401  {object} nubo_error.ErrorResponse "Non autorisé"
-// @Failure      500  {object} nubo_error.ErrorResponse "Erreur interne"
+// @Failure      400  {object} nubo_error.PublicErrorResponse "Format JSON invalide"
+// @Failure      401  {object} nubo_error.PublicErrorResponse "Non autorisé"
+// @Failure      500  {object} nubo_error.PublicErrorResponse "Erreur interne"
 // @Router       /sync/identity [post]
 func SyncIdentityHandler(c *gin.Context) {
 	var input auth_models.SyncIdentityInput
 
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide.", err))
 		return
 	}
 
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 	input.UserID = callerID
 
 	output, err := auth_service.SyncIdentity(c.Request.Context(), input)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur interne lors de la synchronisation"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

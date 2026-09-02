@@ -2,9 +2,9 @@ package like_service
 
 import (
 	"context"
-	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -51,20 +51,20 @@ func GetPostLikes(ctx context.Context, input post_models.GetPostLikesInput) (pos
 	}
 
 	if !found || post.Visibility == -1 {
-		return post_models.GetPostLikesOutput{}, errors.New("not found")
+		return post_models.GetPostLikesOutput{}, nubo_error.NewNotFound("POST_NOT_FOUND", "Publication introuvable.", nil)
 	}
 
 	// Matrice de Confidentialité
 	if post.UserID != input.CallerID {
 		relationState := cache_service.RelationValue(ctx, post.UserID, input.CallerID)
 		if relationState == -1 {
-			return post_models.GetPostLikesOutput{}, errors.New("banned")
+			return post_models.GetPostLikesOutput{}, nubo_error.NewForbidden("USER_BANNED", "Accès refusé.", nil)
 		}
 		if post.Visibility == 1 && relationState < 1 { // Abonnés
-			return post_models.GetPostLikesOutput{}, errors.New("forbidden")
+			return post_models.GetPostLikesOutput{}, nubo_error.NewForbidden("SUBSCRIBERS_ONLY", "Action non autorisée.", nil)
 		}
 		if post.Visibility == 2 && relationState != 2 { // Amis
-			return post_models.GetPostLikesOutput{}, errors.New("forbidden")
+			return post_models.GetPostLikesOutput{}, nubo_error.NewForbidden("FRIENDS_ONLY", "Action non autorisée.", nil)
 		}
 	}
 

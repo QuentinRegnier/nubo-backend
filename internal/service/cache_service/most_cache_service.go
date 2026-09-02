@@ -4,12 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
@@ -91,15 +92,16 @@ func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([
 		posts, err := getPostsFromMongoPaginated("hashtags", slug, offset, limit)
 		if err != nil {
 			// L3 (PostgreSQL)
+			//TODO DDD !
 			query := `SELECT id FROM content.posts WHERE $1 = ANY(hashtags) AND visibility != 2 ORDER BY created_at DESC OFFSET $2 LIMIT $3`
 			rows, err := postgres.PostgresDB.QueryContext(ctx, query, slug, offset, limit)
 			if err != nil {
-				return []post_models.PostPayload{}, fmt.Errorf("erreur requête L3 Postgres tag: %w", err)
+				return []post_models.PostPayload{}, nubo_error.NewInternal(err)
 			}
 			defer func(rows *sql.Rows) {
 				err := rows.Close()
 				if err != nil {
-					log.Printf("⚠️ Erreur fermeture rows L3 Postgres tag: %v", err)
+					logger.Log.Error().Err(err).Msg("Erreur fermeture rows L3 Postgres tag")
 				}
 			}(rows)
 
@@ -123,12 +125,12 @@ func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([
 func UpdateTrendZSETs(ctx context.Context, postID int64, score float64, hashtags []string, date, hour, week string) error {
 	// 1. Bucket Horaire Global
 	if err := redis.TrendGlobalHourly.ZAddWithCap(ctx, hour, score, postID, variables.TDDMaxZSET); err != nil {
-		return fmt.Errorf("zadd hourly: %w", err)
+		return nubo_error.NewInternal(err)
 	}
 
 	// 2. Bucket Journalier Global
 	if err := redis.TrendGlobalDaily.ZAddWithCap(ctx, date, score, postID, variables.TDDMaxZSET); err != nil {
-		return fmt.Errorf("zadd daily: %w", err)
+		return nubo_error.NewInternal(err)
 	}
 
 	// 3. Buckets par Tags Canoniques & Leaderboard

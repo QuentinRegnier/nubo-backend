@@ -3,10 +3,11 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/lib/pq"
 )
 
@@ -15,12 +16,12 @@ func FuncLoadMessagesByIDs(ctx context.Context, messageIDs []int64) ([]message_m
 	query := `SELECT id, conversation_id, sender_id, message_type, visibility, content, attachments, created_at, updated_at FROM messaging.func_load_messages_by_ids($1)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, pq.Array(messageIDs))
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(err)
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			fmt.Println(err)
+			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
 		}
 	}(rows)
 

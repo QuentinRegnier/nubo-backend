@@ -4,11 +4,11 @@ import (
 	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 )
 
 func MongoLoadUser(ID int64, Username string, Email string, Phone string) (auth_models.UserPayload, error) {
-	fmt.Println("MongoLoadUser called with:", ID, Username, Email, Phone)
 	var u auth_models.UserPayload
 
 	// Construction du filtre de recherche
@@ -22,13 +22,11 @@ func MongoLoadUser(ID int64, Username string, Email string, Phone string) (auth_
 	} else if Phone != "" {
 		filter["phone"] = Phone
 	} else {
-		return auth_models.UserPayload{}, fmt.Errorf("aucun critère de recherche mongo")
+		return auth_models.UserPayload{}, nubo_error.NewInternal(fmt.Errorf("aucun critère de recherche mongo"))
 	}
 
-	fmt.Println("MongoLoadUser filter:", filter)
-
 	if len(filter) == 0 {
-		return u, fmt.Errorf("MongoLoadUser: no research criteria (id, username, email, phone) provided")
+		return u, nubo_error.NewInternal(fmt.Errorf("MongoLoadUser: no research criteria provided"))
 	}
 
 	// Appel à ta fonction utilitaire existante

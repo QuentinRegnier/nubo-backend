@@ -2,7 +2,6 @@ package post_service
 
 import (
 	"context"
-	"mime/multipart"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
@@ -14,81 +13,61 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 )
 
-// CreatePost (Inchangé)
-func CreatePost(userID int64, input post_models.CreatePostInput, files []*multipart.FileHeader) (int64, error) {
+// CreatePost orchestre la publication d'un post.
+func CreatePost(ctx context.Context, userID int64, input post_models.CreatePostInput) (int64, error) {
 	now := time.Now().UTC()
 	postID := pkg.GenerateID()
-	var mediaIDs []int64
 
-	// 1. Upload Images
-	for _, fileHeader := range files {
-		mediaID := pkg.GenerateID()
-		file, err := fileHeader.Open()
-		if err == nil {
-			go func() {
-				_ = media_service.UploadMedia(file, userID, mediaID, true)
-			}()
-			mediaIDs = append(mediaIDs, mediaID)
-		}
+	// 1. DÉLÉGATION : Activation des médias fantômes
+	if err := media_service.ActivateMediaBatch(ctx, input.MediaIDs, userID); err != nil {
+		return -1, err
 	}
 
-	// ✅ ÉVALUATION DYNAMIQUE DE LA PRIORITÉ VIA LA MAP DE GRADES
+	// 2. DÉLÉGATION : Évaluation dynamique de la priorité
 	priorityLevel := 0
-	if userLite, err := cache_service.GetUserLite(context.Background(), userID); err == nil {
+	if userLite, err := cache_service.GetUserLite(ctx, userID); err == nil {
 		gradeToPriority := map[int]int{
-			0: 0, // normal     -> priority : 0
-			1: 1, // certifier  -> priority : 1
-			2: 2, // partenaire -> priority : 2
-			3: 3, // moderator  -> priority : 3
-			4: 4, // admin      -> priority : 4
+			0: 0, 1: 1, 2: 2, 3: 3, 4: 4,
 		}
 		if p, ok := gradeToPriority[userLite.Grade]; ok {
 			priorityLevel = p
 		}
 	}
 
-	// 2. Création Objet
+	// 3. ASSEMBLAGE : Création de l'objet Post
 	post := post_models.PostPayload{
 		ID:                postID,
 		UserID:            userID,
 		Content:           pkg.CleanStr(input.Content),
 		Hashtags:          input.Hashtags,
 		Identifiers:       input.Identifiers,
-		MediaIDs:          mediaIDs,
+		MediaIDs:          input.MediaIDs,
 		Visibility:        input.Visibility,
-		PriorityLevel:     priorityLevel, // ✅ Injection de la priorité protégée
+		PriorityLevel:     priorityLevel,
 		Location:          input.Location,
 		CreatedAt:         now,
 		UpdatedAt:         now,
 		LikeCount:         0,
 		CommentCount:      0,
 		ViewCount:         0,
-		HasMedia:          len(mediaIDs) > 0,
-		VectorVersion:     1, // On initialise la version du vecteur
+		HasMedia:          len(input.MediaIDs) > 0,
+		VectorVersion:     1,
 		TelemetryDwellSum: 0.0,
 		TelemetryDwellSq:  0.0,
 		TelemetryClicks:   0,
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// 2.5 VECTORISATION SYNCHRONE DU CONTENU (O(1) - Très rapide)
-	// ─────────────────────────────────────────────────────────────────────────
-	// On génère le vecteur mathématique [224]float32 ici, AVANT la persistance.
-	// Cela garantit que L1 Cache, MongoDB et PostgreSQL recevront l'objet complet.
-	// (Adapte le nom de la fonction selon ton vectorization_service.go)
+	// 4. DÉLÉGATION : Vectorisation synchrone du contenu (O(1))
 	post.Vector = algorithm_service.ComputeContentVectorFull(post, nil)
 
-	// 3. Cache Redis (LFU Init)
-	if err := object_cache_service.SetPostInObjectCache(context.Background(), post); err != nil {
+	// 5. DÉLÉGATION : Cache Redis (LFU Init) & Timeline
+	if err := object_cache_service.SetPostInObjectCache(ctx, post); err != nil {
 		return -1, err
 	}
+	_ = cache_service.AddPostToUserProfile(ctx, userID, postID, float64(now.UnixMilli()))
 
-	// ✅ Mise à jour de la timeline de l'utilisateur en temps réel (ZSET L1)
-	_ = cache_service.AddPostToUserProfile(context.Background(), userID, postID, float64(now.UnixMilli()))
+	// 6. DÉLÉGATION : Persistance Asynchrone (Write-Behind)
+	err := redis.EnqueueDB(ctx, postID, 0, redis.EntityPost, redis.ActionCreate, post, redis.TargetAll)
 
-	// 4. Persistance Async
-	// On passe 0 en partitionKey pour que le CRC32 se fasse sur postID.
-	// Les futurs Likes utiliseront ce postID pour tomber dans le même Shard !
-	err := redis.EnqueueDB(context.Background(), postID, 0, redis.EntityPost, redis.ActionCreate, post, redis.TargetAll)
 	return postID, err
 }

@@ -2,9 +2,10 @@ package postgres
 
 import (
 	"database/sql"
-	"fmt"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 // RelationSeedPayload structure temporaire pour l'amorçage
@@ -19,12 +20,12 @@ func FuncLoadRelationsPaginated(limit, offset int) ([]RelationSeedPayload, error
 	query := `SELECT * FROM auth.func_load_relations_paginated($1, $2)`
 	rows, err := postgres.PostgresDB.Query(query, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(err)
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			fmt.Println("⚠️ Erreur fermeture rows dans FuncLoadRelationsPaginated:", err)
+			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
 		}
 	}(rows)
 

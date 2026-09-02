@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/saved_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"go.mongodb.org/mongo-driver/bson"
 )
@@ -12,7 +13,7 @@ func MongoLoadSavedPosts(userID int64, limit int64, offset int64) ([]saved_model
 
 	docs, err := Saved.GetPaginated(filter, sort, offset, limit)
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	var saveds []saved_models.SavedPayload

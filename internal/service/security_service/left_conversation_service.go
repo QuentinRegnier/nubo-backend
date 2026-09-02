@@ -2,9 +2,9 @@ package security_service
 
 import (
 	"context"
-	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -62,14 +62,14 @@ func LeftConversation(ctx context.Context, convID int64, userID int64) (conversa
 
 	// 4. VÉRIFICATION DES RÈGLES MÉTIER ET DE SÉCURITÉ
 	if !foundConv || conv.State == 1 {
-		return conversation_models.ConversationPayload{}, errors.New("conversation introuvable ou archivée")
+		return conversation_models.ConversationPayload{}, nubo_error.NewNotFound("CONV_NOT_FOUND", "Conversation introuvable ou archivée.", nil)
 	}
 	if !foundMem {
-		return conversation_models.ConversationPayload{}, errors.New("accès refusé: vous n'êtes pas membre de cette conversation")
+		return conversation_models.ConversationPayload{}, nubo_error.NewForbidden("NOT_A_MEMBER", "Accès refusé : vous n'êtes pas membre de cette conversation.", nil)
 	}
 	// Le rôle doit être au moins Admin (1) ou Propriétaire (2) pour modifier la conversation
 	if mem.Role < 1 {
-		return conversation_models.ConversationPayload{}, errors.New("accès refusé: droits d'administration requis")
+		return conversation_models.ConversationPayload{}, nubo_error.NewForbidden("INSUFFICIENT_PERMISSIONS", "Accès refusé : droits d'administration requis.", nil)
 	}
 
 	return conv, nil

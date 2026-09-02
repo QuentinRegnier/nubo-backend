@@ -17,24 +17,21 @@ import (
 // @Produce      json
 // @Security     ApiKeyAuth
 // @Success      200 {array}  auth_models.SessionView
-// @Failure      401 {object} nubo_error.ErrorResponse "Non autorisé"
-// @Failure      500 {object} nubo_error.ErrorResponse "Erreur interne"
+// @Failure      401 {object} nubo_error.PublicErrorResponse "Non autorisé"
+// @Failure      500 {object} nubo_error.PublicErrorResponse "Erreur interne"
 // @Router       /sessions [get]
 func GetSessionsHandler(c *gin.Context) {
-	// 1. Extraction sécurisée de l'ID utilisateur
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Non autorisé"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	// 2. Appel du service métier
 	sessions, err := auth_service.GetUserSessions(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Impossible de récupérer les sessions"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	// 3. Retour de la liste expurgée
 	c.JSON(http.StatusOK, sessions)
 }

@@ -2,13 +2,13 @@ package conversation_service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -22,23 +22,22 @@ func BanMember(ctx context.Context, callerID int64, input conversation_models.Ba
 	// 1. SÉCURITÉ : Vérification des droits du Caller (L1 -> L2 -> L3)
 	callerMem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
 	if err != nil {
-		return errors.New("conversation introuvable ou accès refusé")
+		return nubo_error.NewForbidden("ACCESS_DENIED", "Conversation introuvable ou accès refusé.", err)
 	}
 	if callerMem.Role < 1 { // Doit être au moins Admin (1)
-		return errors.New("action refusée : vous devez être administrateur ou propriétaire pour bannir un membre")
+		return nubo_error.NewForbidden("INSUFFICIENT_PERMISSIONS", "Vous devez être administrateur ou propriétaire pour bannir un membre.", nil)
 	}
 
 	// 2. RÉCUPÉRATION DU MEMBRE CIBLE
 	targetMem, err := security_service.LeftMember(ctx, input.ConversationID, input.TargetUserID)
 	if err != nil {
 		// S'il est déjà banni (-2) ou s'il a déjà quitté (-1), LeftMember renvoie une erreur.
-		// On bloque l'action pour garantir l'idempotence.
-		return errors.New("l'utilisateur ciblé n'est pas un membre actif de ce groupe")
+		return nubo_error.NewBadRequest("USER_NOT_MEMBER", "L'utilisateur ciblé n'est pas un membre actif de ce groupe.", err)
 	}
 
 	// 3. VÉRIFICATION HIERARCHIQUE
 	if callerMem.Role <= targetMem.Role {
-		return errors.New("action refusée : vous ne pouvez pas bannir un membre de rang égal ou supérieur")
+		return nubo_error.NewForbidden("HIERARCHY_VIOLATION", "Vous ne pouvez pas bannir un membre de rang égal ou supérieur.", nil)
 	}
 
 	// 4. CRÉATION DU MESSAGE SYSTÈME (Type 8) AVANT LE GEL !

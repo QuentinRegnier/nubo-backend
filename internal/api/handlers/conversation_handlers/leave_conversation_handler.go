@@ -23,25 +23,25 @@ import (
 // @Param        id            path   int    true  "ID de la conversation"
 // @Param        data          body   conversation_models.LeaveConversationInput false "Optionnel: ID du nouvel administrateur"
 // @Success      200  {object} map[string]string "Message de succès"
-// @Failure      400  {object} nubo_error.ErrorResponse "Données ou ID invalides"
-// @Failure      401  {object} nubo_error.ErrorResponse "Session expirée ou utilisateur non identifié"
-// @Failure      403  {object} nubo_error.ErrorResponse "Erreur de droits ou transfert de propriété manquant"
+// @Failure      400  {object} nubo_error.PublicErrorResponse "Données ou ID invalides"
+// @Failure      401  {object} nubo_error.PublicErrorResponse "Session expirée ou utilisateur non identifié"
+// @Failure      403  {object} nubo_error.PublicErrorResponse "Erreur de droits ou transfert de propriété manquant"
 // @Router       /conversations/{id} [delete]
 func LeaveConversationHandler(c *gin.Context) {
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input conversation_models.LeaveConversationInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide ou conversation_id manquant"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou paramètres manquants.", err))
 		return
 	}
 
 	if err := conversation_service.LeaveConversation(c.Request.Context(), callerID, input.ConversationID, input); err != nil {
-		c.JSON(http.StatusForbidden, nubo_error.ErrorResponse{Error: err.Error()})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Conversation quittée avec succès"})

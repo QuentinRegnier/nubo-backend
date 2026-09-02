@@ -2,9 +2,9 @@ package security_service
 
 import (
 	"context"
-	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -42,10 +42,10 @@ func LeftMember(ctx context.Context, convID int64, userID int64) (conversation_m
 
 	// 4. VÉRIFICATION DES RÈGLES
 	if !found {
-		return conversation_models.MemberPayload{}, errors.New("accès refusé: vous n'êtes pas membre de cette conversation")
+		return conversation_models.MemberPayload{}, nubo_error.NewForbidden("NOT_A_MEMBER", "Accès refusé : vous n'êtes pas membre de cette conversation.", nil)
 	}
 	if mem.Role < 0 {
-		return conversation_models.MemberPayload{}, errors.New("accès refusé: vous êtes banni de cette conversation")
+		return conversation_models.MemberPayload{}, nubo_error.NewForbidden("USER_BANNED", "Accès refusé : vous êtes banni de cette conversation.", nil)
 	}
 
 	return mem, nil

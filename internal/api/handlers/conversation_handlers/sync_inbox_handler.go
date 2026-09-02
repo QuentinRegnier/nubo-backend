@@ -21,25 +21,25 @@ import (
 // @Param        X-Timestamp   header string true  "Timestamp Unix de la requête"
 // @Param        data          body   conversation_models.SyncInboxInput true "Date de dernière mise à jour locale"
 // @Success      200  {object} conversation_models.SyncInboxOutput
-// @Failure      400  {object} nubo_error.ErrorResponse "Données invalides"
-// @Failure      401  {object} nubo_error.ErrorResponse "Non autorisé"
+// @Failure      400  {object} nubo_error.PublicErrorResponse "Données invalides"
+// @Failure      401  {object} nubo_error.PublicErrorResponse "Non autorisé"
 // @Router       /sync/inbox [post]
 func SyncInboxHandler(c *gin.Context) {
 	var input conversation_models.SyncInboxInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide.", err))
 		return
 	}
 
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	output, err := conversation_service.SyncInbox(c.Request.Context(), callerID, input)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur interne lors de la synchronisation"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

@@ -53,19 +53,16 @@ import (
 // @Param        X-Signature   header string true "Signature HMAC calculée"
 // @Param        X-Timestamp   header string true "Timestamp de la requête"
 // @Success      200  {object}  domain.RenewJWTResponse
-// @Failure      400  {object}  domain.ErrorResponse "Requête invalide"
-// @Failure      401  {object}  domain.ErrorResponse "Authentification / Signature refusée"
-// @Failure      500  {object}  domain.ErrorResponse "Erreur serveur critique"
+// @Failure      400  {object}  nubo_error.PublicErrorResponse "Requête invalide"
+// @Failure      401  {object}  nubo_error.PublicErrorResponse "Authentification / Signature refusée"
+// @Failure      500  {object}  nubo_error.PublicErrorResponse "Erreur serveur critique"
 // @Router       /renew-jwt [post_service]
 func RenewJWT(c *gin.Context) {
-	// 1. Lire le Body uniquement pour la signature HMAC (Raw bytes)
-	// On ne fait plus de json.Unmarshal ici car on récupère les infos du Token
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Erreur lecture body"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("READ_BODY_ERROR", "Erreur lecture body.", err))
 		return
 	}
-	// On n'a pas besoin de restaurer le body avec NopCloser car on ne le relit plus après
 
 	// 2. Récupération des Headers
 	authHeader := c.GetHeader("Authorization")
@@ -77,105 +74,82 @@ func RenewJWT(c *gin.Context) {
 	clientTs := c.GetHeader("X-Timestamp")
 
 	if authHeader == "" || clientSecret == "" || clientHMAC == "" || clientTs == "" {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Headers de sécurité manquants"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("MISSING_HEADERS", "Headers de sécurité manquants.", nil))
 		return
 	}
 
-	// 3. EXTRACTION DES DONNÉES DU JWT (Même périmé)
-	// On utilise ParseUnverified de la lib jwt/v5
+	// 3. EXTRACTION DES DONNÉES DU JWT
 	token, _, err := new(jwt.Parser).ParseUnverified(authHeader, jwt.MapClaims{})
 	if err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Token illisible"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_JWT", "Token illisible.", err))
 		return
 	}
 
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Claims JWT invalides"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_CLAIMS", "Claims JWT invalides.", nil))
 		return
 	}
 
-	// A. Récupération UserID ("sub")
 	sub, err := claims.GetSubject()
 	if err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "UserID manquant dans le token"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("MISSING_SUBJECT", "UserID manquant dans le token.", err))
 		return
 	}
-	userID, err := strconv.ParseInt(sub, 10, 64) // Conversion en int64
+	userID, err := strconv.ParseInt(sub, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format UserID invalide"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_SUBJECT", "Format UserID invalide.", err))
 		return
 	}
 
-	// B. Récupération firebaseInstallationIDs ("dev")
 	firebaseInstallationID, ok := claims["dev"].(string)
 	if !ok || firebaseInstallationID == "" {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "FirebaseInstallationID manquant dans le token"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("MISSING_DEVICE_ID", "FirebaseInstallationID manquant dans le token.", nil))
 		return
 	}
 
 	// 4. Vérification HMAC
-	// On signe toujours avec le bodyBytes (même vide) pour garantir l'intégrité de la requête
 	contentToSign := security.GetBodyToSign(c.Request, bodyBytes)
 	stringToSign := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, clientTs, contentToSign)
 
 	if !security.CheckHMAC(stringToSign, clientSecret, clientHMAC) {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Signature HMAC invalide"})
+		nubo_error.RespondWithError(c, nubo_error.NewForbidden("INVALID_HMAC", "Signature HMAC invalide.", nil))
 		return
 	}
 
-	// 5. Génération Nouveau JWT (Action Serveur)
-	// IMPORTANT : On remet le firebaseInstallationID dans le nouveau JWT pour la suite !
+	// 5. Génération Nouveau JWT
 	newJWT, err := pkg.GenerateToken(userID, firebaseInstallationID, variables.JWTExpirationSeconds)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur génération token"})
+		nubo_error.RespondWithError(c, nubo_error.NewInternal(err))
 		return
 	}
 
 	// 6. Rotation du Ratchet & Mise à jour Session
-	// On utilise le userID extrait du token et le authHeader comme "LastJWT"
 	if err := security.RotateRatchet(c, userID, firebaseInstallationID, clientSecret, authHeader); err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Session invalide ou Secret incorrect"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	// 7. PRÉPARATION DE LA RÉPONSE SIGNÉE
-	// On prépare l'objet réponse
 	respData := security_models.RenewJWTResponse{
 		Token:   newJWT,
 		Message: "Renouvellement OK",
 	}
 
-	// A. Sérialisation manuelle en JSON pour la signature
 	respBytes, err := json.Marshal(respData)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur encoding réponse"})
+		nubo_error.RespondWithError(c, nubo_error.NewInternal(err))
 		return
 	}
 
-	// B. Génération du Timestamp et Signature
 	respTs := fmt.Sprintf("%d", time.Now().Unix())
+	stringToSignResp := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, respTs, string(respBytes))
 
-	// C. Build StringToSign (Response Binding)
-	// On signe : METHOD | PATH | TS_REPONSE | BODY_REPONSE
-	stringToSignResp := security.BuildStringToSign(
-		c.Request.Method,
-		c.Request.URL.Path,
-		respTs,
-		string(respBytes),
-	)
-
-	// D. Calcul HMAC
-	// Règle : On utilise le secret qui a validé la requête (clientSecret)
-	// C'est ce secret qui est devenu 'LastSecret' dans la BDD après la rotation.
 	h := hmac.New(sha256.New, []byte(clientSecret))
 	h.Write([]byte(stringToSignResp))
 	respSig := hex.EncodeToString(h.Sum(nil))
 
-	// E. Ajout des Headers
 	c.Header("X-Timestamp", respTs)
 	c.Header("X-Signature", respSig)
-
-	// F. Envoi de la réponse
 	c.Data(http.StatusOK, "application/json", respBytes)
 }

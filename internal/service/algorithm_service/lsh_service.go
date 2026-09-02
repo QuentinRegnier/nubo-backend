@@ -3,10 +3,10 @@ package algorithm_service
 import (
 	"context"
 	"fmt"
-	"log"
 	"math/rand"
 	"strconv"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
@@ -168,7 +168,7 @@ func GetLSHCandidateIDs(ctx context.Context, hash uint32) (map[int64]bool, error
 		members, err := redis.LSHBuckets.SMembers(ctx, neighborHash)
 		if err != nil {
 			// Bucket manquant ou erreur Redis: ignorer silencieusement
-			log.Printf("⚠️ [lsh] SMembers bucket %d: %v", neighborHash, err)
+			logger.Log.Warn().Err(err).Uint32("bucket", neighborHash).Msg("Lookup LSH bucket ignoré")
 			continue
 		}
 

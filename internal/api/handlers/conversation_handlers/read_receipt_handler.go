@@ -23,25 +23,25 @@ import (
 // @Param        id            path   int    true  "ID de la conversation"
 // @Param        data          body   conversation_models.ReadReceiptInput true "ID de la conversation"
 // @Success      200  {object} map[string]string "Message de succès"
-// @Failure      400  {object} nubo_error.ErrorResponse "Données invalides"
-// @Failure      401  {object} nubo_error.ErrorResponse "Session expirée ou utilisateur non identifié"
-// @Failure      403  {object} nubo_error.ErrorResponse "Accès refusé ou utilisateur banni du groupe"
+// @Failure      400  {object} nubo_error.PublicErrorResponse "Données invalides"
+// @Failure      401  {object} nubo_error.PublicErrorResponse "Session expirée ou utilisateur non identifié"
+// @Failure      403  {object} nubo_error.PublicErrorResponse "Accès refusé ou utilisateur banni du groupe"
 // @Router       /conversations/read [post]
 func ReadReceiptHandler(c *gin.Context) {
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input conversation_models.ReadReceiptInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide ou conversation_id manquant"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou paramètres manquants.", err))
 		return
 	}
 
 	if err := conversation_service.MarkConversationAsRead(c.Request.Context(), callerID, input.ConversationID); err != nil {
-		c.JSON(http.StatusForbidden, nubo_error.ErrorResponse{Error: err.Error()})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

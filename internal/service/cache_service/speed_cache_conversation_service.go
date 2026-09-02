@@ -2,13 +2,15 @@ package cache_service
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log"
 	"strconv"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -102,7 +104,7 @@ func GetInboxView(ctx context.Context, userID int64, limit int64, offset int64) 
 	}
 
 	if len(missingArray) > 0 {
-		log.Printf("🛡️ Postgres Fallback déclenché pour %d conversations manquantes dans l'Inbox", len(missingArray))
+		logger.Log.Info().Int("missing_conversations", len(missingArray)).Msg("Postgres Fallback déclenché pour l'Inbox")
 
 		// Appel abstrait pur DDD : Zéro SQL dans le Cache Service !
 		fallbackResults, err := postgres.FuncLoadConversationFallback(ctx, userID, missingArray)
@@ -120,7 +122,7 @@ func GetInboxView(ctx context.Context, userID int64, limit int64, offset int64) 
 				}(res.Conversation, res.Member)
 			}
 		} else {
-			log.Printf("⚠️ Erreur Fallback Postgres Inbox: %v", err)
+			logger.Log.Error().Err(err).Msg("Erreur Fallback Postgres Inbox")
 		}
 	}
 
@@ -315,12 +317,12 @@ func RehydrateConversationItemInSpeedCache(ctx context.Context, fullConv convers
 // SeedMessagingSpeedCache reconstruit l'intégralité du cache Inbox et Conversations depuis Postgres.
 // Appelé uniquement lors d'un "Cold Start" de Redis.
 func SeedMessagingSpeedCache(ctx context.Context) error {
-	log.Println("  Amorçage SPEED Cache: Chargement des Conversations et Inboxes...")
+	logger.Log.Info().Msg("Amorçage SPEED Cache: Chargement des Conversations et Inboxes...")
 
 	// 1. Récupération des Conversations Actives via Repository (DDD Pur)
 	conversations, err := postgres.FuncLoadActiveConversations(ctx)
 	if err != nil {
-		return fmt.Errorf("erreur DB seed conversations: %w", err)
+		return nubo_error.NewInternal(err)
 	}
 
 	for _, conv := range conversations {
@@ -330,7 +332,7 @@ func SeedMessagingSpeedCache(ctx context.Context) error {
 	// 2. Récupération des Membres et Hydratation du ZSET Inbox
 	activeMembers, err := postgres.FuncLoadActiveMembers(ctx)
 	if err != nil {
-		return fmt.Errorf("erreur DB seed members: %w", err)
+		return nubo_error.NewInternal(err)
 	}
 
 	for _, activeMem := range activeMembers {
@@ -348,7 +350,7 @@ func SeedMessagingSpeedCache(ctx context.Context) error {
 		}
 	}
 
-	log.Printf("  SPEED Cache Messaging terminées (%d convos, %d membres chargés).", len(conversations), len(activeMembers))
+	logger.Log.Info().Int("conversations", len(conversations)).Int("membres", len(activeMembers)).Msg("SPEED Cache Messaging terminées")
 	return nil
 }
 
@@ -358,7 +360,7 @@ func GetDirectConversationCache(ctx context.Context, u1, u2 int64) (int64, error
 	// 1. Récupération de tous les IDs de conversation de l'utilisateur
 	convIDStrings, err := redis.UserInbox.ZRevRange(ctx, u1, 0, -1)
 	if err != nil || len(convIDStrings) == 0 {
-		return 0, fmt.Errorf("cache miss")
+		return 0, errors.New("cache miss") // C'est une sentinelle interne
 	}
 
 	var convIDs []int64
@@ -371,7 +373,7 @@ func GetDirectConversationCache(ctx context.Context, u1, u2 int64) (int64, error
 	// 2. Filtrage du Type en O(1) via MGET
 	metaRes, err := redis.ConvMeta.GetMany(ctx, convIDs)
 	if err != nil {
-		return 0, fmt.Errorf("cache miss")
+		return 0, errors.New("cache miss") // C'est une sentinelle interne
 	}
 
 	u2Str := strconv.FormatInt(u2, 10)
@@ -397,7 +399,7 @@ func GetDirectConversationCache(ctx context.Context, u1, u2 int64) (int64, error
 		}
 	}
 
-	return 0, fmt.Errorf("not found in speed cache")
+	return 0, errors.New("not found in speed cache") // C'est une sentinelle interne
 }
 
 // UpdateMemberStateInSpeedCache écrase l'état complet du membre en RAM (O(1))

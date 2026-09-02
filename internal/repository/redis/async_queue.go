@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -101,7 +103,7 @@ func EnqueueDB(ctx context.Context, id int64, partitionKey int64, entity EntityT
 
 	bytes, err := json.Marshal(event)
 	if err != nil {
-		return fmt.Errorf("marshal nubo_error: %w", err)
+		return nubo_error.NewInternal(fmt.Errorf("marshal event: %w", err))
 	}
 
 	// C'EST ICI QUE TOUT SE JOUE : Choix du Shard
@@ -124,7 +126,7 @@ func EnqueueDB(ctx context.Context, id int64, partitionKey int64, entity EntityT
 
 	_, err = pipe.Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("redis pipeline failed: %w", err)
+		return nubo_error.NewInternal(fmt.Errorf("redis pipeline failed: %w", err))
 	}
 
 	return nil
@@ -165,7 +167,7 @@ func PopSmartBatchBlocking(ctx context.Context, shardID int, batchSize int64) ([
 		if err == nil && len(rest) > 0 {
 			rawElements = append(rawElements, rest...)
 		} else if err != nil && !errors.Is(err, redis.Nil) {
-			fmt.Printf("⚠️ Erreur LPopCount secondaire: %v\n", err)
+			logger.Log.Warn().Err(err).Str("queue_key", queueKey).Msg("Erreur LPopCount secondaire")
 		}
 	}
 
@@ -181,7 +183,7 @@ func PopSmartBatchBlocking(ctx context.Context, shardID int, batchSize int64) ([
 		if err := decoder.Decode(&evt); err == nil {
 			events = append(events, evt)
 		} else {
-			fmt.Printf("❌ Erreur décodage event queue: %v\n", err)
+			logger.Log.Error().Err(err).Msg("Erreur de décodage d'un événement de la queue asynchrone")
 		}
 	}
 

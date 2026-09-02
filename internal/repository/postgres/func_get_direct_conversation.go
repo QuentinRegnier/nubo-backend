@@ -3,8 +3,10 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/lib/pq"
 )
@@ -19,8 +21,12 @@ func FuncGetDirectConversation(ctx context.Context, user1, user2 int64) (convers
 	err := postgres.PostgresDB.QueryRowContext(ctx, query, user1, user2).Scan(
 		&c.ID, &c.Type, &cTitle, &cLastMsgID, &c.State, pq.Array(&c.Laws), &c.CreatedAt, &c.UpdatedAt,
 	)
+
 	if err != nil {
-		return c, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return c, nubo_error.NewNotFound("CONV_NOT_FOUND", "Conversation privée introuvable.", err)
+		}
+		return c, nubo_error.NewInternal(err)
 	}
 	if cTitle.Valid {
 		c.Title = cTitle.String

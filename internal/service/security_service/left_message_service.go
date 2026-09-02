@@ -2,9 +2,9 @@ package security_service
 
 import (
 	"context"
-	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -37,16 +37,12 @@ func LeftMessage(ctx context.Context, messageID int64, userID int64) (message_mo
 	}
 
 	// 4. VÉRIFICATION DES RÈGLES DE SÉCURITÉ
-	if !found {
-		return message_models.MessagePayload{}, errors.New("not found")
+	if !found || !msg.Visibility {
+		// Furtivité absolue : on ne dit pas si le message existe mais est caché
+		return message_models.MessagePayload{}, nubo_error.NewNotFound("MESSAGE_NOT_FOUND", "Message introuvable.", nil)
 	}
-
-	if !msg.Visibility {
-		return message_models.MessagePayload{}, errors.New("not found") // Furtivité (Soft-delete)
-	}
-
 	if msg.SenderID != userID {
-		return message_models.MessagePayload{}, errors.New("unauthorized")
+		return message_models.MessagePayload{}, nubo_error.NewForbidden("ACCESS_DENIED", "Accès refusé.", nil)
 	}
 
 	return msg, nil

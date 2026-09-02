@@ -1,5 +1,7 @@
 package mongo
 
+import "github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+
 // MongoGetPostLikes interroge le stockage L2 pour la liste des likes.
 func MongoGetPostLikes(postID int64, limit int, offset int) ([]int64, error) {
 	// ⚠️ CORRECTION POLYMORPHE : On cible explicitement les Posts (0) et l'ID
@@ -13,7 +15,7 @@ func MongoGetPostLikes(postID int64, limit int, offset int) ([]int64, error) {
 
 	docs, err := Likes.GetPaginated(filter, sort, int64(offset), int64(limit))
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	var userIDs []int64

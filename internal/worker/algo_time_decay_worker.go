@@ -2,25 +2,26 @@ package worker
 
 import (
 	"context"
-	"log"
 	"runtime"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/lib/pq"
 )
 
 // ScoreJob contient les métriques pré-calculées par SQL pour éviter l'hydratation N+1
 type ScoreJob struct {
-	PostID       int64
-	LikeCount    int
-	CommentCount int
-	ViewCount    int // NOUVEAU : Indispensable pour ne pas perdre les vues au recalcul
-	HasMedia     bool
-	CreatedAt    time.Time
-	Hashtags     []string
-	Visibility   int
+	PostID        int64
+	LikeCount     int
+	CommentCount  int
+	ViewCount     int
+	HasMedia      bool
+	CreatedAt     time.Time
+	Hashtags      []string
+	Visibility    int
+	PriorityLevel int // NOUVEAU
 }
 
 // StartScoreUpdaterCron initialise le Worker Pool basé sur le nombre de threads CPU
@@ -31,7 +32,7 @@ func StartScoreUpdaterCron(ctx context.Context) {
 
 	// Limite de concurrence matérielle stricte
 	numWorkers := runtime.GOMAXPROCS(0)
-	log.Printf("⏱️ Démarrage du Time-Decay Engine avec %d Workers CPU...", numWorkers)
+	logger.Log.Info().Int("workers_cpu", numWorkers).Msg("Démarrage du Time-Decay Engine")
 
 	for i := 0; i < numWorkers; i++ {
 		go func() {
@@ -51,12 +52,13 @@ func StartScoreUpdaterCron(ctx context.Context) {
 						job.PostID,
 						job.LikeCount,
 						job.CommentCount,
-						job.ViewCount, // NOUVEAU : Transmission du view_count
+						job.ViewCount,
 						mediaCount,
 						job.CreatedAt,
 						job.Hashtags,
 						job.Visibility,
 						0,
+						job.PriorityLevel, // NOUVEAU : Transmission du priority_level
 					)
 				}
 			}
@@ -79,8 +81,9 @@ func runTierCron(ctx context.Context, jobs chan<- ScoreJob, interval time.Durati
 	defer ticker.Stop()
 
 	// CORRECTION SQL : Ajout de view_count et visibility dans le SELECT
+	//TODO DDD
 	query := `
-		SELECT id, like_count, comment_count, view_count, has_media, created_at, hashtags, visibility
+		SELECT id, like_count, comment_count, view_count, has_media, created_at, hashtags, visibility, priority_level
 		FROM content.posts 
 		WHERE created_at <= NOW() - $1::interval 
 		AND created_at > NOW() - $2::interval 
@@ -94,7 +97,7 @@ func runTierCron(ctx context.Context, jobs chan<- ScoreJob, interval time.Durati
 		case <-ticker.C:
 			rows, err := postgres.PostgresDB.QueryContext(ctx, query, minAge, maxAge)
 			if err != nil {
-				log.Printf("⚠️ Erreur Cron Tier (%s-%s) : %v", minAge, maxAge, err)
+				logger.Log.Error().Err(err).Str("min_age", minAge).Str("max_age", maxAge).Msg("Erreur requête Time-Decay Tier")
 				continue
 			}
 
@@ -110,15 +113,16 @@ func runTierCron(ctx context.Context, jobs chan<- ScoreJob, interval time.Durati
 					&job.CreatedAt,
 					pq.Array(&job.Hashtags),
 					&job.Visibility,
+					&job.PriorityLevel, // NOUVEAU
 				)
 				if err != nil {
-					log.Printf("⚠️ Erreur de scan dans runTierCron: %v", err)
+					logger.Log.Error().Err(err).Msg("Erreur de scan SQL dans le Time-Decay")
 					continue
 				}
 				jobs <- job
 			}
 			if err := rows.Close(); err != nil {
-				log.Printf("⚠️ Erreur fermeture rows Cron Tier (%s-%s) : %v", minAge, maxAge, err)
+				logger.Log.Error().Err(err).Str("min_age", minAge).Str("max_age", maxAge).Msg("Erreur fermeture des rows (Time-Decay)")
 			}
 		}
 	}

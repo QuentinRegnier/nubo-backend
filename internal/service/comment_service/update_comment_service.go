@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
@@ -24,7 +26,12 @@ func UpdateComment(ctx context.Context, input comment_models.UpdateCommentInput)
 	// ─────────────────────────────────────────────────────────────────────────
 	// 2. APPLICATION DES MODIFICATIONS
 	// ─────────────────────────────────────────────────────────────────────────
-	comment.Content = input.Content
+	cleanContent := pkg.CleanStr(input.Content)
+	if cleanContent == "" {
+		return nubo_error.NewBadRequest("EMPTY_COMMENT", "Le commentaire ne peut pas être vide.", nil)
+	}
+
+	comment.Content = cleanContent
 	comment.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
 	// ─────────────────────────────────────────────────────────────────────────

@@ -2,9 +2,9 @@ package minio
 
 import (
 	"context"
-	"log"
 	"os"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
@@ -32,20 +32,17 @@ func InitMinio() {
 		// C'est Nginx (en frontal) qui gère le HTTPS.
 		Secure: false,
 	})
-
 	if err != nil {
-		log.Fatal("❌ Erreur critique : Impossible d'initialiser le client MinIO :", err)
+		logger.Log.Fatal().Err(err).Msg("Impossible d'initialiser le client MinIO")
 	}
 
 	// 3. Test de connexion (Ping)
-	// On essaie une opération simple pour s'assurer que le serveur répond vraiment
 	exists, err := MinioClient.BucketExists(context.Background(), bucketName)
 	if err != nil {
-		log.Printf("Attention : Connexion MinIO établie, mais impossible de vérifier le bucket '%s'. Erreur : %v", bucketName, err)
-		// On ne fait pas forcément un Fatal ici, car le container 'createbuckets' peut prendre quelques secondes à démarrer
+		logger.Log.Warn().Err(err).Str("bucket", bucketName).Msg("Connexion MinIO établie, mais impossible de vérifier le bucket")
 	} else if !exists {
-		log.Printf("Attention : Le bucket '%s' n'existe pas encore.", bucketName)
+		logger.Log.Warn().Str("bucket", bucketName).Msg("Le bucket n'existe pas encore.")
 	} else {
-		log.Println("Connexion MinIO réussie et bucket vérifié.")
+		logger.Log.Info().Msg("Connexion MinIO réussie et bucket vérifié")
 	}
 }

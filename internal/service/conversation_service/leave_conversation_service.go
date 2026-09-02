@@ -2,11 +2,11 @@ package conversation_service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -17,14 +17,13 @@ import (
 // LeaveConversation gère la suppression côté client (MP) et le départ (Groupe/Communauté)
 func LeaveConversation(ctx context.Context, callerID int64, convID int64, input conversation_models.LeaveConversationInput) error {
 	// 1. SÉCURITÉ ET RÉCUPÉRATION (Objet Complet)
-	// On s'assure que le caller fait bien partie de la conversation
 	mem, err := security_service.LeftMember(ctx, convID, callerID)
 	if err != nil {
-		return err
+		return err // L'erreur est déjà une AppError formatée par security_service
 	}
 	conv, err := object_cache_service.GetConversationFromObjectCache(ctx, convID)
 	if err != nil {
-		return errors.New("impossible de charger les détails de la conversation")
+		return nubo_error.NewNotFound("CONV_NOT_FOUND", "Impossible de charger les détails de la conversation.", err)
 	}
 
 	// 2. GESTION DU PROPRIÉTAIRE (Type > 0)
@@ -32,15 +31,13 @@ func LeaveConversation(ctx context.Context, callerID int64, convID int64, input 
 	participantCount, _ := redis.ConvParticipants.SCard(ctx, convID)
 
 	if conv.Type > 0 && mem.Role == 2 && participantCount > 1 {
-		// Le propriétaire quitte mais il reste du monde : il DOIT nommer un nouvel admin
 		if input.NewOwnerID == 0 {
-			return errors.New("vous devez transférer la propriété à un administrateur avant de quitter")
+			return nubo_error.NewForbidden("MUST_TRANSFER_OWNERSHIP", "Vous devez transférer la propriété à un administrateur avant de quitter.", nil)
 		}
 
-		// Vérification du nouveau propriétaire
 		newOwnerMem, err := security_service.LeftMember(ctx, convID, input.NewOwnerID)
 		if err != nil || newOwnerMem.Role != 1 {
-			return errors.New("le nouveau propriétaire doit être un administrateur existant du groupe")
+			return nubo_error.NewBadRequest("INVALID_NEW_OWNER", "Le nouveau propriétaire doit être un administrateur existant du groupe.", err)
 		}
 
 		// Promotion du nouveau propriétaire

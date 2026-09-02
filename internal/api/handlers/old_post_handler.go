@@ -5,7 +5,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/worker"
 	"github.com/gin-gonic/gin"
 )
 
@@ -23,33 +23,29 @@ type BatchViewInput struct {
 // @Param        Authorization header string true "Bearer <votre_jwt>"
 // @Param        data body BatchViewInput true "Tableau des IDs des posts vus"
 // @Success      200  {object}  domain.SuccessResponse
-// @Failure      400  {object}  domain.ErrorResponse "JSON invalide ou tableau trop grand"
+// @Failure      400  {object}  nubo_error.PublicErrorResponse "JSON invalide ou tableau trop grand"
 // @Router       /views/batch [post_service]
 func RegisterBatchViewsHandler(c *gin.Context) {
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input BatchViewInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide.", err))
 		return
 	}
 
-	// Sécurité anti-spam : on limite la taille du lot à 100 vues maximum par requête
-	// (Personne ne scrolle plus de 100 posts en 10 secondes)
 	if len(input.PostIDs) > 100 {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Trop d'IDs dans le lot (max 100)"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("BATCH_TOO_LARGE", "Trop d'IDs dans le lot (max 100).", nil))
 		return
 	}
 
-	// On boucle sur les IDs pour les envoyer dans le Buffer en RAM (Temps: 0.01ms)
 	for _, postID := range input.PostIDs {
-		// Nettoyage anti-doublon direct : s'assurer qu'un ID n'est pas à 0
 		if postID > 0 {
-			feed_service.RegisterView(userID, postID)
+			worker.RegisterView(userID, postID)
 		}
 	}
 

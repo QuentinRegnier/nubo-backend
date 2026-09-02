@@ -2,7 +2,7 @@ package post_service
 
 import (
 	"context"
-	"errors"
+	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -20,7 +20,7 @@ func GetUserPosts(ctx context.Context, input post_models.GetUserPostsInput) []po
 	var errCache error
 
 	if input.Force {
-		errCache = errors.New("forced fallback") // Déclenche artificiellement le fallback
+		errCache = fmt.Errorf("forced fallback") // Déclenche artificiellement le fallback (Internal sentinel)
 	} else {
 		ids, errCache = cache_service.GetTopUserPostIDs(ctx, input.TargetUserID, input.Offset, input.Limit)
 	}

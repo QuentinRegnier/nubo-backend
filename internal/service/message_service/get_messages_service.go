@@ -2,9 +2,9 @@ package message_service
 
 import (
 	"context"
-	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
@@ -15,7 +15,7 @@ func GetMessages(ctx context.Context, callerID int64, input message_models.GetMe
 	// 1. SÉCURITÉ : Vérification d'appartenance
 	mem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
 	if err != nil {
-		return nil, errors.New("vous ne faites pas partie de cette conversation")
+		return nil, nubo_error.NewForbidden("NOT_A_MEMBER", "Vous ne faites pas partie de cette conversation.", err)
 	}
 
 	// 2. RÉSOLUTION D'INDEX
@@ -45,7 +45,11 @@ func GetMessages(ctx context.Context, callerID int64, input message_models.GetMe
 				if mediaID > 0 {
 					// Appel unique au domaine Média (DDD)
 					if view, err := media_service.GenerateMediaViewCascade(ctx, mediaID, messages[i].SenderID, messages[i].ID, callerID); err == nil {
-						messages[i].Attachments["media_url"] = view.URL
+						// FINI LE BRICOLAGE : On injecte l'objet MediaView entier par valeur
+						messages[i].Attachments["media_view"] = view
+
+						// Optionnel : On supprime l'ancien 'media_id' brut pour ne laisser que le MediaView propre
+						// delete(messages[i].Attachments, "media_id")
 					}
 				}
 			}

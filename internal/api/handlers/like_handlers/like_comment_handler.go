@@ -3,6 +3,7 @@ package like_handlers
 import (
 	"net/http"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/like_service"
 	"github.com/gin-gonic/gin"
 
@@ -28,38 +29,30 @@ import (
 // @Param        X-Timestamp   header string true "Timestamp Unix de la requête"
 // @Param        data          body   like_models.LikeCommentInput true "Action (like ou unlike) et ID du commentaire"
 // @Success      200  {object}  map[string]string "message: Action prise en compte"
-// @Failure      400  {object}  domain.ErrorResponse "Format JSON invalide ou action non reconnue"
-// @Failure      401  {object}  domain.ErrorResponse "Utilisateur non identifié"
-// @Failure      404  {object}  domain.ErrorResponse "Commentaire introuvable"
+// @Failure      400  {object}  nubo_error.PublicErrorResponse "Format JSON invalide ou action non reconnue"
+// @Failure      401  {object}  nubo_error.PublicErrorResponse "Utilisateur non identifié"
+// @Failure      404  {object}  nubo_error.PublicErrorResponse "Commentaire introuvable"
 // @Router       /comment/like [post]
 func LikeCommentHandler(c *gin.Context) {
-	// 1. Sécurité
 	callerUserID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	// 2. Binding du payload
 	var input like_models.LikeCommentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Format JSON invalide ou action non reconnue ('like'/'unlike' attendu)"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou action non reconnue ('like'/'unlike' attendu).", err))
 		return
 	}
 
 	input.UserID = callerUserID
 
-	// 3. Appel au service hybride
 	err = like_service.ToggleCommentLike(c.Request.Context(), input)
 	if err != nil {
-		if err.Error() == "not found" {
-			c.JSON(http.StatusNotFound, gin.H{"nubo_error": "Commentaire introuvable ou supprimé"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"nubo_error": "Erreur interne lors du traitement du like"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	// 4. Succès optimiste
 	c.JSON(http.StatusOK, gin.H{"message": "Action prise en compte"})
 }

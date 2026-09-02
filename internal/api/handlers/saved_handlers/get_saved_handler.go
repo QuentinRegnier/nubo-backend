@@ -19,19 +19,19 @@ import (
 // @Param        limit  query int false "Nombre max de posts (défaut: 50)"
 // @Param        offset query int false "Décalage pour la pagination (défaut: 0)"
 // @Success      200 {array}  post_models.GetPostOutput
-// @Failure      400 {object} nubo_error.ErrorResponse "Paramètres invalides"
-// @Failure      401 {object} nubo_error.ErrorResponse "Non autorisé"
+// @Failure      400 {object} nubo_error.PublicErrorResponse "Paramètres invalides"
+// @Failure      401 {object} nubo_error.PublicErrorResponse "Non autorisé"
 // @Router       /saved [get]
 func GetSavedPostsHandler(c *gin.Context) {
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Non autorisé"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input saved_models.GetSavedInput
 	if err := c.ShouldBindQuery(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Invalid query parameters: " + err.Error()})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_QUERY", "Paramètres de requête invalides.", err))
 		return
 	}
 

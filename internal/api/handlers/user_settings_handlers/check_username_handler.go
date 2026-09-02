@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/user_settings_service"
 	"github.com/gin-gonic/gin"
 )
@@ -26,7 +27,7 @@ import (
 func CheckUsernameHandler(c *gin.Context) {
 	var input user_settings_models.CheckUsernameInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.Status(http.StatusBadRequest)
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Paramètre manquant ou invalide.", err))
 		return
 	}
 

@@ -16,13 +16,13 @@ func SubmitReport(ctx context.Context, input report_models.CreateReportInput) er
 	now := time.Now().UTC()
 
 	payload := report_models.ReportPayload{
-		ID:         pkg.GenerateID(), // Génération du Snowflake ID
+		ID:         pkg.GenerateID(),
 		ReporterID: input.UserID,
 		TargetType: input.TargetType,
 		TargetIDs:  input.TargetIDs,
 		Category:   input.Category,
-		Reason:     input.Reason,
-		State:      variables.ReportStatePending, // 0 par défaut
+		Reason:     pkg.CleanStr(input.Reason), // Nettoyage de la raison
+		State:      variables.ReportStatePending,
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}

@@ -3,48 +3,94 @@ package websocket
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"fmt"
+	"math"
+	"strconv"
+	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/api/websocket/ws_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// Route intercepte le message brut, l'oriente et gère la réponse.
+// Route intercepte le message brut, l'oriente et gère la réponse avec un bouclier Zero-Trust.
 func (c *Client) Route(message []byte) {
 	var req WSRequest
 	if err := json.Unmarshal(message, &req); err != nil {
-		log.Printf("WS Route Error: Payload illisible: %v", err)
+		logger.Log.Error().Err(err).Msg("WS Route Error: Payload illisible")
 		return
 	}
 
-	// Contexte vide car le WebSocket est une boucle infinie, on n'a pas de Request.Context() HTTP
 	ctx := context.Background()
+
+	// =========================================================================
+	// BOUCLIER DE SÉCURITÉ ZERO-TRUST (HMAC & Anti-Rejeu)
+	// =========================================================================
+
+	// 1. Anti-Rejeu (Timestamp)
+	tsInt, err := strconv.ParseInt(req.Timestamp, 10, 64)
+	if err != nil {
+		c.SendError(req.RequestID, "Timestamp invalide")
+		return
+	}
+	now := time.Now().Unix()
+	if math.Abs(float64(now-tsInt)) > variables.ToleranceTimeSeconds {
+		c.SendError(req.RequestID, "Trame expirée (Anti-Rejeu)")
+		return
+	}
+
+	// 2. Récupération instantanée de la session Ratchet en RAM (Speed Cache O(1))
+	// Cela permet de supporter la rotation de clé HTTP sans couper le WebSocket !
+	session, err := cache_service.LoadSessionFromCache(ctx, c.UserID, c.DeviceID, "")
+	if err != nil || session.ID == 0 {
+		c.SendError(req.RequestID, "Session invalide ou expirée")
+		return
+	}
+
+	// 3. Validation de la signature HMAC (Action|Timestamp|Payload)
+	stringToSign := fmt.Sprintf("%s|%s|%s", req.Action, req.Timestamp, string(req.Payload))
+
+	isValid := security.CheckHMAC(stringToSign, session.CurrentSecret, req.Signature)
+
+	// Tolérance de rotation de clé (Exactement comme en HTTP)
+	if !isValid && session.LastSecret != "" && !session.ToleranceTime.IsZero() && time.Now().Before(session.ToleranceTime) {
+		isValid = security.CheckHMAC(stringToSign, session.LastSecret, req.Signature)
+	}
+
+	if !isValid {
+		c.SendError(req.RequestID, "Signature HMAC invalide")
+		return
+	}
+	// =========================================================================
+
 	var resData any
-	var err error
+	var routeErr error
 
 	// Le Grand Switch (Remplace ton HTTP routes.go)
 	switch req.Action {
-
 	// --- TYPING (Volatil) ---
 	case "typing.started":
-		err = ws_handlers.HandleTyping(ctx, c.UserID, req.Payload, true)
+		routeErr = ws_handlers.HandleTyping(ctx, c.UserID, req.Payload, true)
 	case "typing.stopped":
-		err = ws_handlers.HandleTyping(ctx, c.UserID, req.Payload, false)
+		routeErr = ws_handlers.HandleTyping(ctx, c.UserID, req.Payload, false)
 
 	// --- CONVERSATIONS ---
 	case "conversation.read":
-		err = ws_handlers.HandleReadReceipt(ctx, c.UserID, req.Payload)
+		routeErr = ws_handlers.HandleReadReceipt(ctx, c.UserID, req.Payload)
 
 	// --- MESSAGES ---
 	case "message.create":
-		resData, err = ws_handlers.HandleCreateMessage(ctx, c.UserID, req.Payload)
+		resData, routeErr = ws_handlers.HandleCreateMessage(ctx, c.UserID, req.Payload)
 	case "message.update":
-		err = ws_handlers.HandleUpdateMessage(ctx, c.UserID, req.Payload)
+		routeErr = ws_handlers.HandleUpdateMessage(ctx, c.UserID, req.Payload)
 	case "message.delete":
-		err = ws_handlers.HandleDeleteMessage(ctx, c.UserID, req.Payload)
+		routeErr = ws_handlers.HandleDeleteMessage(ctx, c.UserID, req.Payload)
 	case "message.react":
-		err = ws_handlers.HandleReactMessage(ctx, c.UserID, req.Payload)
+		routeErr = ws_handlers.HandleReactMessage(ctx, c.UserID, req.Payload)
 	case "message.unreact":
-		err = ws_handlers.HandleUnreactMessage(ctx, c.UserID, req.Payload)
+		routeErr = ws_handlers.HandleUnreactMessage(ctx, c.UserID, req.Payload)
 
 	default:
 		c.SendError(req.RequestID, "Action non reconnue")
@@ -52,8 +98,8 @@ func (c *Client) Route(message []byte) {
 	}
 
 	// Gestion de la réponse à renvoyer au client
-	if err != nil {
-		c.SendError(req.RequestID, err.Error())
+	if routeErr != nil {
+		c.SendError(req.RequestID, routeErr.Error())
 	} else {
 		c.SendSuccess(req.RequestID, resData)
 	}

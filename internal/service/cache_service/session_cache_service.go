@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -54,34 +55,39 @@ func LoadSessionFromCache(ctx context.Context, userID int64, firebaseInstallatio
 	}
 
 	if targetID == 0 {
-		return models.SessionsRequest{}, fmt.Errorf("session introuvable dans redis (index miss)")
+		return models.SessionsRequest{}, nubo_error.NewNotFound("SESSION_NOT_FOUND", "Session introuvable en RAM.", nil)
 	}
 
 	var s models.SessionsRequest
 	if err := redis.Sessions.GetObject(c, targetID, &s); err != nil {
-		return models.SessionsRequest{}, err
+		return models.SessionsRequest{}, err // C'est une erreur d'infrastructure, on la propage
 	}
 
 	if masterToken != "" && s.MasterToken != masterToken {
-		return models.SessionsRequest{}, fmt.Errorf("master token mismatch")
+		return models.SessionsRequest{}, nubo_error.NewForbidden("INVALID_MASTER_TOKEN", "Jeton maître invalide.", nil)
 	}
 
 	return s, nil
 }
 
-// DeleteSessionFromCache supprime la session et son index de recherche du cache L1
+// DeleteSessionFromCache supprime la session, son index, et pose un verrou de révocation L1
 func DeleteSessionFromCache(ctx context.Context, sessionID int64, userID int64, firebaseInstallationID string) error {
 	c, cancel := getShortCtx(ctx)
 	defer cancel()
 
-	// 1. Suppression de l'objet principal
-	_ = redis.Sessions.DeleteObject(c, sessionID)
-
-	// 2. Suppression de l'index de recherche associé
 	if userID != 0 && firebaseInstallationID != "" {
 		idxKey := fmt.Sprintf("%d:%s", userID, firebaseInstallationID)
+
+		// 1. POSE DU TOMBSTONE VIA L'ABSTRACTION DDD
+		// On inscrit la clé composite dans la collection Blacklist (TTL automatique géré par le Manager)
+		_ = redis.SessionBlacklist.SetPrimitive(c, idxKey, "1")
+
+		// 2. Suppression de l'index de recherche normal
 		_ = redis.SessionIndexes.DeletePrimitive(c, idxKey)
 	}
+
+	// 3. Suppression de l'objet principal
+	_ = redis.Sessions.DeleteObject(c, sessionID)
 
 	return nil
 }
@@ -119,5 +125,5 @@ func GetFirebaseInstallationIDsCascade(ctx context.Context, userID int64) ([]str
 		return fids, nil
 	}
 
-	return nil, fmt.Errorf("aucun appareil actif trouvé pour l'utilisateur")
+	return nil, nubo_error.NewNotFound("NO_ACTIVE_DEVICE", "Aucun appareil actif trouvé pour cet utilisateur.", nil)
 }

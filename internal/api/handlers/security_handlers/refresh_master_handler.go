@@ -1,14 +1,12 @@
 package security_handlers
 
 import (
-	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"time"
 
@@ -16,6 +14,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/security_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -47,171 +46,134 @@ import (
 // @Param        Authorization header string false "Bearer <Current_JWT> (Optionnel, pour continuité)"
 // @Param        X-Signature   header string true  "HMAC calculé avec l'ANCIEN MasterToken"
 // @Param        X-Timestamp   header string true  "Timestamp de la requête"
-// @Param        request       body     domain.RefreshMasterInput true "Données de reset (MasterToken, UserID, Username)"
+// @Param        input         body   security_models.RefreshMasterInput true "Données de reset (MasterToken, UserID, Username)"
 // @Success      200  {object}  domain.RefreshMasterResponse "Nouveaux identifiants générés"
-// @Failure      400  {object}  domain.ErrorResponse "Format invalide ou Headers manquants"
-// @Failure      401  {object}  domain.ErrorResponse "MasterToken introuvable ou Signature HMAC invalide"
-// @Failure      500  {object}  domain.ErrorResponse "Erreur serveur critique (Génération/Sauvegarde)"
-// @Router       /auth/refresh-master [post_service]
+// @Failure      400  {object}  nubo_error.PublicErrorResponse "Format invalide ou Headers manquants"
+// @Failure      401  {object}  nubo_error.PublicErrorResponse "MasterToken introuvable ou Signature HMAC invalide"
+// @Failure      500  {object}  nubo_error.PublicErrorResponse "Erreur serveur critique (Génération/Sauvegarde)"
+// @Router       /auth/refresh-master [post]
 func RefreshMaster(c *gin.Context) {
-	// 1. Lecture du Body (Nécessaire pour le calcul HMAC manuel plus bas)
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Erreur lecture body"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("READ_BODY_ERROR", "Erreur de lecture du body.", err))
 		return
 	}
 
-	// [IMPORTANT] Restaurer le body pour que c.PostForm puisse le lire ensuite
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-
-	// 2. Parsing des données (Support Form-Data ET Raw JSON)
 	var input security_models.RefreshMasterInput
-	jsonData := c.PostForm("data")
-
-	if jsonData != "" {
-		// CAS 1 : Multipart/Form-Data (celui que tu veux utiliser)
-		if err := json.Unmarshal([]byte(jsonData), &input); err != nil {
-			c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Invalid JSON format in 'data': " + err.Error()})
+	if len(bodyBytes) > 0 {
+		if err := json.Unmarshal(bodyBytes, &input); err != nil {
+			nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide.", err))
 			return
 		}
 	} else {
-		// CAS 2 : Raw JSON (Fallback, au cas où)
-		// Si 'data' est vide, on essaie de parser le body entier
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, &input); err != nil {
-				c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Invalid JSON format"})
-				return
-			}
-		} else {
-			// Aucun contenu trouvé
-			c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "The 'data' field containing the JSON is required"})
-			return
-		}
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("EMPTY_BODY", "Le corps de la requête est requis.", nil))
+		return
 	}
 
-	// 2. Headers
+	if err := pkg.ValidateStruct(&input); err != nil {
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("VALIDATION_FAILED", "Validation failed.", err))
+		return
+	}
+
 	authHeader := c.GetHeader("Authorization")
 	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
 		authHeader = authHeader[7:]
 	} else {
-		authHeader = "" // Cas NULL accepté (perte du JWT)
+		authHeader = ""
 	}
 
 	clientHMAC := c.GetHeader("X-Signature")
 	clientTs := c.GetHeader("X-Timestamp")
 
 	if clientHMAC == "" || clientTs == "" {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Headers de sécurité manquants"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("MISSING_HEADERS", "Headers de sécurité manquants.", nil))
 		return
 	}
 
-	// 5. Récupération de la Session (Cascade : Cache L1 -> Mongo L2 -> Postgres L3)
 	var sessionRaw models.SessionsRequest
 	var sessionFound bool
 
-	// A. Essai Cache L1
-	// Note: LoadSessionFromCache prend (ctx, userID, firebaseInstallationID, masterToken, currentSecret)
 	if s, err := cache_service.LoadSessionFromCache(c, input.UserID, "", input.MasterToken); err == nil && s.ID != 0 {
 		sessionRaw = s
 		sessionFound = true
 	}
 
-	// B. Essai Mongo L2
 	if !sessionFound {
 		if s, err := mongo.MongoLoadSession(input.UserID, "", input.MasterToken, ""); err == nil && s.ID != 0 {
 			sessionRaw = s
 			sessionFound = true
-			_ = cache_service.SetSessionInCache(c, sessionRaw) // Repopulation instantanée L1
+			_ = cache_service.SetSessionInCache(c, sessionRaw)
 		}
 	}
 
-	// C. Essai Postgres L3
 	if !sessionFound {
 		s, err := postgres.FuncLoadSession(-1, input.UserID, "", input.MasterToken)
 		if err == nil && s.ID != 0 {
 			sessionRaw = s
 			sessionFound = true
-			// Repopulation des backups
 			_ = redis.EnqueueDB(c, s.ID, 0, redis.EntitySession, redis.ActionCreate, s, redis.TargetMongo)
-			_ = cache_service.SetSessionInCache(c, s) // Repopulation instantanée L1
+			_ = cache_service.SetSessionInCache(c, s)
 		}
 	}
 
-	// SÉCURITÉ CRITIQUE : Si après les 3 essais on n'a rien, on arrête TOUT.
 	if !sessionFound || sessionRaw.ID == 0 {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Session introuvable"})
+		nubo_error.RespondWithError(c, nubo_error.NewForbidden("SESSION_NOT_FOUND", "Session introuvable.", nil))
 		return
 	}
 
-	// 4. Vérification HMAC (Master Check)
 	contentToSign := security.GetBodyToSign(c.Request, bodyBytes)
-	fmt.Printf("ContentToSign for Master Check: %s\n", contentToSign)                                                     // --- IGNORE ---
-	fmt.Printf("Arguments for Master Check: Method=%s, Path=%s, Ts=%s\n", c.Request.Method, c.Request.URL.Path, clientTs) // --- IGNORE ---
 	stringToSign := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, clientTs, contentToSign)
-	fmt.Printf("StringToSign for Master Check: %s\n", stringToSign) // --- IGNORE ---
+
 	if !security.CheckHMAC(stringToSign, input.MasterToken, clientHMAC) {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Signature HMAC invalide (Master Check)"})
+		nubo_error.RespondWithError(c, nubo_error.NewForbidden("INVALID_HMAC", "Signature HMAC invalide (Master Check).", nil))
 		return
 	}
 
-	// 6. Génération des Nouveaux Credentials
 	newMasterToken, err := pkg.GenerateToken(input.UserID, sessionRaw.FirebaseInstallationID, variables.MasterTokenExpirationSeconds)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur génération MasterToken"})
+		nubo_error.RespondWithError(c, nubo_error.NewInternal(err))
 		return
 	}
 
 	newJWT, err := pkg.GenerateToken(input.UserID, sessionRaw.FirebaseInstallationID, variables.JWTExpirationSeconds)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur génération JWT"})
+		nubo_error.RespondWithError(c, nubo_error.NewInternal(err))
 		return
 	}
 
-	// 7. Reset du Ratchet dans Redis
 	if sessionRaw.CurrentSecret, err = security.ResetRatchet(newMasterToken, sessionRaw.FirebaseInstallationID); err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur reset Ratchet"})
+		nubo_error.RespondWithError(c, nubo_error.NewInternal(err))
 		return
 	}
 
-	// 8. Mise à jour des Bases de Données (Redis Sync L1 + Queue Async L2/L3)
-
-	// Mise à jour de l'objet local
 	sessionRaw.MasterToken = newMasterToken
 	sessionRaw.LastSecret = sessionRaw.FirebaseInstallationID
 	sessionRaw.LastJWT = authHeader
 	sessionRaw.ToleranceTime = time.Now().Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second)
 	sessionRaw.ExpiresAt = time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
 
-	// A. Cache L1 (Immédiat pour valider les prochaines requêtes HTTP)
-	// SetSessionInCache écrase proprement l'ancienne valeur et met à jour les index.
 	if errAdd := cache_service.SetSessionInCache(c, sessionRaw); errAdd != nil {
-		fmt.Printf("⚠️ Warning: Echec update Session Cache L1: %v\n", errAdd)
+		logger.Log.Warn().Err(errAdd).Msg("Warning: Echec update Session Cache L1")
 	}
 
-	// TargetBoth : On veut mettre à jour Mongo (Doc) ET Postgres (Relationnel)
-	// car le MasterToken a changé (info critique).
 	if err := redis.EnqueueDB(c, sessionRaw.ID, 0, redis.EntitySession, redis.ActionUpdate, sessionRaw, redis.TargetAll); err != nil {
-		log.Printf("Error enqueuing to DB: %v", err)
+		logger.Log.Error().Err(err).Msg("Error enqueuing to DB")
 	}
 
-	// 9. PRÉPARATION DE LA RÉPONSE SIGNÉE
 	respData := security_models.RefreshMasterResponse{
 		MasterToken: newMasterToken,
 		Token:       newJWT,
 		Message:     "Master Reset Successful",
 	}
 
-	// A. Sérialisation
 	respBytes, err := json.Marshal(respData)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur encoding réponse"})
+		nubo_error.RespondWithError(c, nubo_error.NewInternal(err))
 		return
 	}
 
-	// B. Timestamp
 	respTs := fmt.Sprintf("%d", time.Now().Unix())
 
-	// C. StringToSign
 	stringToSignResp := security.BuildStringToSign(
 		c.Request.Method,
 		c.Request.URL.Path,
@@ -219,16 +181,12 @@ func RefreshMaster(c *gin.Context) {
 		string(respBytes),
 	)
 
-	// D. Calcul HMAC
-	// Règle : On utilise l'ANCIEN MasterToken (input.MasterToken) car le client ne connait pas encore le nouveau.
 	h := hmac.New(sha256.New, []byte(input.MasterToken))
 	h.Write([]byte(stringToSignResp))
 	respSig := hex.EncodeToString(h.Sum(nil))
 
-	// E. Headers
 	c.Header("X-Timestamp", respTs)
 	c.Header("X-Signature", respSig)
 
-	// F. Envoi
 	c.Data(http.StatusOK, "application/json", respBytes)
 }

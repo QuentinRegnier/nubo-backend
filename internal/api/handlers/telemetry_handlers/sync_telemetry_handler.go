@@ -22,21 +22,21 @@ import (
 // @Param        data          body   telemetry_models.SyncPayload true "Données de télémétrie et vecteur"
 // @Success      200  {object}  telemetry_models.SyncTelemetryOutput "Le serveur a des données plus récentes, mise à jour du client requise"
 // @Success      202  {object}  telemetry_models.SyncTelemetryOutput "Données acceptées et traitées"
-// @Failure      400  {object}  domain.ErrorResponse "Format JSON invalide"
-// @Failure      401  {object}  domain.ErrorResponse "Utilisateur non identifié"
+// @Failure      400  {object}  nubo_error.PublicErrorResponse "Format JSON invalide"
+// @Failure      401  {object}  nubo_error.PublicErrorResponse "Utilisateur non identifié"
 // @Router       /telemetry/sync [patch]
 func SyncTelemetryHandler(c *gin.Context) {
 	// 1. SÉCURITÉ
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	// 2. PARSING DU PAYLOAD
 	var payload telemetry_models.SyncTelemetryPayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide.", err))
 		return
 	}
 
@@ -48,7 +48,7 @@ func SyncTelemetryHandler(c *gin.Context) {
 
 	output, err := telemetry_service.ProcessSyncTelemetry(c.Request.Context(), input)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur interne lors de la synchronisation"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

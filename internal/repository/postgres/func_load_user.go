@@ -7,12 +7,12 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/lib/pq"
 )
 
 func FuncLoadUser(ID int64, Username string, Email string, Phone string) (auth_models.UserPayload, error) {
-	fmt.Println("FuncLoadUser called with:", ID, Username, Email, Phone)
 
 	// Args...
 	args := make([]any, 4)
@@ -78,13 +78,10 @@ func FuncLoadUser(ID int64, Username string, Email string, Phone string) (auth_m
 	)
 
 	if err != nil {
-		// Si l'erreur est "no rows in result set", c'est que la BDD a renvoyé 0 ligne.
 		if errors.Is(err, sql.ErrNoRows) {
-			fmt.Println("🐘 POSTGRES : Aucune ligne trouvée (sql.ErrNoRows).")
-			return auth_models.UserPayload{}, nil // On renvoie vide, pas d'erreur technique
+			return auth_models.UserPayload{}, nil // Pas d'erreur technique
 		}
-		fmt.Printf("❌ ERREUR SQL FuncLoadUser (Scan): %v\n", err)
-		return auth_models.UserPayload{}, fmt.Errorf("erreur SQL LoadUser: %w", err)
+		return auth_models.UserPayload{}, nubo_error.NewInternal(err)
 	}
 
 	// 🕵️ DEBUG : On affiche ce qu'on a scanné

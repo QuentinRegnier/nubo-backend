@@ -4,11 +4,11 @@ import (
 	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 )
 
 func MongoLoadSession(ID int64, FirebaseInstallationID string, MasterToken string, CurrentSecret string) (models.SessionsRequest, error) {
-	fmt.Println("MongoLoadSession called with:", ID, FirebaseInstallationID, MasterToken, CurrentSecret)
 	var s models.SessionsRequest
 
 	// Construction du filtre de recherche (uniquement les valeurs valides)
@@ -39,7 +39,7 @@ func MongoLoadSession(ID int64, FirebaseInstallationID string, MasterToken strin
 	}
 
 	if len(filter) == 0 {
-		return s, fmt.Errorf("MongoLoadSession: no research criteria (id, firebase_installation_id, master_token) provided")
+		return s, nubo_error.NewInternal(fmt.Errorf("MongoLoadSession: aucun critère de recherche fourni"))
 	}
 
 	// Appel à la fonction utilitaire

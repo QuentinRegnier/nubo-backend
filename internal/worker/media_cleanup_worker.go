@@ -2,10 +2,10 @@ package worker
 
 import (
 	"context"
-	"log"
 	"os"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -14,7 +14,7 @@ import (
 
 // StartMediaCleanupCron lance le Garbage Collector qui détruit les médias orphelins.
 func StartMediaCleanupCron(ctx context.Context) {
-	log.Println("🧹 Démarrage du Garbage Collector de Médias (1h)...")
+	logger.Log.Info().Msg("Démarrage du Garbage Collector de Médias (1h)...")
 
 	go func() {
 		ticker := time.NewTicker(1 * time.Hour)
@@ -35,7 +35,7 @@ func processMediaCleanup(ctx context.Context) {
 	// 1. Purge et récupération via PostgreSQL (L3)
 	orphans, err := postgres.FuncDeleteOrphanMedia(ctx)
 	if err != nil {
-		log.Printf("  [Garbage Collector] Erreur Postgres : %v", err)
+		logger.Log.Error().Err(err).Msg("Garbage Collector : Erreur Postgres")
 		return
 	}
 
@@ -43,7 +43,7 @@ func processMediaCleanup(ctx context.Context) {
 		return // Rien à nettoyer
 	}
 
-	log.Printf("  [Garbage Collector] %d médias orphelins purgés de Postgres.", len(orphans))
+	logger.Log.Info().Int("count", len(orphans)).Msg("Garbage Collector : Médias orphelins purgés de Postgres.")
 
 	bucketName := os.Getenv("MINIO_BUCKET_NAME")
 	if bucketName == "" {
@@ -60,7 +60,7 @@ func processMediaCleanup(ctx context.Context) {
 		if orphan.StoragePath != "" {
 			errS3 := media_service.RemovePhysicalMedia(ctx, orphan.StoragePath)
 			if errS3 != nil {
-				log.Printf("  [Garbage Collector] Échec S3 pour %s: %v", orphan.StoragePath, errS3)
+				logger.Log.Error().Err(errS3).Str("storage_path", orphan.StoragePath).Msg("Garbage Collector : Échec S3")
 			}
 		}
 
@@ -70,8 +70,8 @@ func processMediaCleanup(ctx context.Context) {
 
 	// 3. Purge du Cold Storage (MongoDB L2)
 	if err := mongo.MongoDeleteMediaByIDs(idsToDelete); err != nil {
-		log.Printf("  [Garbage Collector] Échec suppression Mongo : %v", err)
+		logger.Log.Error().Err(err).Msg("Garbage Collector : Échec suppression Mongo")
 	}
 
-	log.Printf("  [Garbage Collector] Nettoyage complet (L1, L2, L3, S3) terminé pour %d médias.", len(orphans))
+	logger.Log.Info().Int("count", len(orphans)).Msg("Garbage Collector : Nettoyage complet (L1, L2, L3, S3) terminé.")
 }

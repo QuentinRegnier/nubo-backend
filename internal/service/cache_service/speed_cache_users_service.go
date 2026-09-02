@@ -9,6 +9,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -164,5 +165,5 @@ func GetUserLite(ctx context.Context, userID int64) (models.UserLiteRequest, err
 		}, nil
 	}
 
-	return ul, fmt.Errorf("impossible de trouver l'utilisateur %d dans les couches d'infrastructure", userID)
+	return ul, nubo_error.NewNotFound("USER_NOT_FOUND", "L'utilisateur est introuvable.", nil)
 }

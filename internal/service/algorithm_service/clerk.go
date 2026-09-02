@@ -14,7 +14,7 @@ import (
 // CollectCandidates construit les 3 paniers (A, B, C) avec leurs ADN respectifs
 func CollectCandidates(ctx context.Context, userID int64, seeds [3]int64, quotas Quotas) (*FeedBaskets, error) {
 	if err := quotas.Validate(); err != nil {
-		return nil, fmt.Errorf("quotas invalides : %w", err)
+		return nil, err // L'erreur est déjà une AppError propre !
 	}
 
 	baskets := NewFeedBaskets(quotas.MaxCandidates, seeds[0], seeds[1], seeds[2])
@@ -43,7 +43,7 @@ func CollectCandidates(ctx context.Context, userID int64, seeds [3]int64, quotas
 // Utilise la Seed du flux actif pour garantir la continuité de l'identité algorithmique.
 func CollectSingleBasket(ctx context.Context, userID int64, seed int64, quotas Quotas) (*CandidateBasket, error) {
 	if err := quotas.Validate(); err != nil {
-		return nil, fmt.Errorf("quotas invalides : %w", err)
+		return nil, err
 	}
 
 	// Astuce : On utilise la mécanique FeedBaskets pour charger la boîte aux lettres,

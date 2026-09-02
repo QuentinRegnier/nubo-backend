@@ -30,10 +30,11 @@ type TypingPayload struct {
 }
 
 type Client struct {
-	Hub    *Hub
-	Conn   *websocket.Conn
-	UserID int64
-	Send   chan []byte
+	Hub      *Hub
+	Conn     *websocket.Conn
+	UserID   int64
+	DeviceID string // NOUVEAU : Essentiel pour cibler la bonne session Ratchet en RAM
+	Send     chan []byte
 }
 
 // ReadPump écoute les événements entrants du client (PONG et événements temps réel)

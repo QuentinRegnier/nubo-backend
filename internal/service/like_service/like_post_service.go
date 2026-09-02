@@ -2,11 +2,11 @@ package like_service
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/like_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -70,7 +70,7 @@ func TogglePostLike(ctx context.Context, input like_models.LikePostInput) error 
 		go func(authorID int64) {
 			err := notification_service.DispatchNotification(context.Background(), authorID, input.UserID, "post_liked", input.PostID)
 			if err != nil {
-				fmt.Printf("TogglePostLike: failed to dispatch notification: %v\n", err)
+				logger.Log.Error().Err(err).Int64("post_id", input.PostID).Msg("Échec de l'envoi de la notification pour un like de post")
 			}
 		}(postAuthorID)
 	}

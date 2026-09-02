@@ -2,9 +2,9 @@ package media_service
 
 import (
 	"context"
-	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -34,5 +34,5 @@ func GetMediaCascade(ctx context.Context, mediaID int64) (models.MediaRequest, e
 		return pgMedia, nil
 	}
 
-	return models.MediaRequest{}, errors.New("media not found")
+	return models.MediaRequest{}, nubo_error.NewNotFound("MEDIA_NOT_FOUND", "Média introuvable.", nil)
 }

@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"go.mongodb.org/mongo-driver/bson"
 )
@@ -18,7 +19,7 @@ func MongoLoadComments(commentIDs []int64) ([]comment_models.CommentPayload, err
 	// On récupère les documents bruts
 	docs, err := Comments.GetPaginated(filter, nil, 0, int64(len(commentIDs)))
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	// Conversion propre dans le type du domaine

@@ -2,10 +2,10 @@ package cache_service
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"strconv"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -39,7 +39,7 @@ func RelationValue(ctx context.Context, targetID int64, callerID int64) int {
 	// Étape 3 : Source of Truth L3 (PostgreSQL, ~10ms)
 	statePg, errPg := postgres.FuncGetRelationState(ctx, callerID, targetID)
 	if errPg != nil {
-		log.Printf("⚠️ Erreur L3 RelationValue (Target: %d, Caller: %d): %v", targetID, callerID, errPg)
+		logger.Log.Error().Err(errPg).Int64("target_id", targetID).Int64("caller_id", callerID).Msg("Erreur L3 RelationValue")
 		return 0 // Par sécurité absolue, on refuse l'accès en cas de crash BDD
 	}
 
@@ -72,7 +72,7 @@ func UpdateRelationState(ctx context.Context, targetID int64, callerID int64, ne
 func GetSpeedFollowers(ctx context.Context, userID int64) ([]int64, error) {
 	followerStrings, err := redis.SpeedFollowers.SMembers(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("erreur lecture speed cache followers: %w", err)
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	var followers []int64
@@ -97,7 +97,7 @@ func GetFollowerCount(ctx context.Context, userID int64) int64 {
 func GetSpeedFriends(ctx context.Context, userID int64) ([]int64, error) {
 	relations, err := redis.SpeedRelations.HGetAll(ctx, userID).Result()
 	if err != nil {
-		return nil, fmt.Errorf("erreur lecture speed cache relations: %w", err)
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	var friends []int64

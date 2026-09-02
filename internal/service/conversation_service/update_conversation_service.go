@@ -2,12 +2,12 @@ package conversation_service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
@@ -19,12 +19,12 @@ func UpdateConversation(ctx context.Context, callerID int64, convID int64, input
 	// 1. VÉRIFICATION SÉCURITÉ ET RÉCUPÉRATION (Objet Complet)
 	conv, err := security_service.LeftConversation(ctx, convID, callerID)
 	if err != nil {
-		return err
+		return err // L'erreur est déjà formatée par LeftConversation
 	}
 
 	// 2. RÈGLES MÉTIER
 	if conv.Type == 0 {
-		return errors.New("impossible de modifier les métadonnées d'un message privé")
+		return nubo_error.NewForbidden("INVALID_CONV_TYPE", "Impossible de modifier les métadonnées d'un message privé.", nil)
 	}
 
 	// 3. APPLICATION DES MODIFICATIONS

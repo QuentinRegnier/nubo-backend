@@ -1,7 +1,6 @@
 package post_handlers
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
@@ -32,56 +31,36 @@ import (
 // @Param        X-Timestamp   header string true "Timestamp Unix de la requête"
 // @Param        data          body   UpdatePostInput true "Données de mise à jour"
 // @Success      200  {object}  map[string]string "message: Post mis à jour avec succès"
-// @Failure      400  {object}  domain.ErrorResponse
-// @Failure      401  {object}  domain.ErrorResponse
-// @Failure      403  {object}  domain.ErrorResponse
-// @Failure      404  {object}  domain.ErrorResponse
-// @Failure      500  {object}  domain.ErrorResponse
+// @Failure      400  {object}  nubo_error.PublicErrorResponse
+// @Failure      401  {object}  nubo_error.PublicErrorResponse
+// @Failure      403  {object}  nubo_error.PublicErrorResponse
+// @Failure      404  {object}  nubo_error.PublicErrorResponse
+// @Failure      500  {object}  nubo_error.PublicErrorResponse
 // @Router       /post [patch]
 func UpdatePostHandler(c *gin.Context) {
-	// 1. Authentification via le contexte Gin
 	userID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		fmt.Printf("❌ Erreur authentification : %v\n", err)
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	// 2. Parsing du JSON strict
 	var input post_models.UpdatePostInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Invalid JSON format or missing post_id"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou validation échouée.", err))
 		return
 	}
 
-	// 3. 🛡 BOUCLIER STATIQUE : Validation O(1)
-	if err := pkg.ValidateStruct(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Validation failed: " + err.Error()})
-		return
-	}
-
-	// 4. Nettoyage et sécurisation de la donnée
 	input.Identifiers = pkg.SliceUniqueInt64(input.Identifiers)
 	input.Hashtags = pkg.SliceUniqueStr(input.Hashtags)
 	input.Content = pkg.CleanStr(input.Content)
-	input.UserID = userID // Règle d'or : le JWT fait foi
+	input.Location = pkg.CleanStr(input.Location)
+	input.UserID = userID
 
-	// 5. Appel au service métier
 	err = post_service.UpdatePost(c.Request.Context(), input)
 	if err != nil {
-		// Tri sémantique des erreurs renvoyées par le service
-		if err.Error() == "unauthorized" {
-			c.JSON(http.StatusForbidden, nubo_error.ErrorResponse{Error: "Vous n'êtes pas autorisé à modifier ce post"})
-			return
-		}
-		if err.Error() == "not found" {
-			c.JSON(http.StatusNotFound, nubo_error.ErrorResponse{Error: "Post introuvable"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Failed to update post: " + err.Error()})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	// 6. Réponse HTTP 200
 	c.JSON(http.StatusOK, gin.H{"message": "Post mis à jour avec succès"})
 }

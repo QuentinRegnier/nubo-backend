@@ -3,11 +3,12 @@ package mongo
 import (
 	"context"
 	"fmt"
-	"log"
 	"reflect"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/schemas"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -69,7 +70,7 @@ func InitCacheDatabase() {
 
 	Notifications = NewMongoCollection("nubo_mongo", "activity.notifications", schemaNotifications)
 
-	log.Println("Structure MongoDB initialisée")
+	logger.Log.Info().Msg("Structure de collections MongoDB initialisée")
 }
 
 // ---------------- Collection et schéma ----------------
@@ -92,25 +93,22 @@ func NewMongoCollection(dbName, name string, schema map[string]reflect.Kind) *Mo
 // validate vérifie les types.
 // partial = true : permet de ne vérifier QUE les champs présents (pour Update)
 func (c *MongoCollection) validate(obj map[string]any, partial bool) error {
-	// 1. Si validation complète exigée, on vérifie qu'il ne manque rien
 	if !partial {
 		for field := range c.Schema {
 			if _, ok := obj[field]; !ok {
-				return fmt.Errorf("champ manquant: %s", field)
+				return nubo_error.NewInternal(fmt.Errorf("champ manquant dans MongoDB: %s", field))
 			}
 		}
 	}
 
-	// 2. Vérification des types pour les champs qui sont présents
 	for field, val := range obj {
 		expectedKind, known := c.Schema[field]
 		if !known {
-			continue // Champ hors schéma, on ignore
+			continue
 		}
-
 		if reflect.TypeOf(val).Kind() != expectedKind {
-			return fmt.Errorf("type invalide pour %s: attendu %s, reçu %s",
-				field, expectedKind, reflect.TypeOf(val).Kind())
+			return nubo_error.NewInternal(fmt.Errorf("type invalide pour %s: attendu %s, reçu %s",
+				field, expectedKind, reflect.TypeOf(val).Kind()))
 		}
 	}
 	return nil
@@ -137,7 +135,7 @@ func (c *MongoCollection) Set(obj map[string]any) error {
 	opts := options.Update().SetUpsert(true)
 
 	_, err := collection.UpdateOne(ctx, filter, update, opts)
-	return err
+	return nubo_error.NewInternal(fmt.Errorf("erreur lors de l'insertion/mise à jour: %v", err))
 }
 
 // Get récupère les objets correspondant au filtre avec une projection optionnelle
@@ -154,18 +152,18 @@ func (c *MongoCollection) Get(filter map[string]any, projection map[string]any) 
 
 	cur, err := collection.Find(ctx, filter, opts)
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(fmt.Errorf("erreur lors de la récupération: %v", err))
 	}
 
 	defer func() {
 		if err := cur.Close(ctx); err != nil {
-			log.Printf("Erreur lors de la fermeture du curseur: %v", err)
+			logger.Log.Error().Err(err).Str("collection", c.Name).Msg("Erreur lors de la fermeture du curseur MongoDB")
 		}
 	}()
 
 	var results []map[string]any
 	if err := cur.All(ctx, &results); err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(fmt.Errorf("erreur lors de la récupération: %v", err))
 	}
 
 	return results, nil
@@ -215,18 +213,18 @@ func (c *MongoCollection) GetPaginated(filter map[string]any, sort map[string]an
 
 	cur, err := collection.Find(ctx, filter, opts)
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(fmt.Errorf("erreur lors de la récupération paginée: %v", err))
 	}
 
 	defer func() {
 		if err := cur.Close(ctx); err != nil {
-			log.Printf("Erreur lors de la fermeture du curseur: %v", err)
+			logger.Log.Error().Err(err).Str("collection", c.Name).Msg("Erreur lors de la fermeture du curseur MongoDB")
 		}
 	}()
 
 	var results []map[string]any
 	if err := cur.All(ctx, &results); err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(fmt.Errorf("erreur lors de la récupération paginée: %v", err))
 	}
 
 	return results, nil

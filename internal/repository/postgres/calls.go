@@ -2,9 +2,10 @@ package postgres
 
 import (
 	"database/sql"
-	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/lib/pq"
 )
 
@@ -22,7 +23,7 @@ func scanPosts(rows *sql.Rows) ([]post_models.PostPayload, error) {
 			&p.TelemetryDwellSum, &p.TelemetryDwellSq, &p.TelemetryClicks, // <-- NOUVEAU
 		)
 		if err != nil {
-			fmt.Printf("  Erreur lors du scan d'un post : %v\n", err)
+			logger.Log.Error().Err(err).Msg("Erreur lors du scan d'un post (Postgres)")
 			continue // On ignore la ligne corrompue et on passe à la suivante
 		}
 		if location.Valid {
@@ -31,7 +32,7 @@ func scanPosts(rows *sql.Rows) ([]post_models.PostPayload, error) {
 		posts = append(posts, p)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("erreur pendant l'itération des posts : %w", err)
+		return nil, nubo_error.NewInternal(err)
 	}
 	return posts, nil
 }

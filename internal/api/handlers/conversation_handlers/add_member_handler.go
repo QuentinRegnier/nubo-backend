@@ -23,26 +23,26 @@ import (
 // @Param        X-Timestamp   header string true "Timestamp Unix de la requête"
 // @Param        data          body   conversation_models.AddMemberInput true "ID de conversation et liste des utilisateurs cibles"
 // @Success      200  {object} conversation_models.AddMemberOutput "Contient la répartition des statuts (Added, Invited, Rejected) et les tableaux 'message_ids' et 'conversation_ids' listant les invitations générées."
-// @Failure      400  {object} nubo_error.ErrorResponse "Données ou JSON invalides"
-// @Failure      401  {object} nubo_error.ErrorResponse "Session expirée"
-// @Failure      403  {object} nubo_error.ErrorResponse "Droits insuffisants"
+// @Failure      400  {object} nubo_error.PublicErrorResponse "Données ou JSON invalides"
+// @Failure      401  {object} nubo_error.PublicErrorResponse "Session expirée"
+// @Failure      403  {object} nubo_error.PublicErrorResponse "Droits insuffisants"
 // @Router       /user-group [post]
 func AddMemberHandler(c *gin.Context) {
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input conversation_models.AddMemberInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide ou paramètres manquants"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou paramètres manquants.", err))
 		return
 	}
 
 	output, err := conversation_service.AddMembersToConversation(c.Request.Context(), callerID, input)
 	if err != nil {
-		c.JSON(http.StatusForbidden, nubo_error.ErrorResponse{Error: err.Error()})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

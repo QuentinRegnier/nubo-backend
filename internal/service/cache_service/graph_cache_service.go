@@ -2,11 +2,11 @@ package cache_service
 
 import (
 	"context"
-	"log"
 	"math"
 	"strings"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
@@ -123,7 +123,7 @@ func GetRelatedTagsLazy(ctx context.Context, sourceTag string) map[string]float6
 
 // SeedGraphCache réalise le Cold Start (Time-Travel Ingestion) de l'écosystème sémantique
 func SeedGraphCache(ctx context.Context) error {
-	log.Println("🌱 [Graph Cache] Début de l'initialisation du graphe sémantique...")
+	logger.Log.Info().Msg("Début de l'initialisation du graphe sémantique (Graph Cache)...")
 
 	// 1. Récupération de l'historique complet, filtré (> 1 tag) et trié (ASC)
 	posts, err := postgres.FuncLoadPostsForGraphSeeding(ctx)
@@ -131,17 +131,14 @@ func SeedGraphCache(ctx context.Context) error {
 		return err
 	}
 
-	log.Printf("⏳ [Graph Cache] %d publications trouvées pour le rejeu temporel.", len(posts))
+	logger.Log.Info().Int("count", len(posts)).Msg("Publications trouvées pour le rejeu temporel sémantique.")
 
 	// 2. Rejeu Temporel
-	// La boucle va exécuter les équations de Markov en simulant le temps qui passe
 	for _, p := range posts {
-		// On transmet le timestamp exact de la création du post (Pas l'heure actuelle !)
 		UpdateTagCooccurrences(ctx, p.Hashtags, p.CreatedAt.UnixMilli())
 	}
 
-	log.Println("✅ [Graph Cache] Graphe sémantique initialisé avec succès !")
+	logger.Log.Info().Msg("Graphe sémantique initialisé avec succès !")
 
-	// Note : L'élagage (Pruning) se fera naturellement lors des premières recherches (Lazy Pruning)
 	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/lib/pq"
 )
@@ -85,7 +86,7 @@ func processEntityEvents(ctx context.Context, entityType redis.EntityType, event
 
 	if len(inserts) > 0 {
 		if err := bulkInsertPostgres(ctx, entityType, inserts); err != nil {
-			log.Printf("⚠️ Fast Path Insert failed pour %s: %v. Déclenchement Dichotomie...", entityType, err)
+			logger.Log.Warn().Err(err).Interface("entity", entityType).Msg("Fast Path Insert failed. Déclenchement Dichotomie...")
 			slowPathDichotomy(ctx, entityType, redis.ActionCreate, inserts)
 		}
 	}
@@ -154,7 +155,11 @@ func sendToDLQ(ctx context.Context, entity redis.EntityType, action redis.Action
 	bytes, err := json.Marshal(dlqPayload)
 	if err == nil {
 		_ = redis.DLQ.LPush(ctx, "postgres_errors", bytes)
-		log.Printf("🚨 [DLQ] Événement isolé et mis en quarantaine : %s %s (ID: %d)", entity, action, event.ID)
+		logger.Log.Error().Err(dbErr).
+			Interface("entity", entity).
+			Interface("action", action).
+			Int64("event_id", event.ID).
+			Msg("Événement empoisonné isolé et mis en quarantaine (DLQ)")
 	}
 }
 
@@ -188,7 +193,7 @@ func bulkInsertPostgres(ctx context.Context, entity redis.EntityType, events []r
 	defer func(stmt *sql.Stmt) {
 		err := stmt.Close()
 		if err != nil {
-			log.Printf("⚠️ Erreur fermeture statement CopyIn: %v", err)
+			logger.Log.Error().Err(err).Msg("Erreur de fermeture du statement Postgres")
 		}
 	}(stmt) // Gère la fermeture proprement.
 
@@ -309,7 +314,7 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 		defer func(stmt *sql.Stmt) {
 			err := stmt.Close()
 			if err != nil {
-				fmt.Printf("⚠️ Erreur fermeture statement Delete Likes: %v\n", err)
+				log.Printf("⚠️ Erreur fermeture statement CopyIn: %v", err)
 			}
 		}(stmt)
 

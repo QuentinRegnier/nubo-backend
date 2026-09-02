@@ -21,28 +21,25 @@ import (
 // @Param        X-Timestamp   header string true  "Timestamp Unix de la requête"
 // @Param        data          body   notification_models.ReadNotificationsInput true "ID maximum lu"
 // @Success      200  {object} map[string]string "Statut du succès"
-// @Failure      400  {object} nubo_error.ErrorResponse "Données invalides ou JSON malformé"
-// @Failure      401  {object} nubo_error.ErrorResponse "Session expirée ou utilisateur non identifié"
-// @Failure      500  {object} nubo_error.ErrorResponse "Erreur interne"
+// @Failure      400  {object} nubo_error.PublicErrorResponse "Données invalides ou JSON malformé"
+// @Failure      401  {object} nubo_error.PublicErrorResponse "Session expirée ou utilisateur non identifié"
+// @Failure      500  {object} nubo_error.PublicErrorResponse "Erreur interne"
 // @Router       /notifications/read [post]
 func ReadNotificationsHandler(c *gin.Context) {
 	var input notification_models.ReadNotificationsInput
-
-	// Ton middleware s'attend souvent à lire le body "data" si c'est du multipart,
-	// mais pour un JSON pur (comme utilisé dans CreateConversationHandler), ShouldBindJSON est parfait.
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide ou champs manquants"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou paramètres manquants.", err))
 		return
 	}
 
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	if err := notification_service.MarkNotificationsAsRead(c.Request.Context(), callerID, input); err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Erreur interne lors de la mise à jour du curseur"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

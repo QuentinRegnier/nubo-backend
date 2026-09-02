@@ -2,13 +2,13 @@ package like_service
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/like_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -39,7 +39,7 @@ func ToggleCommentLike(ctx context.Context, input like_models.LikeCommentInput) 
 	if err != nil || comment.Visibility == -1 {
 		// Le commentaire a été supprimé, on annule l'idempotence au cas où et on rejette
 		_ = cache_service.TryRemoveLikeIdempotency(ctx, 1, input.CommentID, input.UserID)
-		return errors.New("not found")
+		return nubo_error.NewNotFound("COMMENT_NOT_FOUND", "Commentaire introuvable ou supprimé.", err)
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -84,7 +84,7 @@ func ToggleCommentLike(ctx context.Context, input like_models.LikeCommentInput) 
 		go func() {
 			err := notification_service.DispatchNotification(context.Background(), comment.UserID, input.UserID, "comment_liked", comment.ID)
 			if err != nil {
-				_ = fmt.Errorf("ToggleCommentLike: failed to dispatch notification for comment %s: %v", comment.ID, err)
+				logger.Log.Error().Err(err).Int64("comment_id", comment.ID).Msg("Échec de l'envoi de la notification pour un like de commentaire")
 			}
 		}()
 	}
@@ -107,5 +107,5 @@ func getCommentCascade(ctx context.Context, commentID int64) (comment_models.Com
 		_ = object_cache_service.SetCommentInObjectCache(ctx, pgComment)
 		return pgComment, nil
 	}
-	return comment_models.CommentPayload{}, errors.New("not found")
+	return comment_models.CommentPayload{}, nubo_error.NewNotFound("COMMENT_NOT_FOUND", "Commentaire introuvable.", nil)
 }

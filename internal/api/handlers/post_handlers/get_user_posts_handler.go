@@ -38,20 +38,20 @@ import (
 // @Param        offset        query  int    false "Décalage pour la pagination (défaut: 0)"
 // @Param        limit         query  int    false "Nombre maximum de posts (défaut: 50, bridé à 100)"
 // @Success      200  {array}   post_models.GetPostOutput "Liste des publications hydratées avec médias"
-// @Failure      400  {object}  domain.ErrorResponse "Paramètre manquant ou invalide"
-// @Failure      401  {object}  domain.ErrorResponse "Utilisateur non identifié"
-// @Failure      500  {object}  domain.ErrorResponse "Erreur interne lors de la récupération"
+// @Failure      400  {object}  nubo_error.PublicErrorResponse "Paramètre manquant ou invalide"
+// @Failure      401  {object}  nubo_error.PublicErrorResponse "Utilisateur non identifié"
+// @Failure      500  {object}  nubo_error.PublicErrorResponse "Erreur interne lors de la récupération"
 // @Router       /post/user [get]
 func GetUserPostsHandler(c *gin.Context) {
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	var input post_models.GetUserPostsInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide ou user_id manquant"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou user_id manquant.", err))
 		return
 	}
 

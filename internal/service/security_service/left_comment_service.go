@@ -2,9 +2,9 @@ package security_service
 
 import (
 	"context"
-	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -47,12 +47,12 @@ func LeftComment(ctx context.Context, commentID int64, userID int64) (comment_mo
 	}
 
 	if !found || comment.Visibility == -1 {
-		return comment_models.CommentPayload{}, errors.New("not found")
+		return comment_models.CommentPayload{}, nubo_error.NewNotFound("COMMENT_NOT_FOUND", "Commentaire introuvable ou supprimé.", nil)
 	}
 
 	// 2. VÉRIFICATION DE LA SÉCURITÉ (Droits d'auteur)
 	if comment.UserID != userID {
-		return comment_models.CommentPayload{}, errors.New("unauthorized")
+		return comment_models.CommentPayload{}, nubo_error.NewForbidden("ACCESS_DENIED", "Vous n'êtes pas autorisé à réaliser cette action sur ce commentaire.", nil)
 	}
 
 	return comment, nil

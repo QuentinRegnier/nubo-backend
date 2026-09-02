@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"go.mongodb.org/mongo-driver/bson"
 )
@@ -24,7 +25,7 @@ func MongoLoadCommentsPaginated(postID int64, offset int64, limit int64) ([]comm
 	// Appel propre de ton wrapper métier
 	docs, err := Comments.GetPaginated(filter, sortMap, offset, limit)
 	if err != nil {
-		return nil, err
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	var comments []comment_models.CommentPayload

@@ -1,13 +1,14 @@
 package cuckoo
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	cuckoo "github.com/seiflotfy/cuckoofilter"
 )
@@ -30,19 +31,25 @@ type CuckooMessage struct {
 
 // InitCuckooFilter initialise le filtre, charge les données de Postgres et lance l'écoute Redis
 func InitCuckooFilter() {
-	log.Println("🔒 Initialisation du Cuckoo Filter...")
+	logger.Log.Info().Msg("Initialisation du Cuckoo Filter...")
 
 	// 1. Création du filtre (Capacité 1M, peut être ajusté)
 	GlobalCuckoo = cuckoo.NewFilter(1000000)
 
 	// 2. Warm-up : Chargement des données existantes depuis Postgres
 	// On récupère TOUS les champs uniques (username, email, phone) pour éviter les faux négatifs au démarrage
-	log.Println("🔄 Chargement des données Postgres dans le Cuckoo Filter...")
+	logger.Log.Info().Msg("Chargement des données Postgres dans le Cuckoo Filter...")
+	//TODO DDD
 	rows, err := postgres.PostgresDB.Query("SELECT username, email, phone FROM auth.users")
 	if err != nil {
-		log.Fatalf("❌ Erreur critique init Cuckoo (SQL): %v", err)
+		logger.Log.Fatal().Err(err).Msg("Erreur critique init Cuckoo (SQL)")
 	}
-	defer rows.Close()
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+			logger.Log.Info().Msg("Erreur fermeture rows Cuckoo : " + err.Error())
+		}
+	}(rows)
 
 	count := 0
 	for rows.Next() {
@@ -60,7 +67,7 @@ func InitCuckooFilter() {
 			count++
 		}
 	}
-	log.Printf("✅ Cuckoo Filter chargé avec %d utilisateurs (x3 clés).", count)
+	logger.Log.Info().Int("count", count).Msg("Cuckoo Filter chargé avec des utilisateurs (x3 clés).")
 
 	// 3. Lancement de la synchro inter-serveurs (Flux Redis)
 	go startCuckooSync()
@@ -73,12 +80,12 @@ func startCuckooSync() {
 	msgChan, cancel := redisgo.SubscribeFlux(redis.Rdb, CuckooChannel)
 	defer cancel()
 
-	log.Println("📡 Cuckoo Sync : Écoute du flux Redis activée.")
+	logger.Log.Info().Msg("Cuckoo Sync : écoute du flux Redis activée.")
 
 	for payload := range msgChan {
 		var msg CuckooMessage
 		if err := json.Unmarshal(payload, &msg); err != nil {
-			log.Printf("⚠️ Erreur décodage message Cuckoo: %v", err)
+			logger.Log.Error().Err(err).Msg("Erreur décodage message Cuckoo")
 			continue
 		}
 
@@ -104,8 +111,7 @@ func BroadcastCuckooUpdate(action, field, value string) {
 	// On met un TTL court car c'est de l'événementiel pur
 	msgID := fmt.Sprintf("%d", time.Now().UnixNano())
 	err := redisgo.PushFluxWithTTL(redis.Rdb, CuckooChannel, msgID, data, 5*time.Second)
-
 	if err != nil {
-		log.Printf("⚠️ Erreur Broadcast Cuckoo: %v", err)
+		logger.Log.Error().Err(err).Msg("Erreur Broadcast Cuckoo")
 	}
 }

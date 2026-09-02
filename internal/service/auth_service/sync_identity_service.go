@@ -7,6 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 )
 
 // SyncIdentity synchronise uniquement l'identité (Profil et Settings) pour le Cold Start de l'App.
@@ -28,6 +29,14 @@ func SyncIdentity(ctx context.Context, input auth_models.SyncIdentityInput) (aut
 		if user.UpdatedAt.UnixMilli() > input.ProfileUpdatedAt {
 			output.ProfileUpdated = true
 			output.Profile = user
+
+			// === NOUVEAU : HYDRATATION DE L'AVATAR (Composition par Valeur) ===
+			if user.ProfilePictureID > 0 {
+				// targetID = 0 (pas lié à un post), readerID = input.UserID
+				if view, err := media_service.GenerateMediaViewCascade(ctx, user.ProfilePictureID, user.ID, 0, input.UserID); err == nil {
+					output.Avatar = view
+				}
+			}
 		}
 	}
 

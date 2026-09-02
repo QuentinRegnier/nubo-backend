@@ -3,11 +3,11 @@ package worker
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"os"
 	"strconv"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 )
@@ -57,8 +57,8 @@ func runWorker(ctx context.Context, shardID int) {
 		// On limite la taille via MaxBatchSize (dynamique)
 		events, err := redis.PopSmartBatchBlocking(ctx, shardID, MaxBatchSize)
 		if err != nil {
-			log.Printf("⚠️ Worker %d: Erreur Redis: %v", shardID, err)
-			time.Sleep(1 * time.Second) // Protection anti-boucle infinie si Redis crashe
+			logger.Log.Error().Err(err).Int("shard_id", shardID).Msg("Worker Redis Error (BLMPOP)")
+			time.Sleep(1 * time.Second)
 			continue
 		}
 

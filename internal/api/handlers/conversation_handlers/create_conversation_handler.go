@@ -24,28 +24,26 @@ import (
 // @Param        X-Timestamp   header string true  "Timestamp Unix de la requête"
 // @Param        data          body   conversation_models.CreateConversationInput true "Données de la conversation"
 // @Success      201  {object} conversation_models.CreateConversationOutput "L'ID de la nouvelle conversation. S'il s'agit d'un groupe (Type 1), inclut les tableaux 'message_ids' et 'conversation_ids' des invitations envoyées."
-// @Failure      400  {object} nubo_error.ErrorResponse "Données invalides ou confidentialité refusée"
-// @Failure      401  {object} nubo_error.ErrorResponse "Session expirée ou utilisateur non identifié"
+// @Failure      400  {object} nubo_error.PublicErrorResponse "Données invalides ou confidentialité refusée"
+// @Failure      401  {object} nubo_error.PublicErrorResponse "Session expirée ou utilisateur non identifié"
 // @Router       /conversations [post]
 func CreateConversationHandler(c *gin.Context) {
-	var input conversation_models.CreateConversationInput
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Format JSON invalide ou champs manquants"})
-		return
-	}
-
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	// Appel unique au service métier qui orchestre désormais tout en interne
+	var input conversation_models.CreateConversationInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou paramètres manquants.", err))
+		return
+	}
+
 	output, err := conversation_service.CreateConversation(c.Request.Context(), callerID, input)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: err.Error()})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
-
 	c.JSON(http.StatusCreated, output)
 }

@@ -1,6 +1,10 @@
 package mongo
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+)
 
 // MongoGetRelationState vérifie l'état de la relation dans le stockage à froid Mongo.
 func MongoGetRelationState(callerID int64, targetID int64) (int, error) {
@@ -12,7 +16,7 @@ func MongoGetRelationState(callerID int64, targetID int64) (int, error) {
 
 	docs, err := Relations.GetPaginated(filter, nil, 0, 1)
 	if err != nil || len(docs) == 0 {
-		return 0, fmt.Errorf("relation introuvable dans mongo") // L'erreur déclenchera le fallback L3
+		return 0, nubo_error.NewNotFound("RELATION_NOT_FOUND", "Relation introuvable dans mongo", err) // L'erreur déclenchera le fallback L3
 	}
 
 	// Extraction robuste et défensive de l'entier "state" depuis le BSON générique
@@ -29,5 +33,5 @@ func MongoGetRelationState(callerID int64, targetID int64) (int, error) {
 		return stateInt, nil
 	}
 
-	return 0, fmt.Errorf("format de state invalide dans la collection relations")
+	return 0, nubo_error.NewInternal(fmt.Errorf("format de state invalide dans la collection relations"))
 }

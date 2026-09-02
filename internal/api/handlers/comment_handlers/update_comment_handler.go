@@ -3,6 +3,7 @@ package comment_handlers
 import (
 	"net/http"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/gin-gonic/gin"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
@@ -30,57 +31,45 @@ import (
 // @Param        X-Timestamp   header string true "Timestamp Unix de la requête"
 // @Param        data          body   comment_models.UpdateCommentInput true "Nouveau contenu du commentaire"
 // @Success      200  {object}  map[string]string "message: Commentaire mis à jour avec succès"
-// @Failure      400  {object}  domain.ErrorResponse "Données invalides ou abus de caractères"
-// @Failure      401  {object}  domain.ErrorResponse "Session expirée ou utilisateur non identifié"
-// @Failure      403  {object}  domain.ErrorResponse "Violation des droits d'auteur"
-// @Failure      404  {object}  domain.ErrorResponse "Commentaire introuvable"
-// @Failure      500  {object}  domain.ErrorResponse "Erreur interne du serveur"
+// @Failure      400  {object}  nubo_error.PublicErrorResponse "Données invalides ou abus de caractères"
+// @Failure      401  {object}  nubo_error.PublicErrorResponse "Session expirée ou utilisateur non identifié"
+// @Failure      403  {object}  nubo_error.PublicErrorResponse "Violation des droits d'auteur"
+// @Failure      404  {object}  nubo_error.PublicErrorResponse "Commentaire introuvable"
+// @Failure      500  {object}  nubo_error.PublicErrorResponse "Erreur interne du serveur"
 // @Router       /comment [patch]
 func UpdateCommentHandler(c *gin.Context) {
-	// 1. Authentification
 	callerUserID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	// 2. Parsing
 	var input comment_models.UpdateCommentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Format JSON invalide ou champs manquants"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou champs manquants.", err))
 		return
 	}
 
-	// 3. 🛡 BOUCLIER PHYSIQUE & NETTOYAGE : Comptage exact des caractères (runes)
+	// 🛡 BOUCLIER PHYSIQUE & NETTOYAGE : Comptage exact des caractères (runes)
 	input.Content = pkg.CleanStr(input.Content)
 	runeCount := len([]rune(input.Content))
 
 	if runeCount == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Le commentaire ne peut pas être vide"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("EMPTY_COMMENT", "Le commentaire ne peut pas être vide.", nil))
 		return
 	}
-	if runeCount > 2200 { // Remplace 2200 par ta limite maximale exacte
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Le commentaire dépasse la taille maximale autorisée"})
+	if runeCount > 2200 {
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("COMMENT_TOO_LONG", "Le commentaire dépasse la taille maximale autorisée.", nil))
 		return
 	}
 
 	input.UserID = callerUserID
 
-	// 4 & 5. Appel au service métier (Cascade & Workers)
 	err = comment_service.UpdateComment(c.Request.Context(), input)
 	if err != nil {
-		if err.Error() == "unauthorized" {
-			c.JSON(http.StatusForbidden, gin.H{"nubo_error": "Vous n'êtes pas autorisé à modifier ce commentaire"})
-			return
-		}
-		if err.Error() == "not found" {
-			c.JSON(http.StatusNotFound, gin.H{"nubo_error": "Commentaire introuvable"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"nubo_error": "Erreur interne lors de la modification"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	// 6. Succès
 	c.JSON(http.StatusOK, gin.H{"message": "Commentaire mis à jour avec succès"})
 }

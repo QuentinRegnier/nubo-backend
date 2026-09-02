@@ -11,6 +11,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
+
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 // CheckHMAC vérifie la signature (utilisable par Middleware et Handler)
@@ -18,7 +20,12 @@ func CheckHMAC(stringToSign string, secret string, signatureToCheck string) bool
 	h := hmac.New(sha256.New, []byte(secret))
 	h.Write([]byte(stringToSign))
 	computedSig := hex.EncodeToString(h.Sum(nil))
-	fmt.Printf("🔐 CheckHMAC: stringToSign=%s, secret=%s, computedSig=%s, signatureToCheck=%s\n", stringToSign, secret, computedSig, signatureToCheck)
+
+	logger.Log.Debug().
+		Str("string_to_sign", stringToSign).
+		Str("computed_sig", computedSig).
+		Str("expected_sig", signatureToCheck).
+		Msg("Vérification HMAC") // On ne loggue JAMAIS le secret en clair !
 
 	// Comparaison sécurisée (Constant Time)
 	return hmac.Equal([]byte(computedSig), []byte(signatureToCheck))

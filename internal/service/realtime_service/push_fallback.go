@@ -3,9 +3,9 @@ package realtime_service
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"strings"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
@@ -50,6 +50,9 @@ func sendPushFallback(ctx context.Context, targetUserID int64, eventType string,
 	// APPEL PUR AU REPOSITORY (Collection WorkerQueue avec ID "firebase")
 	err = redis.WorkerQueue.LPush(ctx, "firebase", bytes)
 	if err == nil {
-		log.Printf("🔔 Push en attente d'expédition vers Firebase (User: %d, Event: %s)", targetUserID, eventType)
+		logger.Log.Info().
+			Int64("user_id", targetUserID).
+			Str("event", eventType).
+			Msg("Push en attente d'expédition vers Firebase")
 	}
 }

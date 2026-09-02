@@ -3,6 +3,7 @@ package comment_handlers
 import (
 	"net/http"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/gin-gonic/gin"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
@@ -35,21 +36,21 @@ import (
 // @Param        X-Timestamp   header string true "Timestamp Unix de la requête"
 // @Param        data          body   comment_models.CreateCommentInput true "Données du commentaire"
 // @Success      200  {object}  map[string]string "message: Commentaire en cours de publication"
-// @Failure      400  {object}  domain.ErrorResponse "Format JSON invalide, post_id manquant ou contenu vide"
-// @Failure      401  {object}  domain.ErrorResponse "Session expirée ou utilisateur non identifié"
+// @Failure      400  {object}  nubo_error.PublicErrorResponse "Format JSON invalide, post_id manquant ou contenu vide"
+// @Failure      401  {object}  nubo_error.PublicErrorResponse "Session expirée ou utilisateur non identifié"
 // @Router       /comment [post]
 func CreateCommentHandler(c *gin.Context) {
 	// 1. Sécurité : Extraction de l'ID via JWT
 	callerUserID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	// 2. Parsing du JSON
 	var input comment_models.CreateCommentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Format JSON invalide ou champs manquants"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou champs manquants.", err))
 		return
 	}
 
@@ -58,7 +59,7 @@ func CreateCommentHandler(c *gin.Context) {
 	input.Content = pkg.CleanStr(input.Content)
 
 	if input.Content == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Le commentaire ne peut pas être vide"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("EMPTY_COMMENT", "Le commentaire ne peut pas être vide.", nil))
 		return
 	}
 

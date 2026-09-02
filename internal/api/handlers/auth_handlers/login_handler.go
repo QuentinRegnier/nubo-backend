@@ -1,14 +1,10 @@
 package auth_handlers
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/auth_service"
 	"github.com/gin-gonic/gin"
 )
@@ -20,9 +16,7 @@ import (
 // @Description  **Règles de validation & Erreurs :**
 // @Description
 // @Description  🔴 **400 Bad Request (Erreurs client) :**
-// @Description  * `The 'data' field containing the JSON is required` : Le champ texte 'data' est manquant.
-// @Description  * `Invalid JSON format in 'data': ...` : Format JSON corrompu ou mal écrit.
-// @Description  * `Validation failed: ...` : Les contraintes structurelles (email valide, champs requis) ont échoué.
+// @Description  * `Invalid JSON format or validation failed: ...` : Format JSON corrompu ou contraintes structurelles (email valide, champs requis) non respectées.
 // @Description
 // @Description  🟠 **401 Unauthorized (Authentification) :**
 // @Description  * `Invalid email or password` : Identifiants incorrects ou utilisateur introuvable en base de données.
@@ -34,51 +28,27 @@ import (
 // @Description  ⚫ **500 Internal Server Error (Serveur) :**
 // @Description  * `Internal server error` : Erreur de communication BDD ou génération de jetons défaillante.
 // @Tags         auth
-// @Accept       multipart/form-data
+// @Accept       json
 // @Produce      json
-// @Param        data formData string true "Données JSON (auth_models.LoginInput)"
+// @Param        input body auth_models.LoginInput true "Données de connexion (email et mot de passe)"
 // @Success      200  {object}  auth_models.LoginResponse
-// @Failure      400  {object}  domain.ErrorResponse "Données d'entrée invalides"
-// @Failure      401  {object}  domain.ErrorResponse "Identifiants incorrects"
-// @Failure      403  {object}  domain.ErrorResponse "Compte inaccessible (banni/désactivé)"
-// @Failure      500  {object}  domain.ErrorResponse "Erreur interne du serveur"
+// @Failure      400  {object}  nubo_error.PublicErrorResponse "Données d'entrée invalides"
+// @Failure      401  {object}  nubo_error.PublicErrorResponse "Identifiants incorrects"
+// @Failure      403  {object}  nubo_error.PublicErrorResponse "Compte inaccessible (banni/désactivé)"
+// @Failure      500  {object}  nubo_error.PublicErrorResponse "Erreur interne du serveur"
 // @Router       /login [post]
 func LoginHandler(c *gin.Context) {
 	var input auth_models.LoginInput
 
-	jsonData := c.PostForm("data")
-	if jsonData == "" {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "The 'data' field containing the JSON is required"})
-		return
-	}
-
-	if err := json.Unmarshal([]byte(jsonData), &input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Invalid JSON format in 'data': " + err.Error()})
-		return
-	}
-
-	if err := pkg.ValidateStruct(&input); err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Validation failed: " + err.Error()})
+	if err := c.ShouldBindJSON(&input); err != nil {
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide ou contraintes non respectées.", err))
 		return
 	}
 
 	userID, sessions, jwtToken, err := auth_service.Login(input, []string{c.ClientIP()})
 	if err != nil {
-		if errors.Is(err, nubo_error.ErrInvalidCredentials) || errors.Is(err, nubo_error.ErrNotFound) {
-			c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Invalid email or password"})
-			return
-		}
-		if errors.Is(err, nubo_error.ErrDesactivated) {
-			c.JSON(http.StatusForbidden, nubo_error.ErrorResponse{Error: "Account deactivated"})
-			return
-		}
-		if errors.Is(err, nubo_error.ErrBanned) {
-			c.JSON(http.StatusForbidden, nubo_error.ErrorResponse{Error: "Account banned"})
-			return
-		}
-
-		fmt.Printf("❌ ERREUR SÉCURITÉ CRITIQUE (Login): %v\n", err)
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Internal server error"})
+		// Le service a déjà qualifié l'erreur (Banni, Identifiants incorrects, Désactivé)
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 

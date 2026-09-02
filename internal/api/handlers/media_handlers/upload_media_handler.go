@@ -1,13 +1,13 @@
 package media_handlers
 
 import (
-	"fmt"
 	"mime/multipart"
 	"net/http"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 	"github.com/gin-gonic/gin"
 )
@@ -21,42 +21,42 @@ import (
 // @Param        Authorization header string true "Bearer <votre_jwt>"
 // @Param        file          formData file   true "Fichier image à uploader"
 // @Success      200  {object} media_models.UploadMediaOutput "L'ID du média généré"
-// @Failure      400  {object} nubo_error.ErrorResponse "Fichier manquant ou invalide"
-// @Failure      401  {object} nubo_error.ErrorResponse "Non autorisé"
-// @Failure      500  {object} nubo_error.ErrorResponse "Erreur interne de traitement"
+// @Failure      400  {object} nubo_error.PublicErrorResponse "Fichier manquant ou invalide"
+// @Failure      401  {object} nubo_error.PublicErrorResponse "Non autorisé"
+// @Failure      500  {object} nubo_error.PublicErrorResponse "Erreur interne de traitement"
 // @Router       /media/upload [post]
 func UploadMediaHandler(c *gin.Context) {
 	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, nubo_error.ErrorResponse{Error: "Utilisateur non identifié"})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, nubo_error.ErrorResponse{Error: "Fichier manquant ou invalide"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("MISSING_FILE", "Fichier manquant ou invalide.", err))
 		return
 	}
 
 	file, err := fileHeader.Open()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Impossible de lire le fichier"})
+		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("FILE_READ_ERROR", "Impossible de lire le fichier.", err))
 		return
 	}
 	defer func(file multipart.File) {
 		err := file.Close()
 		if err != nil {
-			fmt.Println("Erreur lors de la fermeture du fichier:", err)
+			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture du fichier uploadé")
 		}
 	}(file)
 
 	mediaID := pkg.GenerateID()
 	if err := media_service.UploadMedia(file, callerID, mediaID, false); err != nil {
-		c.JSON(http.StatusInternalServerError, nubo_error.ErrorResponse{Error: "Impossible de traiter et d'uploader le média: " + err.Error()})
+		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, media_models.UploadMediaOutput{
+	c.JSON(http.StatusAccepted, media_models.UploadMediaOutput{
 		MediaID: mediaID,
 	})
 }

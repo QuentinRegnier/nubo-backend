@@ -2,11 +2,11 @@ package mongo
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 )
@@ -53,7 +53,7 @@ func MongoLoadConversationPaginated(userID int64, limit int64, offset int64) ([]
 	defer func(cursor *mongo.Cursor, ctx context.Context) {
 		err := cursor.Close(ctx)
 		if err != nil {
-			_ = fmt.Errorf("erreur lors de la fermeture du curseur Mongo : %v", err)
+			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture du curseur Mongo")
 		}
 	}(cursor, ctx)
 

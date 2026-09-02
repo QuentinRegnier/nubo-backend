@@ -3,9 +3,10 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"fmt"
+	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
@@ -19,10 +20,10 @@ func FuncGetComment(ctx context.Context, commentID int64) (comment_models.Commen
 	)
 
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return c, fmt.Errorf("not found")
+		if errors.Is(err, sql.ErrNoRows) {
+			return c, nubo_error.NewNotFound("COMMENT_NOT_FOUND", "Commentaire introuvable.", err)
 		}
-		return c, err
+		return c, nubo_error.NewInternal(err)
 	}
 
 	return c, nil

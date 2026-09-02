@@ -4,9 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
+	"fmt"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -22,6 +23,11 @@ func DeriveNextSecret(secretCurrent, secretLast, masterToken, firebaseInstallati
 
 // RotateRatchet effectue la rotation atomique et sécurisée avec Cascade L1->L2->L3
 func RotateRatchet(ctx context.Context, userID int64, firebaseInstallationID string, clientCurrentSecret string, incomingJWT string) error {
+	// 0. BOUCLIER TOMBSTONE (O(1) en RAM)
+	idxKey := fmt.Sprintf("%d:%s", userID, firebaseInstallationID)
+	if isRevoked, _ := redis.SessionBlacklist.Exists(ctx, idxKey); isRevoked {
+		return nubo_error.NewForbidden("SESSION_REVOKED", "Session révoquée (déconnexion en cours).", nil)
+	}
 
 	// 1. CASCADE L1 -> L2 -> L3 (Recherche sécurisée)
 	sessionRaw, err := cache_service.LoadSessionFromCache(ctx, userID, firebaseInstallationID, "")
@@ -30,14 +36,14 @@ func RotateRatchet(ctx context.Context, userID int64, firebaseInstallationID str
 		if err != nil || sessionRaw.ID == 0 {
 			sessionRaw, err = postgres.FuncLoadSession(-1, userID, firebaseInstallationID, "")
 			if err != nil || sessionRaw.ID == 0 {
-				return errors.New("session introuvable")
+				return nubo_error.NewNotFound("SESSION_NOT_FOUND", "Session introuvable.", err)
 			}
 		}
 	}
 
 	// 2. VÉRIFICATION DE SYNCHRONISATION
 	if sessionRaw.CurrentSecret != clientCurrentSecret {
-		return errors.New("secret invalide (désynchronisation Ratchet)")
+		return nubo_error.NewForbidden("INVALID_SECRET", "Désynchronisation de sécurité détectée.", nil)
 	}
 
 	// 3. ROTATION CRYPTOGRAPHIQUE
@@ -65,7 +71,7 @@ func RotateRatchet(ctx context.Context, userID int64, firebaseInstallationID str
 // ResetRatchet génère le premier secret dérivé suite à un Hard Reset (Rotation du MasterToken)
 func ResetRatchet(newMasterToken, firebaseInstallationID string) (string, error) {
 	if newMasterToken == "" || firebaseInstallationID == "" {
-		return "", errors.New("ResetRatchet: newMasterToken et firebaseInstallationID ne peuvent pas être vides")
+		return "", nubo_error.NewBadRequest("MISSING_PARAMS", "Paramètres manquants pour la rotation.", nil)
 	}
 	firstDerivedSecret := DeriveNextSecret(firebaseInstallationID, newMasterToken, newMasterToken, firebaseInstallationID)
 	return firstDerivedSecret, nil
