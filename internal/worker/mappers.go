@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
@@ -209,7 +209,7 @@ func (m *SessionMapper) ToRow(data any) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var s models.SessionsRequest
+	var s auth_models.SessionsPayload
 	if err := json.Unmarshal(jsonBytes, &s); err != nil {
 		return nil, err
 	}
@@ -284,12 +284,12 @@ type PostMapper struct{}
 func (m *PostMapper) TableName() string { return "content.posts" }
 
 func (m *PostMapper) Columns() []string {
-	// Strict alignement avec la table Postgres
 	return []string{
 		"id", "user_id", "content", "hashtags", "identifiers", "media_ids",
-		"visibility", "priority_level", "location", "like_count", "comment_count",
-		"view_count", "has_media", "vector", "vector_version", "telemetry_dwell_sum",
-		"telemetry_dwell_sq", "telemetry_clicks", "created_at", "updated_at",
+		"visibility", "priority_level", "location", "like_count",
+		"comment_count", "view_count", "report_count", "has_media",
+		"vector", "vector_version", "telemetry_dwell_sum", "telemetry_dwell_sq",
+		"telemetry_clicks", "created_at", "updated_at",
 	}
 }
 
@@ -320,7 +320,7 @@ func (m *PostMapper) ToRow(data any) ([]any, error) {
 	return []any{
 		p.ID, p.UserID, contentDB, pq.Array(p.Hashtags), pq.Array(p.Identifiers), pq.Array(p.MediaIDs),
 		p.Visibility, p.PriorityLevel, locationDB, p.LikeCount, p.CommentCount,
-		p.ViewCount, p.HasMedia, vectorDB, p.VectorVersion, p.TelemetryDwellSum,
+		p.ViewCount, p.ReportCount, p.HasMedia, vectorDB, p.VectorVersion, p.TelemetryDwellSum,
 		p.TelemetryDwellSq, p.TelemetryClicks, p.CreatedAt, p.UpdatedAt,
 	}, nil
 }
@@ -343,7 +343,7 @@ func (m *MediaMapper) ToRow(data any) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var med models.MediaRequest
+	var med media_models.MediaPayload
 	if err := json.Unmarshal(jsonBytes, &med); err != nil {
 		return nil, err
 	}

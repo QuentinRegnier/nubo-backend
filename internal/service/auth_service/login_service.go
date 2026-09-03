@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
@@ -24,11 +24,11 @@ import (
 func Login(
 	input auth_models.LoginInput,
 	IPAddress []string,
-) (int64, models.SessionsRequest, string, error) {
+) (int64, auth_models.SessionsPayload, string, error) {
 	logger.Log.Info().Str("email", input.Email).Msg("Tentative de connexion")
 
 	var user auth_models.UserPayload
-	var sessions models.SessionsRequest
+	var sessions auth_models.SessionsPayload
 	var err error
 	ctx := context.Background()
 
@@ -43,11 +43,11 @@ func Login(
 	if user.ID == 0 {
 		user, err = postgresgo.FuncLoadUser(-1, "", input.Email, "")
 		if err != nil {
-			return -1, models.SessionsRequest{}, "", nubo_error.NewInternal(err)
+			return -1, auth_models.SessionsPayload{}, "", nubo_error.NewInternal(err)
 		}
 
 		if user.ID == 0 {
-			return -1, models.SessionsRequest{}, "", nubo_error.NewNotFound("USER_NOT_FOUND", "Identifiants incorrects.", nil) // On ne dit pas "email non trouvé" pour des raisons de sécu
+			return -1, auth_models.SessionsPayload{}, "", nubo_error.NewNotFound("USER_NOT_FOUND", "Identifiants incorrects.", nil) // On ne dit pas "email non trouvé" pour des raisons de sécu
 		}
 
 		if errQueue := redis.EnqueueDB(ctx, user.ID, 0, redis.EntityUser, redis.ActionCreate, &user, redis.TargetMongo); errQueue != nil {
@@ -57,14 +57,14 @@ func Login(
 
 	// 2. CONTRÔLE SÉCURITÉ ET STATUT DU COMPTE
 	if strings.TrimSpace(user.PasswordHash) != strings.TrimSpace(input.PasswordHash) {
-		return -1, models.SessionsRequest{}, "", nubo_error.NewForbidden("INVALID_CREDENTIALS", "Identifiants incorrects.", nil)
+		return -1, auth_models.SessionsPayload{}, "", nubo_error.NewForbidden("INVALID_CREDENTIALS", "Identifiants incorrects.", nil)
 	}
 
 	if user.Desactivated || user.Banned {
 		if user.Desactivated {
-			return -1, models.SessionsRequest{}, "", nubo_error.NewForbidden("ACCOUNT_DEACTIVATED", "Ce compte est désactivé.", nil)
+			return -1, auth_models.SessionsPayload{}, "", nubo_error.NewForbidden("ACCOUNT_DEACTIVATED", "Ce compte est désactivé.", nil)
 		}
-		return -1, models.SessionsRequest{}, "", nubo_error.NewForbidden("ACCOUNT_BANNED", "Ce compte est banni.", nil)
+		return -1, auth_models.SessionsPayload{}, "", nubo_error.NewForbidden("ACCOUNT_BANNED", "Ce compte est banni.", nil)
 	}
 
 	// -------------------------------------------------------------------------
@@ -98,14 +98,14 @@ func Login(
 		if len(IPAddress) > 0 {
 			sessions.IPHistory = []string{IPAddress[0]}
 		} else {
-			return -1, models.SessionsRequest{}, "", nubo_error.NewBadRequest("INVALID_IP", "Adresse IP requise pour la connexion.", nil)
+			return -1, auth_models.SessionsPayload{}, "", nubo_error.NewBadRequest("INVALID_IP", "Adresse IP requise pour la connexion.", nil)
 		}
 	}
 
 	sessions.ExpiresAt = now.Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
 	sessions.MasterToken, err = pkg.GenerateToken(user.ID, firebaseInstallationID, variables.MasterTokenExpirationSeconds)
 	if err != nil {
-		return -1, models.SessionsRequest{}, "", nubo_error.NewInternal(err)
+		return -1, auth_models.SessionsPayload{}, "", nubo_error.NewInternal(err)
 	}
 
 	sessions.CurrentSecret = security.DeriveNextSecret(sessions.FirebaseInstallationID, sessions.MasterToken, sessions.MasterToken, sessions.FirebaseInstallationID)
@@ -115,7 +115,7 @@ func Login(
 
 	newJWT, err := pkg.GenerateToken(user.ID, sessions.FirebaseInstallationID, variables.JWTExpirationSeconds)
 	if err != nil {
-		return -1, models.SessionsRequest{}, "", nubo_error.NewInternal(err)
+		return -1, auth_models.SessionsPayload{}, "", nubo_error.NewInternal(err)
 	}
 
 	// 4. SYNCHRONISATION DES COUCHES DE CACHE L1 & ALIGNEMENT DE VITESSE
@@ -131,7 +131,7 @@ func Login(
 
 	settings, _ := object_cache_service.GetUserSettingsCascade(ctx, user.ID)
 
-	var liteUser models.UserLiteRequest
+	var liteUser lite_models.UserLiteRequest
 	if errSpeed := redis.UsersLite.GetObject(ctx, user.ID, &liteUser); errSpeed != nil {
 		uReq := auth_models.UserPayload{
 			ID:               user.ID,

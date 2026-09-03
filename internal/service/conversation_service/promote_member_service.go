@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -62,7 +62,7 @@ func PromoteMember(ctx context.Context, callerID int64, input conversation_model
 	_ = object_cache_service.SetMemberInObjectCache(ctx, targetMem)
 
 	// === NOUVEAU : MISE À JOUR SYNCHRONE DU SPEED CACHE ===
-	_ = cache_service.UpdateMemberSpeedCache(ctx, models.MemberLiteRequest{
+	_ = cache_service.UpdateMemberSpeedCache(ctx, lite_models.MemberLiteRequest{
 		ConversationID:  targetMem.ConversationID,
 		UserID:          targetMem.UserID,
 		Role:            targetMem.Role,
@@ -80,7 +80,7 @@ func PromoteMember(ctx context.Context, callerID int64, input conversation_model
 		go func() {
 			err := realtime_service.BroadcastToConversation(context.Background(), input.ConversationID, "member.promoted", targetMem)
 			if err != nil {
-				_ = fmt.Errorf("Erreur lors de l'envoi de la notification de promotion : %v", err)
+				_ = fmt.Errorf("erreur lors de l'envoi de la notification de promotion : %v", err)
 			}
 		}()
 	}

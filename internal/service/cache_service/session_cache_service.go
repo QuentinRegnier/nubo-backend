@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -22,7 +22,7 @@ func getShortCtx(parent context.Context) (context.Context, context.CancelFunc) {
 }
 
 // SetSessionInCache sauvegarde la session et son index de recherche
-func SetSessionInCache(ctx context.Context, s models.SessionsRequest) error {
+func SetSessionInCache(ctx context.Context, s auth_models.SessionsPayload) error {
 	c, cancel := getShortCtx(ctx)
 	defer cancel()
 
@@ -40,7 +40,7 @@ func SetSessionInCache(ctx context.Context, s models.SessionsRequest) error {
 }
 
 // LoadSessionFromCache charge une session.
-func LoadSessionFromCache(ctx context.Context, userID int64, firebaseInstallationID string, masterToken string) (models.SessionsRequest, error) {
+func LoadSessionFromCache(ctx context.Context, userID int64, firebaseInstallationID string, masterToken string) (auth_models.SessionsPayload, error) {
 	c, cancel := getShortCtx(ctx)
 	defer cancel()
 
@@ -55,16 +55,16 @@ func LoadSessionFromCache(ctx context.Context, userID int64, firebaseInstallatio
 	}
 
 	if targetID == 0 {
-		return models.SessionsRequest{}, nubo_error.NewNotFound("SESSION_NOT_FOUND", "Session introuvable en RAM.", nil)
+		return auth_models.SessionsPayload{}, nubo_error.NewNotFound("SESSION_NOT_FOUND", "Session introuvable en RAM.", nil)
 	}
 
-	var s models.SessionsRequest
+	var s auth_models.SessionsPayload
 	if err := redis.Sessions.GetObject(c, targetID, &s); err != nil {
-		return models.SessionsRequest{}, err // C'est une erreur d'infrastructure, on la propage
+		return auth_models.SessionsPayload{}, err // C'est une erreur d'infrastructure, on la propage
 	}
 
 	if masterToken != "" && s.MasterToken != masterToken {
-		return models.SessionsRequest{}, nubo_error.NewForbidden("INVALID_MASTER_TOKEN", "Jeton maître invalide.", nil)
+		return auth_models.SessionsPayload{}, nubo_error.NewForbidden("INVALID_MASTER_TOKEN", "Jeton maître invalide.", nil)
 	}
 
 	return s, nil

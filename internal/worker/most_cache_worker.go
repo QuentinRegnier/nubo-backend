@@ -51,56 +51,71 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 			}
 		}
 
-		// 3. SI C'EST UNE INTERACTION (LIKE ou VUE agrégé)
-		if (e.Type == redis.EntityLike || e.Type == redis.EntityView) && (e.Action == redis.ActionCreate || e.Action == redis.ActionDelete) {
+		// 3. INTERACTIONS : Likes, Vues, Commentaires ET Télémétrie
+		if e.Type == redis.EntityLike || e.Type == redis.EntityView || e.Type == redis.EntityComment || e.Type == redis.EntityTelemetry {
 			jsonBytes, err := json.Marshal(e.Payload)
-			if err == nil {
-				var interactionEvent struct {
+			if err != nil {
+				continue
+			}
+
+			var targetPostID int64
+			var callerID int64
+
+			// A. Extraction sécurisée et explicite de l'ID selon le type d'événement
+			if e.Type == redis.EntityLike || e.Type == redis.EntityView {
+				var payload struct {
 					PostID     int64 `json:"post_id"`
 					TargetID   int64 `json:"target_id"`
 					TargetType int   `json:"target_type"`
 					UserID     int64 `json:"user_id"`
-					Count      int   `json:"count"`
 				}
-
-				if err := json.Unmarshal(jsonBytes, &interactionEvent); err == nil {
-
-					// 🛡️ BOUCLIER : Le Most Cache ignore totalement les interactions sur les commentaires
-					if interactionEvent.TargetType != 0 {
-						continue
+				if json.Unmarshal(jsonBytes, &payload) == nil {
+					if payload.TargetType != 0 {
+						continue // 🛡️ BOUCLIER : Ignore les intéractions sur les commentaires
 					}
-
-					targetID := interactionEvent.TargetID
-					if interactionEvent.PostID != 0 {
-						targetID = interactionEvent.PostID
+					targetPostID = payload.TargetID
+					if payload.PostID != 0 {
+						targetPostID = payload.PostID
 					}
+					callerID = payload.UserID
+				}
+			} else if e.Type == redis.EntityComment || e.Type == redis.EntityTelemetry {
+				var payload struct {
+					PostID int64 `json:"post_id"`
+					UserID int64 `json:"user_id"` // Facultatif pour le commentaire, présent pour la télémétrie
+				}
+				if json.Unmarshal(jsonBytes, &payload) == nil {
+					targetPostID = payload.PostID
+					callerID = payload.UserID
+				}
+			}
 
-					if targetID != 0 {
-						p, err := getPostWithFallback(ctx, targetID)
-						if err == nil && p.Visibility != -1 {
+			// B. Exécution unifiée de l'hydratation et du recalcul
+			if targetPostID != 0 {
+				p, err := getPostWithFallback(ctx, targetPostID)
+				if err == nil && p.Visibility != -1 {
 
-							// VÉRIFICATION DES DROITS ASYNCHRONE
-							if interactionEvent.UserID != 0 && p.UserID != interactionEvent.UserID {
-								relationState := cache_service.RelationValue(ctx, p.UserID, interactionEvent.UserID)
-								if relationState == -1 {
-									continue
-								}
-								if p.Visibility == 1 && relationState < 1 {
-									continue
-								}
-								if p.Visibility == 2 && relationState != 2 {
-									continue
-								}
-							}
-
-							// ÉVALUATION ALGORITHMIQUE (Plus d'écriture dans l'Object Cache ici !)
-							if e.Type == redis.EntityLike {
-								cache_service.EvaluatePostAfterLike(ctx, p)
-							} else if e.Type == redis.EntityView {
-								cache_service.EvaluatePostAfterView(ctx, p)
-							}
+					// VÉRIFICATION DES DROITS (Uniquement si un CallerID est identifié)
+					if callerID != 0 && p.UserID != callerID {
+						relationState := cache_service.RelationValue(ctx, p.UserID, callerID)
+						if relationState == -1 || (p.Visibility == 1 && relationState < 1) || (p.Visibility == 2 && relationState != 2) {
+							continue
 						}
 					}
+
+					// C. ROUTAGE SCALAIRE (Mise à jour des ZSETs et du score global de recommandation)
+					if e.Type == redis.EntityLike {
+						cache_service.EvaluatePostAfterLike(ctx, p)
+					} else if e.Type == redis.EntityView {
+						cache_service.EvaluatePostAfterView(ctx, p)
+					} else {
+						// Pour un commentaire ou de la télémétrie, on actualise le score global
+						cache_service.UpdatePostRecommendationScore(ctx, p)
+					}
+
+					// D. LE CHAÎNON MANQUANT : Mise à jour du Vecteur d'Engagement IA
+					// Garantit que le modèle vectoriel reste parfaitement isométrique avec la BDD et la RAM.
+					algorithm_service.UpdatePostEngagementVector(ctx, p)
 				}
 			}
 		}

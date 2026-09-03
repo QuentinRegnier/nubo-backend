@@ -2,12 +2,11 @@ package service
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
@@ -64,79 +63,33 @@ func ResetCuckooFilter(ctx context.Context, userID int64) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // IsUnique vérifie l'unicité d'une valeur (0 = existe déjà, 1 = unique)
-func IsUnique(collection *mongo.MongoCollection, field string, value any) int {
-
-	valStr := fmt.Sprintf("%v", value)
-	key := field + ":" + valStr
-
-	// ---------------------------------------------------------
-	// 0. CUCKOO FILTER (RAM Layer - O(1))
-	// ---------------------------------------------------------
-	// Premier check ultra-rapide.
-	// Si le Cuckoo ne le trouve pas, c'est CERTAIN qu'il n'existe pas.
-	// On évite Redis, Mongo et Postgres.
-	if cuckoo.GlobalCuckoo != nil {
-		if !cuckoo.GlobalCuckoo.Lookup([]byte(key)) {
-			return 1 // Unique (certitude 100%)
-		}
-	}
-	// Si trouvé ici -> C'est PEUT-ÊTRE un doublon (ou faux positif).
-	// On continue les vérifications pour confirmer.
-
-	// ---------------------------------------------------------
-	// 1. REDIS (Cache Layer)
-	// ---------------------------------------------------------
-	// Construction de la clé : "table:field:value"
-	redisKey := fmt.Sprintf("%s:%s", collection.Name, key)
-
-	// Utilisation d'un contexte vide (à adapter si tu passes le context.Context dans IsUnique à l'avenir)
-	ctx := context.Background()
-
-	// On vérifie l'existence dans le SPEED Cache
-	// (Assure-toi d'utiliser la méthode Exists ou Get adaptée à ton package redis/calls.go)
-	exists, err := redis.Exists(ctx, redisKey)
-	if err != nil {
-		logger.Log.Warn().Err(err).Str("key", redisKey).Msg("Erreur IsUnique (Redis)")
-	} else if exists {
-		return 0 // Existe déjà (Hit confirmé)
+// IsUnique exécute la cascade de vérification d'unicité en 5 étapes.
+// Retourne 1 si la donnée est absolument unique, 0 si elle existe déjà.
+// IsUnique est universel. Si l'entité n'est pas supportée, elle loggue une erreur et refuse l'action par sécurité.
+func IsUnique(ctx context.Context, entity redis.EntityType, field string, value string) int {
+	// ÉTAPE 1 & 2 : Cuckoo Filter (Moteur RAM universel)
+	mightExist, hasFilter := cuckoo.MightExist(entity, field, value)
+	if hasFilter && !mightExist {
+		return 1 // Sûr à 100% que c'est unique. Zéro appel BDD !
 	}
 
-	// ---------------------------------------------------------
-	// 2. MONGODB
-	// ---------------------------------------------------------
-	filter := map[string]any{
-		field: value,
-	}
-	projection := map[string]any{
-		"id": 1,
-	}
-	// Get est dans generic.go dans le package mongo
-	results, err := collection.Get(filter, projection)
-	if err != nil {
-		logger.Log.Error().Err(err).Str("collection", collection.Name).Msg("Erreur IsUnique (Mongo Get)")
-		return 0 // Sécurité
+	// ÉTAPE 4 : MONGODB (Warm Storage L2)
+	existsMongo, errMongo := mongo.MongoCheckUnique(entity, field, value)
+	if errMongo != nil {
+		// L'entité n'est pas mappée ou Mongo a crashé, on passe silencieusement au L3
+	} else if existsMongo {
+		return 0
 	}
 
-	if len(results) > 0 {
-		return 0 // Existe déjà
+	// ÉTAPE 5 : POSTGRESQL (Cold Storage L3 - Source de Vérité)
+	existsPg, errPg := postgres.FuncCheckUnique(ctx, entity, field, value)
+	if errPg != nil {
+		// Le mapper a bloqué la requête (entité inconnue) ou erreur SQL
+		logger.Log.Error().Err(errPg).Str("entity", string(entity)).Str("field", field).Msg("Échec de la validation d'unicité")
+		return 0 // SÉCURITÉ : Dans le doute, on refuse l'unicité pour éviter les doublons fatals.
+	} else if existsPg {
+		return 0
 	}
 
-	// ---------------------------------------------------------
-	// 3. POSTGRESQL
-	// ---------------------------------------------------------
-	query := fmt.Sprintf("SELECT count(1) FROM %s WHERE %s = $1", collection.Name, field)
-	var countSQL int
-	err = postgres.PostgresDB.QueryRow(query, value).Scan(&countSQL)
-	if err != nil {
-		logger.Log.Error().Err(err).Str("collection", collection.Name).Msg("Erreur IsUnique (Postgres)")
-	}
-
-	if countSQL > 0 {
-		return 0 // Existe déjà
-	}
-
-	// ---------------------------------------------------------
-	// Résultat final : La valeur est unique partout
-	// ---------------------------------------------------------
 	return 1
 }

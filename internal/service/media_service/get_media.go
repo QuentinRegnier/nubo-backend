@@ -3,7 +3,7 @@ package media_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -11,7 +11,7 @@ import (
 )
 
 // GetMediaCascade récupère les informations d'un média L1 -> L2 -> L3 et réhydrate les caches
-func GetMediaCascade(ctx context.Context, mediaID int64) (models.MediaRequest, error) {
+func GetMediaCascade(ctx context.Context, mediaID int64) (media_models.MediaPayload, error) {
 	// 1. Tente le L1 (RAM)
 	if m, err := object_cache_service.GetMediaFromObjectCache(ctx, mediaID); err == nil {
 		return m, nil
@@ -34,5 +34,5 @@ func GetMediaCascade(ctx context.Context, mediaID int64) (models.MediaRequest, e
 		return pgMedia, nil
 	}
 
-	return models.MediaRequest{}, nubo_error.NewNotFound("MEDIA_NOT_FOUND", "Média introuvable.", nil)
+	return media_models.MediaPayload{}, nubo_error.NewNotFound("MEDIA_NOT_FOUND", "Média introuvable.", nil)
 }

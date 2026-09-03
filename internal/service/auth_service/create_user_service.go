@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
@@ -13,7 +12,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -28,13 +26,13 @@ func CreateUser(ctx context.Context, input auth_models.SignUpInput, ipAddress st
 
 	// 1. RÈGLES MÉTIER ET VÉRIFICATIONS D'UNICITÉ (BDD)
 	// ---------------------------------------------------------
-	if service.IsUnique(mongo.Users, "username", input.Username) == 0 {
+	if service.IsUnique(ctx, redis.EntityUser, "username", input.Username) == 0 {
 		return auth_models.SignUpResponse{}, nubo_error.NewConflict("USERNAME_TAKEN", "Ce nom d'utilisateur est déjà pris.", nil)
 	}
-	if service.IsUnique(mongo.Users, "email", input.Email) == 0 {
+	if service.IsUnique(ctx, redis.EntityUser, "email", input.Email) == 0 {
 		return auth_models.SignUpResponse{}, nubo_error.NewConflict("EMAIL_TAKEN", "Cet email est déjà utilisé.", nil)
 	}
-	if service.IsUnique(mongo.Users, "phone", input.Phone) == 0 {
+	if service.IsUnique(ctx, redis.EntityUser, "phone", input.Phone) == 0 {
 		return auth_models.SignUpResponse{}, nubo_error.NewConflict("PHONE_TAKEN", "Ce numéro de téléphone est déjà utilisé.", nil)
 	}
 
@@ -97,7 +95,7 @@ func CreateUser(ctx context.Context, input auth_models.SignUpInput, ipAddress st
 	}
 
 	// B. Hydratation du Payload Session
-	sessions := models.SessionsRequest{
+	sessions := auth_models.SessionsPayload{
 		ID:                     sessionID,
 		UserID:                 userID,
 		FirebaseInstallationID: input.FirebaseInstallationID,

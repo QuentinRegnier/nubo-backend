@@ -5,15 +5,15 @@ import (
 	"database/sql"
 	"errors"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models" // ✅ Le bon import
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
-func FuncGetMedia(ctx context.Context, mediaID int64) (models.MediaRequest, error) {
+func FuncGetMedia(ctx context.Context, mediaID int64) (media_models.MediaPayload, error) {
 	query := `SELECT id, owner_id, storage_path, visibility, created_at, updated_at FROM content.get_media($1)`
 
-	var m models.MediaRequest
+	var m media_models.MediaPayload
 	err := postgres.PostgresDB.QueryRowContext(ctx, query, mediaID).Scan(
 		&m.ID,
 		&m.OwnerID,

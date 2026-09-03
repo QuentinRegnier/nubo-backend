@@ -4,15 +4,15 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models" // ✅ Le bon import
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-func MongoLoadMedia(mediaIDs []int64) ([]models.MediaRequest, error) {
+func MongoLoadMedia(mediaIDs []int64) ([]media_models.MediaPayload, error) {
 	if len(mediaIDs) == 0 || Media == nil {
-		return []models.MediaRequest{}, nil
+		return []media_models.MediaPayload{}, nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -35,7 +35,7 @@ func MongoLoadMedia(mediaIDs []int64) ([]models.MediaRequest, error) {
 		}
 	}(cursor, ctx)
 
-	var results []models.MediaRequest
+	var results []media_models.MediaPayload
 	if err = cursor.All(ctx, &results); err != nil {
 		return nil, err
 	}

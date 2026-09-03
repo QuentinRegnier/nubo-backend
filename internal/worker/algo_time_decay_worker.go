@@ -5,10 +5,9 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/lib/pq"
 )
 
 // ScoreJob contient les métriques pré-calculées par SQL pour éviter l'hydratation N+1
@@ -22,6 +21,7 @@ type ScoreJob struct {
 	Hashtags      []string
 	Visibility    int
 	PriorityLevel int // NOUVEAU
+	ReportCount   int
 }
 
 // StartScoreUpdaterCron initialise le Worker Pool basé sur le nombre de threads CPU
@@ -46,7 +46,6 @@ func StartScoreUpdaterCron(ctx context.Context) {
 						mediaCount = 1
 					}
 					// Appel du moteur mathématique pur. BDD = 0, Redis = Max
-					// TODO rendre dynamique isFlagged
 					cache_service.UpdateScoreWithMetrics(
 						ctx,
 						job.PostID,
@@ -57,7 +56,7 @@ func StartScoreUpdaterCron(ctx context.Context) {
 						job.CreatedAt,
 						job.Hashtags,
 						job.Visibility,
-						0,
+						job.ReportCount,
 						job.PriorityLevel, // NOUVEAU : Transmission du priority_level
 					)
 				}
@@ -80,49 +79,31 @@ func runTierCron(ctx context.Context, jobs chan<- ScoreJob, interval time.Durati
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	// CORRECTION SQL : Ajout de view_count et visibility dans le SELECT
-	//TODO DDD
-	query := `
-		SELECT id, like_count, comment_count, view_count, has_media, created_at, hashtags, visibility, priority_level
-		FROM content.posts 
-		WHERE created_at <= NOW() - $1::interval 
-		AND created_at > NOW() - $2::interval 
-		AND visibility != 2
-	`
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			rows, err := postgres.PostgresDB.QueryContext(ctx, query, minAge, maxAge)
+			// Appel Pur DDD via le Repository
+			posts, err := postgres.FuncLoadPostsForTimeDecay(ctx, minAge, maxAge)
 			if err != nil {
 				logger.Log.Error().Err(err).Str("min_age", minAge).Str("max_age", maxAge).Msg("Erreur requête Time-Decay Tier")
 				continue
 			}
 
-			for rows.Next() {
-				var job ScoreJob
-				// CORRECTION DU SCAN : On map toutes les colonnes dans l'ordre du SELECT
-				err := rows.Scan(
-					&job.PostID,
-					&job.LikeCount,
-					&job.CommentCount,
-					&job.ViewCount,
-					&job.HasMedia,
-					&job.CreatedAt,
-					pq.Array(&job.Hashtags),
-					&job.Visibility,
-					&job.PriorityLevel, // NOUVEAU
-				)
-				if err != nil {
-					logger.Log.Error().Err(err).Msg("Erreur de scan SQL dans le Time-Decay")
-					continue
+			for _, p := range posts {
+				jobs <- ScoreJob{
+					PostID:        p.ID,
+					LikeCount:     p.LikeCount,
+					CommentCount:  p.CommentCount,
+					ViewCount:     p.ViewCount,
+					HasMedia:      p.HasMedia,
+					CreatedAt:     p.CreatedAt,
+					Hashtags:      p.Hashtags,
+					Visibility:    p.Visibility,
+					PriorityLevel: p.PriorityLevel,
+					ReportCount:   p.ReportCount,
 				}
-				jobs <- job
-			}
-			if err := rows.Close(); err != nil {
-				logger.Log.Error().Err(err).Str("min_age", minAge).Str("max_age", maxAge).Msg("Erreur fermeture des rows (Time-Decay)")
 			}
 		}
 	}

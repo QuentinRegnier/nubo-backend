@@ -3,8 +3,8 @@ package conversation_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -34,13 +34,13 @@ func GetUserConversationPaginated(ctx context.Context, callerID int64, input con
 		if err == nil && len(mongoResults) > 0 {
 			for _, res := range mongoResults {
 				inboxItems = append(inboxItems, cache_service.InboxItemView{
-					Conversation: models.ConvLiteRequest{
+					Conversation: lite_models.ConvLiteRequest{
 						ID:            res.Conversation.ID,
 						Type:          res.Conversation.Type,
 						Title:         res.Conversation.Title,
 						LastMessageID: res.Conversation.LastMessageID,
 					},
-					Member: models.MemberLiteRequest{
+					Member: lite_models.MemberLiteRequest{
 						ConversationID: res.Member.ConversationID,
 						UserID:         res.Member.UserID,
 						Role:           res.Member.Role,
@@ -71,13 +71,13 @@ func GetUserConversationPaginated(ctx context.Context, callerID int64, input con
 			for _, res := range pgResults {
 
 				inboxItems = append(inboxItems, cache_service.InboxItemView{
-					Conversation: models.ConvLiteRequest{
+					Conversation: lite_models.ConvLiteRequest{
 						ID:            res.Conversation.ID,
 						Type:          res.Conversation.Type,
 						Title:         res.Conversation.Title,
 						LastMessageID: res.Conversation.LastMessageID,
 					},
-					Member: models.MemberLiteRequest{
+					Member: lite_models.MemberLiteRequest{
 						ConversationID: res.Member.ConversationID,
 						UserID:         res.Member.UserID,
 						Role:           res.Member.Role,

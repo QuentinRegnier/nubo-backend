@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -71,7 +71,7 @@ func BanMember(ctx context.Context, callerID int64, input conversation_models.Ba
 
 	// === NOUVEAU : MISE À JOUR SYNCHRONE DU SPEED CACHE ===
 	// Retire le membre du Fan-Out et met à jour son rôle en RAM
-	_ = cache_service.UpdateMemberSpeedCache(ctx, models.MemberLiteRequest{
+	_ = cache_service.UpdateMemberSpeedCache(ctx, lite_models.MemberLiteRequest{
 		ConversationID:  targetMem.ConversationID,
 		UserID:          targetMem.UserID,
 		Role:            targetMem.Role,

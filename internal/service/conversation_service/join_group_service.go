@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
@@ -129,7 +129,7 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 	_ = cache_service.AddConversationToUserInbox(ctx, callerID, conv.ID, conv.LastMessageID)
 
 	// === NOUVEAU : MISE À JOUR SYNCHRONE DU SPEED CACHE ===
-	memLite := models.MemberLiteRequest{
+	memLite := lite_models.MemberLiteRequest{
 		ConversationID:  mem.ConversationID,
 		UserID:          mem.UserID,
 		Role:            mem.Role,

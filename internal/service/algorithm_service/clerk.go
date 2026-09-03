@@ -27,7 +27,7 @@ func CollectCandidates(ctx context.Context, userID int64, seeds [3]int64, quotas
 	// ─────────────────────────────────────────────────────────────────────────────
 	// ACTION 2 : Fusion Télémétrie / Graph 1-Hop / Leaderboard Mondial
 	// ─────────────────────────────────────────────────────────────────────────────
-	tagCloud := buildTagCloud(ctx)
+	tagCloud := buildTagCloud(ctx, userID) // ✅ NOUVEAU : Transmission du userID
 
 	// ─────────────────────────────────────────────────────────────────────────────
 	// REMPLISSAGE DÉTERMINISTE DES 3 PANIERS
@@ -54,7 +54,7 @@ func CollectSingleBasket(ctx context.Context, userID int64, seed int64, quotas Q
 	singleBasket := baskets.A
 
 	// Fusion Télémétrie / Graph 1-Hop / Leaderboard
-	tagCloud := buildTagCloud(ctx)
+	tagCloud := buildTagCloud(ctx, userID) // ✅ NOUVEAU : Transmission du userID
 
 	// Remplissage ciblé
 	fillBasket(ctx, userID, singleBasket, quotas, tagCloud)
@@ -63,24 +63,65 @@ func CollectSingleBasket(ctx context.Context, userID int64, seed int64, quotas Q
 }
 
 // buildTagCloud abstrait la création du Super-Nuage sémantique pour éviter la duplication de code.
-func buildTagCloud(ctx context.Context) map[string]float64 {
-	// TODO : Récupérer la vraie matrice via la route de télémétrie (quand elle existera)
-	userTelemetry := map[string]float64{
-		"naturisme": 1.0,
-		"plage":     0.8,
+// ✅ NOUVEAU : Elle accepte userID pour pouvoir interroger la télémétrie de cet utilisateur précis.
+func buildTagCloud(ctx context.Context, userID int64) map[string]float64 {
+
+	// ─────────────────────────────────────────────────────────────────────────────
+	// 1. LECTURE DE LA TÉLÉMÉTRIE (L1 SPEED CACHE)
+	// ─────────────────────────────────────────────────────────────────────────────
+	userTelemetry := make(map[string]float64)
+
+	// On récupère le "TopTags" que le téléphone a envoyé lors du dernier /sync/telemetry.
+	// La méthode GetTelemetryTags est ultra-rapide (O(1)) car elle tape en RAM.
+	topTags, err := cache_service.GetTelemetryTags(ctx, userID)
+
+	if err == nil && len(topTags) > 0 {
+		// La télémétrie renvoie un tableau classé du plus fort au plus faible.
+		// On va leur attribuer un poids décroissant.
+		// Ex: Le 1er tag vaut 1.0, le 2ème vaut 0.9, le 3ème vaut 0.8...
+		weight := 1.0
+		for _, tag := range topTags {
+			userTelemetry[tag] = weight
+			weight -= 0.1 // On baisse le poids de 10% pour le tag suivant
+			if weight < 0.1 {
+				weight = 0.1 // Poids minimum
+			}
+		}
+	} else {
+		// 🚨 FALLBACK UX : Cold Start (Nouvel utilisateur ou Télémétrie absente)
+		// On utilise les tags du Leaderboard mondial (les sujets les plus chauds du moment)
+		// pour amorcer la pompe et lui proposer du contenu qualitatif par défaut.
+		leaderboardData, errL := redis.ZRevRangeWithScores(ctx, variables.RedisKeyHashtagLeaderboard, 0, 4)
+		if errL == nil && len(leaderboardData) > 0 {
+			weight := 1.0
+			for _, z := range leaderboardData {
+				userTelemetry[z.Member.(string)] = weight
+				weight -= 0.1
+			}
+		} else {
+			// Dernier filet de sécurité (Si même le Leaderboard est vide, ex: Reset BDD)
+			userTelemetry["bienvenue"] = 1.0
+		}
 	}
 
-	// Récupération du Leaderboard Global pour influencer les poids (via la couche Repository ZSET)
+	// ─────────────────────────────────────────────────────────────────────────────
+	// 2. LECTURE DU LEADERBOARD (Pour les Multiplicateurs de Viralité)
+	// ─────────────────────────────────────────────────────────────────────────────
 	leaderboardData, _ := redis.ZRevRangeWithScores(ctx, variables.RedisKeyHashtagLeaderboard, 0, 49)
 	leaderboardBoosts := make(map[string]float64)
 	if len(leaderboardData) > 0 {
 		maxScore := leaderboardData[0].Score
 		for _, z := range leaderboardData {
 			// Normalisation du boost (Le #1 mondial donnera un boost de 1.5x)
-			leaderboardBoosts[z.Member.(string)] = 1.0 + (z.Score / maxScore * 0.5)
+			if maxScore > 0 {
+				leaderboardBoosts[z.Member.(string)] = 1.0 + (z.Score / maxScore * 0.5)
+			}
 		}
 	}
 
+	// ─────────────────────────────────────────────────────────────────────────────
+	// 3. EXPANSION ET ASSEMBLAGE DU SUPER-NUAGE (L'Effet Pingouin)
+	// ─────────────────────────────────────────────────────────────────────────────
 	tagCloud := make(map[string]float64)
 	for coreTag, affinity := range userTelemetry {
 		boost := 1.0
@@ -99,6 +140,7 @@ func buildTagCloud(ctx context.Context) map[string]float64 {
 			tagCloud[neighbor] += affinity * edgeWeight * nBoost
 		}
 	}
+
 	return tagCloud
 }
 

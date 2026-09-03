@@ -49,8 +49,8 @@ func processScheduledWarmups(ctx context.Context) {
 			continue
 		}
 
-		// 2. Récupération des données de télémétrie (Mock temporaire avant raccordement Pilier 1)
-		lastActiveAt, isOnline := mockGetTelemetryData(userID)
+		// 2. Récupération des données de télémétrie depuis le Cache L1 (O(1))
+		lastActiveAt, isOnline := getTelemetryData(ctx, userID) // ✅ CORRECTION
 
 		// Si l'utilisateur est actuellement en ligne, on ne pollue pas sa session active
 		if isOnline {
@@ -106,11 +106,26 @@ func executeBackgroundGeneration(ctx context.Context, userID int64) {
 	_, _, _, _ = feed_service.GetFeed(ctx, input)
 }
 
-// mockGetTelemetryData simule le retour de l'Edge Computing en attendant l'implémentation de la route de télémétrie
-func mockGetTelemetryData(userID int64) (time.Time, bool) {
-	// Valeurs codées en dur pour nos simulations d'intégration
-	// TODO ajouter un vrai système de telemetry
-	return time.Now().Add(-30 * time.Hour), false
+// getTelemetryData interroge les vrais caches L1 pour déterminer la fraîcheur de l'utilisateur
+func getTelemetryData(ctx context.Context, userID int64) (time.Time, bool) {
+	// 1. Est-il en train d'utiliser l'application en ce moment même ?
+	isOnline := cache_service.IsUserOnline(ctx, userID)
+
+	// 2. À quand remonte sa dernière interaction synchronisée ?
+	var lastActiveAt time.Time
+
+	tsMs, err := cache_service.GetTelemetryTimestamp(ctx, userID)
+	if err == nil && tsMs > 0 {
+		// La télémétrie nous envoie un timestamp Unix en millisecondes
+		lastActiveAt = time.UnixMilli(tsMs)
+	} else {
+		// FALLBACK : Si on n'a aucune donnée de télémétrie (ex: nouvel utilisateur ou cache évincé),
+		// on le considère comme inactif depuis très longtemps pour forcer le Niveau 3 (Dormant)
+		// et ne pas gaspiller de CPU à régénérer son flux dans le vide.
+		lastActiveAt = time.Now().Add(-30 * 24 * time.Hour)
+	}
+
+	return lastActiveAt, isOnline
 }
 
 // handleSocialFanOut intercepte les créations de posts pour distribuer l'ID

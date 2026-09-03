@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -27,7 +27,7 @@ func DeleteMedia(ctx context.Context, mediaID int64, ownerID int64) error {
 	_ = object_cache_service.DeleteMediaFromObjectCache(ctx, mediaID)
 
 	// 4. Purge des bases de données (L2/L3) via la file d'attente asynchrone
-	mediaPayload := models.MediaRequest{ID: mediaID, OwnerID: ownerID}
+	mediaPayload := media_models.MediaPayload{ID: mediaID, OwnerID: ownerID}
 	return redis.EnqueueDB(ctx, mediaID, ownerID, redis.EntityMedia, redis.ActionDelete, mediaPayload, redis.TargetAll)
 }
 

@@ -7,16 +7,16 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/lib/pq"
 )
 
-func FuncLoadSession(ID int64, UserId int64, FirebaseInstallationID string, MasterToken string) (models.SessionsRequest, error) {
+func FuncLoadSession(ID int64, UserId int64, FirebaseInstallationID string, MasterToken string) (auth_models.SessionsPayload, error) {
 	// 1. Vérification que les champs sont non nuls
 	if ID == -1 && UserId == -1 && FirebaseInstallationID == "" && MasterToken == "" {
-		return models.SessionsRequest{}, nubo_error.NewInternal(fmt.Errorf("champs requis manquants pour FuncLoadSession"))
+		return auth_models.SessionsPayload{}, nubo_error.NewInternal(fmt.Errorf("champs requis manquants pour FuncLoadSession"))
 	}
 
 	// 2. Préparation des arguments (gestion des types spéciaux)
@@ -46,7 +46,7 @@ func FuncLoadSession(ID int64, UserId int64, FirebaseInstallationID string, Mast
 
 	// 4. Exécution via la connexion partagée du package 'db'
 	//    Nous utilisons QueryRow car la fonction SQL retourne une seule valeur (le UUID)
-	var res models.SessionsRequest
+	var res auth_models.SessionsPayload
 	var deviceInfoBytes []byte
 	var firebaseInstallationID sql.NullString // Le token peut être NULL en base (stocké en JSON string ou NULL)
 
@@ -69,9 +69,9 @@ func FuncLoadSession(ID int64, UserId int64, FirebaseInstallationID string, Mast
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return models.SessionsRequest{}, nil
+			return auth_models.SessionsPayload{}, nil
 		}
-		return models.SessionsRequest{}, nubo_error.NewInternal(err)
+		return auth_models.SessionsPayload{}, nubo_error.NewInternal(err)
 	}
 
 	// Traitement des données

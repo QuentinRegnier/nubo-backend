@@ -25,6 +25,17 @@ func GetFeed(ctx context.Context, input feed_models.GetFeedInput) ([]post_models
 		friendMap[id] = true
 	}
 
+	// ─────────────────────────────────────────────────────────────────────────
+	// 2.5 LECTURE DE L'ADN ALGORITHMIQUE (Vecteur Utilisateur depuis la Télémétrie)
+	// ─────────────────────────────────────────────────────────────────────────
+	userVector, err := cache_service.GetTelemetryVector(ctx, input.UserID)
+	if err != nil || len(userVector) != variables.VectorDimTotal {
+		// FALLBACK GRACIEUX : Si l'utilisateur est nouveau, n'a pas encore de télémétrie,
+		// ou si le cache a été évincé, on le force à nil.
+		// Le moteur mathématique du Pilier 4 ignorera le calcul de similarité cosinus sans crasher.
+		userVector = nil
+	}
+
 	// Configuration du contexte pour l'algorithme
 	opts := algorithm_service.RefreshOptions{
 		UserID:        input.UserID,
@@ -37,9 +48,9 @@ func GetFeed(ctx context.Context, input feed_models.GetFeedInput) ([]post_models
 		},
 		PersonalOpts: algorithm_service.PersonalizedFeedOptions{
 			UserID:         input.UserID,
-			UserVec:        nil, // TODO: Profile Service (Architecture Microservice / Edge en attente)
-			UserConfidence: 1.0,
-			FriendIDs:      friendMap, // ✅ Connexion du Speed Cache pour le paramètre B(u,p)
+			UserVec:        userVector, // ✅ INJECTION DYNAMIQUE DU VECTEUR
+			UserConfidence: 1.0,        // (Pourra être dynamisé si le mobile envoie un score de confiance de son modèle local)
+			FriendIDs:      friendMap,
 			Date:           time.Now(),
 			Limit:          variables.TDDFeedSize,
 		},

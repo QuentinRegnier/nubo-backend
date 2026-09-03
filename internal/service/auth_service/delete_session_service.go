@@ -3,7 +3,7 @@ package auth_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -13,7 +13,7 @@ import (
 
 // RevokeSession vérifie la propriété et détruit une session à distance
 func RevokeSession(ctx context.Context, callerID int64, sessionID int64) error {
-	var s models.SessionsRequest
+	var s auth_models.SessionsPayload
 
 	// 1. TENTATIVE L1 (RAM) : Récupération pour vérifier la propriété et obtenir le FirebaseInstallationID (pour l'index)
 	err := redis.Sessions.GetObject(ctx, sessionID, &s)
@@ -38,6 +38,6 @@ func RevokeSession(ctx context.Context, callerID int64, sessionID int64) error {
 	_ = realtime_service.DistributeToUsers(ctx, "session.revoked", map[string]int64{"session_id": sessionID}, []int64{callerID})
 
 	// 5. PERSISTANCE ASYNCHRONE : Envoi au Worker pour suppression SQL
-	payload := models.SessionsRequest{ID: sessionID, UserID: callerID} // Payload minimal pour le mapping
+	payload := auth_models.SessionsPayload{ID: sessionID, UserID: callerID} // Payload minimal pour le mapping
 	return redis.EnqueueDB(ctx, sessionID, callerID, redis.EntitySession, redis.ActionDelete, payload, redis.TargetAll)
 }

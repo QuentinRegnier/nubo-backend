@@ -169,6 +169,7 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 	commentLikeDeltas := make(map[int64]int)
 	commentDeltas := make(map[int64]int)
 	viewDeltas := make(map[int64]int)
+	reportDeltas := make(map[int64]int)
 
 	telemetryDwellSum := make(map[int64]float64)
 	telemetryDwellSq := make(map[int64]float64)
@@ -214,6 +215,18 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 				}
 				viewDeltas[p.TargetID] += delta
 			}
+		} else if e.Type == redis.EntityReport {
+			// ✅ NOUVEAU: INTERCEPTION DES SIGNALEMENTS POUR DÉNORMALISATION
+			var r struct {
+				TargetType int     `json:"target_type"`
+				TargetIDs  []int64 `json:"target_ids"`
+			}
+			// 1 correspond au TargetType d'un Post dans l'enum applicatif
+			if err := json.Unmarshal(jsonBytes, &r); err == nil && r.TargetType == 1 {
+				for _, id := range r.TargetIDs {
+					reportDeltas[id] += delta
+				}
+			}
 		} else if e.Type == redis.EntityTelemetry {
 			var t struct {
 				PostID       int64 `json:"post_id"`
@@ -255,6 +268,13 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 		}))
 	}
 
+	for id, delta := range commentLikeDeltas {
+		commentModels = append(commentModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{
+			"$inc": bson.M{"like_count": delta, "score": delta},
+			"$set": bson.M{"last_use": now},
+		}))
+	}
+
 	for id, delta := range commentDeltas {
 		postModels = append(postModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{
 			"$inc": bson.M{"comment_count": delta},
@@ -269,6 +289,13 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 		}))
 	}
 
+	for id, delta := range reportDeltas {
+		postModels = append(postModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{
+			"$inc": bson.M{"report_count": delta},
+			"$set": bson.M{"last_use": now},
+		}))
+	}
+
 	for id, sum := range telemetryDwellSum {
 		postModels = append(postModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{
 			"$inc": bson.M{
@@ -276,13 +303,6 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 				"telemetry_dwell_sq":  telemetryDwellSq[id],
 				"telemetry_clicks":    telemetryClicks[id],
 			},
-			"$set": bson.M{"last_use": now},
-		}))
-	}
-
-	for id, delta := range commentLikeDeltas {
-		commentModels = append(commentModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{
-			"$inc": bson.M{"like_count": delta, "score": delta},
 			"$set": bson.M{"last_use": now},
 		}))
 	}

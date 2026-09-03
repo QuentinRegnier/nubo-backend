@@ -4,14 +4,14 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 // FuncLoadActiveConversations récupère les métadonnées pour le Seeding
-func FuncLoadActiveConversations(ctx context.Context) ([]models.ConvLiteRequest, error) {
+func FuncLoadActiveConversations(ctx context.Context) ([]lite_models.ConvLiteRequest, error) {
 	query := `SELECT id, type, title, last_message_id FROM messaging.func_load_active_conversations()`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query)
 	if err != nil {
@@ -24,7 +24,7 @@ func FuncLoadActiveConversations(ctx context.Context) ([]models.ConvLiteRequest,
 		}
 	}(rows)
 
-	var results []models.ConvLiteRequest
+	var results []lite_models.ConvLiteRequest
 	for rows.Next() {
 		var cid int64
 		var cType int
@@ -32,7 +32,7 @@ func FuncLoadActiveConversations(ctx context.Context) ([]models.ConvLiteRequest,
 		var lastMsgID sql.NullInt64
 
 		if err := rows.Scan(&cid, &cType, &title, &lastMsgID); err == nil {
-			meta := models.ConvLiteRequest{ID: cid, Type: cType}
+			meta := lite_models.ConvLiteRequest{ID: cid, Type: cType}
 			if title.Valid {
 				meta.Title = title.String
 			}

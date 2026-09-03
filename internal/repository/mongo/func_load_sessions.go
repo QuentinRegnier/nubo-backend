@@ -3,13 +3,13 @@ package mongo
 import (
 	"fmt"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 )
 
-func MongoLoadSession(ID int64, FirebaseInstallationID string, MasterToken string, CurrentSecret string) (models.SessionsRequest, error) {
-	var s models.SessionsRequest
+func MongoLoadSession(ID int64, FirebaseInstallationID string, MasterToken string, CurrentSecret string) (auth_models.SessionsPayload, error) {
+	var s auth_models.SessionsPayload
 
 	// Construction du filtre de recherche (uniquement les valeurs valides)
 	filter := make(map[string]any)

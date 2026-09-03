@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -76,7 +76,7 @@ func GetConversationAvatars(ctx context.Context, convID int64, callerID int64, c
 			continue
 		}
 		if strVal, ok := val.(string); ok {
-			var mem models.MemberLiteRequest
+			var mem lite_models.MemberLiteRequest
 			if msgpack.Unmarshal([]byte(strVal), &mem) == nil {
 				if mem.Role == 2 {
 					ownerID = mem.UserID
@@ -150,7 +150,7 @@ func fetchAvatarsForUsers(ctx context.Context, userIDs []int64, convID int64, ca
 	// On boucle sur userIDs pour conserver l'ordre du classement
 	for _, uID := range userIDs {
 		if data, ok := getRes.Found[uID]; ok {
-			var u models.UserLiteRequest
+			var u lite_models.UserLiteRequest
 			if msgpack.Unmarshal(data, &u) == nil && u.ProfilePictureID > 0 {
 				// Signature instantanée via le domaine Média
 				if view, err := media_service.GenerateMediaViewCascade(ctx, u.ProfilePictureID, u.ID, convID, callerID); err == nil {

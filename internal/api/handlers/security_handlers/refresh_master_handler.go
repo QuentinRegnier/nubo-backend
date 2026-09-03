@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/security_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
@@ -90,7 +90,7 @@ func RefreshMaster(c *gin.Context) {
 		return
 	}
 
-	var sessionRaw models.SessionsRequest
+	var sessionRaw auth_models.SessionsPayload
 	var sessionFound bool
 
 	if s, err := cache_service.LoadSessionFromCache(c, input.UserID, "", input.MasterToken); err == nil && s.ID != 0 {

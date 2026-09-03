@@ -50,6 +50,7 @@ func CreatePost(ctx context.Context, userID int64, input post_models.CreatePostI
 		LikeCount:         0,
 		CommentCount:      0,
 		ViewCount:         0,
+		ReportCount:       0, // ✅ NOUVEAU : Initialisation explicite à zéro à la création
 		HasMedia:          len(input.MediaIDs) > 0,
 		VectorVersion:     1,
 		TelemetryDwellSum: 0.0,

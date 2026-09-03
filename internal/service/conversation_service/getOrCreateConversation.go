@@ -3,8 +3,8 @@ package conversation_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -54,7 +54,7 @@ func hydrateConversationCascade(ctx context.Context, conv conversation_models.Co
 
 	// Guérison de l'Object Cache L1 et des Metas
 	_ = object_cache_service.SetConversationInObjectCache(ctx, conv)
-	convLite := models.ConvLiteRequest{
+	convLite := lite_models.ConvLiteRequest{
 		ID:            conv.ID,
 		Type:          conv.Type,
 		Title:         conv.Title,
@@ -86,7 +86,7 @@ func hydrateMember(ctx context.Context, convID, userID int64, fromL3 bool) {
 
 	if err == nil && mem.ID != 0 {
 		_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
-		_ = cache_service.AddMemberToSpeedCache(ctx, models.MemberLiteRequest{
+		_ = cache_service.AddMemberToSpeedCache(ctx, lite_models.MemberLiteRequest{
 			ConversationID: mem.ConversationID,
 			UserID:         mem.UserID,
 			Role:           mem.Role,

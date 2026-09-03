@@ -7,14 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
 // GetAddableUsersFromSpeedCache résout le sous-cache ZSET (Ami > Abonné + Lexicographique) en O(log N)
-func GetAddableUsersFromSpeedCache(ctx context.Context, callerID int64, limit int64, offset int64, force bool) ([]models.UserLiteRequest, error) {
+func GetAddableUsersFromSpeedCache(ctx context.Context, callerID int64, limit int64, offset int64, force bool) ([]lite_models.UserLiteRequest, error) {
 	// Utilisation propre de la collection déclarée dans le repository (manager.go)
 	zsetKey := redis.SpeedAddable.Key(callerID)
 
@@ -53,7 +53,7 @@ func GetAddableUsersFromSpeedCache(ctx context.Context, callerID int64, limit in
 					continue
 				}
 
-				var u models.UserLiteRequest
+				var u lite_models.UserLiteRequest
 				if err := msgpack.Unmarshal(data, &u); err == nil {
 					// ASTUCE DE TRI :
 					// State 2 (Ami) devient 0. State 1 (Abonné) devient 1.
@@ -96,7 +96,7 @@ func GetAddableUsersFromSpeedCache(ctx context.Context, callerID int64, limit in
 	}
 
 	if len(finalIDs) == 0 {
-		return []models.UserLiteRequest{}, nil
+		return []lite_models.UserLiteRequest{}, nil
 	}
 
 	// 4. HYDRATATION FINALE (MGET O(1) sur le Speed Cache)
@@ -105,10 +105,10 @@ func GetAddableUsersFromSpeedCache(ctx context.Context, callerID int64, limit in
 		return nil, err
 	}
 
-	var result []models.UserLiteRequest
+	var result []lite_models.UserLiteRequest
 	for _, id := range finalIDs {
 		if data, ok := getRes.Found[id]; ok {
-			var u models.UserLiteRequest
+			var u lite_models.UserLiteRequest
 			if err := msgpack.Unmarshal(data, &u); err == nil {
 				result = append(result, u)
 			}

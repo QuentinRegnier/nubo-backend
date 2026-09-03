@@ -2,16 +2,14 @@ package cache_service
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -29,9 +27,7 @@ func UpdatePostRecommendationScore(ctx context.Context, p post_models.PostPayloa
 		mediaCount = 1
 	}
 
-	// ✅ AJOUT : Transmission du PriorityLevel dans la chaîne de calcul
-	// TODO rendre dynamique isFlagged
-	UpdateScoreWithMetrics(ctx, p.ID, p.LikeCount, p.CommentCount, p.ViewCount, mediaCount, p.CreatedAt, p.Hashtags, p.Visibility, 0, p.PriorityLevel)
+	UpdateScoreWithMetrics(ctx, p.ID, p.LikeCount, p.CommentCount, p.ViewCount, mediaCount, p.CreatedAt, p.Hashtags, p.Visibility, p.ReportCount, p.PriorityLevel)
 }
 
 // EvaluatePostAfterLike force l'insertion du post_service avec sa valeur absolue dans les classements stricts.
@@ -91,26 +87,10 @@ func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([
 	if offset >= variables.MaxTagElements {
 		posts, err := getPostsFromMongoPaginated("hashtags", slug, offset, limit)
 		if err != nil {
-			// L3 (PostgreSQL)
-			//TODO DDD !
-			query := `SELECT id FROM content.posts WHERE $1 = ANY(hashtags) AND visibility != 2 ORDER BY created_at DESC OFFSET $2 LIMIT $3`
-			rows, err := postgres.PostgresDB.QueryContext(ctx, query, slug, offset, limit)
-			if err != nil {
-				return []post_models.PostPayload{}, nubo_error.NewInternal(err)
-			}
-			defer func(rows *sql.Rows) {
-				err := rows.Close()
-				if err != nil {
-					logger.Log.Error().Err(err).Msg("Erreur fermeture rows L3 Postgres tag")
-				}
-			}(rows)
-
-			var ids []int64
-			for rows.Next() {
-				var id int64
-				if err := rows.Scan(&id); err == nil {
-					ids = append(ids, id)
-				}
+			// L3 (PostgreSQL) - Pur DDD
+			ids, errPg := postgres.FuncLoadPostIDsByTagPaginated(ctx, slug, offset, limit)
+			if errPg != nil {
+				return []post_models.PostPayload{}, nubo_error.NewInternal(errPg)
 			}
 			return object_cache_service.GetPostsView(ids)
 		}
@@ -154,7 +134,7 @@ func UpdateTrendZSETs(ctx context.Context, postID int64, score float64, hashtags
 }
 
 // UpdateScoreWithMetrics orchestre le calcul et la distribution des scores.
-func UpdateScoreWithMetrics(ctx context.Context, postID int64, likes, comments, views, mediaCount int, createdAt time.Time, hashtags []string, visibility int, isFlagged int, priorityLevel int) {
+func UpdateScoreWithMetrics(ctx context.Context, postID int64, likes, comments, views, mediaCount int, createdAt time.Time, hashtags []string, visibility int, reportCount int, priorityLevel int) {
 	ageSeconds := time.Since(createdAt).Seconds()
 
 	baseOpts := service.ScoreOptions{
@@ -162,9 +142,9 @@ func UpdateScoreWithMetrics(ctx context.Context, postID int64, likes, comments, 
 		CommentsCount: comments,
 		ViewCount:     views,
 		MediaCount:    mediaCount,
+		ReportCount:   reportCount, // ✅ INJECTION DYNAMIQUE
 		AgeSeconds:    ageSeconds,
 		IsDeleted:     visibility == 0,
-		IsReported:    isFlagged == 0,
 	}
 	scoreGlobal := service.CalculateRecommendationScore(postID, baseOpts)
 

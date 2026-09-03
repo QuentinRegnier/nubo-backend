@@ -1,14 +1,11 @@
 package cuckoo
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
-	"fmt"
-	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	cuckoo "github.com/seiflotfy/cuckoofilter"
 )
@@ -36,36 +33,27 @@ func InitCuckooFilter() {
 	// 1. Création du filtre (Capacité 1M, peut être ajusté)
 	GlobalCuckoo = cuckoo.NewFilter(1000000)
 
-	// 2. Warm-up : Chargement des données existantes depuis Postgres
-	// On récupère TOUS les champs uniques (username, email, phone) pour éviter les faux négatifs au démarrage
+	// 2. Warm-up : Chargement des données existantes depuis Postgres (Pur DDD)
 	logger.Log.Info().Msg("Chargement des données Postgres dans le Cuckoo Filter...")
-	//TODO DDD
-	rows, err := postgres.PostgresDB.Query("SELECT username, email, phone FROM auth.users")
+
+	ctx := context.Background()
+	identifiers, err := postgres.FuncLoadAllUserIdentifiers(ctx)
 	if err != nil {
-		logger.Log.Fatal().Err(err).Msg("Erreur critique init Cuckoo (SQL)")
+		logger.Log.Fatal().Err(err).Msg("Erreur critique init Cuckoo (SQL via Repository)")
 	}
-	defer func(rows *sql.Rows) {
-		err := rows.Close()
-		if err != nil {
-			logger.Log.Info().Msg("Erreur fermeture rows Cuckoo : " + err.Error())
-		}
-	}(rows)
 
 	count := 0
-	for rows.Next() {
-		var u, e, p string
-		if err := rows.Scan(&u, &e, &p); err == nil {
-			if u != "" {
-				GlobalCuckoo.Insert([]byte("username:" + u))
-			}
-			if e != "" {
-				GlobalCuckoo.Insert([]byte("email:" + e))
-			}
-			if p != "" {
-				GlobalCuckoo.Insert([]byte("phone:" + p))
-			}
-			count++
+	for _, idents := range identifiers {
+		if idents.Username != nil && *idents.Username != "" {
+			GlobalCuckoo.Insert([]byte("username:" + *idents.Username))
 		}
+		if idents.Email != nil && *idents.Email != "" {
+			GlobalCuckoo.Insert([]byte("email:" + *idents.Email))
+		}
+		if idents.Phone != nil && *idents.Phone != "" {
+			GlobalCuckoo.Insert([]byte("phone:" + *idents.Phone))
+		}
+		count++
 	}
 	logger.Log.Info().Int("count", count).Msg("Cuckoo Filter chargé avec des utilisateurs (x3 clés).")
 
@@ -75,9 +63,8 @@ func InitCuckooFilter() {
 
 // startCuckooSync écoute le flux Redis pour mettre à jour le filtre local
 func startCuckooSync() {
-	// Utilisation de TA fonction SubscribeFlux
-	// On s'abonne au canal "cuckoo-sync"
-	msgChan, cancel := redisgo.SubscribeFlux(redis.Rdb, CuckooChannel)
+	// Utilisation pure DDD : la Collection encapsule tout (canal, nom, client)
+	msgChan, cancel := redisgo.CuckooSync.SubscribeFlux(context.Background())
 	defer cancel()
 
 	logger.Log.Info().Msg("Cuckoo Sync : écoute du flux Redis activée.")
@@ -89,7 +76,6 @@ func startCuckooSync() {
 			continue
 		}
 
-		// Mise à jour du filtre local en RAM
 		if msg.Action == ActionAdd {
 			GlobalCuckoo.Insert([]byte(msg.Key))
 		} else if msg.Action == ActionDel {
@@ -102,16 +88,13 @@ func startCuckooSync() {
 func BroadcastCuckooUpdate(action, field, value string) {
 	msg := CuckooMessage{
 		Action: action,
-		Key:    fmt.Sprintf("%s:%s", field, value),
+		Key:    field + ":" + value, // Concaténation pure et simple
 	}
 
 	data, _ := json.Marshal(msg)
 
-	// Utilisation de TA fonction PushFluxWithTTL
-	// On met un TTL court car c'est de l'événementiel pur
-	msgID := fmt.Sprintf("%d", time.Now().UnixNano())
-	err := redisgo.PushFluxWithTTL(redis.Rdb, CuckooChannel, msgID, data, 5*time.Second)
-	if err != nil {
+	// Utilisation pure DDD : Zéro exposition de l'infrastructure sous-jacente
+	if err := redisgo.CuckooSync.PushFlux(context.Background(), data); err != nil {
 		logger.Log.Error().Err(err).Msg("Erreur Broadcast Cuckoo")
 	}
 }

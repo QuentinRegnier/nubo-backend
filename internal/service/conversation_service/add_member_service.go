@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
@@ -101,7 +101,7 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 			}
 
 			_ = object_cache_service.SetMemberInObjectCache(ctx, memberPayload)
-			_ = cache_service.AddMemberToSpeedCache(ctx, models.MemberLiteRequest{
+			_ = cache_service.AddMemberToSpeedCache(ctx, lite_models.MemberLiteRequest{
 				ConversationID: conv.ID,
 				UserID:         targetID,
 				Role:           0,

@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -107,7 +107,7 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 			_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
 
 			// === NOUVEAU : MISE À JOUR SYNCHRONE DU SPEED CACHE ===
-			_ = cache_service.AddMemberToSpeedCache(ctx, models.MemberLiteRequest{
+			_ = cache_service.AddMemberToSpeedCache(ctx, lite_models.MemberLiteRequest{
 				ConversationID: mem.ConversationID,
 				UserID:         mem.UserID,
 				Role:           mem.Role,
@@ -135,7 +135,7 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 		_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
 
 		// === NOUVEAU : MISE À JOUR SYNCHRONE DU SPEED CACHE ===
-		_ = cache_service.AddMemberToSpeedCache(ctx, models.MemberLiteRequest{
+		_ = cache_service.AddMemberToSpeedCache(ctx, lite_models.MemberLiteRequest{
 			ConversationID: mem.ConversationID,
 			UserID:         mem.UserID,
 			Role:           mem.Role,

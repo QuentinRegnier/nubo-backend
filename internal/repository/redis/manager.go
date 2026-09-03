@@ -2,8 +2,8 @@ package redis
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -75,6 +75,7 @@ var (
 
 	// --- CUCKOO FILTER ---
 	CuckooSeen *Collection
+	CuckooSync *Collection // NOUVEAU
 
 	// --- MESSAGING & LSH ---
 	ConvParticipants *Collection
@@ -163,6 +164,7 @@ func InitCacheDatabase() {
 
 	// --- CUCKOO FILTER ---
 	CuckooSeen = NewCollection("cuckoo:seen", variables.StandardTTL)
+	CuckooSync = NewCollection("cuckoo:sync", 5*time.Second) // NOUVEAU : TTL court encapsulé !
 
 	// --- MESSAGING & LSH ---
 	ConvParticipants = NewCollection("conv:participants", 0)
@@ -419,59 +421,64 @@ func (c *Collection) CFAdd(ctx context.Context, id any, item any) error {
 }
 
 // ============================================================================
-// 11. PUB/SUB FLUX (Pattern Claim Check)
+// 11. PUB/SUB FLUX (Pattern Claim Check - DDD)
 // ============================================================================
 
-const DefaultFluxTTL = 5 * time.Second
+// PushFlux publie un message lourd (stockage RAM puis notification)
+func (c *Collection) PushFlux(ctx context.Context, message []byte) error {
+	// 1. La génération de l'ID est encapsulée ici (zéro fuite d'infrastructure)
+	messageID := strconv.FormatInt(time.Now().UnixNano(), 10)
 
-func PushFluxWithTTL(rdb *redis.Client, nodeName string, messageID string, message []byte, ttl time.Duration) error {
-	ctx := context.Background()
-	key := "fluxmsg:" + messageID
-	if err := rdb.Set(ctx, key, message, ttl).Err(); err != nil {
+	// 2. Stockage du payload avec le TTL par défaut de la collection
+	payloadKey := c.Key("msg:" + messageID)
+	if err := c.Client.Set(ctx, payloadKey, message, c.DefaultTTL).Err(); err != nil {
 		return err
 	}
-	channel := "flux:" + nodeName
-	if err := rdb.Publish(ctx, channel, messageID).Err(); err != nil {
-		return err
-	}
-	return nil
+
+	// 3. Publication de l'ID sur le canal de cette collection
+	channelKey := c.Key("channel")
+	return c.Client.Publish(ctx, channelKey, messageID).Err()
 }
 
-func SubscribeFlux(rdb *redis.Client, nodeName string) (<-chan []byte, context.CancelFunc) {
-	channel := "flux:" + nodeName
-	ctx, cancel := context.WithCancel(context.Background())
-	pubsub := rdb.Subscribe(ctx, channel)
+// SubscribeFlux s'abonne au canal et récupère automatiquement les payloads (Claim Check)
+func (c *Collection) SubscribeFlux(ctx context.Context) (<-chan []byte, context.CancelFunc) {
+	channelKey := c.Key("channel")
+
+	// Sous-contexte pour pouvoir annuler l'écoute proprement
+	subCtx, cancel := context.WithCancel(ctx)
+	pubsub := c.Client.Subscribe(subCtx, channelKey)
 	ch := make(chan []byte, 100)
 
 	go func() {
-		defer func(pubsub *redis.PubSub) {
-			err := pubsub.Close()
-			if err != nil {
+		defer func() {
+			if err := pubsub.Close(); err != nil {
 				logger.Log.Error().Err(err).Msg("Erreur fermeture pubsub")
 			}
-		}(pubsub)
+		}()
 		defer close(ch)
 
 		for msg := range pubsub.Channel() {
 			messageID := msg.Payload
-			readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
-			data, err := rdb.Get(readCtx, "fluxmsg:"+messageID).Bytes()
+			payloadKey := c.Key("msg:" + messageID)
+
+			// Récupération du payload lourd stocké juste avant la publication
+			readCtx, readCancel := context.WithTimeout(subCtx, 2*time.Second)
+			data, err := c.Client.Get(readCtx, payloadKey).Bytes()
 			readCancel()
 
-			if errors.Is(redis.Nil, err) {
-				continue
-			} else if err != nil {
-				logger.Log.Error().Err(err).Str("node_name", nodeName).Str("message_id", messageID).Msg("Erreur de lecture sur le flux Pub/Sub")
+			if err != nil {
+				// Si absent (TTL expiré ou erreur), on l'ignore silencieusement
 				continue
 			}
 
 			select {
 			case ch <- data:
-			case <-ctx.Done():
+			case <-subCtx.Done():
 				return
 			}
 		}
 	}()
+
 	return ch, cancel
 }
 

@@ -3,7 +3,7 @@ package auth_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -30,6 +30,6 @@ func Logout(ctx context.Context, callerID int64, firebaseInstallationID string) 
 	_ = cache_service.DeleteSessionFromCache(ctx, session.ID, callerID, firebaseInstallationID)
 
 	// 3. Persistance asynchrone (Envoi de la demande de Delete aux workers)
-	payload := models.SessionsRequest{ID: session.ID, UserID: callerID}
+	payload := auth_models.SessionsPayload{ID: session.ID, UserID: callerID}
 	return redis.EnqueueDB(ctx, session.ID, callerID, redis.EntitySession, redis.ActionDelete, payload, redis.TargetAll)
 }

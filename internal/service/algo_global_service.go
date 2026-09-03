@@ -27,8 +27,8 @@ type ScoreOptions struct {
 	AgeSeconds float64 // Δt = t - t_p (secondes)
 
 	// ── Facteur de modération Φ_mod (TDD §3.2) ───────────────────────────
-	IsDeleted  bool
-	IsReported bool
+	IsDeleted   bool
+	ReportCount int
 }
 
 // CalculateRecommendationScore calcule S(p, t) — le score de tendance global.
@@ -40,15 +40,19 @@ type ScoreOptions struct {
 // Complexité: O(1) — opérations scalaires uniquement.
 func CalculateRecommendationScore(_ int64, opts ScoreOptions) float64 {
 
-	// 1. Facteur de modération Φ_mod(p)
+	// 1. Facteur de modération phi_mod(p)
 	if opts.IsDeleted {
 		return 0.0
 	}
-	var phiMod float64
-	if opts.IsReported {
-		phiMod = variables.TDDPhiReported
-	} else {
-		phiMod = 1.0
+
+	phiMod := 1.0
+	// ✅ PROTECTION ANTI-BRIGADING : Seuil absolu (ex: min 10 signalements) + Ratio d'engagement
+	if opts.ReportCount >= 10 {
+		// Le ratio de signalement doit dépasser 1% des vues (avec un minimum mathématique de 100 vues pour lisser)
+		reportRatio := float64(opts.ReportCount) / math.Max(100.0, float64(opts.ViewCount))
+		if reportRatio > 0.01 {
+			phiMod = variables.TDDPhiReported // ex: 0.5 (Pénalité algorithmique validée)
+		}
 	}
 
 	// 2. Somme pondérée des signaux d'engagement (Σ w_s · n_s(p))

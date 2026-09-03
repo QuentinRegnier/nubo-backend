@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
@@ -19,8 +19,8 @@ import (
 
 // InboxItemView est la structure consolidée renvoyée à l'API
 type InboxItemView struct {
-	Conversation models.ConvLiteRequest   `json:"conversation"`
-	Member       models.MemberLiteRequest `json:"member"`
+	Conversation lite_models.ConvLiteRequest   `json:"conversation"`
+	Member       lite_models.MemberLiteRequest `json:"member"`
 }
 
 // GetInboxView assemble l'Inbox hybride (SPEED Cache L1 -> Postgres L3)
@@ -60,13 +60,13 @@ func GetInboxView(ctx context.Context, userID int64, limit int64, offset int64) 
 	}
 	memberValues, _ := redis.ConvMembers.MGet(ctx, memberIDs...)
 
-	foundMetas := make(map[int64]models.ConvLiteRequest)
-	foundMembers := make(map[int64]models.MemberLiteRequest)
+	foundMetas := make(map[int64]lite_models.ConvLiteRequest)
+	foundMembers := make(map[int64]lite_models.MemberLiteRequest)
 	var missingMemberIDs []int64
 
 	// Désérialisation Metas
 	for cid, data := range metaRes.Found {
-		var meta models.ConvLiteRequest
+		var meta lite_models.ConvLiteRequest
 		if err := msgpack.Unmarshal(data, &meta); err == nil {
 			foundMetas[cid] = meta
 		} else {
@@ -79,7 +79,7 @@ func GetInboxView(ctx context.Context, userID int64, limit int64, offset int64) 
 		cid := convIDs[i]
 		if val != nil {
 			if strVal, ok := val.(string); ok {
-				var mem models.MemberLiteRequest
+				var mem lite_models.MemberLiteRequest
 				if err := msgpack.Unmarshal([]byte(strVal), &mem); err == nil {
 					foundMembers[cid] = mem
 					continue
@@ -110,16 +110,34 @@ func GetInboxView(ctx context.Context, userID int64, limit int64, offset int64) 
 		fallbackResults, err := postgres.FuncLoadConversationFallback(ctx, userID, missingArray)
 		if err == nil {
 			for _, res := range fallbackResults {
-				foundMetas[res.Conversation.ID] = res.Conversation
-				foundMembers[res.Conversation.ID] = res.Member
+
+				// 🛠️ CORRECTION : Utilisation de la structure imbriquée
+				convLite := lite_models.ConvLiteRequest{
+					ID:            res.Conversation.ID,
+					Type:          res.Conversation.Type,
+					Title:         res.Conversation.Title,
+					LastMessageID: res.Conversation.LastMessageID,
+				}
+
+				memLite := lite_models.MemberLiteRequest{
+					ConversationID: res.Member.ConversationID,
+					UserID:         userID, // On connaît le UserID puisqu'on l'a passé à la fonction
+					Role:           res.Member.Role,
+					UnreadCount:    res.Member.UnreadCount,
+					JoinedAt:       res.Member.JoinedAt,
+				}
+
+				// ✅ ASSIGNATION SÉCURISÉE
+				foundMetas[res.Conversation.ID] = convLite
+				foundMembers[res.Conversation.ID] = memLite
 
 				// ⬆️ PROMOTION L3 -> L1 (Auto-Guérison du Cache)
-				go func(mMeta models.ConvLiteRequest, mMem models.MemberLiteRequest) {
+				go func(mMeta lite_models.ConvLiteRequest, mMem lite_models.MemberLiteRequest) {
 					bgCtx := context.Background()
 					_ = redis.ConvMeta.SetObject(bgCtx, mMeta.ID, mMeta)
 					memberID := fmt.Sprintf("%d:%d", mMem.ConversationID, mMem.UserID)
 					_ = redis.ConvMembers.SetObject(bgCtx, memberID, mMem)
-				}(res.Conversation, res.Member)
+				}(convLite, memLite)
 			}
 		} else {
 			logger.Log.Error().Err(err).Msg("Erreur Fallback Postgres Inbox")
@@ -153,12 +171,12 @@ func ProcessNewMessageInSpeedCache(ctx context.Context, msgID int64, convID int6
 	var updatedUsers []int64
 
 	// 1. AUTO-GUÉRISON DE LA CONVERSATION (ConvMeta)
-	var convLite models.ConvLiteRequest
+	var convLite lite_models.ConvLiteRequest
 	errMeta := redis.ConvMeta.GetObject(ctx, convID, &convLite)
 	if errMeta != nil || convLite.ID == 0 {
 		// CACHE MISS : La conversation a été évincée par Redis (volatile-lfu). On réhydrate via Mongo (L2).
 		if mongoConv, errMongo := mongo.MongoGetConversation(convID); errMongo == nil && mongoConv.ID != 0 {
-			convLite = models.ConvLiteRequest{
+			convLite = lite_models.ConvLiteRequest{
 				ID:            mongoConv.ID,
 				Type:          mongoConv.Type,
 				Title:         mongoConv.Title,
@@ -199,14 +217,14 @@ func ProcessNewMessageInSpeedCache(ctx context.Context, msgID int64, convID int6
 
 		// 2. Incrémenter unread_count pour les destinataires uniquement (Sauf l'expéditeur)
 		if participantID != senderID {
-			var memberLite models.MemberLiteRequest
+			var memberLite lite_models.MemberLiteRequest
 			memberID := fmt.Sprintf("%d:%d", convID, participantID)
 			errMem := redis.ConvMembers.GetObject(ctx, memberID, &memberLite)
 
 			if errMem != nil || memberLite.ConversationID == 0 {
 				// CACHE MISS MEMBER : On réhydrate l'objet Member complet depuis L2/L3
 				if pgMem, errPg := postgres.FuncGetMember(ctx, convID, participantID); errPg == nil && pgMem.ID != 0 {
-					memberLite = models.MemberLiteRequest{
+					memberLite = lite_models.MemberLiteRequest{
 						ConversationID: pgMem.ConversationID,
 						UserID:         pgMem.UserID,
 						Role:           pgMem.Role,
@@ -230,7 +248,7 @@ func ProcessNewMessageInSpeedCache(ctx context.Context, msgID int64, convID int6
 }
 
 // AddMemberToSpeedCache indexe un nouveau membre dans le cache de messagerie
-func AddMemberToSpeedCache(ctx context.Context, member models.MemberLiteRequest) error {
+func AddMemberToSpeedCache(ctx context.Context, member lite_models.MemberLiteRequest) error {
 	_ = redis.ConvParticipants.SAdd(ctx, member.ConversationID, member.UserID)
 	memberID := fmt.Sprintf("%d:%d", member.ConversationID, member.UserID)
 	return redis.ConvMembers.SetObject(ctx, memberID, member)
@@ -249,7 +267,7 @@ func RemoveMemberFromSpeedCache(ctx context.Context, convID int64, userID int64)
 
 // ResetMemberUnreadCountInSpeedCache remet le compteur de messages non lus à 0 pour un membre (Mode DDD)
 func ResetMemberUnreadCountInSpeedCache(ctx context.Context, convID int64, userID int64) error {
-	var memberLite models.MemberLiteRequest
+	var memberLite lite_models.MemberLiteRequest
 	memberID := fmt.Sprintf("%d:%d", convID, userID)
 
 	// Si le membre est en Speed Cache, on le met à jour
@@ -279,14 +297,14 @@ func RehydrateConversationItemInSpeedCache(ctx context.Context, fullConv convers
 	}
 
 	// Parsing en dur (Full -> Lite)
-	convLite := models.ConvLiteRequest{
+	convLite := lite_models.ConvLiteRequest{
 		ID:            fullConv.ID,
 		Type:          fullConv.Type,
 		Title:         fullConv.Title,
 		LastMessageID: fullConv.LastMessageID,
 	}
 
-	memLite := models.MemberLiteRequest{
+	memLite := lite_models.MemberLiteRequest{
 		ConversationID: fullMem.ConversationID,
 		UserID:         fullMem.UserID,
 		Role:           fullMem.Role,
@@ -326,7 +344,14 @@ func SeedMessagingSpeedCache(ctx context.Context) error {
 	}
 
 	for _, conv := range conversations {
-		_ = redis.ConvMeta.SetObject(ctx, conv.ID, conv)
+		// 🛠️ CORRECTION : Mapping vers ConvLiteRequest pour le SetObject
+		convLite := lite_models.ConvLiteRequest{
+			ID:            conv.ID,
+			Type:          conv.Type,
+			Title:         conv.Title,
+			LastMessageID: conv.LastMessageID,
+		}
+		_ = redis.ConvMeta.SetObject(ctx, convLite.ID, convLite)
 	}
 
 	// 2. Récupération des Membres et Hydratation du ZSET Inbox
@@ -336,9 +361,19 @@ func SeedMessagingSpeedCache(ctx context.Context) error {
 	}
 
 	for _, activeMem := range activeMembers {
-		// A. Remplissage ConvMembers (Object Cache)
+		// 🛠️ CORRECTION : activeMem est une structure plate. On crée le MemberLiteRequest.
 		memberID := fmt.Sprintf("%d:%d", activeMem.Member.ConversationID, activeMem.Member.UserID)
-		_ = redis.ConvMembers.SetObject(ctx, memberID, activeMem.Member)
+
+		memLite := lite_models.MemberLiteRequest{
+			ConversationID: activeMem.Member.ConversationID,
+			UserID:         activeMem.Member.UserID,
+			Role:           activeMem.Member.Role,
+			UnreadCount:    activeMem.Member.UnreadCount,
+			JoinedAt:       activeMem.Member.JoinedAt,
+		}
+
+		// A. Remplissage ConvMembers (Object Cache)
+		_ = redis.ConvMembers.SetObject(ctx, memberID, memLite)
 
 		// B. Remplissage ConvParticipants (Set de distribution)
 		_ = redis.ConvParticipants.SAdd(ctx, activeMem.Member.ConversationID, activeMem.Member.UserID)
@@ -385,7 +420,7 @@ func GetDirectConversationCache(ctx context.Context, u1, u2 int64) (int64, error
 			continue
 		}
 
-		var meta models.ConvLiteRequest
+		var meta lite_models.ConvLiteRequest
 		if err := msgpack.Unmarshal(data, &meta); err == nil && meta.Type == 0 {
 			// C'est un Message Privé, on vérifie si l'autre utilisateur est dedans
 			participants, errPart := redis.ConvParticipants.SMembers(ctx, cid)
@@ -404,7 +439,7 @@ func GetDirectConversationCache(ctx context.Context, u1, u2 int64) (int64, error
 
 // UpdateMemberStateInSpeedCache écrase l'état complet du membre en RAM (O(1))
 // et gère dynamiquement sa présence dans les listes de Fan-Out.
-func UpdateMemberSpeedCache(ctx context.Context, member models.MemberLiteRequest) error {
+func UpdateMemberSpeedCache(ctx context.Context, member lite_models.MemberLiteRequest) error {
 	memberID := fmt.Sprintf("%d:%d", member.ConversationID, member.UserID)
 
 	// 1. Écrasement total avec le payload frais (Zéro cherry-picking)

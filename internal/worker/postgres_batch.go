@@ -442,6 +442,7 @@ func updateCountersPostgres(ctx context.Context, events []redis.AsyncEvent) {
 	commentDeltas := make(map[int64]int)
 	viewDeltas := make(map[int64]int)
 	commentLikeDeltas := make(map[int64]int)
+	reportDeltas := make(map[int64]int) // ✅ NOUVELLE MAP
 	telemetryDwellSum := make(map[int64]float64)
 	telemetryDwellSq := make(map[int64]float64)
 	telemetryClicks := make(map[int64]int)
@@ -485,6 +486,16 @@ func updateCountersPostgres(ctx context.Context, events []redis.AsyncEvent) {
 					delta = p.Count // Prise en compte des vues groupées
 				}
 				viewDeltas[p.TargetID] += delta
+			}
+		} else if e.Type == redis.EntityReport {
+			var r struct {
+				TargetType int     `json:"target_type"`
+				TargetIDs  []int64 `json:"target_ids"`
+			}
+			if err := json.Unmarshal(jsonBytes, &r); err == nil && r.TargetType == 1 { // 1 = type Post
+				for _, id := range r.TargetIDs {
+					reportDeltas[id] += delta
+				}
 			}
 		} else if e.Type == redis.EntityTelemetry {
 			// Note: on recrée localement la structure pour éviter les imports circulaires
@@ -530,6 +541,9 @@ func updateCountersPostgres(ctx context.Context, events []redis.AsyncEvent) {
 	}
 	for id, delta := range commentLikeDeltas {
 		_, _ = postgres.PostgresDB.ExecContext(ctx, "SELECT content.func_increment_comment_metrics($1, $2)", id, delta)
+	}
+	for id, delta := range reportDeltas {
+		_, _ = postgres.PostgresDB.ExecContext(ctx, "SELECT content.func_increment_post_report($1, $2)", id, delta)
 	}
 	for id, sum := range telemetryDwellSum {
 		_, _ = postgres.PostgresDB.ExecContext(ctx, "SELECT content.func_increment_post_telemetry($1, $2, $3, $4)", id, sum, telemetryDwellSq[id], telemetryClicks[id])

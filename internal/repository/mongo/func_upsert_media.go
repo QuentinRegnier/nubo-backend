@@ -4,14 +4,14 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // MongoUpsertMedia met à jour ou insère un média dans le Cold Storage L2 lors d'une réhydratation depuis L3.
-func MongoUpsertMedia(media models.MediaRequest) error {
+func MongoUpsertMedia(media media_models.MediaPayload) error {
 	if Media == nil {
 		return nil
 	}

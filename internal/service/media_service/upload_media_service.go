@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
@@ -83,7 +83,7 @@ func UploadMedia(file io.ReadSeeker, ownerID int64, mediaID int64, isVisible boo
 
 	// --- 3. CRÉATION DE L'OBJET ORPHELIN ---
 	now := time.Now().UTC()
-	media := models.MediaRequest{
+	media := media_models.MediaPayload{
 		ID:          mediaID,
 		OwnerID:     ownerID,
 		StoragePath: storagePath,

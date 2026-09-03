@@ -16,12 +16,13 @@ var PostsSchema = map[string]reflect.Kind{
 	"like_count":          reflect.Int,
 	"comment_count":       reflect.Int,
 	"view_count":          reflect.Int,
+	"report_count":        reflect.Int, // ✅ NOUVEAU
 	"has_media":           reflect.Bool,
 	"vector":              reflect.Slice,   // REAL[] -> []float32
 	"vector_version":      reflect.Int,     // Integer
-	"telemetry_dwell_sum": reflect.Float64, // NOUVEAU : Somme des temps de lecture
-	"telemetry_dwell_sq":  reflect.Float64, // NOUVEAU : Somme des carrés (pour la variance)
-	"telemetry_clicks":    reflect.Int,     // NOUVEAU : Compteur d'interactions directes
+	"telemetry_dwell_sum": reflect.Float64, // Somme des temps de lecture
+	"telemetry_dwell_sq":  reflect.Float64, // Somme des carrés (pour la variance)
+	"telemetry_clicks":    reflect.Int,     // Compteur d'interactions directes
 	"created_at":          reflect.Struct,
 	"updated_at":          reflect.Struct,
 }

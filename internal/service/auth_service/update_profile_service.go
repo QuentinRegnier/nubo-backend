@@ -35,7 +35,7 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 
 	// 2. Vérification d'unicité uniquement si la valeur a changé
 	if input.Username != user.Username {
-		if service.IsUnique(mongo.Users, "username", input.Username) == 0 {
+		if service.IsUnique(ctx, redis.EntityUser, "username", input.Username) == 0 {
 			return nubo_error.NewConflict("USERNAME_TAKEN", "Ce nom d'utilisateur est déjà pris.", nil)
 		}
 		oldUsername = user.Username
@@ -44,7 +44,7 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 	}
 
 	if input.Email != user.Email {
-		if service.IsUnique(mongo.Users, "email", input.Email) == 0 {
+		if service.IsUnique(ctx, redis.EntityUser, "email", input.Email) == 0 {
 			return nubo_error.NewConflict("EMAIL_TAKEN", "Cet email est déjà utilisé.", nil)
 		}
 		oldEmail = user.Email
@@ -55,7 +55,7 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 
 	// === NOUVEAU BLOC : GESTION DU TÉLÉPHONE ===
 	if input.Phone != user.Phone {
-		if input.Phone != "" && service.IsUnique(mongo.Users, "phone", input.Phone) == 0 {
+		if input.Phone != "" && service.IsUnique(ctx, redis.EntityUser, "phone", input.Phone) == 0 {
 			return nubo_error.NewConflict("PHONE_TAKEN", "Ce numéro de téléphone est déjà utilisé.", nil)
 		}
 		oldPhone = user.Phone

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -48,7 +48,7 @@ func UpdateConversation(ctx context.Context, callerID int64, convID int64, input
 
 	// 5. MISE À JOUR IMMÉDIATE DU L1 (Uniquement si le titre a changé pour l'UI)
 	if isTitleUpdated {
-		convLite := models.ConvLiteRequest{
+		convLite := lite_models.ConvLiteRequest{
 			ID:            conv.ID,
 			Type:          conv.Type,
 			Title:         conv.Title, // Sans pointeur
