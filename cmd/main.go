@@ -13,7 +13,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/api"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/middleware"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/websocket"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
@@ -97,11 +96,11 @@ func main() {
 	// Initiatiser MinIO
 	minio.InitMinio()
 
-	// Iniitaliser la structure MongoDB
+	// Initiatiser la structure MongoDB
 	mongogo.InitCacheDatabase()
 
 	// Initialiser le Cuckoo Filter
-	cuckoo.InitCuckooFilter()
+	service.WarmUpCuckooFilter(context.Background())
 
 	// --- SMART SEEDING DU MOST CACHE ---
 	count, _ := redisgo.ZCard(context.Background(), variables.RedisKeyStrictRecent)
@@ -133,6 +132,14 @@ func main() {
 
 	// On passe de gin.Default() à gin.New() pour retirer les vieux middlewares
 	r := gin.New()
+
+	// ✅ NOUVEAU : SÉCURITÉ ANTI-USURPATION D'IP
+	// On indique à Gin de ne lire le X-Forwarded-For QUE s'il vient de nos réseaux privés Docker (Nginx).
+	// Tout autre X-Forwarded-For falsifié venant de l'extérieur sera ignoré et Gin utilisera la vraie IP source.
+	errTrust := r.SetTrustedProxies([]string{"127.0.0.1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"})
+	if errTrust != nil {
+		logger.Log.Warn().Err(errTrust).Msg("Impossible de configurer les TrustedProxies")
+	}
 
 	// 1. On branche NOTRE générateur de TraceID en premier
 	r.Use(middleware.TraceIDMiddleware())

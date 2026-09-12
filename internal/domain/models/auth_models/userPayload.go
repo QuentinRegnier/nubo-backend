@@ -6,10 +6,10 @@ type UserPayload struct { // CreateUser
 	ID               int64     `bson:"id" json:"id"` // Attention : défini comme Int dans ton schéma
 	Username         string    `bson:"username" json:"username"`
 	Email            string    `bson:"email" json:"email"`
-	EmailVerified    bool      `bson:"email_verified" json:"email_verified"`
+	EmailVerified    bool      `bson:"email_verified" json:"-"`
 	Phone            string    `bson:"phone" json:"phone"`
-	PhoneVerified    bool      `bson:"phone_verified" json:"phone_verified"`
-	PasswordHash     string    `bson:"password_hash" json:"password_hash"`
+	PhoneVerified    bool      `bson:"phone_verified" json:"-"`
+	PasswordHash     string    `bson:"password_hash" json:"-"`
 	FirstName        string    `bson:"first_name" json:"first_name"`
 	LastName         string    `bson:"last_name" json:"last_name"`
 	Birthdate        time.Time `bson:"birthdate" json:"birthdate"` // time.Time

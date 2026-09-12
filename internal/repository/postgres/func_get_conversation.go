@@ -13,14 +13,16 @@ import (
 
 // FuncGetConversation récupère l'intégralité d'une conversation depuis L3
 func FuncGetConversation(ctx context.Context, convID int64) (conversation_models.ConversationPayload, error) {
-	query := `SELECT id, type, title, last_message_id, state, laws, created_at, updated_at FROM messaging.func_get_conversation($1)`
+	query := `SELECT id, type, title, description, avatar_id, last_message_id, state, laws, created_at, updated_at FROM messaging.func_get_conversation($1)`
 
 	var c conversation_models.ConversationPayload
 	var cTitle sql.NullString
+	var cDescription sql.NullString
+	var cAvatarID sql.NullInt64
 	var cLastMsgID sql.NullInt64
 
 	err := postgres.PostgresDB.QueryRowContext(ctx, query, convID).Scan(
-		&c.ID, &c.Type, &cTitle, &cLastMsgID, &c.State, pq.Array(&c.Laws), &c.CreatedAt, &c.UpdatedAt,
+		&c.ID, &c.Type, &cTitle, &cDescription, &cAvatarID, &cLastMsgID, &c.State, pq.Array(&c.Laws), &c.CreatedAt, &c.UpdatedAt,
 	)
 
 	if err != nil {
@@ -33,6 +35,12 @@ func FuncGetConversation(ctx context.Context, convID int64) (conversation_models
 	// Conversion des NULL SQL en Zéro-values Go
 	if cTitle.Valid {
 		c.Title = cTitle.String
+	}
+	if cDescription.Valid {
+		c.Description = cDescription.String
+	}
+	if cAvatarID.Valid {
+		c.AvatarID = cAvatarID.Int64
 	}
 	if cLastMsgID.Valid {
 		c.LastMessageID = cLastMsgID.Int64

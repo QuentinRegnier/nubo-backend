@@ -11,23 +11,27 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 )
 
-// UpdateStyle fusionne les réglages esthétiques et linguistiques puis délègue la sauvegarde au Write-Behind
-func UpdateStyle(ctx context.Context, userID int64, input user_settings_models.UpdateStyleInput) error {
+// UpdateDisplay fusionne les réglages esthétiques et de contenu puis délègue la sauvegarde au Write-Behind
+func UpdateDisplay(ctx context.Context, userID int64, input user_settings_models.UpdateDisplayInput) error {
 	settings, err := object_cache_service.GetUserSettingsCascade(ctx, userID)
 	if err != nil || settings.ID == 0 {
 		return nubo_error.NewNotFound("SETTINGS_NOT_FOUND", "Paramètres de l'utilisateur introuvables.", err)
 	}
 
-	settings.Language = input.Language
-	settings.Theme = input.Theme
-
+	// Mise à jour de la nouvelle struct "DisplayAndContent"
+	settings.DisplayAndContent.Language = input.Language
+	settings.DisplayAndContent.Theme = input.Theme
+	settings.DisplayAndContent.SafeForCommute = input.SafeForCommute
 	settings.UpdatedAt = time.Now().UTC()
 
+	// Sauvegarde L1
 	if err := object_cache_service.SetUserSettings(ctx, settings); err != nil {
 		return err
 	}
 
+	// Notification Websocket
 	_ = realtime_service.DistributeToUsers(ctx, "user.settings_updated", settings, []int64{userID})
 
+	// Persistance (Write-Behind)
 	return redis.EnqueueDB(ctx, settings.ID, userID, redis.EntityUserSettings, redis.ActionUpdate, settings, redis.TargetAll)
 }

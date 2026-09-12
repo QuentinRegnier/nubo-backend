@@ -13,8 +13,8 @@ type SyncIdentityInput struct {
 
 type SyncIdentityOutput struct {
 	ProfileUpdated  bool                                     `json:"profile_updated"`
-	Profile         UserPayload                              `json:"profile"`
-	Avatar          media_models.MediaView                   `json:"avatar"` // <-- NOUVEAU (Par valeur)
+	Profile         UserProfileView                          `json:"profile"` // ✅ Remplacé par le DTO sécurisé
+	Avatar          media_models.MediaView                   `json:"avatar"`
 	SettingsUpdated bool                                     `json:"settings_updated"`
 	Settings        user_settings_models.UserSettingsPayload `json:"settings"`
 }

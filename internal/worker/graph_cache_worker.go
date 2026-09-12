@@ -21,9 +21,10 @@ func handleGraphUpdate(ctx context.Context, events []redis.AsyncEvent) {
 
 			var post post_models.PostPayload
 			if err := json.Unmarshal(jsonBytes, &post); err == nil {
-				// S'il y a au moins 2 tags, on demande au moteur mathématique de faire émerger les liens
-				if len(post.Hashtags) > 1 {
-					cache_service.UpdateTagCooccurrences(ctx, post.Hashtags, post.CreatedAt.UnixMilli())
+				// ✅ Fusionner pour le calcul sémantique
+				allTags := append(post.Hashtags, post.IndirectHashtags...)
+				if len(allTags) > 1 {
+					cache_service.UpdateTagCooccurrences(ctx, allTags, post.CreatedAt.UnixMilli())
 				}
 			}
 		}

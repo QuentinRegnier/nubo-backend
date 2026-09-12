@@ -17,6 +17,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/relation_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/report_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/saved_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/search_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/security_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/telemetry_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/user_settings_handlers"
@@ -139,7 +140,7 @@ func SetupRoutes(r *gin.Engine) {
 	secured.PUT("settings/profile/update", auth_handlers.UpdateProfileHandler)
 	secured.PATCH("settings/privacy/update", user_settings_handlers.UpdatePrivacyHandler)
 	secured.PATCH("settings/notifications/update", user_settings_handlers.UpdateNotificationsHandler)
-	secured.PATCH("settings/style/update", user_settings_handlers.UpdateStyleHandler)
+	secured.PATCH("settings/display/update", user_settings_handlers.UpdateDisplayHandler)
 
 	// --- Administration / Modération ---
 	secured.POST("/ban", BanHandler)                                            // ℹ️❌
@@ -156,11 +157,20 @@ func SetupRoutes(r *gin.Engine) {
 	secured.GET("/information-message", LoadAdminInformationMessageHandler)     // ℹ️❌
 
 	// --- Messagerie / Groupes ---
-	secured.POST("/conversations/get", conversation_handlers.GetConversationHandler)
+	secured.POST("/conversations/user/get", conversation_handlers.GetUserConversationsHandler)
+	secured.POST("/conversations/get", conversation_handlers.GetUserConversationsHandler)
+	secured.POST("/conversation/members/get", conversation_handlers.GetConversationMembersHandler)
+	secured.POST("/conversation/member/suggest", conversation_handlers.SuggestMemberHandler)
 	secured.POST("/conversation/set", conversation_handlers.CreateConversationHandler)
+	secured.POST("/conversation/community/set", conversation_handlers.CreateCommunityHandler)
+	secured.POST("conversation/community/members/requests/get", conversation_handlers.GetCommunityRequestsHandler)
+	secured.POST("conversation/community/members/requests/accept", conversation_handlers.AcceptCommunityRequestHandler)
+	secured.POST("conversation/community/members/requests/refusal", conversation_handlers.RefuseCommunityRequestHandler)
 	secured.PUT("/conversation/update", conversation_handlers.UpdateConversationHandler)
+	secured.PATCH("/conversation/settings", conversation_handlers.UpdateMemberSettingsHandler)
+	secured.POST("/conversation/pin", conversation_handlers.PinConversationHandler)
+	secured.DELETE("/conversation/pin", conversation_handlers.UnpinConversationHandler)
 	secured.DELETE("/conversation/delete", conversation_handlers.LeaveConversationHandler)
-
 	secured.POST("/messages/get", message_handlers.GetMessagesHandler)
 	secured.POST("/read", conversation_handlers.ReadReceiptHandler)
 
@@ -172,16 +182,13 @@ func SetupRoutes(r *gin.Engine) {
 	secured.POST("/group/join", conversation_handlers.JoinGroupHandler)
 
 	// --- Media ---
-	secured.POST("/upload", media_handlers.UploadMediaHandler)
+	secured.POST("/media/upload", media_handlers.UploadMediaHandler)
+	secured.POST("/media/sign", media_handlers.SignMediaHandler)
 
 	// --- Recherche ---
-	secured.POST("/search/user", SearchUserHandler)           // ℹ️❌
-	secured.POST("/search/post", SearchPostHandler)           // ℹ️❌
-	secured.POST("/search/community", SearchCommunityHandler) // ℹ️❌
-	secured.POST("/search/message", SearchMessageHandler)     // ℹ️❌
-	secured.POST("/search/group", SearchGroupHandler)         // ℹ️❌
-	secured.POST("/search/tag", SearchTagHandler)             // ℹ️❌
-	secured.POST("/search/user-addable")
+	secured.POST("/search/autocomplete/text", search_handlers.AutocompleteTextHandler)
+	secured.POST("/search/autocomplete/tags", search_handlers.AutocompleteTagHandler)
+	secured.POST("/search/post", search_handlers.SearchPostHandler)
 
 	// --- Report ---
 	secured.POST("/report", report_handlers.CreateReportHandler)
@@ -245,34 +252,4 @@ func LoadAdminInformationCommentHandler(c *gin.Context) {
 func LoadAdminInformationMessageHandler(c *gin.Context) {
 	// TODO: charger les informations d'un message
 	c.JSON(http.StatusOK, gin.H{"message": "information message"})
-}
-
-func SearchUserHandler(c *gin.Context) {
-	// TODO: gérer la recherche d'un utilisateur
-	c.JSON(http.StatusOK, gin.H{"users": []string{"user 1", "user 2"}})
-}
-
-func SearchPostHandler(c *gin.Context) {
-	// TODO: gérer la recherche d'un post_service
-	c.JSON(http.StatusOK, gin.H{"posts": []string{"post_service 1", "post_service 2"}})
-}
-
-func SearchCommunityHandler(c *gin.Context) {
-	// TODO: gérer la recherche d'une communauté
-	c.JSON(http.StatusOK, gin.H{"communities": []string{"community 1", "community 2"}})
-}
-
-func SearchMessageHandler(c *gin.Context) {
-	// TODO: gérer la recherche d'un message
-	c.JSON(http.StatusOK, gin.H{"messages": []string{"new message 1", "new message 2"}})
-}
-
-func SearchGroupHandler(c *gin.Context) {
-	// TODO: gérer la recherche d'un groupe
-	c.JSON(http.StatusOK, gin.H{"groups": []string{"group 1", "group 2"}})
-}
-
-func SearchTagHandler(c *gin.Context) {
-	// TODO: gérer la recherche d'un tag
-	c.JSON(http.StatusOK, gin.H{"tags": []string{"tag 1", "tag 2"}})
 }

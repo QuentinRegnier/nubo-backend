@@ -44,19 +44,21 @@ func AddUserToSpeedCache(ctx context.Context, u auth_models.UserPayload, setting
 		Grade:                  u.Grade,
 		Badges:                 u.Badges,
 		ConversationPermission: settings.Privacy.ConversationPermission,
-		AddGroupPermission:     settings.Privacy.AllowTagging == 0, // Fallback si pas de booleen explicite, ou map directe de privacy
+		AddGroupPermission:     settings.Privacy.AddGroupPermission,
+		HideConnections:        settings.Privacy.HideConnections, // ✅ NOUVEAU
 	}
 
 	// 3. Sauvegarde L1
 	return redis.UsersLite.SetObject(ctx, u.ID, userLite)
 }
 
-// UpdateUserSpeedCachePrivacy met à jour la confidentialité dans le SPEED Cache lors d'un changement de paramètres
-func UpdateUserSpeedCachePrivacy(ctx context.Context, userID int64, convPerm int, addGroupPerm bool) error {
+// Dans la fonction UpdateUserSpeedCachePrivacy :
+func UpdateUserSpeedCachePrivacy(ctx context.Context, userID int64, convPerm int, addGroupPerm int, hideConnections bool) error {
 	var lite lite_models.UserLiteRequest
 	if err := redis.UsersLite.GetObject(ctx, userID, &lite); err == nil && lite.ID != 0 {
 		lite.ConversationPermission = convPerm
 		lite.AddGroupPermission = addGroupPerm
+		lite.HideConnections = hideConnections // ✅ NOUVEAU
 		return redis.UsersLite.SetObject(ctx, userID, lite)
 	}
 	return nil
@@ -138,7 +140,7 @@ func GetUserLite(ctx context.Context, userID int64) (lite_models.UserLiteRequest
 			Grade:                  uMongo.Grade,
 			Badges:                 uMongo.Badges,
 			ConversationPermission: settings.Privacy.ConversationPermission,
-			AddGroupPermission:     settings.Privacy.AllowTagging == 0, // Ou settings.Privacy.AddGroupPermission selon ton implémentation
+			AddGroupPermission:     settings.Privacy.AddGroupPermission, // Ou settings.Privacy.AddGroupPermission selon ton implémentation
 		}, nil
 	}
 
@@ -161,7 +163,8 @@ func GetUserLite(ctx context.Context, userID int64) (lite_models.UserLiteRequest
 			Grade:                  uPg.Grade,
 			Badges:                 uPg.Badges,
 			ConversationPermission: settings.Privacy.ConversationPermission,
-			AddGroupPermission:     settings.Privacy.AllowTagging == 0,
+			AddGroupPermission:     settings.Privacy.AddGroupPermission,
+			HideConnections:        settings.Privacy.HideConnections, // ✅ NOUVEAU
 		}, nil
 	}
 

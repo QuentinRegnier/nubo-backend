@@ -17,15 +17,15 @@ import (
 // @Description
 // @Description  **Règles de validation & Erreurs :**
 // @Description
-// @Description  ✅ **200 OK (Succès partiel ou total) :**
+// @Description    **200 OK (Succès partiel ou total) :**
 // @Description  * Retourne toujours un tableau. Si un post est inaccessible (privé, supprimé, banni), l'erreur est intégrée dans l'objet de réponse du post spécifique pour ne pas bloquer le reste de la liste.
 // @Description
-// @Description  🔴 **400 Bad Request (Erreurs client) :**
+// @Description    **400 Bad Request (Erreurs client) :**
 // @Description  * Le paramètre 'ids' est manquant dans l'URL.
 // @Description  * Limite dépassée : impossible de demander plus de 50 posts simultanément (Bouclier statique).
 // @Description  * Aucun ID valide n'a pu être extrait.
 // @Description
-// @Description  🟠 **401 Unauthorized (Authentification) :**
+// @Description    **401 Unauthorized (Authentification) :**
 // @Description  * Token JWT invalide, expiré ou utilisateur non identifié.
 // @Tags         posts
 // @Accept       json
@@ -53,18 +53,23 @@ func GetPostHandler(c *gin.Context) {
 
 	input.PostIDs = pkg.SliceUniqueInt64(input.PostIDs)
 
-	// 🛡️ BOUCLIER DE BATCH (Max 50 IDs d'un coup)
+	// BOUCLIER DE BATCH (Max 50 IDs d'un coup)
 	if len(input.PostIDs) > 50 {
 		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Limite de 50 posts simultanés dépassée"})
 		return
 	}
+
 	if len(input.PostIDs) == 0 {
+		// ✅ CORRECTION : Assure-toi que le JSON renvoie un tableau vide typé
 		c.JSON(http.StatusOK, []post_models.GetPostOutput{})
 		return
 	}
 
 	input.UserID = userID
 
+	// Appel du service hydraté (qui renvoie maintenant des GetPostOutput avec l'auteur)
 	results := post_service.GetPosts(c.Request.Context(), input)
+
+	// Le routeur HTTP sert directement la structure DTO propre
 	c.JSON(http.StatusOK, results)
 }

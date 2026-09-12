@@ -15,19 +15,18 @@ import (
 
 // FuncLoadUserSettings charge les paramètres complets d'un utilisateur (incluant son ADN algorithmique)
 func FuncLoadUserSettings(ctx context.Context, userID int64) (user_settings_models.UserSettingsPayload, error) {
-	query := `SELECT id, user_id, privacy, notifications, language, theme, telemetry_vector, telemetry_tags, telemetry_timestamp 
+	query := `SELECT id, user_id, privacy, notifications, display_and_content, telemetry_vector, telemetry_tags, telemetry_timestamp
 	          FROM auth.func_load_user_settings(NULL, $1)`
 
 	var s user_settings_models.UserSettingsPayload
-	var privacyBytes, notifBytes []byte
+	var privacyBytes, notifBytes, displayBytes []byte
 
 	err := postgres.PostgresDB.QueryRowContext(ctx, query, userID).Scan(
 		&s.ID,
 		&s.UserID,
 		&privacyBytes,
 		&notifBytes,
-		&s.Language,
-		&s.Theme,
+		&displayBytes,
 		pq.Array(&s.TelemetryVector),
 		pq.Array(&s.TelemetryTags),
 		&s.TelemetryTimestamp,
@@ -47,6 +46,9 @@ func FuncLoadUserSettings(ctx context.Context, userID int64) (user_settings_mode
 	}
 	if len(notifBytes) > 0 {
 		_ = json.Unmarshal(notifBytes, &s.Notifications)
+	}
+	if len(displayBytes) > 0 {
+		_ = json.Unmarshal(displayBytes, &s.DisplayAndContent)
 	}
 
 	return s, nil

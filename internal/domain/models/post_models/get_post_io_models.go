@@ -11,9 +11,11 @@ type GetPostInput struct {
 }
 
 type GetPostOutput struct {
-	PostID   int64                             `json:"post_id"`
-	Data     PostPayload                       `json:"data,omitempty"`
-	Media    []media_models.MediaView          `json:"media,omitempty"` // <-- MODIFIÉ
-	Comments []comment_models.GetCommentOutput `json:"comments,omitempty"`
-	Error    string                            `json:"nubo_error,omitempty"`
+	PostID         int64                             `json:"post_id"`
+	Data           PostPayload                       `json:"data,omitempty"`
+	AuthorUsername string                            `json:"author_username,omitempty"` // ✅ NOUVEAU
+	AuthorAvatar   media_models.MediaView            `json:"author_avatar,omitempty"`   // ✅ NOUVEAU
+	Media          []media_models.MediaView          `json:"media,omitempty"`
+	Comments       []comment_models.GetCommentOutput `json:"comments,omitempty"`
+	Error          string                            `json:"nubo_error,omitempty"`
 }

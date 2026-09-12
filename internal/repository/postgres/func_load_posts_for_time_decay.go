@@ -12,20 +12,22 @@ import (
 )
 
 type TimeDecayPost struct {
-	ID            int64
-	LikeCount     int
-	CommentCount  int
-	ViewCount     int
-	HasMedia      bool
-	CreatedAt     time.Time
-	Hashtags      []string
-	Visibility    int
-	PriorityLevel int
-	ReportCount   int
+	ID               int64
+	LikeCount        int
+	CommentCount     int
+	ViewCount        int
+	HasMedia         bool
+	CreatedAt        time.Time
+	Hashtags         []string
+	IndirectHashtags []string // ✅ NOUVEAU
+	Visibility       int
+	PriorityLevel    int
+	ReportCount      int
 }
 
 func FuncLoadPostsForTimeDecay(ctx context.Context, minAge, maxAge string) ([]TimeDecayPost, error) {
-	query := `SELECT id, like_count, comment_count, view_count, has_media, created_at, hashtags, visibility, priority_level, report_count FROM content.func_load_posts_for_time_decay($1::interval, $2::interval)`
+	query := `SELECT id, like_count, comment_count, view_count, has_media, created_at, hashtags, indirect_hashtags, visibility, priority_level, report_count FROM content.func_load_posts_for_time_decay($1::interval, $2::interval)`
+
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, minAge, maxAge)
 	if err != nil {
 		return nil, nubo_error.NewInternal(err)
@@ -41,12 +43,13 @@ func FuncLoadPostsForTimeDecay(ctx context.Context, minAge, maxAge string) ([]Ti
 	for rows.Next() {
 		var p TimeDecayPost
 		err := rows.Scan(
-			&p.ID, &p.LikeCount, &p.CommentCount, &p.ViewCount, &p.HasMedia,
-			&p.CreatedAt, pq.Array(&p.Hashtags), &p.Visibility, &p.PriorityLevel, &p.ReportCount,
+			&p.ID, &p.LikeCount, &p.CommentCount, &p.ViewCount, &p.HasMedia, &p.CreatedAt,
+			pq.Array(&p.Hashtags), pq.Array(&p.IndirectHashtags), &p.Visibility, &p.PriorityLevel, &p.ReportCount, // ✅ NOUVEAU (Scan correct)
 		)
 		if err == nil {
 			posts = append(posts, p)
 		}
 	}
+
 	return posts, nil
 }

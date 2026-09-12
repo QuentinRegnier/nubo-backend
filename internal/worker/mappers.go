@@ -144,11 +144,13 @@ func (m *UserMapper) BuildUpdateQuery(tempTable string) string {
 // --- USER SETTINGS MAPPER (auth.user_settings) ---
 type UserSettingsMapper struct{}
 
-func (m *UserSettingsMapper) TableName() string { return "auth.user_settings" }
+func (m *UserSettingsMapper) TableName() string {
+	return "auth.user_settings"
+}
 
 func (m *UserSettingsMapper) Columns() []string {
 	return []string{
-		"id", "user_id", "privacy", "notifications", "language", "theme",
+		"id", "user_id", "privacy", "notifications", "display_and_content", // ✅ REMPLACE "language", "theme"
 		"telemetry_vector", "telemetry_tags", "telemetry_timestamp",
 		"created_at", "updated_at",
 	}
@@ -166,6 +168,7 @@ func (m *UserSettingsMapper) ToRow(data any) ([]any, error) {
 
 	privacyJSON, _ := json.Marshal(s.Privacy)
 	notifJSON, _ := json.Marshal(s.Notifications)
+	displayJSON, _ := json.Marshal(s.DisplayAndContent) // ✅ DÉJÀ FAIT PAR TES SOINS
 
 	// TRADUCTION DES NULLs
 	var telVecDB any = pq.Array(s.TelemetryVector)
@@ -182,7 +185,7 @@ func (m *UserSettingsMapper) ToRow(data any) ([]any, error) {
 	}
 
 	return []any{
-		s.ID, s.UserID, string(privacyJSON), string(notifJSON), s.Language, s.Theme,
+		s.ID, s.UserID, string(privacyJSON), string(notifJSON), string(displayJSON),
 		telVecDB, telTagsDB, telTsDB, s.CreatedAt, s.UpdatedAt,
 	}, nil
 }
@@ -318,7 +321,7 @@ func (m *PostMapper) ToRow(data any) ([]any, error) {
 	}
 
 	return []any{
-		p.ID, p.UserID, contentDB, pq.Array(p.Hashtags), pq.Array(p.Identifiers), pq.Array(p.MediaIDs),
+		p.ID, p.UserID, contentDB, pq.Array(p.Hashtags), pq.Array(p.IndirectHashtags), pq.Array(p.Identifiers), pq.Array(p.MediaIDs),
 		p.Visibility, p.PriorityLevel, locationDB, p.LikeCount, p.CommentCount,
 		p.ViewCount, p.ReportCount, p.HasMedia, vectorDB, p.VectorVersion, p.TelemetryDwellSum,
 		p.TelemetryDwellSq, p.TelemetryClicks, p.CreatedAt, p.UpdatedAt,
@@ -493,7 +496,8 @@ type ConversationMapper struct{}
 func (m *ConversationMapper) TableName() string { return "messaging.conversations" }
 
 func (m *ConversationMapper) Columns() []string {
-	return []string{"id", "type", "title", "last_message_id", "state", "laws", "created_at", "updated_at"}
+	// NOUVEAU : description et avatar_id ajoutés
+	return []string{"id", "type", "title", "description", "avatar_id", "last_message_id", "state", "laws", "created_at", "updated_at"}
 }
 
 func (m *ConversationMapper) ToRow(data any) ([]any, error) {
@@ -516,7 +520,17 @@ func (m *ConversationMapper) ToRow(data any) ([]any, error) {
 		lastMsgDB = nil
 	}
 
-	return []any{c.ID, c.Type, titleDB, lastMsgDB, c.State, pq.Array(c.Laws), c.CreatedAt, c.UpdatedAt}, nil
+	// NOUVEAU : Traductions NULL pour les nouveaux champs
+	var descDB any = c.Description
+	if c.Description == "" {
+		descDB = nil
+	}
+	var avatarDB any = c.AvatarID
+	if c.AvatarID == 0 {
+		avatarDB = nil
+	}
+
+	return []any{c.ID, c.Type, titleDB, descDB, avatarDB, lastMsgDB, c.State, pq.Array(c.Laws), c.CreatedAt, c.UpdatedAt}, nil
 }
 
 func (m *ConversationMapper) BuildUpdateQuery(t string) string {
@@ -531,7 +545,7 @@ func (m *MemberMapper) TableName() string {
 }
 
 func (m *MemberMapper) Columns() []string {
-	return []string{"id", "conversation_id", "user_id", "role", "joined_at", "unread_count", "frozen_message_id", "created_at", "updated_at"}
+	return []string{"id", "conversation_id", "user_id", "role", "settings", "joined_at", "unread_count", "frozen_message_id", "created_at", "updated_at"}
 }
 
 func (m *MemberMapper) ToRow(data any) ([]any, error) {
@@ -544,13 +558,19 @@ func (m *MemberMapper) ToRow(data any) ([]any, error) {
 		return nil, err
 	}
 
-	// TRADUCTION DES NULLs (Si 0, on met NULL en base)
+	// Sérialisation du Settings (La structure garantit un JSON valide)
+	settingsJSON, _ := json.Marshal(mem.Settings)
+	var settingsDB any = string(settingsJSON)
+
 	var frozenDB any = mem.FrozenMessageID
 	if mem.FrozenMessageID == 0 {
 		frozenDB = nil
 	}
 
-	return []any{mem.ID, mem.ConversationID, mem.UserID, mem.Role, mem.JoinedAt, mem.UnreadCount, frozenDB, mem.CreatedAt, mem.UpdatedAt}, nil
+	return []any{
+		mem.ID, mem.ConversationID, mem.UserID, mem.Role, settingsDB,
+		mem.JoinedAt, mem.UnreadCount, frozenDB, mem.CreatedAt, mem.UpdatedAt,
+	}, nil
 }
 
 func (m *MemberMapper) BuildUpdateQuery(t string) string {

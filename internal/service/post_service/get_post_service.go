@@ -4,11 +4,9 @@ import (
 	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models" // ✅ NOUVEL IMPORT NÉCESSAIRE
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/comment_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 )
@@ -85,6 +83,20 @@ func GetPosts(ctx context.Context, input post_models.GetPostInput) []post_models
 		// Règle D : Public (Visibility = 0) ou accès validé
 		// ─────────────────────────────────────────────────────────────────
 
+		// ✅ NOUVEAU : HYDRATATION DE L'AUTEUR (Pseudo + Avatar en O(1))
+		var authorUsername string
+		var authorAvatar media_models.MediaView
+
+		if authorLite, errLite := cache_service.GetUserLite(ctx, post.UserID); errLite == nil {
+			authorUsername = authorLite.Username
+			if authorLite.ProfilePictureID > 0 {
+				// authorID = post.UserID, targetID = post.ID, readerID = input.UserID
+				if view, errMedia := media_service.GenerateMediaViewCascade(ctx, authorLite.ProfilePictureID, post.UserID, post.ID, input.UserID); errMedia == nil {
+					authorAvatar = view
+				}
+			}
+		}
+
 		// HYDRATATION DES MEDIAS ET SIGNATURE HMAC VIA LE DOMAINE DÉDIÉ
 		mediaURLs := media_service.FormatMediaViewsCascade(ctx, post.MediaIDs, post.UserID, post.ID, input.UserID)
 
@@ -98,68 +110,14 @@ func GetPosts(ctx context.Context, input post_models.GetPostInput) []post_models
 		comments, _ := comment_service.GetComments(ctx, commentInput)
 
 		results = append(results, post_models.GetPostOutput{
-			PostID:   id,
-			Data:     post,      // Affectation directe, plus de pointeur
-			Media:    mediaURLs, // Le client reçoit les URLs prêtes à l'emploi
-			Comments: comments,  // ✅ Injection instantanée de l'arbre des commentaires
+			PostID:         id,
+			Data:           post,           // Affectation directe
+			AuthorUsername: authorUsername, // ✅ Rempli
+			AuthorAvatar:   authorAvatar,   // ✅ Rempli
+			Media:          mediaURLs,
+			Comments:       comments,
 		})
 	}
 
 	return results
-}
-
-// fetchPostsCascade gère la récupération L1 -> L2 -> L3 pour un batch d'IDs.
-func fetchPostsCascade(ctx context.Context, ids []int64) map[int64]post_models.PostPayload {
-	postsMap := make(map[int64]post_models.PostPayload)
-	var missingFromL1 []int64
-
-	// Étape 1 : Object Cache LFU (Redis)
-	for _, id := range ids {
-		if p, err := object_cache_service.GetPostFromObjectCache(ctx, id); err == nil {
-			postsMap[id] = p
-		} else {
-			missingFromL1 = append(missingFromL1, id)
-		}
-	}
-
-	if len(missingFromL1) == 0 {
-		return postsMap // Tous les posts étaient en RAM, retour instantané
-	}
-
-	// Étape 2 : Cold Storage (MongoDB)
-	var missingFromL2 []int64
-	mongoPosts, errMongo := mongo.MongoLoadPosts(missingFromL1)
-	if errMongo == nil {
-		for _, p := range mongoPosts {
-			postsMap[p.ID] = p
-			_ = object_cache_service.SetPostInObjectCache(ctx, p) // Réhydratation L1
-		}
-	}
-
-	// Identification de ce qu'il reste à trouver
-	for _, id := range missingFromL1 {
-		if _, exists := postsMap[id]; !exists {
-			missingFromL2 = append(missingFromL2, id)
-		}
-	}
-
-	if len(missingFromL2) == 0 {
-		return postsMap
-	}
-
-	// Étape 3 : Source of Truth (PostgreSQL) via ta fonction paramétrée
-	pgPosts, errPg := postgres.FuncLoadPosts(missingFromL2, len(missingFromL2), 0)
-	if errPg == nil {
-		for _, p := range pgPosts {
-			postsMap[p.ID] = p
-
-			// A. Réhydratation du stockage à froid L2 (MongoDB) pour soulager définitivement Postgres
-			_ = mongo.MongoUpsertPost(p)
-
-			// B. Réhydratation du cache haute performance L1 (Redis JSON)
-			_ = object_cache_service.SetPostInObjectCache(ctx, p)
-		}
-	}
-
-	return postsMap
 }

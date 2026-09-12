@@ -12,16 +12,17 @@ import (
 
 // ScoreJob contient les métriques pré-calculées par SQL pour éviter l'hydratation N+1
 type ScoreJob struct {
-	PostID        int64
-	LikeCount     int
-	CommentCount  int
-	ViewCount     int
-	HasMedia      bool
-	CreatedAt     time.Time
-	Hashtags      []string
-	Visibility    int
-	PriorityLevel int // NOUVEAU
-	ReportCount   int
+	PostID           int64
+	LikeCount        int
+	CommentCount     int
+	ViewCount        int
+	HasMedia         bool
+	CreatedAt        time.Time
+	Hashtags         []string
+	IndirectHashtags []string
+	Visibility       int
+	PriorityLevel    int // NOUVEAU
+	ReportCount      int
 }
 
 // StartScoreUpdaterCron initialise le Worker Pool basé sur le nombre de threads CPU
@@ -45,7 +46,9 @@ func StartScoreUpdaterCron(ctx context.Context) {
 					if job.HasMedia {
 						mediaCount = 1
 					}
-					// Appel du moteur mathématique pur. BDD = 0, Redis = Max
+
+					// ✅ CORRECTION : On ne fusionne plus ici, on passe les deux tableaux séparément
+					// conformément à la nouvelle signature de UpdateScoreWithMetrics
 					cache_service.UpdateScoreWithMetrics(
 						ctx,
 						job.PostID,
@@ -54,10 +57,11 @@ func StartScoreUpdaterCron(ctx context.Context) {
 						job.ViewCount,
 						mediaCount,
 						job.CreatedAt,
-						job.Hashtags,
+						job.Hashtags,         // ✅ Paramètre 8: Tags Directs
+						job.IndirectHashtags, // ✅ Paramètre 9: Tags Indirects
 						job.Visibility,
 						job.ReportCount,
-						job.PriorityLevel, // NOUVEAU : Transmission du priority_level
+						job.PriorityLevel,
 					)
 				}
 			}
@@ -93,16 +97,17 @@ func runTierCron(ctx context.Context, jobs chan<- ScoreJob, interval time.Durati
 
 			for _, p := range posts {
 				jobs <- ScoreJob{
-					PostID:        p.ID,
-					LikeCount:     p.LikeCount,
-					CommentCount:  p.CommentCount,
-					ViewCount:     p.ViewCount,
-					HasMedia:      p.HasMedia,
-					CreatedAt:     p.CreatedAt,
-					Hashtags:      p.Hashtags,
-					Visibility:    p.Visibility,
-					PriorityLevel: p.PriorityLevel,
-					ReportCount:   p.ReportCount,
+					PostID:           p.ID,
+					LikeCount:        p.LikeCount,
+					CommentCount:     p.CommentCount,
+					ViewCount:        p.ViewCount,
+					HasMedia:         p.HasMedia,
+					CreatedAt:        p.CreatedAt,
+					Hashtags:         p.Hashtags,
+					IndirectHashtags: p.IndirectHashtags, // ✅ NOUVEAU
+					Visibility:       p.Visibility,
+					PriorityLevel:    p.PriorityLevel,
+					ReportCount:      p.ReportCount,
 				}
 			}
 		}

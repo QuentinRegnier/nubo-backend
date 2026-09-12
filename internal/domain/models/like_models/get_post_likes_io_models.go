@@ -1,4 +1,8 @@
-package post_models
+package like_models
+
+import (
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
+)
 
 type GetPostLikesInput struct {
 	CallerID int64 `json:"caller_id"` // Injecté par le Handler (Sécurité)
@@ -8,6 +12,6 @@ type GetPostLikesInput struct {
 }
 
 type GetPostLikesOutput struct {
-	PostID  int64   `json:"post_id"`
-	UserIDs []int64 `json:"user_ids"`
+	PostID int64                      `json:"post_id"`
+	Users  []auth_models.UserLiteView `json:"users"` // ✅ Remplacé : on renvoie les données prêtes à afficher
 }

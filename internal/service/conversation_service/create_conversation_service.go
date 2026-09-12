@@ -9,6 +9,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
@@ -69,13 +70,15 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 	}
 
 	convPayload := conversation_models.ConversationPayload{
-		ID:        convID,
-		Type:      input.Type,
-		Title:     title,
-		State:     0,
-		Laws:      []int{},
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          convID,
+		Type:        input.Type,
+		Title:       title,
+		Description: "", // NOUVEAU
+		AvatarID:    0,  // NOUVEAU
+		State:       0,
+		Laws:        []int{},
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	_ = object_cache_service.SetConversationInObjectCache(ctx, convPayload)
@@ -99,6 +102,7 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 				ConversationID: convID,
 				UserID:         userID,
 				Role:           0,
+				Settings:       DefaultMemberSettings(convPayload.Type),
 				JoinedAt:       now,
 				UnreadCount:    0,
 				CreatedAt:      now,
@@ -111,6 +115,7 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 				ConversationID: mem.ConversationID,
 				UserID:         mem.UserID,
 				Role:           mem.Role,
+				Settings:       service.ToMemberSettingsLite(mem.Settings),
 				UnreadCount:    mem.UnreadCount,
 			})
 
@@ -126,6 +131,7 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 			ConversationID:  convID,
 			UserID:          callerID,
 			Role:            2, // Propriétaire
+			Settings:        DefaultMemberSettings(convPayload.Type),
 			JoinedAt:        now,
 			FrozenMessageID: 0,
 			UnreadCount:     0,
@@ -139,6 +145,7 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 			ConversationID: mem.ConversationID,
 			UserID:         mem.UserID,
 			Role:           mem.Role,
+			Settings:       service.ToMemberSettingsLite(mem.Settings),
 			UnreadCount:    mem.UnreadCount,
 			JoinedAt:       mem.JoinedAt.UnixMilli(),
 		})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -123,6 +125,7 @@ func GetInboxView(ctx context.Context, userID int64, limit int64, offset int64) 
 					ConversationID: res.Member.ConversationID,
 					UserID:         userID, // On connaît le UserID puisqu'on l'a passé à la fonction
 					Role:           res.Member.Role,
+					Settings:       res.Member.Settings,
 					UnreadCount:    res.Member.UnreadCount,
 					JoinedAt:       res.Member.JoinedAt,
 				}
@@ -156,6 +159,28 @@ func GetInboxView(ctx context.Context, userID int64, limit int64, offset int64) 
 			})
 		}
 	}
+
+	// === NOUVEAU : TRI DYNAMIQUE AVEC IS_PINNED ===
+	// On trie l'inbox finale pour remonter les épingles (Pinned != -1) en haut de la liste.
+	sort.Slice(finalInbox, func(i, j int) bool {
+		pinI := finalInbox[i].Member.Settings.Pinned
+		pinJ := finalInbox[j].Member.Settings.Pinned
+
+		// 1. Les deux sont épinglés (>= 0) -> on trie par la valeur de l'épingle (ex: 1 avant 2)
+		if pinI != -1 && pinJ != -1 {
+			return pinI < pinJ
+		}
+		// 2. Uniquement i est épinglé
+		if pinI != -1 {
+			return true
+		}
+		// 3. Uniquement j est épinglé
+		if pinJ != -1 {
+			return false
+		}
+		// 4. Aucun n'est épinglé (-1) -> on conserve le tri temporel (LastMessageID décroissant)
+		return finalInbox[i].Conversation.LastMessageID > finalInbox[j].Conversation.LastMessageID
+	})
 
 	return finalInbox, nil
 }
@@ -228,6 +253,7 @@ func ProcessNewMessageInSpeedCache(ctx context.Context, msgID int64, convID int6
 						ConversationID: pgMem.ConversationID,
 						UserID:         pgMem.UserID,
 						Role:           pgMem.Role,
+						Settings:       service.ToMemberSettingsLite(pgMem.Settings),
 						UnreadCount:    pgMem.UnreadCount + 1, // On ajoute le nouveau message
 						JoinedAt:       pgMem.JoinedAt.UnixMilli(),
 					}
@@ -308,6 +334,7 @@ func RehydrateConversationItemInSpeedCache(ctx context.Context, fullConv convers
 		ConversationID: fullMem.ConversationID,
 		UserID:         fullMem.UserID,
 		Role:           fullMem.Role,
+		Settings:       service.ToMemberSettingsLite(fullMem.Settings),
 		UnreadCount:    fullMem.UnreadCount,
 		JoinedAt:       fullMem.JoinedAt.UnixMilli(),
 	}
@@ -368,6 +395,7 @@ func SeedMessagingSpeedCache(ctx context.Context) error {
 			ConversationID: activeMem.Member.ConversationID,
 			UserID:         activeMem.Member.UserID,
 			Role:           activeMem.Member.Role,
+			Settings:       activeMem.Member.Settings,
 			UnreadCount:    activeMem.Member.UnreadCount,
 			JoinedAt:       activeMem.Member.JoinedAt,
 		}

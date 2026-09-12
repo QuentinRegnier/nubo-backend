@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	cuckoo "github.com/seiflotfy/cuckoofilter"
 )
@@ -26,38 +25,15 @@ type CuckooMessage struct {
 	Key    string // ex: "username:toto"
 }
 
-// InitCuckooFilter initialise le filtre, charge les données de Postgres et lance l'écoute Redis
+// InitCuckooFilter initialise la mémoire du filtre et lance l'écoute Redis.
+// Le warm-up avec les données est désormais orchestré par la couche Service.
 func InitCuckooFilter() {
-	logger.Log.Info().Msg("Initialisation du Cuckoo Filter...")
+	logger.Log.Info().Msg("Initialisation du Cuckoo Filter en mémoire...")
 
 	// 1. Création du filtre (Capacité 1M, peut être ajusté)
 	GlobalCuckoo = cuckoo.NewFilter(1000000)
 
-	// 2. Warm-up : Chargement des données existantes depuis Postgres (Pur DDD)
-	logger.Log.Info().Msg("Chargement des données Postgres dans le Cuckoo Filter...")
-
-	ctx := context.Background()
-	identifiers, err := postgres.FuncLoadAllUserIdentifiers(ctx)
-	if err != nil {
-		logger.Log.Fatal().Err(err).Msg("Erreur critique init Cuckoo (SQL via Repository)")
-	}
-
-	count := 0
-	for _, idents := range identifiers {
-		if idents.Username != nil && *idents.Username != "" {
-			GlobalCuckoo.Insert([]byte("username:" + *idents.Username))
-		}
-		if idents.Email != nil && *idents.Email != "" {
-			GlobalCuckoo.Insert([]byte("email:" + *idents.Email))
-		}
-		if idents.Phone != nil && *idents.Phone != "" {
-			GlobalCuckoo.Insert([]byte("phone:" + *idents.Phone))
-		}
-		count++
-	}
-	logger.Log.Info().Int("count", count).Msg("Cuckoo Filter chargé avec des utilisateurs (x3 clés).")
-
-	// 3. Lancement de la synchro inter-serveurs (Flux Redis)
+	// 2. Lancement de la synchro inter-serveurs (Flux Redis)
 	go startCuckooSync()
 }
 
@@ -88,12 +64,11 @@ func startCuckooSync() {
 func BroadcastCuckooUpdate(action, field, value string) {
 	msg := CuckooMessage{
 		Action: action,
-		Key:    field + ":" + value, // Concaténation pure et simple
+		Key:    field + ":" + value,
 	}
 
 	data, _ := json.Marshal(msg)
 
-	// Utilisation pure DDD : Zéro exposition de l'infrastructure sous-jacente
 	if err := redisgo.CuckooSync.PushFlux(context.Background(), data); err != nil {
 		logger.Log.Error().Err(err).Msg("Erreur Broadcast Cuckoo")
 	}

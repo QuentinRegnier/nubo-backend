@@ -11,8 +11,10 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
@@ -41,8 +43,8 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 		AddedUserIDs:    make([]int64, 0),
 		InvitedUserIDs:  make([]int64, 0),
 		RejectedUserIDs: make([]int64, 0),
-		MessageIDs:      make([]int64, 0), // Initialisation d'un slice vide
-		ConversationIDs: make([]int64, 0), // Initialisation d'un slice vide
+		MessageIDs:      make([]int64, 0),
+		ConversationIDs: make([]int64, 0),
 	}
 
 	now := time.Now().UTC()
@@ -61,6 +63,7 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 		}
 
 		// B. Calcul de la relation entre le Caller et la Cible (0=Rien, 1=Follow, 2=Ami, -1=Banni)
+		// Ici la relation évaluée est : "Qu'est-ce que Target pense de Caller ?"
 		relationState := cache_service.RelationValue(ctx, callerID, targetID)
 
 		// RÈGLE DE BAN : Si l'un des deux a bloqué l'autre, rejet direct
@@ -75,9 +78,9 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 		case 0:
 			canCommunicate = true
 		case 1:
-			canCommunicate = relationState >= 1
+			canCommunicate = relationState >= 1 // L'utilisateur cible suit ou est ami avec l'appelant
 		case 2:
-			canCommunicate = relationState == 2
+			canCommunicate = relationState == 2 // L'utilisateur cible est ami avec l'appelant
 		}
 
 		if !canCommunicate {
@@ -86,13 +89,24 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 		}
 
 		// VERROU 2 : Mode d'ajout (AddGroupPermission)
-		if targetLite.AddGroupPermission {
+		canAddDirectly := false
+		switch targetLite.AddGroupPermission {
+		case 0: // Tout le monde peut l'ajouter
+			canAddDirectly = true
+		case 1: // Seuls ses amis peuvent l'ajouter
+			canAddDirectly = (relationState == 2)
+		case 2: // Personne ne peut l'ajouter (invitation obligatoire)
+			canAddDirectly = false
+		}
+
+		if canAddDirectly {
 			// --- CAS A : AJOUT AUTOMATIQUE DIRECT ---
 			memberPayload := conversation_models.MemberPayload{
 				ID:              pkg.GenerateID(),
 				ConversationID:  conv.ID,
 				UserID:          targetID,
 				Role:            0, // Membre standard
+				Settings:        DefaultMemberSettings(conv.Type),
 				JoinedAt:        now,
 				FrozenMessageID: 0,
 				UnreadCount:     0,
@@ -105,6 +119,7 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 				ConversationID: conv.ID,
 				UserID:         targetID,
 				Role:           0,
+				Settings:       service.ToMemberSettingsLite(DefaultMemberSettings(conv.Type)),
 				UnreadCount:    0,
 				JoinedAt:       memberPayload.JoinedAt.UnixMilli(),
 			})
@@ -128,12 +143,37 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 			output.AddedUserIDs = append(output.AddedUserIDs, targetID)
 
 			// Envoie notification (Asynchrone)
-			go func(payload conversation_models.MemberPayload, cID int64, tID int64) {
+			go func(payload conversation_models.MemberPayload, cID int64, tID int64, cType int, cCaller int64) {
 				bgCtx := context.Background()
-				_ = realtime_service.BroadcastToConversation(bgCtx, cID, "member.added", payload)
+
+				// HYDRATATION CONDITIONNELLE DU DTO WEBSOCKET
+				memView := conversation_models.MemberView{
+					MemberPayload: payload,
+					IsOnline:      cache_service.IsUserOnline(bgCtx, payload.UserID), // NOUVEAU
+				}
+
+				if targetLite, errLite := cache_service.GetUserLite(bgCtx, payload.UserID); errLite == nil {
+					memView.Username = targetLite.Username
+
+					if cType == 2 || cType == 3 {
+						memView.AvatarCommunityID = targetLite.ProfilePictureID // Twitch Mode
+					} else {
+						if targetLite.ProfilePictureID > 0 {
+							// Mode Classique : URL HMAC signée
+							if avatarView, errMedia := media_service.GenerateMediaViewCascade(bgCtx, targetLite.ProfilePictureID, payload.UserID, 0, cCaller); errMedia == nil {
+								memView.Avatar = avatarView
+							}
+						}
+					}
+				}
+
+				// Diffusion du MemberView au lieu du MemberPayload brut !
+				_ = realtime_service.BroadcastToConversation(bgCtx, cID, "member.added", memView)
+
 				// On notifie la cible qu'elle a une nouvelle conversation !
 				_ = realtime_service.DistributeToUsers(bgCtx, "conversation.created", conv, []int64{tID})
-			}(memberPayload, conv.ID, targetID)
+
+			}(memberPayload, conv.ID, targetID, conv.Type, callerID)
 		} else {
 			// --- CAS B : ENVOI D'UNE INVITATION (Message Système Type 6) ---
 			// 1. Récupération ou création de la conversation privée (MP) entre les deux utilisateurs

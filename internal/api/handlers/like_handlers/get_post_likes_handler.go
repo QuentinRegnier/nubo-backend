@@ -3,11 +3,11 @@ package like_handlers
 import (
 	"net/http"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/like_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/like_service"
 	"github.com/gin-gonic/gin"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 )
 
@@ -32,7 +32,7 @@ import (
 // @Param        id            path   int    true "ID du post"
 // @Param        limit         query  int    false "Nombre de résultats (Défaut: 20, Max: 100)"
 // @Param        offset        query  int    false "Décalage pour la pagination (Défaut: 0)"
-// @Success      200  {object}  post_models.GetPostLikesOutput "Liste des identifiants des utilisateurs ayant liké"
+// @Success      200  {object}  like_models.GetPostLikesOutput "Liste des identifiants des utilisateurs ayant liké"
 // @Failure      400  {object}  nubo_error.PublicErrorResponse "Paramètres de requête invalides"
 // @Failure      401  {object}  nubo_error.PublicErrorResponse "Utilisateur non identifié"
 // @Failure      404  {object}  nubo_error.PublicErrorResponse "Post introuvable ou inaccessible"
@@ -45,7 +45,7 @@ func GetPostLikesHandler(c *gin.Context) {
 		return
 	}
 
-	var input post_models.GetPostLikesInput
+	var input like_models.GetPostLikesInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide.", err))
 		return

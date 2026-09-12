@@ -8,7 +8,7 @@ type SyncActivityInput struct {
 
 // SyncActivityOutput ne renvoie les notifications que si elles sont nouvelles.
 type SyncActivityOutput struct {
-	NeedUpdate    bool                  `json:"need_update"`
-	ServerUpdated int64                 `json:"server_updated"`
-	Notifications []NotificationPayload `json:"notifications,omitempty"`
+	NeedUpdate    bool               `json:"need_update"`
+	ServerUpdated int64              `json:"server_updated"`
+	Notifications []NotificationView `json:"notifications,omitempty"` // ✅ Remplacé par NotificationView
 }

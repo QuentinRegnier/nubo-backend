@@ -12,7 +12,7 @@ import (
 
 // FuncLoadActiveConversations récupère les métadonnées pour le Seeding
 func FuncLoadActiveConversations(ctx context.Context) ([]lite_models.ConvLiteRequest, error) {
-	query := `SELECT id, type, title, last_message_id FROM messaging.func_load_active_conversations()`
+	query := `SELECT id, type, title, description, avatar_id, last_message_id FROM messaging.func_load_active_conversations()`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query)
 	if err != nil {
 		return nil, nubo_error.NewInternal(err)
@@ -30,11 +30,19 @@ func FuncLoadActiveConversations(ctx context.Context) ([]lite_models.ConvLiteReq
 		var cType int
 		var title sql.NullString
 		var lastMsgID sql.NullInt64
+		var description sql.NullString
+		var avatarID sql.NullInt64
 
-		if err := rows.Scan(&cid, &cType, &title, &lastMsgID); err == nil {
+		if err := rows.Scan(&cid, &cType, &title, &description, &avatarID, &lastMsgID); err == nil {
 			meta := lite_models.ConvLiteRequest{ID: cid, Type: cType}
 			if title.Valid {
 				meta.Title = title.String
+			}
+			if description.Valid {
+				meta.Description = description.String
+			}
+			if avatarID.Valid {
+				meta.AvatarID = avatarID.Int64
 			}
 			if lastMsgID.Valid {
 				meta.LastMessageID = lastMsgID.Int64

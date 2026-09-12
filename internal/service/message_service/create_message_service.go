@@ -101,10 +101,31 @@ func CreateMessage(ctx context.Context, senderID int64, convID int64, input mess
 	conv, _ := object_cache_service.GetConversationFromObjectCache(ctx, convID)
 
 	// 6. DISTRIBUTION TEMPS RÉEL (WebSockets)
+	msgView := message_models.MessageView{
+		MessagePayload: msgPayload,
+	}
+
+	// ✅ HYDRATATION CONDITIONNELLE DU DTO WEBSOCKET
+	if userLite, errLite := cache_service.GetUserLite(ctx, senderID); errLite == nil {
+		msgView.SenderUsername = userLite.Username
+
+		if conv.Type == 2 || conv.Type == 3 {
+			// Mode Twitch : Zéro URL HMAC, on donne juste l'ID brut.
+			msgView.SenderAvatarCommunityID = userLite.ProfilePictureID
+		} else {
+			// Mode Classique (90% du trafic) : On génère l'URL signée pour optimiser Flutter
+			if userLite.ProfilePictureID > 0 {
+				if avatarView, errAvatar := media_service.GenerateMediaViewCascade(ctx, userLite.ProfilePictureID, senderID, 0, senderID); errAvatar == nil {
+					msgView.SenderAvatar = avatarView
+				}
+			}
+		}
+	}
+
 	if conv.Type == 2 || conv.Type == 3 {
-		_ = realtime_service.DistributeToCommunity(ctx, "message.created", msgPayload, convID)
+		_ = realtime_service.DistributeToCommunity(ctx, "message.created", msgView, convID)
 	} else {
-		_ = realtime_service.DistributeToUsers(ctx, "message.created", msgPayload, destinataires)
+		_ = realtime_service.DistributeToUsers(ctx, "message.created", msgView, destinataires)
 	}
 
 	// 7. BATCHING DES COMPTEURS BDD

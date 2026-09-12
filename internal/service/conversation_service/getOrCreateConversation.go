@@ -8,6 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
@@ -58,6 +59,8 @@ func hydrateConversationCascade(ctx context.Context, conv conversation_models.Co
 		ID:            conv.ID,
 		Type:          conv.Type,
 		Title:         conv.Title,
+		Description:   conv.Description, // NOUVEAU
+		AvatarID:      conv.AvatarID,    // NOUVEAU
 		LastMessageID: conv.LastMessageID,
 	}
 	_ = redis.ConvMeta.SetObject(ctx, conv.ID, convLite)
@@ -90,6 +93,7 @@ func hydrateMember(ctx context.Context, convID, userID int64, fromL3 bool) {
 			ConversationID: mem.ConversationID,
 			UserID:         mem.UserID,
 			Role:           mem.Role,
+			Settings:       service.ToMemberSettingsLite(mem.Settings),
 			UnreadCount:    mem.UnreadCount,
 			JoinedAt:       mem.JoinedAt.UnixMilli(),
 		})

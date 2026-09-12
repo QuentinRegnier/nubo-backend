@@ -4,8 +4,10 @@ package variables
 // LIMITES OPÉRATIONNELLES ET CACHE
 // ============================================================================
 const (
-	MaxStrictElements = 5000 // Remplace MaxRankElements — Top absolu pour l'UI (Likes, Vues)
-	MaxTagElements    = 5000 // Taille max pour l'historique brut d'un tag
+	MaxStrictElements    = 5000 // Remplace MaxRankElements — Top absolu pour l'UI (Likes, Vues)
+	MaxTagElements       = 5000 // Taille max pour l'historique brut d'un tag
+	MaxTrendingTagsInRAM = 1000 // ✅ NOUVEAU : Top 1000 des tags mondiaux (UI)
+	MaxPostsPerTagInRAM  = 1000 // ✅ NOUVEAU : Limite stricte pour le Speed Cache par tag
 )
 
 // ============================================================================
@@ -36,7 +38,6 @@ const (
 	RedisKeyStrictRecent = "most_cache:strict:recent"
 
 	// TDD §4.1 — Paramètre gaussien du bloc temporel
-	// c_{p,k}^(temp) = exp(-(k - h_p)² / (2·σ_h²)) · Z^{-1}
 	TDDSigmaHours         = 2.0  // σ_h (h) — lissage gaussien sur l'heure
 	TDDWeightView         = 0.1  // w_view — Poids d'une vue pure
 	TDDPhiReported        = 0.5  // φ_mod — Pénalité si le post_service est signalé

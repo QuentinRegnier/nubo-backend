@@ -14,6 +14,7 @@ func SetNotificationInObjectCache(ctx context.Context, notif notification_models
 }
 
 // GetNotificationsView : Le Pipeline d'Hydratation L1 -> L2
+// Renvoie strictement les Payloads bruts (La couche haute s'occupera de la View).
 func GetNotificationsView(ctx context.Context, ids []int64) ([]notification_models.NotificationPayload, error) {
 	if len(ids) == 0 {
 		return []notification_models.NotificationPayload{}, nil

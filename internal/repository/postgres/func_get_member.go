@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
@@ -12,13 +13,14 @@ import (
 
 // FuncGetMember récupère l'intégralité d'un membre depuis L3
 func FuncGetMember(ctx context.Context, convID int64, userID int64) (conversation_models.MemberPayload, error) {
-	query := `SELECT id, conversation_id, user_id, role, joined_at, unread_count, frozen_message_id, created_at, updated_at FROM messaging.func_get_member($1, $2)`
+	query := `SELECT id, conversation_id, user_id, role, settings, joined_at, unread_count, frozen_message_id, created_at, updated_at FROM messaging.func_get_member($1, $2)`
 
 	var m conversation_models.MemberPayload
 	var frozenID sql.NullInt64
+	var settingsRaw sql.NullString
 
 	err := postgres.PostgresDB.QueryRowContext(ctx, query, convID, userID).Scan(
-		&m.ID, &m.ConversationID, &m.UserID, &m.Role, &m.JoinedAt, &m.UnreadCount, &frozenID, &m.CreatedAt, &m.UpdatedAt,
+		&m.ID, &m.ConversationID, &m.UserID, &m.Role, &settingsRaw, &m.JoinedAt, &m.UnreadCount, &frozenID, &m.CreatedAt, &m.UpdatedAt,
 	)
 
 	if err != nil {
@@ -30,6 +32,11 @@ func FuncGetMember(ctx context.Context, convID int64, userID int64) (conversatio
 
 	if frozenID.Valid {
 		m.FrozenMessageID = frozenID.Int64
+	}
+
+	// PARSING DU JSONB
+	if settingsRaw.Valid && settingsRaw.String != "" && settingsRaw.String != "{}" {
+		_ = json.Unmarshal([]byte(settingsRaw.String), &m.Settings)
 	}
 
 	return m, nil

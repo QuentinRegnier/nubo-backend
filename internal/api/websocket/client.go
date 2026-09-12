@@ -42,13 +42,19 @@ func (c *Client) ReadPump() {
 	defer func() {
 		c.Hub.Unregister <- c
 		_ = c.Conn.Close()
+		// Pas besoin d'appeler de fonction pour dire "offline" !
+		// Si le client crashe ou quitte, les pings JSON s'arrêtent,
+		// et Redis fera expirer le TTL de 90s tout seul. Magique.
 	}()
 
 	c.Conn.SetReadLimit(maxMessageSize)
 	_ = c.Conn.SetReadDeadline(time.Now().Add(pongWait))
 
+	// Optionnel : Tu peux garder le SetPongHandler si tu veux supporter les deux méthodes
+	// (Pings natifs ET Pings JSON). C'est ce que je ferais en tant que Senior pour être ultra robuste.
 	c.Conn.SetPongHandler(func(string) error {
 		_ = c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+		// Si un client envoie un vrai ping natif, on le marque aussi en ligne
 		_ = cache_service.MarkUserOnline(context.Background(), c.UserID)
 		return nil
 	})
@@ -56,8 +62,12 @@ func (c *Client) ReadPump() {
 	for {
 		_, message, err := c.Conn.ReadMessage()
 		if err != nil {
-			break // Déconnexion naturelle
+			break // Déconnexion naturelle ou Timeout
 		}
+
+		// Dès qu'on reçoit un message (n'importe lequel : typing, message.create, ou ping),
+		// on prolonge le bail de présence. L'activité prouve la présence.
+		_ = cache_service.MarkUserOnline(context.Background(), c.UserID)
 
 		// On envoie le message brut au routeur !
 		c.Route(message)

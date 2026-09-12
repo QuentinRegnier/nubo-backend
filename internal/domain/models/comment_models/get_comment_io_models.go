@@ -11,8 +11,9 @@ type GetCommentsInput struct {
 
 // GetCommentOutput représente la réponse pour un ID spécifique
 type GetCommentOutput struct {
-	CommentID    int64                  `json:"comment_id"`
-	Data         CommentPayload         `json:"data,omitempty"`
-	AuthorAvatar media_models.MediaView `json:"author_avatar"` // <-- NOUVEAU (Par valeur)
-	Error        string                 `json:"nubo_error,omitempty"`
+	CommentID      int64                  `json:"comment_id"`
+	Data           CommentPayload         `json:"data,omitempty"`
+	AuthorUsername string                 `json:"author_username,omitempty"` // ✅ NOUVEAU : Le pseudo de l'auteur
+	AuthorAvatar   media_models.MediaView `json:"author_avatar"`             // <-- NOUVEAU (Par valeur)
+	Error          string                 `json:"nubo_error,omitempty"`
 }

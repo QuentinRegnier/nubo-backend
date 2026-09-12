@@ -9,5 +9,5 @@ type GetMessagesInput struct {
 }
 
 type GetMessagesOutput struct {
-	Messages []MessagePayload `json:"messages"`
+	Messages []MessageView `json:"messages"` // ✅ REMPLACÉ : On utilise la MessageView
 }

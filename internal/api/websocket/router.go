@@ -68,8 +68,17 @@ func (c *Client) Route(message []byte) {
 	var resData any
 	var routeErr error
 
+	// =========================================================================
 	// Le Grand Switch (Remplace ton HTTP routes.go)
 	switch req.Action {
+
+	// --- NOUVEAU : GESTION DE LA PRÉSENCE (HEARTBEAT) ---
+	case "ping":
+		// 1. Prolonge le TTL de 90 secondes en O(1) dans le L1
+		routeErr = cache_service.MarkUserOnline(ctx, c.UserID)
+		// 2. On renvoie simplement un petit objet vide (ou juste le status "success" via resData)
+		resData = map[string]string{"status": "pong"}
+
 	// --- TYPING (Volatil) ---
 	case "typing.started":
 		routeErr = ws_handlers.HandleTyping(ctx, c.UserID, req.Payload, true)

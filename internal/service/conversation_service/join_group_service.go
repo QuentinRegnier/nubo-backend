@@ -13,12 +13,17 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
 )
+
+// LawJoinApprovalRequired définit l'identifiant de la loi exigeant une approbation manuelle pour rejoindre.
+const LawJoinApprovalRequired = 1
 
 func JoinGroup(ctx context.Context, callerID int64, input conversation_models.JoinGroupInput) error {
 	// 1. AUTO-GUÉRISON (Cascade L1 -> L2 -> L3) POUR VÉRIFIER LA CONVERSATION
@@ -96,21 +101,46 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 		if mem.Role == -2 {
 			return nubo_error.NewForbidden("USER_BANNED", "Vous êtes banni de ce groupe.", nil)
 		}
+		if mem.Role == -3 { // NOUVEAU : Anti-Spam de requêtes d'approbation
+			return nubo_error.NewConflict("ALREADY_PENDING", "Votre demande pour rejoindre cette communauté est déjà en attente d'approbation.", nil)
+		}
 		if mem.Role >= 0 {
 			return nubo_error.NewBadRequest("ALREADY_MEMBER", "Vous faites déjà partie de ce groupe.", nil)
 		}
-		// Role = -1 : L'utilisateur revient après avoir quitté.
+		// Role = -1 : L'utilisateur revient après avoir quitté
 		isUpdate = true
 	}
 
-	// 5. CONSTRUCTION DE L'ÉTAT
+	// ========================================================================
+	// 5. VÉRIFICATION DES LOIS (Approbation requise)
+	// ========================================================================
+	requiresApproval := false
+	if conv.Type == 3 {
+		for _, law := range conv.Laws {
+			if law == LawJoinApprovalRequired {
+				requiresApproval = true
+				break
+			}
+		}
+	}
+
+	// Détermination du Rôle
+	assignedRole := 0
+	if requiresApproval {
+		assignedRole = -3
+	}
+
+	// ========================================================================
+	// 6. CONSTRUCTION DE L'ENTITÉ
+	// ========================================================================
 	now := time.Now().UTC()
 	if !isUpdate {
 		mem = conversation_models.MemberPayload{
 			ID:              pkg.GenerateID(),
 			ConversationID:  input.ConversationID,
 			UserID:          callerID,
-			Role:            0, // Membre standard
+			Role:            assignedRole, // Rôle dynamique (0 ou -3)
+			Settings:        DefaultMemberSettings(conv.Type),
 			JoinedAt:        now,
 			UnreadCount:     0,
 			FrozenMessageID: 0,
@@ -118,32 +148,34 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 			UpdatedAt:       now,
 		}
 	} else {
-		mem.Role = 0
+		mem.Role = assignedRole // Rôle dynamique (0 ou -3)
 		mem.JoinedAt = now
 		mem.UpdatedAt = now
 		mem.FrozenMessageID = 0
 	}
 
-	// 6. CACHE L1 IMMÉDIAT
+	// 7. CACHE L1 IMMÉDIAT
 	_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
 	_ = cache_service.AddConversationToUserInbox(ctx, callerID, conv.ID, conv.LastMessageID)
 
-	// === NOUVEAU : MISE À JOUR SYNCHRONE DU SPEED CACHE ===
+	// === MISE À JOUR SYNCHRONE DU SPEED CACHE ===
 	memLite := lite_models.MemberLiteRequest{
 		ConversationID:  mem.ConversationID,
 		UserID:          mem.UserID,
 		Role:            mem.Role,
+		Settings:        service.ToMemberSettingsLite(mem.Settings),
 		UnreadCount:     mem.UnreadCount,
 		FrozenMessageID: mem.FrozenMessageID,
 		JoinedAt:        mem.JoinedAt.UnixMilli(),
 	}
+
 	if isUpdate {
 		_ = cache_service.UpdateMemberSpeedCache(ctx, memLite)
 	} else {
 		_ = cache_service.AddMemberToSpeedCache(ctx, memLite)
 	}
 
-	// 9. WRITE-BEHIND
+	// 8. WRITE-BEHIND
 	action := redis.ActionCreate
 	if isUpdate {
 		action = redis.ActionUpdate
@@ -151,19 +183,42 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 	err = redis.EnqueueDB(ctx, mem.ID, input.ConversationID, redis.EntityMembers, action, mem, redis.TargetAll)
 
 	if err == nil {
-		// 7. & 8. MESSAGE SYSTÈME ET NOTIFICATION (Asynchrone)
-		go func() {
-			bgCtx := context.Background()
-			if callerLite, errLite := cache_service.GetUserLite(bgCtx, callerID); errLite == nil {
-				sysContent := fmt.Sprintf("%s a rejoint le groupe", callerLite.Username)
-				msgInput := message_models.CreateMessageInput{
-					MessageType: 8,
-					Content:     sysContent,
+		// 9. MESSAGE SYSTÈME ET NOTIFICATION (Uniquement si l'entrée est directe)
+		if assignedRole == 0 {
+			go func() {
+				bgCtx := context.Background()
+				if callerLite, errLite := cache_service.GetUserLite(bgCtx, callerID); errLite == nil {
+
+					sysContent := fmt.Sprintf("%s a rejoint le groupe", callerLite.Username)
+					msgInput := message_models.CreateMessageInput{
+						MessageType: 8,
+						Content:     sysContent,
+					}
+					_, _ = message_service.CreateMessage(bgCtx, callerID, input.ConversationID, msgInput, true)
+
+					// HYDRATATION CONDITIONNELLE DU DTO WEBSOCKET
+					memView := conversation_models.MemberView{
+						MemberPayload: mem,
+						Username:      callerLite.Username,
+						IsOnline:      cache_service.IsUserOnline(bgCtx, callerID), // NOUVEAU
+					}
+
+					if conv.Type == 2 || conv.Type == 3 {
+						memView.AvatarCommunityID = callerLite.ProfilePictureID // Mode Twitch
+					} else {
+						if callerLite.ProfilePictureID > 0 {
+							// Mode Classique : URL HMAC signée
+							if avatarView, errMedia := media_service.GenerateMediaViewCascade(bgCtx, callerLite.ProfilePictureID, callerID, 0, callerID); errMedia == nil {
+								memView.Avatar = avatarView
+							}
+						}
+					}
+
+					// Diffusion du MemberView au lieu du MemberPayload brut
+					_ = realtime_service.BroadcastToConversation(bgCtx, input.ConversationID, "member.joined", memView)
 				}
-				_, _ = message_service.CreateMessage(bgCtx, callerID, input.ConversationID, msgInput, true)
-			}
-			_ = realtime_service.BroadcastToConversation(bgCtx, input.ConversationID, "member.joined", mem)
-		}()
+			}()
+		}
 	}
 
 	return err

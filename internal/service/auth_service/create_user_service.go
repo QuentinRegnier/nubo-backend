@@ -127,8 +127,7 @@ func CreateUser(ctx context.Context, input auth_models.SignUpInput, ipAddress st
 		UserID:             userID,
 		Privacy:            input.Privacy,
 		Notifications:      input.Notifications,
-		Language:           input.Language,
-		Theme:              input.Theme,
+		DisplayAndContent:  input.DisplayAndContent,
 		TelemetryVector:    nil, // Profil vierge
 		TelemetryTags:      nil, // Profil vierge
 		TelemetryTimestamp: 0,

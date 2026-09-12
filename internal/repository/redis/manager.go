@@ -38,11 +38,14 @@ var (
 	// --- SPEED Cache (Lite Objects & UI) ---
 	UsersLite      *Collection
 	UsersLex       *Collection // ZSET Lexicographique pour l'auto-complétion
+	CommunitiesLex *Collection // ZSET Lexicographique pour l'auto-complétion
+	TagsLex        *Collection // ZSET Lexicographique pour l'auto-complétion
 	ConvMeta       *Collection
 	ConvMembers    *Collection
 	SpeedFollowers *Collection
 	SpeedRelations *Collection
 	SpeedAddable   *Collection
+	SpeedCommunity *Collection
 
 	// --- FEED Cache ---
 	FeedsObject       *Collection
@@ -127,11 +130,14 @@ func InitCacheDatabase() {
 	// --- SPEED Cache ---
 	UsersLite = NewCollection("speed_cache:user:lite", 0)
 	UsersLex = NewCollection("speed_cache:user:search", 0)
+	CommunitiesLex = NewCollection("speed_cache:community:search", 0)
+	TagsLex = NewCollection("speed_cache:tag:search", 0)
 	ConvMeta = NewCollection("speed_cache:conversation:meta", variables.StandardTTL)
 	ConvMembers = NewCollection("speed_cache:conversation:members", variables.StandardTTL)
 	SpeedFollowers = NewCollection("speed_cache:followers:default", 0)
 	SpeedRelations = NewCollection("speed_cache:relations:default", 0)
 	SpeedAddable = NewCollection("speed_cache:addable:default", variables.StandardTTL)
+	SpeedCommunity = NewCollection("speed_cache:community:default", variables.StandardTTL)
 
 	// --- FEED Cache ---
 	FeedsObject = NewCollection("feed:state", variables.StandardTTL)

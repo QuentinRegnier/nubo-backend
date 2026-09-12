@@ -8,5 +8,5 @@ type GetNotificationsInput struct {
 }
 
 type GetNotificationsOutput struct {
-	Notifications []NotificationPayload `json:"notifications"`
+	Notifications []NotificationView `json:"notifications"` // ✅ Remplacé par NotificationView
 }

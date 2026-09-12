@@ -10,6 +10,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
@@ -46,9 +47,6 @@ func DemoteMember(ctx context.Context, callerID int64, input conversation_models
 	targetMem.Role = 0
 	targetMem.UpdatedAt = time.Now().UTC()
 
-	targetMem.Role = 1
-	targetMem.UpdatedAt = time.Now().UTC()
-
 	callerLite, _ := cache_service.GetUserLite(ctx, callerID)
 	targetLite, _ := cache_service.GetUserLite(ctx, input.TargetUserID)
 
@@ -72,6 +70,7 @@ func DemoteMember(ctx context.Context, callerID int64, input conversation_models
 		ConversationID:  targetMem.ConversationID,
 		UserID:          targetMem.UserID,
 		Role:            targetMem.Role,
+		Settings:        service.ToMemberSettingsLite(targetMem.Settings),
 		UnreadCount:     targetMem.UnreadCount,
 		FrozenMessageID: targetMem.FrozenMessageID,
 		JoinedAt:        targetMem.JoinedAt.UnixMilli(),

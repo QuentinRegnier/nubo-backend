@@ -45,9 +45,9 @@ func SyncActivity(ctx context.Context, callerID int64, input notification_models
 	}
 
 	// 4. Filtrage chirurgical O(N) en RAM
-	// On ne garde QUE les notifications qui ont un ID strictement supérieur (nouveauté garantie par Snowflake)
-	// ou un timestamp supérieur (au cas où la date a été mise à jour).
-	var newNotifs []notification_models.NotificationPayload
+	// On conserve le type View ! Zéro ré-hydratation inutile.
+	var newNotifs []notification_models.NotificationView
+
 	for _, n := range notifs {
 		if n.ID > input.ReadUpToID || n.CreatedAt.UnixMilli() > input.ClientUpdatedAt {
 			newNotifs = append(newNotifs, n)
@@ -58,13 +58,13 @@ func SyncActivity(ctx context.Context, callerID int64, input notification_models
 		}
 	}
 
-	// Si après filtrage il n'y a rien de neuf, on sécurise le retour
+	// Si après filtrage, il n'y a rien de neuf, on sécurise le retour
 	if len(newNotifs) == 0 {
 		return output, nil
 	}
 
 	output.NeedUpdate = true
-	output.Notifications = newNotifs
+	output.Notifications = newNotifs // Assigation directe du tableau filtré
 
 	return output, nil
 }

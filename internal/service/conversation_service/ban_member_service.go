@@ -10,6 +10,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
@@ -75,6 +76,7 @@ func BanMember(ctx context.Context, callerID int64, input conversation_models.Ba
 		ConversationID:  targetMem.ConversationID,
 		UserID:          targetMem.UserID,
 		Role:            targetMem.Role,
+		Settings:        service.ToMemberSettingsLite(targetMem.Settings),
 		UnreadCount:     targetMem.UnreadCount,
 		FrozenMessageID: targetMem.FrozenMessageID,
 		JoinedAt:        targetMem.JoinedAt.UnixMilli(),

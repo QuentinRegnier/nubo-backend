@@ -8,6 +8,7 @@ type PostPayload struct {
 	UserID            int64     `bson:"user_id" json:"user_id" msgpack:"user_id"`
 	Content           string    `bson:"content" json:"content" msgpack:"content"`
 	Hashtags          []string  `bson:"hashtags" json:"hashtags" msgpack:"hashtags"`
+	IndirectHashtags  []string  `bson:"indirect_hashtags" json:"indirect_hashtags" msgpack:"indirect_hashtags"` // ✅ NOUVEAU
 	Identifiers       []int64   `bson:"identifiers" json:"identifiers" msgpack:"identifiers"`
 	MediaIDs          []int64   `bson:"media_ids" json:"media_ids" msgpack:"media_ids"`
 	Visibility        int       `bson:"visibility" json:"visibility" msgpack:"visibility"`
@@ -16,7 +17,7 @@ type PostPayload struct {
 	LikeCount         int       `bson:"like_count" json:"like_count" msgpack:"like_count"`
 	CommentCount      int       `bson:"comment_count" json:"comment_count" msgpack:"comment_count"`
 	ViewCount         int       `bson:"view_count" json:"view_count" msgpack:"view_count"`
-	ReportCount       int       `bson:"report_count" json:"-" msgpack:"report_count"` // ✅ NOUVEAU COMPTEUR
+	ReportCount       int       `bson:"report_count" json:"-" msgpack:"report_count"`
 	HasMedia          bool      `bson:"has_media" json:"has_media" msgpack:"has_media"`
 	Vector            []float32 `bson:"vector" json:"vector" msgpack:"vector"`
 	VectorVersion     int       `bson:"vector_version" json:"vector_version" msgpack:"vector_version"`

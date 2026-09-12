@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"os"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
@@ -44,11 +43,6 @@ func processMediaCleanup(ctx context.Context) {
 	}
 
 	logger.Log.Info().Int("count", len(orphans)).Msg("Garbage Collector : Médias orphelins purgés de Postgres.")
-
-	bucketName := os.Getenv("MINIO_BUCKET_NAME")
-	if bucketName == "" {
-		bucketName = "nubo-bucket"
-	}
 
 	var idsToDelete []int64
 

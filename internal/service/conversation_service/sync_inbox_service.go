@@ -34,13 +34,14 @@ func SyncInbox(ctx context.Context, callerID int64, input conversation_models.Sy
 	output.ServerUpdated = serverTimestamp
 
 	// On demande par défaut les 50 premières conversations (Paramétrable si besoin)
-	reqInput := conversation_models.GetConversationInput{
+	reqInput := conversation_models.GetUserConversationsInput{
 		Limit:  50,
 		Offset: 0,
 		Force:  false,
 	}
 
-	inboxData, err := GetUserConversationPaginated(ctx, callerID, reqInput)
+	// CORRECTION : Appel de la fonction "GetUserConversationsPaginated" (avec un "s")
+	inboxData, err := GetUserConversationsPaginated(ctx, callerID, reqInput)
 	if err != nil {
 		return output, err
 	}

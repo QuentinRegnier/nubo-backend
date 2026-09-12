@@ -36,5 +36,8 @@ func DispatchNotification(ctx context.Context, ownerID, actorID int64, notifType
 	_ = redis.EnqueueDB(ctx, notif.ID, ownerID, redis.EntityNotification, redis.ActionCreate, notif, redis.TargetMongo)
 
 	// 3. Temps Réel (WebSocket)
-	return realtime_service.DistributeToUsers(ctx, "notification."+notifType, notif, []int64{ownerID})
+	// ✅ HYDRATATION EN VUE : On a un seul propriétaire, donc on peut générer l'URL HMAC en toute sécurité.
+	notifView := hydrateNotificationView(ctx, ownerID, notif)
+
+	return realtime_service.DistributeToUsers(ctx, "notification."+notifType, notifView, []int64{ownerID})
 }

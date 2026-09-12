@@ -79,8 +79,9 @@ func processHashtagTrends(ctx context.Context) {
 
 		ageSeconds := now.Sub(p.CreatedAt).Seconds()
 
-		// Agrégation par Tag
-		for _, tag := range p.Hashtags {
+		// ✅ NOUVEAU : Agrégation par Tag (On fusionne Directs et Indirects)
+		allTags := append(p.Hashtags, p.IndirectHashtags...)
+		for _, tag := range allTags {
 			if postScoresByTag[tag] == nil {
 				postScoresByTag[tag] = make(map[int64]float64)
 				postAgesByTag[tag] = make(map[int64]float64)

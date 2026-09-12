@@ -8,6 +8,7 @@ var PostsSchema = map[string]reflect.Kind{
 	"user_id":             reflect.Int64,
 	"content":             reflect.String,
 	"hashtags":            reflect.Slice, // Text[]
+	"indirect_hashtags":   reflect.Slice, // ✅ NOUVEAU : Text[]
 	"identifiers":         reflect.Slice, // Bigint[]
 	"media_ids":           reflect.Slice, // Bigint[]
 	"visibility":          reflect.Int,
@@ -16,7 +17,7 @@ var PostsSchema = map[string]reflect.Kind{
 	"like_count":          reflect.Int,
 	"comment_count":       reflect.Int,
 	"view_count":          reflect.Int,
-	"report_count":        reflect.Int, // ✅ NOUVEAU
+	"report_count":        reflect.Int,
 	"has_media":           reflect.Bool,
 	"vector":              reflect.Slice,   // REAL[] -> []float32
 	"vector_version":      reflect.Int,     // Integer

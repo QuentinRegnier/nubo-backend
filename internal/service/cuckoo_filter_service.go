@@ -93,3 +93,38 @@ func IsUnique(ctx context.Context, entity redis.EntityType, field string, value 
 
 	return 1
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INITIALISATION & WARM-UP DU CUCKOO FILTER
+// ─────────────────────────────────────────────────────────────────────────────
+
+// WarmUpCuckooFilter lance le filtre en mémoire et le charge avec les données de Postgres.
+// Cette fonction orchestre proprement le Repository et l'Infrastructure sans créer de cycle.
+func WarmUpCuckooFilter(ctx context.Context) {
+	// 1. Allouer la mémoire et démarrer la synchronisation
+	cuckoo.InitCuckooFilter()
+
+	logger.Log.Info().Msg("Chargement des données Postgres dans le Cuckoo Filter...")
+
+	// 2. Récupérer la vérité absolue depuis la source (Cold Storage)
+	identifiers, err := postgres.FuncLoadAllUserIdentifiers(ctx)
+	if err != nil {
+		logger.Log.Fatal().Err(err).Msg("Erreur critique init Cuckoo (SQL via Repository)")
+	}
+
+	// 3. Peupler le filtre d'infrastructure
+	count := 0
+	for _, idents := range identifiers {
+		if idents.Username != nil && *idents.Username != "" {
+			cuckoo.GlobalCuckoo.Insert([]byte("username:" + *idents.Username))
+		}
+		if idents.Email != nil && *idents.Email != "" {
+			cuckoo.GlobalCuckoo.Insert([]byte("email:" + *idents.Email))
+		}
+		if idents.Phone != nil && *idents.Phone != "" {
+			cuckoo.GlobalCuckoo.Insert([]byte("phone:" + *idents.Phone))
+		}
+		count++
+	}
+	logger.Log.Info().Int("count", count).Msg("Cuckoo Filter chargé avec des utilisateurs (x3 clés).")
+}

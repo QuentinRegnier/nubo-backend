@@ -40,6 +40,7 @@ func CreatePost(ctx context.Context, userID int64, input post_models.CreatePostI
 		UserID:            userID,
 		Content:           pkg.CleanStr(input.Content),
 		Hashtags:          input.Hashtags,
+		IndirectHashtags:  nil, // ✅ NOUVEAU : Initialisation stricte anti-fantôme
 		Identifiers:       input.Identifiers,
 		MediaIDs:          input.MediaIDs,
 		Visibility:        input.Visibility,
@@ -50,14 +51,13 @@ func CreatePost(ctx context.Context, userID int64, input post_models.CreatePostI
 		LikeCount:         0,
 		CommentCount:      0,
 		ViewCount:         0,
-		ReportCount:       0, // ✅ NOUVEAU : Initialisation explicite à zéro à la création
+		ReportCount:       0,
 		HasMedia:          len(input.MediaIDs) > 0,
 		VectorVersion:     1,
 		TelemetryDwellSum: 0.0,
 		TelemetryDwellSq:  0.0,
 		TelemetryClicks:   0,
 	}
-
 	// 4. DÉLÉGATION : Vectorisation synchrone du contenu (O(1))
 	post.Vector = algorithm_service.ComputeContentVectorFull(post, nil)
 

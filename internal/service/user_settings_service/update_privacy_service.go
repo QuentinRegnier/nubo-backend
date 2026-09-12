@@ -28,9 +28,10 @@ func UpdatePrivacy(ctx context.Context, userID int64, input user_settings_models
 	settings.Privacy.AllowTagging = input.AllowTagging
 	settings.Privacy.AllowMentions = input.AllowMentions
 	settings.Privacy.ShowOnlineStatus = input.ShowOnlineStatus
-	settings.Privacy.ShowLocation = input.ShowLocation
+	settings.Privacy.SendReadReceipts = input.SendReadReceipts
 	settings.Privacy.SearchByEmailPhone = input.SearchByEmailPhone
-	settings.Privacy.AllowContentSharing = input.AllowContentSharing
+	settings.Privacy.ShowLocation = input.ShowLocation
+	settings.Privacy.HideConnections = input.HideConnections
 
 	settings.UpdatedAt = time.Now().UTC()
 
@@ -45,6 +46,7 @@ func UpdatePrivacy(ctx context.Context, userID int64, input user_settings_models
 		settings.UserID,
 		settings.Privacy.ConversationPermission,
 		settings.Privacy.AddGroupPermission,
+		settings.Privacy.HideConnections,
 	)
 
 	// 4. Envoi notification

@@ -31,10 +31,11 @@ func GetAddableUsers(ctx context.Context, callerID int64, input relation_models.
 			}
 		}
 
-		// Composition par valeur stricte
+		// Composition par valeur stricte et ajout du statut en ligne
 		views = append(views, auth_models.UserLiteView{
-			User:   u,
-			Avatar: avatar,
+			User:     u,
+			Avatar:   avatar,
+			IsOnline: cache_service.IsUserOnline(ctx, u.ID), // NOUVEAU (O(1))
 		})
 	}
 

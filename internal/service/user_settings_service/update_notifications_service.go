@@ -22,13 +22,13 @@ func UpdateNotifications(ctx context.Context, userID int64, input user_settings_
 	// 2. Remplacement intégral des paramètres de notification
 	settings.Notifications.MasterPushEnabled = input.MasterPushEnabled
 	settings.Notifications.MasterEmailEnabled = input.MasterEmailEnabled
-	settings.Notifications.NotifyNewFollower = input.NotifyNewFollower
-	settings.Notifications.NotifyFriendRequest = input.NotifyFriendRequest
-	settings.Notifications.NotifyMessages = input.NotifyMessages
 	settings.Notifications.NotifyLikes = input.NotifyLikes
 	settings.Notifications.NotifyComments = input.NotifyComments
 	settings.Notifications.NotifyMentions = input.NotifyMentions
-	settings.Notifications.QuietHoursEnabled = input.QuietHoursEnabled
+	settings.Notifications.NotifyNewFollower = input.NotifyNewFollower
+	settings.Notifications.NotifyFriendRequest = input.NotifyFriendRequest
+	settings.Notifications.NotifyMessages = input.NotifyMessages
+	settings.Notifications.NotifyGroupInvites = input.NotifyGroupInvites
 
 	settings.UpdatedAt = time.Now().UTC()
 
