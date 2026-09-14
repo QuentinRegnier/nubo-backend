@@ -24,7 +24,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/api/websocket"
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/middleware"
 	"github.com/gin-gonic/gin"
 )
@@ -51,9 +50,9 @@ func SetupRoutes(r *gin.Engine) {
 	// =========================================================================
 
 	// Authentification (Sécu interne spécifique)
-	r.POST("/signup", auth_handlers.SignUpHandler)
-	r.POST("/login", auth_handlers.LoginHandler)
-	r.POST("/check-username", user_settings_handlers.CheckUsernameHandler)
+	r.POST("/signup", auth_handlers.SignUpHandler)                         //
+	r.POST("/login", auth_handlers.LoginHandler)                           //
+	r.POST("/check-username", user_settings_handlers.CheckUsernameHandler) //
 
 	// Renouvellement de Tokens (Ratchet / Master)
 	// Ces routes gèrent leur propre sécurité (HMAC spécial, checks BDD...)
@@ -89,58 +88,57 @@ func SetupRoutes(r *gin.Engine) {
 	secured.Use(middleware.HMACMiddleware()) // 2. Est-ce authentique ? (Check Signature with Redis Secret)
 
 	// --- Websocket ---
-	secured.GET("/ws", websocket.ServeWS)
+	secured.GET("/ws", websocket.ServeWS) //
 
 	// --- User ---
-	secured.POST("/logout", auth_handlers.LogoutHandler)
-	secured.GET("/sessions", auth_handlers.GetSessionsHandler) // Seule route GET car pas besoin de paramètres (juste callerID via JWT)
-	secured.DELETE("/session", auth_handlers.DeleteSessionHandler)
+	secured.POST("/logout", auth_handlers.LogoutHandler)                  //
+	secured.GET("/session/get", auth_handlers.GetSessionsHandler)         //
+	secured.DELETE("/session/delete", auth_handlers.DeleteSessionHandler) //
 
 	// --- Posts ---
-	secured.POST("/feed/set", feed_handlers.GetFeedHandler)            // L'option /force est désormais dans le JSON `{"force": true}`
-	secured.POST("/posts/set", post_handlers.GetPostHandler)           // Remplace le ?ids=x,y,z
-	secured.POST("/posts/user/get", post_handlers.GetUserPostsHandler) // Profil d'un utilisateur
-	secured.POST("/posts/set", post_handlers.CreatePostHandler)
-	secured.PUT("/posts/update", post_handlers.UpdatePostHandler)
-	secured.DELETE("/posts/delete", post_handlers.DeletePostHandler)
-	secured.POST("/views/batch", handlers.RegisterBatchViewsHandler) // ℹ️❌ à vérifier
+	secured.POST("/feed/get", feed_handlers.GetFeedHandler) //
+	secured.POST("/posts/get", post_handlers.GetPostHandler)
+	secured.POST("/posts/user/get", post_handlers.GetUserPostsHandler) // Profil d'un utilisateur (non)
+	secured.POST("/posts/set", post_handlers.CreatePostHandler)        //
+	secured.PUT("/posts/update", post_handlers.UpdatePostHandler)      //
+	secured.DELETE("/posts/delete", post_handlers.DeletePostHandler)   //
 
 	// --- Notifications ---
-	secured.POST("/notifications/get", notification_handlers.GetNotificationsHandler)
+	secured.POST("/notifications/get", notification_handlers.GetNotificationsHandler) //
 	secured.POST("/notifications/read", notification_handlers.ReadNotificationsHandler)
 
 	// --- Sync ---
-	secured.PATCH("/sync/telemetry", telemetry_handlers.SyncTelemetryHandler) // PATCH est sémantiquement parfait ici
-	secured.POST("/sync/inbox", conversation_handlers.SyncInboxHandler)       // <-- NOUVEAU DELTA SYNC
-	secured.POST("/sync/identity", auth_handlers.SyncIdentityHandler)
-	secured.POST("/sync/activity", notification_handlers.SyncActivityHandler)
+	secured.PATCH("/sync/telemetry", telemetry_handlers.SyncTelemetryHandler) //
+	secured.POST("/sync/inbox", conversation_handlers.SyncInboxHandler)       //
+	secured.POST("/sync/identity", auth_handlers.SyncIdentityHandler)         //
+	secured.POST("/sync/activity", notification_handlers.SyncActivityHandler) //
 
 	// --- Actions Sociales ---
-	secured.POST("/like/post/set", like_handlers.LikePostHandler)
-	secured.POST("/like/post/get", like_handlers.GetPostLikesHandler)
-	secured.POST("/like/comment/set", like_handlers.LikeCommentHandler)
+	secured.POST("/like/post/set", like_handlers.LikePostHandler)       //
+	secured.POST("/like/post/get", like_handlers.GetPostLikesHandler)   //
+	secured.POST("/like/comment/set", like_handlers.LikeCommentHandler) //
 
-	secured.POST("/comment/get", comment_handlers.GetCommentsHandler) //regarder si on get bien les like aussi du commentaire
-	secured.POST("/comment/set", comment_handlers.CreateCommentHandler)
-	secured.PUT("/comment/update", comment_handlers.UpdateCommentHandler)
-	secured.DELETE("/comment/delete", comment_handlers.DeleteCommentHandler) //regarder si on delete bien aussi les like du commentaire
+	secured.POST("/comment/get", comment_handlers.GetCommentsHandler)        //
+	secured.POST("/comment/set", comment_handlers.CreateCommentHandler)      //
+	secured.PUT("/comment/update", comment_handlers.UpdateCommentHandler)    //
+	secured.DELETE("/comment/delete", comment_handlers.DeleteCommentHandler) //
 
-	secured.POST("/follow/set", relation_handlers.FollowHandler)
-	secured.DELETE("/follow/delete", relation_handlers.UnFollowHandler)
-	secured.POST("/friend/set", relation_handlers.FriendHandler)
-	secured.DELETE("/friend/delete", relation_handlers.UnFriendHandler)
-	secured.POST("/block/set", relation_handlers.BlockHandler)
-	secured.DELETE("/block/delete", relation_handlers.UnBlockHandler)
+	secured.POST("/follow/set", relation_handlers.FollowHandler)        //
+	secured.DELETE("/follow/delete", relation_handlers.UnFollowHandler) //
+	secured.POST("/friend/set", relation_handlers.FriendHandler)        //
+	secured.DELETE("/friend/delete", relation_handlers.UnFriendHandler) //
+	secured.POST("/block/set", relation_handlers.BlockHandler)          //
+	secured.DELETE("/block/delete", relation_handlers.UnBlockHandler)   //
 
-	secured.POST("/saved/get", saved_handlers.GetSavedPostsHandler)
-	secured.POST("/saved/set", saved_handlers.SavePostHandler)
-	secured.DELETE("/saved/delete", saved_handlers.UnsavePostHandler)
+	secured.POST("/saved/get", saved_handlers.GetSavedPostsHandler)   //
+	secured.POST("/saved/set", saved_handlers.SavePostHandler)        //
+	secured.DELETE("/saved/delete", saved_handlers.UnsavePostHandler) //
 
 	// --- Reglage ---
-	secured.PUT("settings/profile/update", auth_handlers.UpdateProfileHandler)
-	secured.PATCH("settings/privacy/update", user_settings_handlers.UpdatePrivacyHandler)
-	secured.PATCH("settings/notifications/update", user_settings_handlers.UpdateNotificationsHandler)
-	secured.PATCH("settings/display/update", user_settings_handlers.UpdateDisplayHandler)
+	secured.PUT("/settings/profile/update", auth_handlers.UpdateProfileHandler)                        //
+	secured.PATCH("/settings/privacy/update", user_settings_handlers.UpdatePrivacyHandler)             //
+	secured.PATCH("/settings/notifications/update", user_settings_handlers.UpdateNotificationsHandler) //
+	secured.PATCH("/settings/display/update", user_settings_handlers.UpdateDisplayHandler)             //
 
 	// --- Administration / Modération ---
 	secured.POST("/ban", BanHandler)                                            // ℹ️❌
@@ -157,41 +155,40 @@ func SetupRoutes(r *gin.Engine) {
 	secured.GET("/information-message", LoadAdminInformationMessageHandler)     // ℹ️❌
 
 	// --- Messagerie / Groupes ---
-	secured.POST("/conversations/user/get", conversation_handlers.GetUserConversationsHandler)
-	secured.POST("/conversations/get", conversation_handlers.GetUserConversationsHandler)
-	secured.POST("/conversation/members/get", conversation_handlers.GetConversationMembersHandler)
-	secured.POST("/conversation/member/suggest", conversation_handlers.SuggestMemberHandler)
-	secured.POST("/conversation/set", conversation_handlers.CreateConversationHandler)
-	secured.POST("/conversation/community/set", conversation_handlers.CreateCommunityHandler)
-	secured.POST("conversation/community/members/requests/get", conversation_handlers.GetCommunityRequestsHandler)
-	secured.POST("conversation/community/members/requests/accept", conversation_handlers.AcceptCommunityRequestHandler)
-	secured.POST("conversation/community/members/requests/refusal", conversation_handlers.RefuseCommunityRequestHandler)
-	secured.PUT("/conversation/update", conversation_handlers.UpdateConversationHandler)
-	secured.PATCH("/conversation/settings", conversation_handlers.UpdateMemberSettingsHandler)
-	secured.POST("/conversation/pin", conversation_handlers.PinConversationHandler)
-	secured.DELETE("/conversation/pin", conversation_handlers.UnpinConversationHandler)
-	secured.DELETE("/conversation/delete", conversation_handlers.LeaveConversationHandler)
-	secured.POST("/messages/get", message_handlers.GetMessagesHandler)
-	secured.POST("/read", conversation_handlers.ReadReceiptHandler)
+	secured.POST("/conversations/user/get", conversation_handlers.GetUserConversationsHandler)                           //
+	secured.POST("/conversations/get", conversation_handlers.GetUserConversationsHandler)                                //
+	secured.POST("/conversation/members/get", conversation_handlers.GetConversationMembersHandler)                       //
+	secured.POST("/conversation/suggest", conversation_handlers.SuggestContactsHandler)                                  //
+	secured.POST("/conversation/set", conversation_handlers.CreateConversationHandler)                                   //
+	secured.POST("/conversation/community/set", conversation_handlers.CreateCommunityHandler)                            //
+	secured.POST("conversation/community/members/requests/get", conversation_handlers.GetCommunityRequestsHandler)       //
+	secured.POST("conversation/community/members/requests/accept", conversation_handlers.AcceptCommunityRequestHandler)  //
+	secured.POST("conversation/community/members/requests/refusal", conversation_handlers.RefuseCommunityRequestHandler) //
+	secured.PUT("/conversation/update", conversation_handlers.UpdateConversationHandler)                                 //
+	secured.PATCH("/conversation/settings", conversation_handlers.UpdateMemberSettingsHandler)                           //
+	secured.POST("/conversation/pin", conversation_handlers.PinConversationHandler)                                      //
+	secured.DELETE("/conversation/unpin", conversation_handlers.UnpinConversationHandler)                                //
+	secured.DELETE("/conversation/delete", conversation_handlers.LeaveConversationHandler)                               //
+	secured.POST("/messages/get", message_handlers.GetMessagesHandler)                                                   //
+	secured.POST("messages/reactions/list", message_handlers.GetMessageReactionsHandler)                                 //
 
-	secured.POST("/group/addable", relation_handlers.GetAddableHandler)
-	secured.POST("/group/user/set", conversation_handlers.AddMemberHandler)
-	secured.DELETE("/group/user/delete", conversation_handlers.BanMemberHandler)
-	secured.POST("/group/promote/set", conversation_handlers.PromoteMemberHandler)
-	secured.DELETE("/group/promote/delete", conversation_handlers.DemoteMemberHandler)
-	secured.POST("/group/join", conversation_handlers.JoinGroupHandler)
+	secured.POST("/group/user/set", conversation_handlers.AddMemberHandler)            //
+	secured.DELETE("/group/user/delete", conversation_handlers.BanMemberHandler)       //
+	secured.POST("/group/promote/set", conversation_handlers.PromoteMemberHandler)     //
+	secured.DELETE("/group/promote/delete", conversation_handlers.DemoteMemberHandler) //
+	secured.POST("/group/join", conversation_handlers.JoinGroupHandler)                //
 
 	// --- Media ---
-	secured.POST("/media/upload", media_handlers.UploadMediaHandler)
-	secured.POST("/media/sign", media_handlers.SignMediaHandler)
+	secured.POST("/media/upload", media_handlers.UploadMediaHandler) //
+	secured.POST("/media/sign", media_handlers.SignMediaHandler)     //
 
 	// --- Recherche ---
-	secured.POST("/search/autocomplete/text", search_handlers.AutocompleteTextHandler)
-	secured.POST("/search/autocomplete/tags", search_handlers.AutocompleteTagHandler)
-	secured.POST("/search/post", search_handlers.SearchPostHandler)
+	secured.POST("/search/autocomplete/text", search_handlers.AutocompleteTextHandler) //
+	secured.POST("/search/autocomplete/tags", search_handlers.AutocompleteTagHandler)  //
+	secured.POST("/search/post", search_handlers.SearchPostHandler)                    //
 
 	// --- Report ---
-	secured.POST("/report", report_handlers.CreateReportHandler)
+	secured.POST("/report", report_handlers.CreateReportHandler) //
 }
 
 func BanHandler(c *gin.Context) {

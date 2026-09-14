@@ -50,7 +50,10 @@ func GetOrCreateDirectConversation(ctx context.Context, callerID, targetID int64
 // hydrateConversationCascade gère l'auto-guérison croisée des caches suite à un fallback L2/L3
 func hydrateConversationCascade(ctx context.Context, conv conversation_models.ConversationPayload, u1, u2 int64, fromL3 bool) {
 	if fromL3 {
-		_ = mongo.MongoUpsertConversation(conv)
+		// Réhydratation L2 Asynchrone
+		go func(c conversation_models.ConversationPayload) {
+			_ = redis.EnqueueDB(context.Background(), c.ID, c.ID, redis.EntityConversation, redis.ActionUpdate, c, redis.TargetMongo)
+		}(conv)
 	}
 
 	// Guérison de l'Object Cache L1 et des Metas
@@ -78,10 +81,14 @@ func hydrateConversationCascade(ctx context.Context, conv conversation_models.Co
 func hydrateMember(ctx context.Context, convID, userID int64, fromL3 bool) {
 	var mem conversation_models.MemberPayload
 	var err error
+
 	if fromL3 {
 		mem, err = postgres.FuncGetMember(ctx, convID, userID)
 		if err == nil {
-			_ = mongo.MongoUpsertMember(mem)
+			// Réhydratation L2 Asynchrone
+			go func(m conversation_models.MemberPayload) {
+				_ = redis.EnqueueDB(context.Background(), m.ID, m.ConversationID, redis.EntityMembers, redis.ActionUpdate, m, redis.TargetMongo)
+			}(mem)
 		}
 	} else {
 		mem, err = mongo.MongoGetMember(convID, userID)

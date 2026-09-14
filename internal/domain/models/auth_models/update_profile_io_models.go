@@ -1,5 +1,7 @@
 package auth_models
 
+import "time"
+
 // UpdateProfileInput définit les champs publics modifiables (Remplacement intégral PUT).
 type UpdateProfileInput struct {
 	Username         string `json:"username" binding:"required,min=3,max=30,alphanum"`
@@ -12,4 +14,8 @@ type UpdateProfileInput struct {
 	School           string `json:"school" binding:"max=100"`
 	Work             string `json:"work" binding:"max=100"`
 	ProfilePictureID int64  `json:"profile_picture_id" binding:"omitempty"`
+}
+
+type UpdateProfileOutput struct {
+	ProfileUpdatedAt time.Time `json:"profile_updated_at"`
 }

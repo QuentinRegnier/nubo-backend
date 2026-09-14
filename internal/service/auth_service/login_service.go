@@ -79,6 +79,19 @@ func Login(
 		sessions, _ = mongo.MongoLoadSession(user.ID, firebaseInstallationID, "", "")
 		if sessions.ID == 0 {
 			sessions, _ = postgresgo.FuncLoadSession(-1, user.ID, firebaseInstallationID, "")
+
+			if sessions.ID != 0 {
+				// ⬆️ PROMOTION L3 -> L2 (Asynchrone via Worker)
+				go func(s auth_models.SessionsPayload) {
+					bgCtx := context.Background()
+					_ = redis.EnqueueDB(bgCtx, s.ID, s.UserID, redis.EntitySession, redis.ActionUpdate, s, redis.TargetMongo)
+				}(sessions)
+			}
+		}
+
+		if sessions.ID != 0 {
+			// ⬆️ PROMOTION L3/L2 -> L1 (Immédiate en RAM)
+			_ = cache_service.SetSessionInCache(ctx, sessions)
 		}
 	}
 

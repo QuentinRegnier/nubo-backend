@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 )
 
 type WSEvent struct {
@@ -22,20 +21,12 @@ func DistributeToUsers(ctx context.Context, eventType string, payload any, userI
 		EventType: eventType,
 		Payload:   payload,
 	}
-
 	eventBytes, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
 
-	for _, uID := range userIDs {
-		// === LE FALLBACK PUSH CENTRALISÉ ===
-		if !cache_service.IsUserOnline(ctx, uID) {
-			sendPushFallback(ctx, uID, eventType, payload)
-		}
-	}
-
-	// Appel pur du Repository Redis (Zéro infrastructure ici)
+	// Appel pur du Repository Redis (Zéro infrastructure/push ici, juste du temps réel !)
 	return redis.ChannelUser.PublishMultiple(ctx, userIDs, eventBytes)
 }
 

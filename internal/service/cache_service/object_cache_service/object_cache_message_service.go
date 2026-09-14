@@ -28,6 +28,7 @@ func DeleteMessageFromObjectCache(ctx context.Context, messageID int64) error {
 }
 
 // GetMessagesView : Le Pipeline d'Hydratation Optimisé pour les Messages (L1 -> L2 -> L3)
+// CORRECTION : Le paramètre est bien nommé 'ctx'
 func GetMessagesView(ctx context.Context, ids []int64) ([]message_models.MessagePayload, error) {
 	if len(ids) == 0 {
 		return []message_models.MessagePayload{}, nil
@@ -43,11 +44,9 @@ func GetMessagesView(ctx context.Context, ids []int64) ([]message_models.Message
 	} else {
 		for id, data := range result.Found {
 			var m message_models.MessagePayload
-			// Désérialisation binaire MsgPack réelle
 			if errDecode := msgpack.Unmarshal(data, &m); errDecode == nil {
 				tempMap[id] = m
 			} else {
-				// Si l'objet en RAM est corrompu, on l'ajoute aux MissingIDs pour le forcer à se réhydrater depuis L2/L3
 				result.MissingIDs = append(result.MissingIDs, id)
 			}
 		}
@@ -63,7 +62,7 @@ func GetMessagesView(ctx context.Context, ids []int64) ([]message_models.Message
 				tempMap[m.ID] = m
 				mongoFound[m.ID] = true
 
-				// PROMOTION L2 -> L1
+				// PROMOTION L2 -> L1 (Immédiat en RAM)
 				go func(msg message_models.MessagePayload) {
 					_ = SetMessageInObjectCache(context.Background(), msg)
 				}(m)
@@ -87,8 +86,14 @@ func GetMessagesView(ctx context.Context, ids []int64) ([]message_models.Message
 
 				// PROMOTION L3 -> L2 & L1
 				go func(msg message_models.MessagePayload) {
-					_ = mongo.MongoUpsertMessage(msg)
-					_ = SetMessageInObjectCache(context.Background(), msg)
+					bgCtx := context.Background()
+
+					// L1 : Hydratation immédiate en RAM pour les prochaines requêtes
+					_ = SetMessageInObjectCache(bgCtx, msg)
+
+					// L2 : Hydratation asynchrone via la queue pour bénéficier du BulkWrite MongoDB des workers
+					// On utilise redis.TargetMongo pour éviter de réécrire dans Postgres
+					_ = redis.EnqueueDB(bgCtx, msg.ID, msg.ConversationID, redis.EntityMessage, redis.ActionUpdate, msg, redis.TargetMongo)
 				}(m)
 			}
 		}

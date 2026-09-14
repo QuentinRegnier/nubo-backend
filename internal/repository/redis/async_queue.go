@@ -31,22 +31,23 @@ const (
 type EntityType string
 
 const (
-	EntityUser         EntityType = "Users"
-	EntityUserSettings EntityType = "UserSettings"
-	EntitySession      EntityType = "Sessions"
-	EntityRelation     EntityType = "Relations"
-	EntityPost         EntityType = "Posts"
-	EntityComment      EntityType = "Comments"
-	EntityLike         EntityType = "Likes"
-	EntityMedia        EntityType = "Media"
-	EntityConversation EntityType = "Conversations"
-	EntityMembers      EntityType = "Members"
-	EntityMessage      EntityType = "Messages"
-	EntityView         EntityType = "Views"
-	EntityFeed         EntityType = "Feeds"
-	EntityReport       EntityType = "Reports"
-	EntityTelemetry    EntityType = "Telemetry" // NOUVEAU : Pour router les Dwell Times et Clics
-	EntitySaved        EntityType = "Saved"
+	EntityUser            EntityType = "Users"
+	EntityUserSettings    EntityType = "UserSettings"
+	EntitySession         EntityType = "Sessions"
+	EntityRelation        EntityType = "Relations"
+	EntityPost            EntityType = "Posts"
+	EntityComment         EntityType = "Comments"
+	EntityLike            EntityType = "Likes"
+	EntityMedia           EntityType = "Media"
+	EntityConversation    EntityType = "Conversations"
+	EntityMembers         EntityType = "Members"
+	EntityMessage         EntityType = "Messages"
+	EntityMessageReaction EntityType = "MessageReactions"
+	EntityView            EntityType = "Views"
+	EntityFeed            EntityType = "Feeds"
+	EntityReport          EntityType = "Reports"
+	EntityTelemetry       EntityType = "Telemetry" // NOUVEAU : Pour router les Dwell Times et Clics
+	EntitySaved           EntityType = "Saved"
 
 	EntityNotification EntityType = "Notifications"
 )

@@ -22,14 +22,14 @@ import (
 )
 
 // AcceptCommunityRequest valide l'adhésion d'un membre en attente (Role = -3).
-func AcceptCommunityRequest(ctx context.Context, callerID int64, input conversation_models.AcceptCommunityRequestInput) error {
+func AcceptCommunityRequest(ctx context.Context, callerID int64, input conversation_models.AcceptCommunityRequestInput) (conversation_models.AcceptCommunityRequestOutput, error) {
 	// 1. SÉCURITÉ : L'appelant doit être Admin (1) ou Owner (2)
 	callerMem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
 	if err != nil {
-		return nubo_error.NewForbidden("ACCESS_DENIED", "Conversation introuvable ou accès refusé.", err)
+		return conversation_models.AcceptCommunityRequestOutput{}, nubo_error.NewForbidden("ACCESS_DENIED", "Conversation introuvable ou accès refusé.", err)
 	}
 	if callerMem.Role < 1 {
-		return nubo_error.NewForbidden("INSUFFICIENT_PERMISSIONS", "Vous devez être administrateur pour accepter une candidature.", nil)
+		return conversation_models.AcceptCommunityRequestOutput{}, nubo_error.NewForbidden("INSUFFICIENT_PERMISSIONS", "Vous devez être administrateur pour accepter une candidature.", nil)
 	}
 
 	// 2. RÉCUPÉRATION DU MEMBRE CIBLE (Cascade L1 -> L2 -> L3 manuelle car LeftMember bloque les rôles < 0)
@@ -40,14 +40,14 @@ func AcceptCommunityRequest(ctx context.Context, callerID int64, input conversat
 		if err != nil || targetMem.ID == 0 {
 			targetMem, err = postgres.FuncGetMember(ctx, input.ConversationID, input.TargetUserID)
 			if err != nil || targetMem.ID == 0 {
-				return nubo_error.NewNotFound("USER_NOT_FOUND", "Candidature introuvable.", err)
+				return conversation_models.AcceptCommunityRequestOutput{}, nubo_error.NewNotFound("USER_NOT_FOUND", "Candidature introuvable.", err)
 			}
 		}
 	}
 
 	// 3. RÈGLE MÉTIER : Vérifier l'état d'attente
 	if targetMem.Role != -3 {
-		return nubo_error.NewBadRequest("INVALID_STATE", "Cet utilisateur n'est pas en attente d'approbation.", nil)
+		return conversation_models.AcceptCommunityRequestOutput{}, nubo_error.NewBadRequest("INVALID_STATE", "Cet utilisateur n'est pas en attente d'approbation.", nil)
 	}
 
 	// 4. APPLICATION DE L'ACCEPTATION
@@ -74,7 +74,7 @@ func AcceptCommunityRequest(ctx context.Context, callerID int64, input conversat
 	// 6. ENVOI AUX WORKERS (Write-Behind)
 	err = redis.EnqueueDB(ctx, targetMem.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMem, redis.TargetAll)
 	if err != nil {
-		return err
+		return conversation_models.AcceptCommunityRequestOutput{}, err
 	}
 
 	// 7. MESSAGE SYSTÈME ET NOTIFICATION (Asynchrone)
@@ -118,5 +118,16 @@ func AcceptCommunityRequest(ctx context.Context, callerID int64, input conversat
 		}
 	}()
 
-	return nil
+	output := conversation_models.AcceptCommunityRequestOutput{}
+
+	// ========================================================================
+	// MARQUAGE DU TEMPS (DIRTY FLAG)
+	// ========================================================================
+	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
+	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
+	// et garantit que le client reçoit la date de la fin absolue de la transaction.
+	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
+	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+
+	return output, nil
 }

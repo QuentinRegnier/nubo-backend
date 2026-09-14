@@ -14,16 +14,16 @@ import (
 )
 
 // UnpinConversation gère le retrait d'une épingle sur une conversation.
-func UnpinConversation(ctx context.Context, callerID int64, input conversation_models.UnpinConversationInput) error {
+func UnpinConversation(ctx context.Context, callerID int64, input conversation_models.UnpinConversationInput) (conversation_models.UnpinConversationOutput, error) {
 	// 1. Récupération sécurisée du membre (Cascade L1->L2->L3)
 	mem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
 	if err != nil {
-		return err
+		return conversation_models.UnpinConversationOutput{}, err
 	}
 
 	// 2. Idempotence : Si déjà désépinglée (-1), on s'arrête silencieusement
 	if mem.Settings.Pinned == -1 {
-		return nil
+		return conversation_models.UnpinConversationOutput{}, nil
 	}
 
 	// 3. Application du retrait
@@ -44,5 +44,17 @@ func UnpinConversation(ctx context.Context, callerID int64, input conversation_m
 
 	// 5. Persistance Asynchrone (Write-Behind)
 	// La clé de partition est l'ID de la conversation pour conserver l'ordre des requêtes
-	return redis.EnqueueDB(ctx, mem.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, mem, redis.TargetAll)
+
+	output := conversation_models.UnpinConversationOutput{}
+
+	// ========================================================================
+	// MARQUAGE DU TEMPS (DIRTY FLAG)
+	// ========================================================================
+	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
+	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
+	// et garantit que le client reçoit la date de la fin absolue de la transaction.
+	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
+	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+
+	return output, redis.EnqueueDB(ctx, mem.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, mem, redis.TargetAll)
 }

@@ -17,8 +17,8 @@ import (
 // @Accept       json
 // @Produce      json
 // @Security     ApiKeyAuth
-// @Param        payload body conversation_models.PinConversationInput true "Action (pin/unpin) et ID"
-// @Success      200 {object} map[string]string "Message de succès"
+// @Param        payload body conversation_models.PinConversationInput true "ID de la conversation"
+// @Success      200 {object} conversation_models.PinConversationOutput
 // @Router       /conversation/pin [post]
 func PinConversationHandler(c *gin.Context) {
 	userID, err := pkg.GetUserIDFromContext(c)
@@ -33,10 +33,11 @@ func PinConversationHandler(c *gin.Context) {
 		return
 	}
 
-	if err := conversation_service.TogglePinConversation(c.Request.Context(), userID, input); err != nil {
+	output, err := conversation_service.TogglePinConversation(c.Request.Context(), userID, input)
+	if err != nil {
 		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Action d'épinglage prise en compte"})
+	c.JSON(http.StatusOK, output)
 }

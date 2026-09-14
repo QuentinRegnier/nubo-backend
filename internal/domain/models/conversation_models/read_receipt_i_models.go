@@ -4,3 +4,8 @@ package conversation_models
 type ReadReceiptInput struct {
 	ConversationID int64 `json:"conversation_id" binding:"required"`
 }
+
+// ReadReceiptOutput renvoie le timestamp de synchronisation de l'inbox
+type ReadReceiptOutput struct {
+	InboxUpdateAt int64 `json:"inbox_updated_at"`
+}

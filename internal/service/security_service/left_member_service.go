@@ -7,6 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
 
@@ -35,8 +36,14 @@ func LeftMember(ctx context.Context, convID int64, userID int64) (conversation_m
 		if pgMem, err := postgres.FuncGetMember(ctx, convID, userID); err == nil && pgMem.ID != 0 {
 			mem = pgMem
 			found = true
-			_ = mongo.MongoUpsertMember(mem)                          // Auto-Guérison L2
-			_ = object_cache_service.SetMemberInObjectCache(ctx, mem) // Auto-Guérison L1
+
+			// ⬆️ Auto-Guérison L1 (Immédiat en RAM)
+			_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
+
+			// ⬆️ Auto-Guérison L2 (Asynchrone via Worker Mongo)
+			go func(m conversation_models.MemberPayload) {
+				_ = redis.EnqueueDB(context.Background(), m.ID, m.ConversationID, redis.EntityMembers, redis.ActionUpdate, m, redis.TargetMongo)
+			}(mem)
 		}
 	}
 

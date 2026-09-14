@@ -4,8 +4,10 @@ import (
 	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/saved_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/post_service"
 )
@@ -33,9 +35,16 @@ func GetSavedPosts(ctx context.Context, userID int64, limit int, offset int) []p
 			if errL3 == nil && len(savedsL3) > 0 {
 				for _, s := range savedsL3 {
 					postIDs = append(postIDs, s.PostID)
-					// Auto-guérison L2 & L1
-					_ = mongo.MongoUpsertSaved(s)
+
+					// Auto-guérison L1 (Synchrone)
 					_ = object_cache_service.AddSavedToZSET(ctx, userID, s.PostID, float64(s.CreatedAt.UnixMilli()))
+
+					// Auto-guérison L2 (Asynchrone via les workers)
+					go func(saved saved_models.SavedPayload) {
+						bgCtx := context.Background()
+						// On utilise le userID comme partitionKey pour centraliser les favoris d'un user
+						_ = redis.EnqueueDB(bgCtx, saved.ID, saved.UserID, redis.EntitySaved, redis.ActionUpdate, saved, redis.TargetMongo)
+					}(s)
 				}
 			}
 		}

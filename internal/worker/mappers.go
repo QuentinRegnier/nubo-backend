@@ -50,6 +50,8 @@ func GetMapper(entity redis.EntityType) EntityMapper {
 		return &SavedMapper{}
 	case redis.EntityMessage:
 		return &MessageMapper{}
+	case redis.EntityMessageReaction: // NOUVEAU
+		return &MessageReactionMapper{}
 	case redis.EntityConversation:
 		return &ConversationMapper{}
 	case redis.EntityMembers:
@@ -490,14 +492,45 @@ func (m *MessageMapper) BuildUpdateQuery(tempTable string) string {
 	return buildGenericUpdateQuery(m.TableName(), tempTable, m.Columns())
 }
 
+// --- MESSAGE REACTION MAPPER (messaging.message_reactions) ---
+type MessageReactionMapper struct{}
+
+func (m *MessageReactionMapper) TableName() string {
+	return "messaging.message_reactions"
+}
+
+func (m *MessageReactionMapper) Columns() []string {
+	return []string{"id", "message_id", "user_id", "reaction", "created_at"}
+}
+
+func (m *MessageReactionMapper) ToRow(data any) ([]any, error) {
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	var r message_models.MessageReactionPayload
+	if err := json.Unmarshal(jsonBytes, &r); err != nil {
+		return nil, err
+	}
+	return []any{r.ID, r.MessageID, r.UserID, r.Reaction, r.CreatedAt}, nil
+}
+
+func (m *MessageReactionMapper) BuildUpdateQuery(_ string) string {
+	// Retourne une chaîne vide. Pour EntityMessageReaction, on gèrera
+	// l'UPSERT spécifiquement dans postgres_batch.go via ON CONFLICT.
+	return ""
+}
+
 // --- CONVERSATION MAPPER (messaging.conversations) ---
 type ConversationMapper struct{}
 
-func (m *ConversationMapper) TableName() string { return "messaging.conversations" }
+func (m *ConversationMapper) TableName() string {
+	return "messaging.conversations"
+}
 
 func (m *ConversationMapper) Columns() []string {
-	// NOUVEAU : description et avatar_id ajoutés
-	return []string{"id", "type", "title", "description", "avatar_id", "last_message_id", "state", "laws", "created_at", "updated_at"}
+	// Remplacement de "laws" par "settings"
+	return []string{"id", "type", "title", "description", "avatar_id", "last_message_id", "state", "settings", "created_at", "updated_at"}
 }
 
 func (m *ConversationMapper) ToRow(data any) ([]any, error) {
@@ -519,8 +552,6 @@ func (m *ConversationMapper) ToRow(data any) ([]any, error) {
 	if c.LastMessageID == 0 {
 		lastMsgDB = nil
 	}
-
-	// NOUVEAU : Traductions NULL pour les nouveaux champs
 	var descDB any = c.Description
 	if c.Description == "" {
 		descDB = nil
@@ -530,7 +561,11 @@ func (m *ConversationMapper) ToRow(data any) ([]any, error) {
 		avatarDB = nil
 	}
 
-	return []any{c.ID, c.Type, titleDB, descDB, avatarDB, lastMsgDB, c.State, pq.Array(c.Laws), c.CreatedAt, c.UpdatedAt}, nil
+	// Sérialisation JSONB du champ Settings
+	settingsJSON, _ := json.Marshal(c.Settings)
+	var settingsDB any = string(settingsJSON)
+
+	return []any{c.ID, c.Type, titleDB, descDB, avatarDB, lastMsgDB, c.State, settingsDB, c.CreatedAt, c.UpdatedAt}, nil
 }
 
 func (m *ConversationMapper) BuildUpdateQuery(t string) string {

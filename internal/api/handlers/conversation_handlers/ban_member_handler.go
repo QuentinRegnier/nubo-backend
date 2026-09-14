@@ -22,7 +22,7 @@ import (
 // @Param        X-Signature   header string true "Signature HMAC de la requête"
 // @Param        X-Timestamp   header string true "Timestamp Unix de la requête"
 // @Param        data          body   conversation_models.BanMemberInput true "ID du groupe et de l'utilisateur à bannir"
-// @Success      200  {object} map[string]string "message: Membre banni avec succès"
+// @Success      200  {object} conversation_models.BanMemberOutput
 // @Failure      400  {object} nubo_error.PublicErrorResponse "Format JSON invalide ou paramètres manquants"
 // @Failure      401  {object} nubo_error.PublicErrorResponse "Utilisateur non identifié"
 // @Failure      403  {object} nubo_error.PublicErrorResponse "Droits insuffisants pour bannir ce membre"
@@ -40,10 +40,11 @@ func BanMemberHandler(c *gin.Context) {
 		return
 	}
 
-	if err := conversation_service.BanMember(c.Request.Context(), callerID, input); err != nil {
+	output, err := conversation_service.BanMember(c.Request.Context(), callerID, input)
+	if err != nil {
 		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Membre banni avec succès"})
+	c.JSON(http.StatusOK, output)
 }

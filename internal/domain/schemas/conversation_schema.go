@@ -7,10 +7,11 @@ var ConversationsSchema = map[string]reflect.Kind{
 	"id":              reflect.Int64,
 	"type":            reflect.Int,
 	"title":           reflect.String,
-	"description":     reflect.String, // NOUVEAU
-	"avatar_id":       reflect.Int64,  // NOUVEAU
+	"description":     reflect.String,
+	"avatar_id":       reflect.Int64,
 	"last_message_id": reflect.Int64,
 	"state":           reflect.Int,
+	"settings":        reflect.Map, // Remplacement de "laws": reflect.Slice
 	"created_at":      reflect.Struct,
 	"updated_at":      reflect.Struct,
 }

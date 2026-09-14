@@ -123,10 +123,14 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 					// C. ROUTAGE SCALAIRE (Mise à jour des ZSETs et du score global de recommandation)
 					if e.Type == redis.EntityLike {
 						cache_service.EvaluatePostAfterLike(ctx, p)
-					} else if e.Type == redis.EntityView {
+					} else if e.Type == redis.EntityTelemetry {
+						// ✅ La télémétrie remplace l'ancienne "View" : elle met à jour le leaderboard des vues ET le score global
 						cache_service.EvaluatePostAfterView(ctx, p)
+
+						// D. LE CHAÎNON MANQUANT : Mise à jour du Vecteur d'Engagement IA
+						algorithm_service.UpdatePostEngagementVector(ctx, p)
 					} else {
-						// Pour un commentaire ou de la télémétrie, on actualise le score global
+						// Pour un commentaire, on actualise juste le score global
 						cache_service.UpdatePostRecommendationScore(ctx, p)
 					}
 

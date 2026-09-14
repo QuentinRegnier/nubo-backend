@@ -19,7 +19,7 @@ import (
 // @Produce      json
 // @Security     ApiKeyAuth
 // @Param        payload body conversation_models.UpdateMemberSettingsInput true "Paramètres à mettre à jour"
-// @Success      200 {object} map[string]string "Message de succès"
+// @Success      200 {object} conversation_models.UpdateMemberSettingsOutput
 // @Failure      400 {object} nubo_error.PublicErrorResponse "JSON invalide ou conversation_id manquant"
 // @Failure      401 {object} nubo_error.PublicErrorResponse "Non autorisé"
 // @Failure      403 {object} nubo_error.PublicErrorResponse "L'utilisateur n'est pas membre de la conversation"
@@ -41,11 +41,12 @@ func UpdateMemberSettingsHandler(c *gin.Context) {
 	}
 
 	// 3. Appel du service métier
-	if err := conversation_service.UpdateMemberSettings(c.Request.Context(), userID, input); err != nil {
+	output, err := conversation_service.UpdateMemberSettings(c.Request.Context(), userID, input)
+	if err != nil {
 		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	// 4. Succès direct, pas besoin d'un DTO de sortie
-	c.JSON(http.StatusOK, gin.H{"message": "Paramètres de la conversation mis à jour avec succès"})
+	c.JSON(http.StatusOK, output)
 }

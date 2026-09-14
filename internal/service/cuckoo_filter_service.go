@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
@@ -73,21 +74,36 @@ func IsUnique(ctx context.Context, entity redis.EntityType, field string, value 
 		return 1 // Sûr à 100% que c'est unique. Zéro appel BDD !
 	}
 
+	// ÉTAPE 3 : SPEED CACHE (Vérification L1)
+	// Pour les pseudos, on interroge l'index Lexicographique RAM pour un blocage absolu sans BDD.
+	if entity == redis.EntityUser && field == "username" {
+		lexValue := strings.ToLower(value)
+		// ZRangeByLex cherche la valeur exacte en O(log N)
+		res, err := redis.UsersLex.ZRangeByLex(ctx, "lex", lexValue, 1)
+		if err == nil && len(res) > 0 {
+			// Le format stocké est "username:id"
+			if strings.Split(res[0], ":")[0] == lexValue {
+				return 0 // Existe déjà dans le L1
+			}
+		}
+	}
+
 	// ÉTAPE 4 : MONGODB (Warm Storage L2)
 	existsMongo, errMongo := mongo.MongoCheckUnique(entity, field, value)
-	if errMongo != nil {
-		// L'entité n'est pas mappée ou Mongo a crashé, on passe silencieusement au L3
-	} else if existsMongo {
+	if errMongo == nil && existsMongo {
+		// ⬆️ AUTO-GUÉRISON L1 : Le Cuckoo Filter l'avait oublié, on le répare
+		cuckoo.BroadcastCuckooUpdate(cuckoo.ActionAdd, field, value)
 		return 0
 	}
 
 	// ÉTAPE 5 : POSTGRESQL (Cold Storage L3 - Source de Vérité)
 	existsPg, errPg := postgres.FuncCheckUnique(ctx, entity, field, value)
 	if errPg != nil {
-		// Le mapper a bloqué la requête (entité inconnue) ou erreur SQL
 		logger.Log.Error().Err(errPg).Str("entity", string(entity)).Str("field", field).Msg("Échec de la validation d'unicité")
-		return 0 // SÉCURITÉ : Dans le doute, on refuse l'unicité pour éviter les doublons fatals.
+		return 0 // SÉCURITÉ : Dans le doute, on refuse l'unicité
 	} else if existsPg {
+		// ⬆️ AUTO-GUÉRISON L1 : On répare le Cuckoo Filter
+		cuckoo.BroadcastCuckooUpdate(cuckoo.ActionAdd, field, value)
 		return 0
 	}
 

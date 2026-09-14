@@ -7,6 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
 
@@ -25,11 +26,8 @@ func LeftComment(ctx context.Context, commentID int64, userID int64) (comment_mo
 			comment = mongoComments[0]
 			found = true
 
-			// PROMOTION L2 -> L1
-			go func(c comment_models.CommentPayload) {
-				_ = object_cache_service.SetCommentInObjectCache(context.Background(), c)
-			}(comment)
-
+			// ⬆️ PROMOTION L2 -> L1 (Immédiat en RAM)
+			_ = object_cache_service.SetCommentInObjectCache(ctx, comment)
 		} else {
 			// TENTATIVE L3 (PostgreSQL)
 			pgComment, errPg := postgres.FuncGetComment(ctx, commentID)
@@ -37,10 +35,14 @@ func LeftComment(ctx context.Context, commentID int64, userID int64) (comment_mo
 				comment = pgComment
 				found = true
 
-				// PROMOTION L3 -> L2 & L1
+				// ⬆️ PROMOTION L3 -> L1 (Immédiat en RAM)
+				_ = object_cache_service.SetCommentInObjectCache(ctx, comment)
+
+				// ⬆️ PROMOTION L3 -> L2 (Asynchrone via Worker Mongo)
 				go func(c comment_models.CommentPayload) {
-					_ = mongo.MongoUpsertComment(c)
-					_ = object_cache_service.SetCommentInObjectCache(context.Background(), c)
+					bgCtx := context.Background()
+					// PartitionKey = PostID pour les commentaires
+					_ = redis.EnqueueDB(bgCtx, c.ID, c.PostID, redis.EntityComment, redis.ActionUpdate, c, redis.TargetMongo)
 				}(comment)
 			}
 		}

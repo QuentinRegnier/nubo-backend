@@ -9,6 +9,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
@@ -43,7 +44,11 @@ func GetCommunityRequests(ctx context.Context, callerID int64, input conversatio
 
 		// Auto-Guérison L2
 		for _, m := range members {
-			_ = mongo.MongoUpsertMember(m)
+			go func(member conversation_models.MemberPayload) {
+				bgCtx := context.Background()
+				// On l'envoie en tant qu'Update à Mongo pour qu'il le sauvegarde
+				_ = redis.EnqueueDB(bgCtx, member.ID, member.ConversationID, redis.EntityMembers, redis.ActionUpdate, member, redis.TargetMongo)
+			}(m)
 		}
 	}
 

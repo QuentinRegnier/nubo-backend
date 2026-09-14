@@ -10,6 +10,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service" // ✅ NOUVEAU
@@ -46,9 +47,13 @@ func GetPostLikes(ctx context.Context, input like_models.GetPostLikesInput) (lik
 				post = pgPosts[0]
 				found = true
 
+				// ⬆️ PROMOTION L3/L2 -> L1 (Immédiat en RAM)
+				_ = object_cache_service.SetPostInObjectCache(ctx, post)
+
+				// ⬆️ PROMOTION L3 -> L2 (Asynchrone via Worker)
 				go func(p post_models.PostPayload) {
-					_ = mongo.MongoUpsertPost(p)
-					_ = object_cache_service.SetPostInObjectCache(context.Background(), p)
+					bgCtx := context.Background()
+					_ = redis.EnqueueDB(bgCtx, p.ID, p.UserID, redis.EntityPost, redis.ActionUpdate, p, redis.TargetMongo)
 				}(post)
 			}
 		}
@@ -82,9 +87,19 @@ func GetPostLikes(ctx context.Context, input like_models.GetPostLikesInput) (lik
 
 	// Si Mongo échoue ou ne renvoie rien (Cache miss), on tape Postgres (L3)
 	if errMongo != nil || len(userIDs) == 0 {
-		userIDsPg, errPg := postgres.FuncGetPostLikes(ctx, input.PostID, input.Limit, input.Offset)
+		// On charge les objets Likes COMPLETS pour pouvoir réhydrater Mongo
+		likesPg, errPg := postgres.FuncLoadLikes(ctx, 0, input.PostID, 0, input.Limit, 0)
 		if errPg == nil {
-			userIDs = userIDsPg
+			for _, l := range likesPg {
+				userIDs = append(userIDs, l.UserID)
+
+				// ⬆️ PROMOTION L3 -> L2 (Asynchrone via Worker)
+				go func(like like_models.LikePayload) {
+					bgCtx := context.Background()
+					// PartitionKey = targetID (le post) pour grouper les opérations
+					_ = redis.EnqueueDB(bgCtx, like.ID, like.TargetID, redis.EntityLike, redis.ActionUpdate, like, redis.TargetMongo)
+				}(l)
+			}
 		}
 	}
 

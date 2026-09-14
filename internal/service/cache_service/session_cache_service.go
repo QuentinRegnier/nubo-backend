@@ -3,7 +3,6 @@ package cache_service
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
@@ -93,37 +92,65 @@ func DeleteSessionFromCache(ctx context.Context, sessionID int64, userID int64, 
 }
 
 // GetFirebaseInstallationIDsCascade récupère tous les tokens d'appareils de l'utilisateur (L1 -> L2 -> L3)
+// L'architecture repose désormais sur l'abstraction Collection (DDD).
 func GetFirebaseInstallationIDsCascade(ctx context.Context, userID int64) ([]string, error) {
 	c, cancel := getShortCtx(ctx)
 	defer cancel()
 
-	var fids []string
-
-	// 1. TENTATIVE L1 (Redis via KEYS sur SessionIndexes)
-	// La clé est au format session_cache:<userID>:<firebaseInstallationID>
-	pattern := fmt.Sprintf("%s:%d:*", redis.SessionIndexes.Prefix, userID)
-	keys, err := redis.Keys(c, pattern)
-	if err == nil && len(keys) > 0 {
-		for _, key := range keys {
-			parts := strings.Split(key, ":")
-			if len(parts) >= 3 {
-				fids = append(fids, parts[2])
-			}
-		}
+	// 1. TENTATIVE L1 (Redis via SMembers)
+	// On utilise l'abstraction DDD de ta Collection pour récupérer le SET des tokens.
+	// (Note: Cela implique que lors du login, tu fasses : redis.SessionIndexes.SAdd(ctx, userID, firebaseID))
+	fids, err := redis.SessionIndexes.SMembers(c, userID)
+	if err == nil && len(fids) > 0 {
 		return fids, nil
 	}
 
 	// 2. FALLBACK L2 (MongoDB)
 	fids, err = mongo.MongoGetFirebaseInstallationIDs(userID)
 	if err == nil && len(fids) > 0 {
+		// ⬆️ AUTO-GUÉRISON L1 : On répare le cache RAM
+		go healSessionIndexL1(userID, fids)
 		return fids, nil
 	}
 
-	// 3. FALLBACK L3 (PostgreSQL)
-	fids, err = postgres.FuncGetFirebaseInstallationIDs(ctx, userID)
-	if err == nil && len(fids) > 0 {
-		return fids, nil
+	// 3. FALLBACK L3 COMPLET (PostgreSQL) avec réhydratation
+	sessionsPg, errPg := postgres.FuncLoadAllUserSessions(ctx, userID)
+	if errPg == nil && len(sessionsPg) > 0 {
+		var newFids []string
+
+		for _, session := range sessionsPg {
+			newFids = append(newFids, session.FirebaseInstallationID)
+
+			// PROMOTION L3 -> L2 & L1
+			go func(s auth_models.SessionsPayload) {
+				bgCtx := context.Background()
+				// L1 : Hydratation en RAM de l'objet complet
+				_ = SetSessionInCache(bgCtx, s)
+
+				// L2 : Asynchrone vers Mongo
+				_ = redis.EnqueueDB(bgCtx, s.ID, s.UserID, redis.EntitySession, redis.ActionUpdate, s, redis.TargetMongo)
+			}(session)
+		}
+
+		// ⬆️ AUTO-GUÉRISON L1 : On répare l'index de recherche (Le Set)
+		go healSessionIndexL1(userID, newFids)
+
+		return newFids, nil
 	}
 
 	return nil, nubo_error.NewNotFound("NO_ACTIVE_DEVICE", "Aucun appareil actif trouvé pour cet utilisateur.", nil)
+}
+
+// healSessionIndexL1 est un helper local asynchrone pour insérer un lot de FIDs dans le Set L1
+func healSessionIndexL1(userID int64, fids []string) {
+	bgCtx := context.Background()
+	// Conversion en slice de "any" pour l'interface SAdd
+	args := make([]any, len(fids))
+	for i, fid := range fids {
+		args[i] = fid
+	}
+
+	// Utilisation de ton abstraction DDD
+	_ = redis.SessionIndexes.SAdd(bgCtx, userID, args...)
+	_ = redis.SessionIndexes.RefreshTTL(bgCtx, userID)
 }

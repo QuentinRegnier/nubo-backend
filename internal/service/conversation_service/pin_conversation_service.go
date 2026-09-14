@@ -16,15 +16,15 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
 )
 
-func TogglePinConversation(ctx context.Context, callerID int64, input conversation_models.PinConversationInput) error {
+func TogglePinConversation(ctx context.Context, callerID int64, input conversation_models.PinConversationInput) (conversation_models.PinConversationOutput, error) {
 	// 1. Récupération sécurisée du membre
 	mem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
 	if err != nil {
-		return err
+		return conversation_models.PinConversationOutput{}, err
 	}
 
 	if mem.Settings.Pinned >= 0 {
-		return nil // Déjà épinglé, on garantit l'idempotence
+		return conversation_models.PinConversationOutput{}, nil // Déjà épinglé, on garantit l'idempotence
 	}
 
 	// A. Récupération des indices utilisés (L2 -> L3)
@@ -36,7 +36,7 @@ func TogglePinConversation(ctx context.Context, callerID int64, input conversati
 
 	// B. Limite stricte
 	if len(indices) >= 3 {
-		return nubo_error.NewBadRequest("MAX_PIN_REACHED", "Vous ne pouvez épingler que 3 conversations.", nil)
+		return conversation_models.PinConversationOutput{}, nubo_error.NewBadRequest("MAX_PIN_REACHED", "Vous ne pouvez épingler que 3 conversations.", nil)
 	}
 
 	// C. Détermination du slot vide (0, 1 ou 2)
@@ -69,5 +69,17 @@ func TogglePinConversation(ctx context.Context, callerID int64, input conversati
 	})
 
 	// 4. Persistance (Write-Behind)
-	return redis.EnqueueDB(ctx, mem.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, mem, redis.TargetAll)
+
+	output := conversation_models.PinConversationOutput{}
+
+	// ========================================================================
+	// MARQUAGE DU TEMPS (DIRTY FLAG)
+	// ========================================================================
+	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
+	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
+	// et garantit que le client reçoit la date de la fin absolue de la transaction.
+	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
+	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+
+	return output, redis.EnqueueDB(ctx, mem.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, mem, redis.TargetAll)
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
 
@@ -54,11 +55,14 @@ func fetchPostsCascade(ctx context.Context, ids []int64) map[int64]post_models.P
 		for _, p := range pgPosts {
 			postsMap[p.ID] = p
 
-			// A. Réhydratation du stockage à froid L2 (MongoDB) pour soulager définitivement Postgres
-			_ = mongo.MongoUpsertPost(p)
-
-			// B. Réhydratation du cache haute performance L1 (Redis JSON)
+			// A. Réhydratation du cache haute performance L1 (Redis JSON) - Synchrone
 			_ = object_cache_service.SetPostInObjectCache(ctx, p)
+
+			// B. Réhydratation du stockage à froid L2 (MongoDB) - Asynchrone
+			go func(post post_models.PostPayload) {
+				bgCtx := context.Background()
+				_ = redis.EnqueueDB(bgCtx, post.ID, post.UserID, redis.EntityPost, redis.ActionUpdate, post, redis.TargetMongo)
+			}(p)
 		}
 	}
 

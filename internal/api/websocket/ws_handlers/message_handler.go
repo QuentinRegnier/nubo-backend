@@ -16,44 +16,53 @@ func HandleCreateMessage(ctx context.Context, callerID int64, rawPayload []byte)
 	if err := json.Unmarshal(rawPayload, &input); err != nil {
 		return nil, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Payload invalide.", err)
 	}
-
 	if err := pkg.ValidateStruct(&input); err != nil {
 		return nil, nubo_error.NewBadRequest("VALIDATION_FAILED", "Validation échouée.", err)
 	}
 
-	msgID, err := message_service.CreateMessage(ctx, callerID, input.ConversationID, input, false)
+	output, err := message_service.CreateMessage(ctx, callerID, input.ConversationID, input, false)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]int64{"message_id": msgID}, nil
+
+	// ICI on retourne la structure complète au lieu du map codé en dur !
+	return output, nil
 }
 
-func HandleUpdateMessage(ctx context.Context, callerID int64, rawPayload []byte) error {
+func HandleUpdateMessage(ctx context.Context, callerID int64, rawPayload []byte) (any, error) {
 	var input message_models.UpdateMessageInput
 	if err := json.Unmarshal(rawPayload, &input); err != nil {
-		return nubo_error.NewBadRequest("INVALID_PAYLOAD", "Payload invalide.", err)
+		return nil, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Payload invalide.", err)
 	}
-
-	// 🛡️ BOUCLIER STATIQUE
 	if err := pkg.ValidateStruct(&input); err != nil {
-		return errors.New("validation échouée : " + err.Error())
+		return nil, errors.New("validation échouée : " + err.Error())
 	}
 
-	return message_service.UpdateMessage(ctx, callerID, input)
+	output, err := message_service.UpdateMessage(ctx, callerID, input)
+	if err != nil {
+		return nil, err
+	}
+
+	// ICI on retourne la structure complète au lieu du map codé en dur !
+	return output, nil
 }
 
-func HandleDeleteMessage(ctx context.Context, callerID int64, rawPayload []byte) error {
+func HandleDeleteMessage(ctx context.Context, callerID int64, rawPayload []byte) (any, error) {
 	var input message_models.DeleteMessageInput
 	if err := json.Unmarshal(rawPayload, &input); err != nil {
-		return nubo_error.NewBadRequest("INVALID_PAYLOAD", "Payload invalide.", err)
+		return nil, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Payload invalide.", err)
 	}
-
-	// 🛡️ BOUCLIER STATIQUE
 	if err := pkg.ValidateStruct(&input); err != nil {
-		return nubo_error.NewBadRequest("VALIDATION_FAILED", "Validation échouée.", err)
+		return nil, nubo_error.NewBadRequest("VALIDATION_FAILED", "Validation échouée.", err)
 	}
 
-	return message_service.DeleteMessage(ctx, callerID, input)
+	output, err := message_service.DeleteMessage(ctx, callerID, input)
+	if err != nil {
+		return nil, err
+	}
+
+	// ICI on retourne la structure complète au lieu du map codé en dur !
+	return output, nil
 }
 
 func HandleReactMessage(ctx context.Context, callerID int64, rawPayload []byte) error {

@@ -7,6 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
 
@@ -26,11 +27,16 @@ func GetMediaCascade(ctx context.Context, mediaID int64) (media_models.MediaPayl
 
 	// 3. Fallback L3 (Postgres)
 	if pgMedia, errPg := postgres.FuncGetMedia(ctx, mediaID); errPg == nil {
-		// ✅ HYDRATATION L2 (Mongo) ! La pièce manquante
-		_ = mongo.MongoUpsertMedia(pgMedia)
-
-		// ✅ HYDRATATION L1 (Redis)
+		// ✅ HYDRATATION L1 (Redis) Synchrone
 		_ = object_cache_service.SetMediaInObjectCache(ctx, pgMedia)
+
+		// ✅ HYDRATATION L2 (Mongo) Asynchrone
+		go func(m media_models.MediaPayload) {
+			bgCtx := context.Background()
+			// PartitionKey = OwnerID
+			_ = redis.EnqueueDB(bgCtx, m.ID, m.OwnerID, redis.EntityMedia, redis.ActionUpdate, m, redis.TargetMongo)
+		}(pgMedia)
+
 		return pgMedia, nil
 	}
 

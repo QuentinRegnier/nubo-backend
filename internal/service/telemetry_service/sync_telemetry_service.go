@@ -11,7 +11,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
-	"github.com/QuentinRegnier/nubo-backend/internal/worker"
 )
 
 // ProcessSyncTelemetry orchestre la synchronisation bidirectionnelle et l'envoi de la télémétrie aux workers.
@@ -103,12 +102,9 @@ func ProcessSyncTelemetry(ctx context.Context, input telemetry_models.SyncTeleme
 				_ = object_cache_service.SetPostInObjectCache(ctx, p)
 				cache_service.EvaluatePostAfterView(ctx, p)
 			}
-
-			// 2. ENVOI AU BUFFER L2/L3 (Interaction Worker)
-			worker.RegisterView(input.UserID, event.PostID)
 		}
 
-		// Envoi à la file d'attente détaillée (Les workers mettront à jour telemetry_dwell_sum, etc.)
+		// Envoi à la file d'attente détaillée (Les workers mettront à jour telemetry_dwell_sum, view_count, etc.)
 		_ = redis.EnqueueDB(ctx, event.PostID, input.UserID, redis.EntityTelemetry, redis.ActionCreate, event, redis.TargetAll)
 	}
 

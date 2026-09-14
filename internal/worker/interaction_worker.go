@@ -14,30 +14,17 @@ type Interaction struct {
 	TargetID  int64
 	Type      string
 	Timestamp int64
+	Emoji     string // NOUVEAU: Spécifique pour les réactions
+	Delta     int    // NOUVEAU: +1 ou -1
 }
 
 var (
 	// Canal asynchrone bufferisé (50 000 emplacements).
-	// Amortit les Thundering Herds (pics soudains de trafic) sans bloquer les requêtes HTTP.
 	interactionChan = make(chan Interaction, 50000)
 )
 
 func init() {
 	go flushInteractionsPeriodically()
-}
-
-// RegisterView met en file d'attente une incrémentation de vue qualitative
-func RegisterView(actorID int64, postID int64) {
-	select {
-	case interactionChan <- Interaction{
-		ActorID:   actorID,
-		TargetID:  postID,
-		Type:      "view",
-		Timestamp: time.Now().Unix(),
-	}:
-	default:
-		// BACKPRESSURE
-	}
 }
 
 // RegisterUnread met en file d'attente une incrémentation de message non lu
@@ -51,6 +38,22 @@ func RegisterUnread(convID int64, userID int64) {
 	}:
 	default:
 		// BACKPRESSURE
+	}
+}
+
+// RegisterMessageReaction met en file d'attente une mise à jour de compteur de réaction
+func RegisterMessageReaction(msgID int64, emoji string, delta int) {
+	select {
+	case interactionChan <- Interaction{
+		TargetID:  msgID,
+		Type:      "msg_reaction",
+		Emoji:     emoji,
+		Delta:     delta,
+		Timestamp: time.Now().Unix(),
+	}:
+	default:
+		// BACKPRESSURE: Si le buffer RAM est plein, on perd le compteur (le Fast Path L1 est prioritaire)
+		logger.Log.Warn().Int64("msg_id", msgID).Msg("Interaction Worker : Buffer plein, perte d'un delta de réaction")
 	}
 }
 
@@ -83,55 +86,48 @@ func flushInteractionsPeriodically() {
 
 // processCacheUpdates agrège et expédie les paquets de compteurs vers les BDD
 func processCacheUpdates(ctx context.Context, batch []Interaction) {
-	viewsToAdd := make(map[int64]int)
-	unreadsToAdd := make(map[string]int) // Clé = "convID:userID"
+	unreadsToAdd := make(map[string]int)             // Clé = "convID:userID"
+	reactionsToAdd := make(map[int64]map[string]int) // NOUVEAU: map[msgID]map[emoji]delta
 
 	// 1. Agrégation mathématique en RAM
 	for _, interaction := range batch {
-		if interaction.Type == "view" {
-			viewsToAdd[interaction.TargetID]++
-		} else if interaction.Type == "unread" {
+		if interaction.Type == "unread" {
 			key := fmt.Sprintf("%d:%d", interaction.TargetID, interaction.ActorID)
 			unreadsToAdd[key]++
+		} else if interaction.Type == "msg_reaction" {
+			if reactionsToAdd[interaction.TargetID] == nil {
+				reactionsToAdd[interaction.TargetID] = make(map[string]int)
+			}
+			reactionsToAdd[interaction.TargetID][interaction.Emoji] += interaction.Delta
 		}
 	}
 
 	var eventsToQueue []redis.AsyncEvent
 
-	// 2. Traitement des Vues
-	for postID, count := range viewsToAdd {
-		eventsToQueue = append(eventsToQueue, redis.AsyncEvent{
-			Type:   redis.EntityView,
-			Action: redis.ActionCreate,
-			Payload: map[string]interface{}{
-				"target_id": postID,
-				"count":     count, // On flag la valeur absolue du paquet
-			},
-			Targets: redis.TargetPostgres | redis.TargetMongo,
-		})
-	}
-
-	// 3. Traitement des Unreads
-	for key, count := range unreadsToAdd {
-		var convID, userID int64
-		_, err := fmt.Sscanf(key, "%d:%d", &convID, &userID)
-		if err != nil {
-			return
+	// 2. Traitement des Réactions aux messages (NOUVEAU)
+	for msgID, emojiDeltas := range reactionsToAdd {
+		// Nettoyage: on ne garde que les emojis avec un delta != 0
+		validDeltas := make(map[string]int)
+		for emoji, delta := range emojiDeltas {
+			if delta != 0 {
+				validDeltas[emoji] = delta
+			}
 		}
 
-		eventsToQueue = append(eventsToQueue, redis.AsyncEvent{
-			Type:   redis.EntityMembers,
-			Action: redis.ActionUpdate,
-			Payload: map[string]interface{}{
-				"conversation_id": convID,
-				"user_id":         userID,
-				"unread_delta":    count, // On passe un DELTA
-			},
-			Targets: redis.TargetPostgres | redis.TargetMongo,
-		})
+		if len(validDeltas) > 0 {
+			eventsToQueue = append(eventsToQueue, redis.AsyncEvent{
+				Type:   redis.EntityMessage, // On cible la mise à jour du Message parent
+				Action: redis.ActionBuild,   // Action personnalisée pour signifier une mise à jour partielle
+				Payload: map[string]interface{}{
+					"message_id": msgID,
+					"deltas":     validDeltas,
+				},
+				Targets: redis.TargetPostgres | redis.TargetMongo,
+			})
+		}
 	}
 
-	// 4. Envoi sur la File Redis (Write-Behind)
+	// 3. Envoi sur la File Redis (Write-Behind)
 	for _, event := range eventsToQueue {
 		payloadMap, ok := event.Payload.(map[string]interface{})
 		if !ok {
@@ -141,10 +137,13 @@ func processCacheUpdates(ctx context.Context, batch []Interaction) {
 		var partitionKey int64
 		if event.Type == redis.EntityMembers {
 			partitionKey = payloadMap["conversation_id"].(int64)
+		} else if event.Type == redis.EntityMessage {
+			partitionKey = payloadMap["message_id"].(int64) // Routage par message_id
 		} else {
 			partitionKey = payloadMap["target_id"].(int64)
 		}
 
+		// On utilise TargetWorker pour les compteurs (les bases géreront ça spécifiquement)
 		err := redis.EnqueueDB(
 			ctx,
 			event.ID,

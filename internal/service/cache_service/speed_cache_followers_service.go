@@ -3,7 +3,9 @@ package cache_service
 import (
 	"context"
 	"strconv"
+	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
@@ -43,8 +45,21 @@ func RelationValue(ctx context.Context, targetID int64, callerID int64) int {
 		return 0 // Par sécurité absolue, on refuse l'accès en cas de crash BDD
 	}
 
-	// Réhydratation L1 (Inclut le Cache Négatif : si statePg == 0, on le met en RAM quand même)
+	// Réhydratation L1 (Inclut le Cache Négatif)
 	_ = redis.SpeedRelations.HSet(ctx, targetID, strCallerID, statePg)
+
+	// Réhydratation L2 asynchrone via la queue
+	go func(currentState int) {
+		bgCtx := context.Background()
+		payload := relation_models.RelationPayload{
+			PrimaryID:   callerID,
+			SecondaryID: targetID,
+			State:       currentState,
+			UpdatedAt:   time.Now().UTC(),
+		}
+		// On envoie un ActionUpdate. Le worker Mongo a été codé pour utiliser PrimaryID/SecondaryID
+		_ = redis.EnqueueDB(bgCtx, 0, targetID, redis.EntityRelation, redis.ActionUpdate, payload, redis.TargetMongo)
+	}(statePg)
 
 	return statePg
 }

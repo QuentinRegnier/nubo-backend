@@ -21,7 +21,7 @@ import (
 // @Param X-Signature header string true "Signature HMAC de la requête"
 // @Param X-Timestamp header string true "Timestamp Unix de la requête"
 // @Param input body conversation_models.AcceptCommunityRequestInput true "Identifiants de la conversation et de la cible"
-// @Success 200 {string} string "OK"
+// @Success 200 {object} conversation_models.AcceptCommunityRequestOutput
 // @Failure 400 {object} nubo_error.PublicErrorResponse
 // @Failure 401 {object} nubo_error.PublicErrorResponse
 // @Failure 403 {object} nubo_error.PublicErrorResponse
@@ -43,12 +43,12 @@ func AcceptCommunityRequestHandler(c *gin.Context) {
 	}
 
 	// 3. Appel du service métier
-	err = conversation_service.AcceptCommunityRequest(c.Request.Context(), callerID, input)
+	output, err := conversation_service.AcceptCommunityRequest(c.Request.Context(), callerID, input)
 	if err != nil {
 		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	// 4. Réponse
-	c.Status(http.StatusOK)
+	c.JSON(http.StatusOK, output)
 }

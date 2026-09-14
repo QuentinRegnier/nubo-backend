@@ -18,7 +18,7 @@ import (
 // @Produce      json
 // @Security     ApiKeyAuth
 // @Param        payload body conversation_models.UnpinConversationInput true "ID de la conversation"
-// @Success      200 {object} map[string]string "Message de succès"
+// @Success      200 {object} conversation_models.UnpinConversationOutput
 // @Failure      400 {object} nubo_error.PublicErrorResponse "JSON invalide"
 // @Failure      401 {object} nubo_error.PublicErrorResponse "Non autorisé"
 // @Failure      403 {object} nubo_error.PublicErrorResponse "Accès refusé"
@@ -36,10 +36,11 @@ func UnpinConversationHandler(c *gin.Context) {
 		return
 	}
 
-	if err := conversation_service.UnpinConversation(c.Request.Context(), userID, input); err != nil {
+	output, err := conversation_service.UnpinConversation(c.Request.Context(), userID, input)
+	if err != nil {
 		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Conversation désépinglée avec succès"})
+	c.JSON(http.StatusOK, output)
 }

@@ -4,9 +4,12 @@ import (
 	"context"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -17,27 +20,67 @@ import (
 )
 
 // CreateMessage construit le message et active les médias orphelins.
-func CreateMessage(ctx context.Context, senderID int64, convID int64, input message_models.CreateMessageInput, isInternal bool) (int64, error) {
+func CreateMessage(ctx context.Context, senderID int64, convID int64, input message_models.CreateMessageInput, isInternal bool) (message_models.CreateMessageOutput, error) {
 	// 1. SÉCURITÉ DES TYPES DE MESSAGES (Filtre anti-usurpation)
 	if !isInternal {
 		switch input.MessageType {
 		case 0, 2, 3: // Texte, Image, GIF : OK
 		case 1, 4: // Vocales, Vidéos : En attente d'implémentation
-			return 0, nubo_error.NewBadRequest("UNSUPPORTED_MESSAGE_TYPE", "Les messages vocaux et vidéos ne sont pas encore supportés.", nil)
+			return message_models.CreateMessageOutput{}, nubo_error.NewBadRequest("UNSUPPORTED_MESSAGE_TYPE", "Les messages vocaux et vidéos ne sont pas encore supportés.", nil)
 		case 5, 6, 7, 8: // Systèmes, Invitations, Liens
-			return 0, nubo_error.NewForbidden("INVALID_MESSAGE_TYPE", "Vous n'avez pas l'autorisation d'envoyer ce type de message.", nil)
+			return message_models.CreateMessageOutput{}, nubo_error.NewForbidden("INVALID_MESSAGE_TYPE", "Vous n'avez pas l'autorisation d'envoyer ce type de message.", nil)
 		default:
-			return 0, nubo_error.NewBadRequest("UNKNOWN_MESSAGE_TYPE", "Type de message inconnu.", nil)
+			return message_models.CreateMessageOutput{}, nubo_error.NewBadRequest("UNKNOWN_MESSAGE_TYPE", "Type de message inconnu.", nil)
 		}
 	}
 
 	// 2. SÉCURITÉ : L'utilisateur doit être membre actif
 	mem, err := security_service.LeftMember(ctx, convID, senderID)
 	if err != nil {
-		return 0, err // Propage l'erreur (déjà formatée par security_service)
+		return message_models.CreateMessageOutput{}, err
 	}
 	if mem.Role < 0 {
-		return 0, nubo_error.NewForbidden("USER_BANNED", "Accès refusé : vous êtes banni de cette conversation.", nil)
+		return message_models.CreateMessageOutput{}, nubo_error.NewForbidden("USER_BANNED", "Accès refusé : vous êtes banni de cette conversation.", nil)
+	}
+
+	// === NOUVEAU : CHARGEMENT DE LA CONVERSATION ET MATRICE DE PERMISSIONS (Cascade L1 -> L2 -> L3) ===
+	conv, errConv := object_cache_service.GetConversationFromObjectCache(ctx, convID)
+	if errConv != nil || conv.ID == 0 {
+		conv, errConv = mongo.MongoGetConversation(convID)
+		if errConv != nil || conv.ID == 0 {
+			// FALLBACK ABSOLU L3
+			conv, errConv = postgres.FuncGetConversation(ctx, convID)
+			if errConv != nil || conv.ID == 0 {
+				return message_models.CreateMessageOutput{}, nubo_error.NewNotFound("CONV_NOT_FOUND", "Conversation introuvable.", errConv)
+			}
+
+			// ⬆️ PROMOTION L3 -> L2 (Asynchrone via la queue pour protéger Mongo)
+			go func(c conversation_models.ConversationPayload) {
+				bgCtx := context.Background()
+				_ = redis.EnqueueDB(bgCtx, c.ID, c.ID, redis.EntityConversation, redis.ActionUpdate, c, redis.TargetMongo)
+			}(conv)
+		}
+
+		// ⬆️ PROMOTION L3/L2 -> L1 (Immédiat en RAM)
+		_ = object_cache_service.SetConversationInObjectCache(ctx, conv)
+	}
+
+	if !isInternal && conv.Type > 0 {
+		// Droit d'écriture (1 = Admins seuls, 2 = Annonces & Threads)
+		if conv.Settings.WritePermission == 1 && mem.Role == 0 {
+			return message_models.CreateMessageOutput{}, nubo_error.NewForbidden("WRITE_PERMISSION_DENIED", "Seuls les administrateurs peuvent envoyer des messages ici.", nil)
+		}
+		if conv.Settings.WritePermission == 2 && mem.Role == 0 {
+			// On autorise si ThreadParentID > 0 (c'est une réponse à un thread)
+			if input.ThreadParentID == 0 {
+				return message_models.CreateMessageOutput{}, nubo_error.NewForbidden("WRITE_PERMISSION_DENIED", "Vous ne pouvez que répondre aux annonces dans cette communauté.", nil)
+			}
+		}
+
+		// Droit d'envoi de médias
+		if input.MessageType == 2 && conv.Settings.SendMediaPermission == 1 && mem.Role == 0 {
+			return message_models.CreateMessageOutput{}, nubo_error.NewForbidden("MEDIA_PERMISSION_DENIED", "Vous n'êtes pas autorisé à envoyer des médias dans ce groupe.", nil)
+		}
 	}
 
 	// 3. ACTIVATION DU MÉDIA (OUT-OF-BAND)
@@ -47,12 +90,11 @@ func CreateMessage(ctx context.Context, senderID int64, convID int64, input mess
 	}
 
 	if input.MessageType == 2 {
-		// A. On extrait le media_id fourni par le client
+		// Logique d'activation de média inchangée...
 		rawMediaID, exists := attachMap["media_id"]
 		if !exists {
-			return 0, nubo_error.NewBadRequest("MISSING_MEDIA_ID", "L'identifiant du média (media_id) est manquant.", nil)
+			return message_models.CreateMessageOutput{}, nubo_error.NewBadRequest("MISSING_MEDIA_ID", "L'identifiant du média (media_id) est manquant.", nil)
 		}
-
 		var mediaID int64
 		switch v := rawMediaID.(type) {
 		case float64:
@@ -62,12 +104,11 @@ func CreateMessage(ctx context.Context, senderID int64, convID int64, input mess
 		}
 
 		if mediaID > 0 {
-			// Délégation stricte au service Média pour validation et activation
 			if errAct := media_service.ActivateMediaBatch(ctx, []int64{mediaID}, senderID); errAct != nil {
-				return 0, nubo_error.NewBadRequest("MEDIA_ACTIVATION_FAILED", "Impossible d'utiliser cette image.", errAct)
+				return message_models.CreateMessageOutput{}, nubo_error.NewBadRequest("MEDIA_ACTIVATION_FAILED", "Impossible d'utiliser cette image.", errAct)
 			}
 		} else {
-			return 0, nubo_error.NewBadRequest("INVALID_MEDIA_ID", "L'identifiant du média est invalide.", nil)
+			return message_models.CreateMessageOutput{}, nubo_error.NewBadRequest("INVALID_MEDIA_ID", "L'identifiant du média est invalide.", nil)
 		}
 	} else {
 		// Nettoyage avant vérification
@@ -75,9 +116,13 @@ func CreateMessage(ctx context.Context, senderID int64, convID int64, input mess
 
 		// Prévention stricte des "Messages Fantômes" (Texte vide)
 		if input.Content == "" && input.MessageType == 0 {
-			return 0, nubo_error.NewBadRequest("EMPTY_MESSAGE", "Le message ne peut pas être vide.", nil)
+			return message_models.CreateMessageOutput{}, nubo_error.NewBadRequest("EMPTY_MESSAGE", "Le message ne peut pas être vide.", nil)
 		}
 	}
+
+	// === NOUVEAU : EXTRACTION DES MENTIONS ===
+	// On le fait ici car on est certain que le texte est propre et validé.
+	mentionedUserIDs := ExtractMentions(input.Content)
 
 	// 4. PRÉPARATION DU MESSAGE
 	msgID := pkg.GenerateID()
@@ -98,22 +143,19 @@ func CreateMessage(ctx context.Context, senderID int64, convID int64, input mess
 	// 5. MISE EN CACHE L1 IMMÉDIATE (Object Cache LFU)
 	_ = object_cache_service.SetMessageInObjectCache(ctx, msgPayload)
 	destinataires, _ := cache_service.ProcessNewMessageInSpeedCache(ctx, msgID, convID, senderID)
-	conv, _ := object_cache_service.GetConversationFromObjectCache(ctx, convID)
+	conv, _ = object_cache_service.GetConversationFromObjectCache(ctx, convID)
 
 	// 6. DISTRIBUTION TEMPS RÉEL (WebSockets)
 	msgView := message_models.MessageView{
 		MessagePayload: msgPayload,
 	}
 
-	// ✅ HYDRATATION CONDITIONNELLE DU DTO WEBSOCKET
+	// HYDRATATION CONDITIONNELLE DU DTO WEBSOCKET
 	if userLite, errLite := cache_service.GetUserLite(ctx, senderID); errLite == nil {
 		msgView.SenderUsername = userLite.Username
-
 		if conv.Type == 2 || conv.Type == 3 {
-			// Mode Twitch : Zéro URL HMAC, on donne juste l'ID brut.
 			msgView.SenderAvatarCommunityID = userLite.ProfilePictureID
 		} else {
-			// Mode Classique (90% du trafic) : On génère l'URL signée pour optimiser Flutter
 			if userLite.ProfilePictureID > 0 {
 				if avatarView, errAvatar := media_service.GenerateMediaViewCascade(ctx, userLite.ProfilePictureID, senderID, 0, senderID); errAvatar == nil {
 					msgView.SenderAvatar = avatarView
@@ -128,16 +170,32 @@ func CreateMessage(ctx context.Context, senderID int64, convID int64, input mess
 		_ = realtime_service.DistributeToUsers(ctx, "message.created", msgView, destinataires)
 	}
 
-	// 7. BATCHING DES COMPTEURS BDD
+	// === 7. ROUTAGE DES PUSH NOTIFICATIONS (La Matrice) ===
+	dispatchPushNotifications(msgView, destinataires, mentionedUserIDs)
+
+	// 8. BATCHING DES COMPTEURS BDD
 	for _, uID := range destinataires {
 		worker.RegisterUnread(convID, uID)
 	}
 
-	// 8. ENVOI À LA FILE ASYNCHRONE (Write-Behind)
+	// 9. ENVOI À LA FILE ASYNCHRONE (Write-Behind)
 	err = redis.EnqueueDB(ctx, msgID, convID, redis.EntityMessage, redis.ActionCreate, msgPayload, redis.TargetAll)
 	if err != nil {
-		return 0, err
+		return message_models.CreateMessageOutput{}, err
 	}
 
-	return msgID, nil
+	output := message_models.CreateMessageOutput{
+		MessageID: msgID,
+	}
+
+	// ========================================================================
+	// MARQUAGE DU TEMPS (DIRTY FLAG)
+	// ========================================================================
+	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
+	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
+	// et garantit que le client reçoit la date de la fin absolue de la transaction.
+	timestampMs := cache_service.TouchInboxActivity(ctx, senderID)
+	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+
+	return output, nil
 }

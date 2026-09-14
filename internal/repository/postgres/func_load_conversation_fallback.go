@@ -18,9 +18,8 @@ type InboxFallbackResult struct {
 	Member       lite_models.MemberLiteRequest
 }
 
-// FuncLoadConversationFallback appelle la fonction SQL pour réparer les trous du SPEED Cache (Inbox)
 func FuncLoadConversationFallback(ctx context.Context, userID int64, convIDs []int64) ([]InboxFallbackResult, error) {
-	query := `SELECT conversation_id, title, description, avatar_id, type, last_message_id, role, settings, unread_count, frozen_message_id, joined_at FROM messaging.func_load_conversation_fallback($1, $2)`
+	query := `SELECT conversation_id, title, description, avatar_id, type, conversation_settings, last_message_id, role, settings, frozen_message_id, unread_count, joined_at FROM messaging.func_load_conversation_fallback($1, $2)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, userID, convIDs)
 	if err != nil {
 		return nil, nubo_error.NewInternal(err)
@@ -39,14 +38,14 @@ func FuncLoadConversationFallback(ctx context.Context, userID int64, convIDs []i
 		var description sql.NullString
 		var avatarID sql.NullInt64
 		var cType int
+		var convSettingsRaw sql.NullString
 		var lastMsgID sql.NullInt64
 		var role, unreadCount int
 		var frozenID sql.NullInt64
-		var joinedAt time.Time // ✅ NOUVEAU
-		var settings sql.NullString
+		var joinedAt time.Time
+		var memSettingsRaw sql.NullString
 
-		// ✅ NOUVEAU : On scanne la variable joinedAt à la fin
-		if err := rows.Scan(&cid, &title, &description, &avatarID, &cType, &lastMsgID, &role, &settings, &unreadCount, &frozenID, &joinedAt); err == nil {
+		if err := rows.Scan(&cid, &title, &description, &avatarID, &cType, &convSettingsRaw, &lastMsgID, &role, &memSettingsRaw, &frozenID, &unreadCount, &joinedAt); err == nil {
 			conv := lite_models.ConvLiteRequest{ID: cid, Type: cType}
 			if title.Valid {
 				conv.Title = title.String
@@ -60,9 +59,13 @@ func FuncLoadConversationFallback(ctx context.Context, userID int64, convIDs []i
 			if lastMsgID.Valid {
 				conv.LastMessageID = lastMsgID.Int64
 			}
-			var parsedSettings conversation_models.MemberSettings
-			if settings.Valid && settings.String != "" && settings.String != "{}" {
-				_ = json.Unmarshal([]byte(settings.String), &parsedSettings)
+			if convSettingsRaw.Valid && convSettingsRaw.String != "" && convSettingsRaw.String != "{}" {
+				_ = json.Unmarshal([]byte(convSettingsRaw.String), &conv.Settings)
+			}
+
+			var parsedMemSettings conversation_models.MemberSettings
+			if memSettingsRaw.Valid && memSettingsRaw.String != "" && memSettingsRaw.String != "{}" {
+				_ = json.Unmarshal([]byte(memSettingsRaw.String), &parsedMemSettings)
 			}
 
 			mem := lite_models.MemberLiteRequest{
@@ -70,18 +73,17 @@ func FuncLoadConversationFallback(ctx context.Context, userID int64, convIDs []i
 				UserID:         userID,
 				Role:           role,
 				Settings: lite_models.MemberSettingsLite{
-					IsMuted:           parsedSettings.IsMuted,
-					MuteExpireAt:      parsedSettings.MuteExpireAt,
-					Pinned:            parsedSettings.Pinned,
-					MediaAutoDownload: parsedSettings.MediaAutoDownload,
+					IsMuted:           parsedMemSettings.IsMuted,
+					MuteExpireAt:      parsedMemSettings.MuteExpireAt,
+					Pinned:            parsedMemSettings.Pinned,
+					MediaAutoDownload: parsedMemSettings.MediaAutoDownload,
 				},
 				UnreadCount: unreadCount,
-				JoinedAt:    joinedAt.UnixMilli(), // ✅ MAGIE : la vraie date
+				JoinedAt:    joinedAt.UnixMilli(),
 			}
 			if frozenID.Valid {
 				mem.FrozenMessageID = frozenID.Int64
 			}
-
 			results = append(results, InboxFallbackResult{Conversation: conv, Member: mem})
 		}
 	}

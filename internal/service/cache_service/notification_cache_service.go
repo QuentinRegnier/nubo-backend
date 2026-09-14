@@ -3,6 +3,7 @@ package cache_service
 import (
 	"context"
 	"strconv"
+	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
@@ -37,4 +38,16 @@ func GetNotificationIDsFromZSET(ctx context.Context, userID int64, offset int64,
 
 func PurgeNotificationsZSET(ctx context.Context, userID int64) error {
 	return redis.NotificationsZSet.DeleteObject(ctx, userID)
+}
+
+// TouchActivityTimestamp signale une modification dans l'état des notifications de l'utilisateur
+// et retourne le timestamp exact (en millisecondes) généré par le serveur.
+func TouchActivityTimestamp(ctx context.Context, userID int64) int64 {
+	nowMs := time.Now().UnixMilli()
+
+	// Il faut que tu t'assures d'avoir déclaré une collection Redis pour ça dans ton repository/redis
+	// Exemple: var NotificationActivity = NewCollection("notification_activity", ...)
+	_ = redis.NotificationActivity.SetPrimitive(ctx, userID, nowMs)
+
+	return nowMs
 }

@@ -31,7 +31,7 @@ func CheckUsernameHandler(c *gin.Context) {
 		return
 	}
 
-	isAvailable := user_settings_service.CheckUsernameAvailability(input.Username)
+	isAvailable := user_settings_service.CheckUsernameAvailability(c, input.Username)
 	if isAvailable {
 		c.Status(http.StatusOK)
 	} else {

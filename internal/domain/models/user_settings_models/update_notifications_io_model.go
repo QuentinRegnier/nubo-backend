@@ -1,5 +1,7 @@
 package user_settings_models
 
+import "time"
+
 // UpdateNotificationsInput (Remplacement intégral PUT)
 type UpdateNotificationsInput struct {
 	MasterPushEnabled   bool `json:"master_push_enabled"`
@@ -11,4 +13,8 @@ type UpdateNotificationsInput struct {
 	NotifyFriendRequest bool `json:"notify_friend_request"`
 	NotifyMessages      bool `json:"notify_messages"`
 	NotifyGroupInvites  bool `json:"notify_group_invites"` // NOUVEAU
+}
+
+type UpdateNotificationsOutput struct {
+	UserSettingsUpdateAt time.Time `json:"user_settings_update_at"`
 }

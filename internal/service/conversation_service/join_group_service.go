@@ -22,10 +22,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
 )
 
-// LawJoinApprovalRequired définit l'identifiant de la loi exigeant une approbation manuelle pour rejoindre.
-const LawJoinApprovalRequired = 1
-
-func JoinGroup(ctx context.Context, callerID int64, input conversation_models.JoinGroupInput) error {
+func JoinGroup(ctx context.Context, callerID int64, input conversation_models.JoinGroupInput) (conversation_models.JoinGroupOutput, error) {
 	// 1. AUTO-GUÉRISON (Cascade L1 -> L2 -> L3) POUR VÉRIFIER LA CONVERSATION
 	conv, err := object_cache_service.GetConversationFromObjectCache(ctx, input.ConversationID)
 	if err != nil || conv.ID == 0 {
@@ -33,40 +30,46 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 		if err != nil || conv.ID == 0 {
 			conv, err = postgres.FuncGetConversation(ctx, input.ConversationID)
 			if err != nil || conv.ID == 0 {
-				return nubo_error.NewNotFound("CONV_NOT_FOUND", "La conversation n'existe pas ou a été supprimée.", err)
+				return conversation_models.JoinGroupOutput{}, nubo_error.NewNotFound("CONV_NOT_FOUND", "La conversation n'existe pas ou a été supprimée.", err)
 			}
-			_ = mongo.MongoUpsertConversation(conv)
+
+			// ⬆️ PROMOTION L3 -> L2 (Mongo)
+			go func(c conversation_models.ConversationPayload) {
+				_ = redis.EnqueueDB(context.Background(), c.ID, c.ID, redis.EntityConversation, redis.ActionUpdate, c, redis.TargetMongo)
+			}(conv)
 		}
+
+		// ⬆️ PROMOTION L3/L2 -> L1 (Redis Object Cache)
 		_ = object_cache_service.SetConversationInObjectCache(ctx, conv)
 	}
 
 	// 2. RÈGLE MÉTIER : On ne rejoint pas un MP.
 	if conv.Type == 0 {
-		return nubo_error.NewForbidden("INVALID_CONV_TYPE", "Impossible de rejoindre un message privé.", nil)
+		return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("INVALID_CONV_TYPE", "Impossible de rejoindre un message privé.", nil)
 	}
 
 	// 3. LA BARRIÈRE DE SÉCURITÉ
 	if conv.Type == 1 || conv.Type == 2 {
 		if input.InviteMsgID == 0 {
-			return nubo_error.NewForbidden("INVITE_REQUIRED", "Une invitation est requise pour rejoindre ce groupe privé.", nil)
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("INVITE_REQUIRED", "Une invitation est requise pour rejoindre ce groupe privé.", nil)
 		}
 
 		inviteMsg, errSec := security_service.LeftMessage(ctx, input.InviteMsgID, callerID)
 		if errSec != nil {
-			return nubo_error.NewNotFound("INVITE_NOT_FOUND", "Invitation introuvable ou vous n'en êtes pas le destinataire.", errSec)
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewNotFound("INVITE_NOT_FOUND", "Invitation introuvable ou vous n'en êtes pas le destinataire.", errSec)
 		}
 
 		if inviteMsg.MessageType != 6 {
-			return nubo_error.NewBadRequest("INVALID_INVITE", "Le message fourni n'est pas une invitation valide.", nil)
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewBadRequest("INVALID_INVITE", "Le message fourni n'est pas une invitation valide.", nil)
 		}
 
 		if inviteMsg.Attachments == nil {
-			return nubo_error.NewBadRequest("CORRUPT_INVITE", "Invitation corrompue (aucune cible).", nil)
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewBadRequest("CORRUPT_INVITE", "Invitation corrompue (aucune cible).", nil)
 		}
 
 		targetConvRaw, exists := inviteMsg.Attachments["conversation_id"]
 		if !exists {
-			return nubo_error.NewBadRequest("MISSING_INVITE_TARGET", "Invitation invalide (cible manquante).", nil)
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewBadRequest("MISSING_INVITE_TARGET", "Invitation invalide (cible manquante).", nil)
 		}
 
 		var targetConvID int64
@@ -78,7 +81,7 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 		}
 
 		if targetConvID != input.ConversationID {
-			return nubo_error.NewForbidden("INVITE_MISMATCH", "Cette invitation ne correspond pas à ce groupe.", nil)
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("INVITE_MISMATCH", "Cette invitation ne correspond pas à ce groupe.", nil)
 		}
 	}
 	// Si Type == 3, la porte est ouverte, on passe directement à la suite.
@@ -99,34 +102,23 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 
 	if mem.ID != 0 {
 		if mem.Role == -2 {
-			return nubo_error.NewForbidden("USER_BANNED", "Vous êtes banni de ce groupe.", nil)
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("USER_BANNED", "Vous êtes banni de ce groupe.", nil)
 		}
-		if mem.Role == -3 { // NOUVEAU : Anti-Spam de requêtes d'approbation
-			return nubo_error.NewConflict("ALREADY_PENDING", "Votre demande pour rejoindre cette communauté est déjà en attente d'approbation.", nil)
+		if mem.Role == -3 {
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewConflict("ALREADY_PENDING", "Votre demande pour rejoindre cette communauté est déjà en attente d'approbation.", nil)
 		}
 		if mem.Role >= 0 {
-			return nubo_error.NewBadRequest("ALREADY_MEMBER", "Vous faites déjà partie de ce groupe.", nil)
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewBadRequest("ALREADY_MEMBER", "Vous faites déjà partie de ce groupe.", nil)
 		}
-		// Role = -1 : L'utilisateur revient après avoir quitté
+		// Role = -1 (A quitté) ou Role = -4 (Rejeté) : On autorise le retour / la nouvelle demande
 		isUpdate = true
 	}
 
 	// ========================================================================
 	// 5. VÉRIFICATION DES LOIS (Approbation requise)
 	// ========================================================================
-	requiresApproval := false
-	if conv.Type == 3 {
-		for _, law := range conv.Laws {
-			if law == LawJoinApprovalRequired {
-				requiresApproval = true
-				break
-			}
-		}
-	}
-
-	// Détermination du Rôle
 	assignedRole := 0
-	if requiresApproval {
+	if conv.Settings.JoinApprovalRequired {
 		assignedRole = -3
 	}
 
@@ -221,5 +213,16 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 		}
 	}
 
-	return err
+	output := conversation_models.JoinGroupOutput{}
+
+	// ========================================================================
+	// MARQUAGE DU TEMPS (DIRTY FLAG)
+	// ========================================================================
+	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
+	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
+	// et garantit que le client reçoit la date de la fin absolue de la transaction.
+	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
+	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+
+	return output, err
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -81,7 +80,7 @@ func GetPostsView(ids []int64) ([]post_models.PostPayload, error) {
 	if len(stillMissingIDs) > 0 {
 		logger.Log.Info().Int("missing_count", len(stillMissingIDs)).Msg("Postgres Fallback déclenché")
 
-		// 1. Appel de ta NOUVELLE FONCTION (on met limit = taille du tableau)
+		// 1. Appel de la NOUVELLE FONCTION
 		posts, err := postgres.FuncLoadPosts(stillMissingIDs, len(stillMissingIDs), 0)
 
 		if err != nil {
@@ -93,13 +92,13 @@ func GetPostsView(ids []int64) ([]post_models.PostPayload, error) {
 
 				// ⬆️ PROMOTION L3 -> L2 & L1 (Auto-Guérison du Système)
 				go func(post post_models.PostPayload) {
-					// 1. Réparer Mongo
-					doc, _ := pkg.ToMap(post)
-					if doc != nil {
-						_ = mongo.Posts.Set(doc) // Assure-toi que cela fait bien un Upsert
-					}
-					// 2. Réparer Redis
-					_ = SetPostInObjectCache(context.Background(), post)
+					bgCtx := context.Background()
+
+					// 1. Réparer Redis L1 (Immédiat)
+					_ = SetPostInObjectCache(bgCtx, post)
+
+					// 2. Réparer Mongo L2 (Asynchrone via Worker BulkWrite)
+					_ = redis.EnqueueDB(bgCtx, post.ID, post.UserID, redis.EntityPost, redis.ActionUpdate, post, redis.TargetMongo)
 				}(p)
 			}
 		}

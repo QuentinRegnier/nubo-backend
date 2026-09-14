@@ -43,13 +43,14 @@ func GetUserSettingsCascade(ctx context.Context, userID int64) (user_settings_mo
 	// 3. TENTATIVE L3 (PostgreSQL)
 	sPg, errPg := postgres.FuncLoadUserSettings(ctx, userID)
 	if errPg == nil && sPg.ID != 0 {
-		// A. Réhydratation L2 (Mongo)
-		doc, _ := pkg.ToMap(sPg)
-		if doc != nil {
-			_ = mongo.UserSettings.Set(doc)
-		}
-		// B. Réhydratation L1 (Redis)
+		// A. Réhydratation L1 (Redis - Immédiate en RAM)
 		_ = SetUserSettings(ctx, sPg)
+
+		// B. Réhydratation L2 (Mongo - Asynchrone via les workers)
+		go func(settings user_settings_models.UserSettingsPayload) {
+			bgCtx := context.Background() // Détaché de la requête HTTP
+			_ = redis.EnqueueDB(bgCtx, settings.ID, settings.UserID, redis.EntityUserSettings, redis.ActionUpdate, settings, redis.TargetMongo)
+		}(sPg)
 
 		return sPg, nil
 	}

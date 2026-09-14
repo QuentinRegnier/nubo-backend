@@ -1,5 +1,7 @@
 package user_settings_models
 
+import "time"
+
 type UpdatePrivacyInput struct {
 	ProfileVisibility      int  `json:"profile_visibility" binding:"omitempty,oneof=0 1"`
 	PostVisibilityDefault  int  `json:"post_visibility_default" binding:"omitempty,oneof=0 1 2"`
@@ -12,4 +14,8 @@ type UpdatePrivacyInput struct {
 	SearchByEmailPhone     bool `json:"search_by_email_phone" binding:"omitempty"`
 	ShowLocation           bool `json:"show_location" binding:"omitempty"`
 	HideConnections        bool `json:"hide_connections" binding:"omitempty"` // NOUVEAU
+}
+
+type UpdatePrivacyOutput struct {
+	UserSettingsUpdateAt time.Time `json:"user_settings_update_at"`
 }

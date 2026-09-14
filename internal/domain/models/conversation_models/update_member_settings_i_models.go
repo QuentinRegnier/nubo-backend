@@ -1,9 +1,15 @@
 package conversation_models
 
-// UpdateMemberSettingsInput valide la mise à jour des paramètres personnels d'une conversation.
+import "time"
+
+// UpdateMemberSettingsInput valide le payload complet envoyé par l'application
 type UpdateMemberSettingsInput struct {
 	ConversationID    int64 `json:"conversation_id" binding:"required"`
-	IsMuted           bool  `json:"is_muted" binding:"omitempty"`
-	MuteExpiresAt     int64 `json:"mute_expires_at" binding:"omitempty"`
-	MediaAutoDownload bool  `json:"media_auto_download" binding:"omitempty"`
+	IsMuted           int   `json:"is_muted" binding:"min=0,max=2"`
+	MuteExpiresAt     int64 `json:"mute_expires_at"`
+	MediaAutoDownload bool  `json:"media_auto_download"`
+}
+
+type UpdateMemberSettingsOutput struct {
+	InboxUpdateAt time.Time `json:"inbox_update_at"`
 }

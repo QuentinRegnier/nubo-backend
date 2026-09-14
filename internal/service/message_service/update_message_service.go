@@ -9,28 +9,29 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
 )
 
 // UpdateMessage gère la modification d'un message texte existant.
-func UpdateMessage(ctx context.Context, callerID int64, input message_models.UpdateMessageInput) error {
+func UpdateMessage(ctx context.Context, callerID int64, input message_models.UpdateMessageInput) (message_models.UpdateMessageOutput, error) {
 	// 1. SÉCURITÉ : Récupération du message complet et vérification d'appartenance
 	msg, err := security_service.LeftMessage(ctx, input.MessageID, callerID)
 	if err != nil {
-		return err // L'erreur est déjà formatée par LeftMessage
+		return message_models.UpdateMessageOutput{}, err // L'erreur est déjà formatée par LeftMessage
 	}
 
 	// 2. RÈGLE MÉTIER STRICTE : Seul le type 0 (Texte) est modifiable
 	if msg.MessageType != 0 {
-		return nubo_error.NewBadRequest("UNSUPPORTED_MESSAGE_TYPE", "Seul un message de type texte peut être modifié.", nil)
+		return message_models.UpdateMessageOutput{}, nubo_error.NewBadRequest("UNSUPPORTED_MESSAGE_TYPE", "Seul un message de type texte peut être modifié.", nil)
 	}
 
 	// 3. APPLICATION DES MODIFICATIONS
 	msg.Content = pkg.CleanStr(input.Content)
 	if msg.Content == "" {
-		return nubo_error.NewBadRequest("EMPTY_MESSAGE", "Le message ne peut pas être vide.", nil)
+		return message_models.UpdateMessageOutput{}, nubo_error.NewBadRequest("EMPTY_MESSAGE", "Le message ne peut pas être vide.", nil)
 	}
 	msg.UpdatedAt = time.Now().UTC()
 
@@ -51,5 +52,16 @@ func UpdateMessage(ctx context.Context, callerID int64, input message_models.Upd
 		}()
 	}
 
-	return err
+	output := message_models.UpdateMessageOutput{}
+
+	// ========================================================================
+	// MARQUAGE DU TEMPS (DIRTY FLAG)
+	// ========================================================================
+	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
+	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
+	// et garantit que le client reçoit la date de la fin absolue de la transaction.
+	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
+	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+
+	return output, err
 }

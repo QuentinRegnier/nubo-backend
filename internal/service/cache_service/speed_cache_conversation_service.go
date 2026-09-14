@@ -487,3 +487,13 @@ func UpdateMemberSpeedCache(ctx context.Context, member lite_models.MemberLiteRe
 func AddConversationToUserInbox(ctx context.Context, userID int64, convID int64, lastMessageID int64) error {
 	return redis.UserInbox.ZAddWithCap(ctx, userID, float64(lastMessageID), convID, 100)
 }
+
+// TouchInboxActivity signale une modification dans la boîte de réception de l'utilisateur
+// et retourne le timestamp exact (en millisecondes) généré par le serveur.
+func TouchInboxActivity(ctx context.Context, userID int64) int64 {
+	nowMs := time.Now().UnixMilli()
+	// On met à jour le cache L1 pour que le prochain /sync sache qu'il y a eu du mouvement
+	_ = redis.InboxActivity.SetPrimitive(ctx, userID, nowMs)
+
+	return nowMs
+}

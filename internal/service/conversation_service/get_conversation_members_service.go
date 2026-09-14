@@ -58,16 +58,26 @@ func GetConversationMembers(ctx context.Context, callerID int64, input conversat
 		for _, pID := range pIDs {
 			// A. Récupération du MemberPayload (L1 -> L2 -> L3)
 			mem, errMem := object_cache_service.GetMemberFromObjectCache(ctx, convID, pID)
+
 			if errMem != nil || mem.ID == 0 {
+				// TENTATIVE L2
 				mem, errMem = mongo.MongoGetMember(convID, pID)
-				if errMem != nil || mem.ID == 0 {
+				if errMem == nil && mem.ID != 0 {
+					// Auto-Guérison L1
+					go func(m conversation_models.MemberPayload) {
+						_ = object_cache_service.SetMemberInObjectCache(context.Background(), m)
+					}(mem)
+				} else {
+					// FALLBACK L3
 					mem, _ = postgres.FuncGetMember(ctx, convID, pID)
 					if mem.ID != 0 {
-						_ = mongo.MongoUpsertMember(mem)
+						// Auto-Guérison L1 & L2 (Asynchrone)
+						go func(m conversation_models.MemberPayload) {
+							bgCtx := context.Background()
+							_ = object_cache_service.SetMemberInObjectCache(bgCtx, m)
+							_ = redis.EnqueueDB(bgCtx, m.ID, m.ConversationID, redis.EntityMembers, redis.ActionUpdate, m, redis.TargetMongo)
+						}(mem)
 					}
-				}
-				if mem.ID != 0 {
-					_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
 				}
 			}
 

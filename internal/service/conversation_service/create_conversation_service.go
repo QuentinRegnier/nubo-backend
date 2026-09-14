@@ -69,14 +69,20 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 		title = pkg.CleanStr(input.Title)
 	}
 
+	settings := input.Settings
+	// Si le Front n'a rien envoyé (struct vide), on applique les valeurs par défaut selon le type
+	if settings == (conversation_models.ConversationSettings{}) {
+		settings = DefaultConversationSettings(input.Type)
+	}
+
 	convPayload := conversation_models.ConversationPayload{
 		ID:          convID,
 		Type:        input.Type,
 		Title:       title,
-		Description: "", // NOUVEAU
-		AvatarID:    0,  // NOUVEAU
+		Description: "",
+		AvatarID:    0,
 		State:       0,
-		Laws:        []int{},
+		Settings:    settings, // NOUVEAU
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -170,6 +176,15 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 		// ENVOI NOTIFICATION
 		_ = realtime_service.DistributeToUsers(ctx, "conversation.created", convPayload, []int64{callerID})
 	}
+
+	// ========================================================================
+	// 5. MARQUAGE DU TEMPS (DIRTY FLAG)
+	// ========================================================================
+	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
+	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
+	// et garantit que le client reçoit la date de la fin absolue de la transaction.
+	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
+	output.InboxUpdateAt = time.UnixMilli(timestampMs)
 
 	return output, nil
 }

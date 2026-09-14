@@ -19,13 +19,13 @@ import (
 )
 
 // UpdateProfile modifie l'identité, vérifie l'unicité, gère l'avatar et envoie au Write-Behind.
-func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdateProfileInput) error {
+func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdateProfileInput) (auth_models.UpdateProfileOutput, error) {
 	// 1. Récupération de l'utilisateur existant complet (L2 -> L3) pour préserver les données critiques
 	user, err := mongo.MongoLoadUser(userID, "", "", "")
 	if err != nil || user.ID == 0 {
 		user, err = postgres.FuncLoadUser(userID, "", "", "")
 		if err != nil || user.ID == 0 {
-			return nubo_error.NewNotFound("USER_NOT_FOUND", "Utilisateur introuvable.", err)
+			return auth_models.UpdateProfileOutput{}, nubo_error.NewNotFound("USER_NOT_FOUND", "Utilisateur introuvable.", err)
 		}
 	}
 
@@ -36,7 +36,7 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 	// 2. Vérification d'unicité uniquement si la valeur a changé
 	if input.Username != user.Username {
 		if service.IsUnique(ctx, redis.EntityUser, "username", input.Username) == 0 {
-			return nubo_error.NewConflict("USERNAME_TAKEN", "Ce nom d'utilisateur est déjà pris.", nil)
+			return auth_models.UpdateProfileOutput{}, nubo_error.NewConflict("USERNAME_TAKEN", "Ce nom d'utilisateur est déjà pris.", nil)
 		}
 		oldUsername = user.Username
 		newUsername = input.Username
@@ -45,7 +45,7 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 
 	if input.Email != user.Email {
 		if service.IsUnique(ctx, redis.EntityUser, "email", input.Email) == 0 {
-			return nubo_error.NewConflict("EMAIL_TAKEN", "Cet email est déjà utilisé.", nil)
+			return auth_models.UpdateProfileOutput{}, nubo_error.NewConflict("EMAIL_TAKEN", "Cet email est déjà utilisé.", nil)
 		}
 		oldEmail = user.Email
 		newEmail = input.Email
@@ -56,7 +56,7 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 	// === NOUVEAU BLOC : GESTION DU TÉLÉPHONE ===
 	if input.Phone != user.Phone {
 		if input.Phone != "" && service.IsUnique(ctx, redis.EntityUser, "phone", input.Phone) == 0 {
-			return nubo_error.NewConflict("PHONE_TAKEN", "Ce numéro de téléphone est déjà utilisé.", nil)
+			return auth_models.UpdateProfileOutput{}, nubo_error.NewConflict("PHONE_TAKEN", "Ce numéro de téléphone est déjà utilisé.", nil)
 		}
 		oldPhone = user.Phone
 		newPhone = input.Phone
@@ -82,7 +82,7 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 		// B. Activer la nouvelle image
 		if input.ProfilePictureID > 0 {
 			if errAct := media_service.ActivateMediaBatch(ctx, []int64{input.ProfilePictureID}, userID); errAct != nil {
-				return nubo_error.NewBadRequest("AVATAR_ACTIVATION_FAILED", "Impossible de valider la nouvelle photo de profil.", errAct)
+				return auth_models.UpdateProfileOutput{}, nubo_error.NewBadRequest("AVATAR_ACTIVATION_FAILED", "Impossible de valider la nouvelle photo de profil.", errAct)
 			}
 		}
 		user.ProfilePictureID = input.ProfilePictureID
@@ -113,5 +113,7 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 	_ = realtime_service.DistributeToUsers(ctx, "user.profile_updated", user, []int64{userID})
 
 	// 8. Persistance Asynchrone (Write-Behind vers Mongo et Postgres avec l'objet complet)
-	return redis.EnqueueDB(ctx, user.ID, 0, redis.EntityUser, redis.ActionUpdate, user, redis.TargetAll)
+	return auth_models.UpdateProfileOutput{
+		ProfileUpdatedAt: user.UpdatedAt,
+	}, redis.EnqueueDB(ctx, user.ID, 0, redis.EntityUser, redis.ActionUpdate, user, redis.TargetAll)
 }

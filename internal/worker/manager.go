@@ -30,6 +30,13 @@ func StartBackgroundWorkers(ctx context.Context) {
 	// NOUVEAU : Lancement du Garbage Collector de Médias
 	StartMediaCleanupCron(ctx)
 
+	// NOUVEAU : Lancement du Garbage Collector de Likes
+	StartLikeCleanupCron(ctx)
+
+	StartReactionCleanupCron(ctx)
+
+	StartSavedCleanupCron(ctx)
+
 	// === NOUVEAU : Lancement du Worker de Push Notifications ===
 	StartPushNotificationWorker(ctx)
 

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -10,9 +11,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
-// FuncLoadActiveConversations récupère les métadonnées pour le Seeding
 func FuncLoadActiveConversations(ctx context.Context) ([]lite_models.ConvLiteRequest, error) {
-	query := `SELECT id, type, title, description, avatar_id, last_message_id FROM messaging.func_load_active_conversations()`
+	query := `SELECT id, type, title, description, avatar_id, last_message_id, settings FROM messaging.func_load_active_conversations()`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query)
 	if err != nil {
 		return nil, nubo_error.NewInternal(err)
@@ -32,8 +32,9 @@ func FuncLoadActiveConversations(ctx context.Context) ([]lite_models.ConvLiteReq
 		var lastMsgID sql.NullInt64
 		var description sql.NullString
 		var avatarID sql.NullInt64
+		var settingsRaw sql.NullString
 
-		if err := rows.Scan(&cid, &cType, &title, &description, &avatarID, &lastMsgID); err == nil {
+		if err := rows.Scan(&cid, &cType, &title, &description, &avatarID, &lastMsgID, &settingsRaw); err == nil {
 			meta := lite_models.ConvLiteRequest{ID: cid, Type: cType}
 			if title.Valid {
 				meta.Title = title.String
@@ -46,6 +47,9 @@ func FuncLoadActiveConversations(ctx context.Context) ([]lite_models.ConvLiteReq
 			}
 			if lastMsgID.Valid {
 				meta.LastMessageID = lastMsgID.Int64
+			}
+			if settingsRaw.Valid && settingsRaw.String != "" && settingsRaw.String != "{}" {
+				_ = json.Unmarshal([]byte(settingsRaw.String), &meta.Settings)
 			}
 			results = append(results, meta)
 		}

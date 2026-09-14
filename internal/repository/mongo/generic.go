@@ -19,18 +19,19 @@ import (
 // ---------------- Initialisation ----------------
 // declarations globales
 var (
-	Users         *MongoCollection
-	UserSettings  *MongoCollection
-	Sessions      *MongoCollection
-	Relations     *MongoCollection
-	Posts         *MongoCollection
-	Comments      *MongoCollection
-	Likes         *MongoCollection
-	Media         *MongoCollection
-	Conversations *MongoCollection
-	Members       *MongoCollection
-	Messages      *MongoCollection
-	Saved         *MongoCollection
+	Users            *MongoCollection
+	UserSettings     *MongoCollection
+	Sessions         *MongoCollection
+	Relations        *MongoCollection
+	Posts            *MongoCollection
+	Comments         *MongoCollection
+	Likes            *MongoCollection
+	Media            *MongoCollection
+	Conversations    *MongoCollection
+	Members          *MongoCollection
+	Messages         *MongoCollection
+	MessageReactions *MongoCollection
+	Saved            *MongoCollection
 
 	Notifications *MongoCollection
 )
@@ -50,6 +51,7 @@ func InitCacheDatabase() {
 	schemaConversations := schemas.ConversationsSchema
 	schemaMembers := schemas.MembersSchema
 	schemaMessages := schemas.MessagesSchema
+	schemaMessageReactions := schemas.MessageReactionsSchema
 	schemaSaved := schemas.SavedSchema
 
 	schemaNotifications := schemas.NotificationsSchema
@@ -66,6 +68,7 @@ func InitCacheDatabase() {
 	Conversations = NewMongoCollection("nubo_mongo", "messaging.conversations", schemaConversations)
 	Members = NewMongoCollection("nubo_mongo", "messaging.members", schemaMembers)
 	Messages = NewMongoCollection("nubo_mongo", "messaging.messages", schemaMessages)
+	MessageReactions = NewMongoCollection("nubo_mongo", "messaging.message_reactions", schemaMessageReactions)
 	Saved = NewMongoCollection("nubo_mongo", "content.saved", schemaSaved)
 
 	Notifications = NewMongoCollection("nubo_mongo", "activity.notifications", schemaNotifications)

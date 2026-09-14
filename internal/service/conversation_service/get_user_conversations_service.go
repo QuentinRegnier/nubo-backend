@@ -92,15 +92,18 @@ func GetUserConversationsPaginated(ctx context.Context, callerID int64, input co
 					},
 				})
 
-				// PROMOTION L3 -> L2 (Mongo) -> L1 (Redis)
+				// ⬆️ PROMOTION L3 -> L2 (Mongo) -> L1 (Redis)
 				go func(fConv conversation_models.ConversationPayload, fMem conversation_models.MemberPayload, o int64) {
 					bgCtx := context.Background()
-					// A. Réhydratation L2 (MongoDB) avec les FULL Payloads
-					_ = mongo.MongoUpsertConversation(fConv)
-					_ = mongo.MongoUpsertMember(fMem)
+
+					// A. Réhydratation L2 (MongoDB) asynchrone via les workers
+					_ = redis.EnqueueDB(bgCtx, fConv.ID, fConv.ID, redis.EntityConversation, redis.ActionUpdate, fConv, redis.TargetMongo)
+					_ = redis.EnqueueDB(bgCtx, fMem.ID, fMem.ConversationID, redis.EntityMembers, redis.ActionUpdate, fMem, redis.TargetMongo)
+
 					// B. Réhydratation L1 (OBJECT CACHE) avec les FULL Payloads
 					_ = object_cache_service.SetConversationInObjectCache(bgCtx, fConv)
 					_ = object_cache_service.SetMemberInObjectCache(bgCtx, fMem)
+
 					// C. Réhydratation L1 (SPEED CACHE) avec le parsing interne Full->Lite
 					cache_service.RehydrateConversationItemInSpeedCache(bgCtx, fConv, fMem, o)
 				}(res.Conversation, res.Member, input.Offset)

@@ -37,7 +37,7 @@ import (
 // @Param X-Signature header string true "Signature HMAC de la requête"
 // @Param X-Timestamp header string true "Timestamp Unix de la requête"
 // @Param data body conversation_models.JoinGroupInput true "Données pour rejoindre"
-// @Success 200 {object} map[string]string "Message de succès"
+// @Success 200 {object} conversation_models.JoinGroupOutput
 // @Failure 400 {object} nubo_error.PublicErrorResponse "Données invalides"
 // @Failure 401 {object} nubo_error.PublicErrorResponse "Session expirée ou utilisateur non identifié"
 // @Failure 403 {object} nubo_error.PublicErrorResponse "Accès refusé"
@@ -59,11 +59,12 @@ func JoinGroupHandler(c *gin.Context) {
 	}
 
 	// 3. Délégation au Service Métier (Cascade L1->L2->L3 et Write-Behind)
-	if err := conversation_service.JoinGroup(c.Request.Context(), callerID, input); err != nil {
+	output, err := conversation_service.JoinGroup(c.Request.Context(), callerID, input)
+	if err != nil {
 		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	// 4. Succès
-	c.JSON(http.StatusOK, gin.H{"message": "Vous avez rejoint le groupe avec succès"})
+	c.JSON(http.StatusOK, output)
 }

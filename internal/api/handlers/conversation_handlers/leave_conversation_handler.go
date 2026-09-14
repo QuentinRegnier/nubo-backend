@@ -22,7 +22,7 @@ import (
 // @Param        X-Timestamp   header string true  "Timestamp Unix de la requête"
 // @Param        id            path   int    true  "ID de la conversation"
 // @Param        data          body   conversation_models.LeaveConversationInput false "Optionnel: ID du nouvel administrateur"
-// @Success      200  {object} map[string]string "Message de succès"
+// @Success      200  {object} conversation_models.LeaveConversationOutput
 // @Failure      400  {object} nubo_error.PublicErrorResponse "Données ou ID invalides"
 // @Failure      401  {object} nubo_error.PublicErrorResponse "Session expirée ou utilisateur non identifié"
 // @Failure      403  {object} nubo_error.PublicErrorResponse "Erreur de droits ou transfert de propriété manquant"
@@ -40,9 +40,10 @@ func LeaveConversationHandler(c *gin.Context) {
 		return
 	}
 
-	if err := conversation_service.LeaveConversation(c.Request.Context(), callerID, input.ConversationID, input); err != nil {
+	output, err := conversation_service.LeaveConversation(c.Request.Context(), callerID, input.ConversationID, input)
+	if err != nil {
 		nubo_error.RespondWithError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "Conversation quittée avec succès"})
+	c.JSON(http.StatusOK, output)
 }

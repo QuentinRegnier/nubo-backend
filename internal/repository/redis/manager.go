@@ -86,11 +86,16 @@ var (
 	MessagesIndex    *Collection
 	LSHBuckets       *Collection
 
+	// --- RÉACTIONS AUX MESSAGES ---
+	MessageReactionCounts *Collection // Hash: msg_id -> emoji -> count
+	MessageUserReactions  *Collection // Hash: msg_id -> user_id -> emoji
+
 	// --- ACTIVITY FEED ---
-	FeedSchedule        *Collection
-	NotificationsZSet   *Collection
-	NotificationCursors *Collection
-	InboxActivity       *Collection
+	FeedSchedule         *Collection
+	NotificationsZSet    *Collection
+	NotificationCursors  *Collection
+	InboxActivity        *Collection
+	NotificationActivity *Collection
 
 	// --- TELEMETRY Cache ---
 	TelemetryVectors    *Collection
@@ -178,10 +183,15 @@ func InitCacheDatabase() {
 	MessagesIndex = NewCollection("messages:idx", 24*time.Hour)
 	LSHBuckets = NewCollection("lsh:bucket", variables.StandardTTL)
 
+	// --- RÉACTIONS AUX MESSAGES ---
+	MessageReactionCounts = NewCollection("msg_react_counts", variables.StandardTTL)
+	MessageUserReactions = NewCollection("msg_user_react", variables.StandardTTL)
+
 	// --- ACTIVITY FEED ---
 	FeedSchedule = NewCollection("feed:precompute:schedule", 0)
 	NotificationsZSet = NewCollection("notifications:user", variables.StandardTTL)
 	NotificationCursors = NewCollection("notifications:cursor", 0)
+	NotificationActivity = NewCollection("notifications:activity", 0)
 	InboxActivity = NewCollection("inbox:activity", 0)
 
 	// --- TELEMETRY Cache ---

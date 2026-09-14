@@ -16,6 +16,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
 )
@@ -37,6 +38,11 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 	// Interdiction d'ajouter des membres dans un Message Privé (Type 0)
 	if conv.Type == 0 {
 		return conversation_models.AddMemberOutput{}, nubo_error.NewForbidden("INVALID_CONV_TYPE", "Impossible d'ajouter des membres à une conversation privée à deux.", nil)
+	}
+
+	// === NOUVEAU : VÉRIFICATION DES DROITS D'AJOUT ===
+	if conv.Settings.AddMemberPermission == 1 && callerMem.Role == 0 {
+		return conversation_models.AddMemberOutput{}, nubo_error.NewForbidden("INSUFFICIENT_PERMISSIONS", "Seuls les administrateurs peuvent ajouter des membres à ce groupe.", nil)
 	}
 
 	output := conversation_models.AddMemberOutput{
@@ -126,19 +132,15 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 
 			_ = redis.EnqueueDB(ctx, memberPayload.ID, conv.ID, redis.EntityMembers, redis.ActionCreate, memberPayload, redis.TargetAll)
 
+			// === NOUVEAU : FILTRAGE DES MESSAGES SYSTÈMES ===
 			callerLite, _ := cache_service.GetUserLite(ctx, callerID)
-
-			sysContent := fmt.Sprintf("%s has add %s", callerLite.Username, targetLite.Username)
+			sysContent := fmt.Sprintf("%s a ajouté %s", callerLite.Username, targetLite.Username)
 			msgInput := message_models.CreateMessageInput{
 				MessageType: 8,
 				Content:     sysContent,
 			}
-
 			// Expédition via le service Message.
-			// Cela insère le message dans la BDD et met à jour les ZSETs des autres utilisateurs.
-			if _, errM := message_service.CreateMessage(ctx, callerID, input.ConversationID, msgInput, true); errM != nil {
-				return conversation_models.AddMemberOutput{}, errM
-			}
+			_, _ = message_service.CreateMessage(ctx, callerID, input.ConversationID, msgInput, true)
 
 			output.AddedUserIDs = append(output.AddedUserIDs, targetID)
 
@@ -191,16 +193,31 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 				}
 
 				// 3. Expédition du message via le service Message (DDD total)
-				msgID, errCreate := message_service.CreateMessage(ctx, callerID, directConvID, msgInput, true)
-				if errCreate == nil && msgID > 0 {
-					output.MessageIDs = append(output.MessageIDs, msgID)                  // On trace chaque invitation envoyée
-					output.ConversationIDs = append(output.ConversationIDs, directConvID) // On trace le canal MP utilisé
+				createMessageOutput, errCreate := message_service.CreateMessage(ctx, callerID, directConvID, msgInput, true)
+				if errCreate == nil && createMessageOutput.MessageID > 0 {
+					output.MessageIDs = append(output.MessageIDs, createMessageOutput.MessageID) // On trace chaque invitation envoyée
+					output.ConversationIDs = append(output.ConversationIDs, directConvID)        // On trace le canal MP utilisé
+					output.InvitedUserIDs = append(output.InvitedUserIDs, targetID)
+
+					// === NOUVEAU : DÉCLENCHEUR GROUP_INVITED ===
+					go func(tID int64, cID int64) {
+						_ = notification_service.DispatchNotification(context.Background(), tID, callerID, "group_invited", cID)
+					}(targetID, conv.ID)
 				}
 			}
 
 			output.InvitedUserIDs = append(output.InvitedUserIDs, targetID)
 		}
 	}
+
+	// ========================================================================
+	// MARQUAGE DU TEMPS (DIRTY FLAG)
+	// ========================================================================
+	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
+	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
+	// et garantit que le client reçoit la date de la fin absolue de la transaction.
+	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
+	output.InboxUpdateAt = time.UnixMilli(timestampMs)
 
 	return output, nil
 }

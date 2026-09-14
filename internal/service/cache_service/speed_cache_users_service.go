@@ -147,7 +147,11 @@ func GetUserLite(ctx context.Context, userID int64) (lite_models.UserLiteRequest
 	// 3. FALLBACK L3 : Source de Vérité Absolue (PostgreSQL)
 	uPg, errPg := postgres.FuncLoadUser(userID, "", "", "")
 	if errPg == nil {
-		_ = mongo.MongoUpsertUser(uPg)
+		// ⬆️ PROMOTION L3 -> L2 & L1
+		go func(user auth_models.UserPayload) {
+			bgCtx := context.Background()
+			_ = redis.EnqueueDB(bgCtx, user.ID, 0, redis.EntityUser, redis.ActionUpdate, user, redis.TargetMongo)
+		}(uPg)
 
 		// On récupère les paramètres de confidentialité manquants
 		settings, _ := object_cache_service.GetUserSettingsCascade(ctx, userID)

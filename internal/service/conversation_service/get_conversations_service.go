@@ -35,8 +35,13 @@ func GetConversations(ctx context.Context, callerID int64, input conversation_mo
 				if errConv != nil || conv.ID == 0 {
 					continue
 				}
-				_ = mongo.MongoUpsertConversation(conv)
+				// ⬆️ PROMOTION L3 -> L2 (Asynchrone via la queue)
+				go func(c conversation_models.ConversationPayload) {
+					bgCtx := context.Background()
+					_ = redis.EnqueueDB(bgCtx, c.ID, c.ID, redis.EntityConversation, redis.ActionUpdate, c, redis.TargetMongo)
+				}(conv)
 			}
+			// ⬆️ PROMOTION L3/L2 -> L1 (Immédiat)
 			_ = object_cache_service.SetConversationInObjectCache(ctx, conv)
 		}
 

@@ -42,7 +42,7 @@ import (
 // @Param        profile_picture formData file   false "Nouvelle image de profil (optionnelle)"
 // @Param        data            formData string false "Données JSON (auth_models.UpdateProfileInput) si multipart"
 // @Param        payload         body     auth_models.UpdateProfileInput false "Données JSON classiques si pas d'image"
-// @Success      200 {object} map[string]string "Profil mis à jour avec succès"
+// @Success      200 {object} auth_models.UpdateProfileOutput
 // @Failure      400 {object} nubo_error.PublicErrorResponse "JSON invalide"
 // @Failure      401 {object} nubo_error.PublicErrorResponse "Non autorisé"
 // @Failure      409 {object} nubo_error.PublicErrorResponse "Conflit d'identifiant (Username, Email, Phone)"
@@ -60,11 +60,11 @@ func UpdateProfileHandler(c *gin.Context) {
 		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide.", err))
 		return
 	}
-
-	if err := auth_service.UpdateProfile(c.Request.Context(), userID, input); err != nil {
+	output, err := auth_service.UpdateProfile(c.Request.Context(), userID, input)
+	if err != nil {
 		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Profil mis à jour avec succès"})
+	c.JSON(http.StatusOK, output)
 }

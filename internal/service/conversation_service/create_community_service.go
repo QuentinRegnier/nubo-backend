@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -13,16 +14,16 @@ import (
 )
 
 // CreateCommunity orchestre la création d'une communauté publique (Type 3) en respectant les droits et le DDD.
-func CreateCommunity(ctx context.Context, callerID int64, input conversation_models.CreateCommunityInput) (int64, error) {
+func CreateCommunity(ctx context.Context, callerID int64, input conversation_models.CreateCommunityInput) (conversation_models.CreateCommunityOutput, error) {
 	// 1. IDENTITÉ & DROITS (Lecture O(1) depuis le Speed Cache)
 	callerLite, err := cache_service.GetUserLite(ctx, callerID)
 	if err != nil {
-		return 0, err
+		return conversation_models.CreateCommunityOutput{}, err
 	}
 
 	// Grades: 0=Normal, 1=Certifié, 2=Collaborateur/Partenaire, 3=Modérateur, 4=Admin
 	if callerLite.Grade < 2 {
-		return 0, nubo_error.NewForbidden("INSUFFICIENT_GRADE", "Vous n'avez pas le grade requis pour créer une communauté publique.", nil)
+		return conversation_models.CreateCommunityOutput{}, nubo_error.NewForbidden("INSUFFICIENT_GRADE", "Vous n'avez pas le grade requis pour créer une communauté publique.", nil)
 	}
 
 	// Règle spécifique Collaborateurs (Grade 2) : Max 1 communauté publique gérée
@@ -32,7 +33,7 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 		if errInbox == nil {
 			for _, item := range inbox {
 				if item.Conversation.Type == 3 && item.Member.Role == 2 {
-					return 0, nubo_error.NewForbidden("COMMUNITY_LIMIT_REACHED", "Vous gérez déjà une communauté publique. Une demande est nécessaire pour en créer d'autres.", nil)
+					return conversation_models.CreateCommunityOutput{}, nubo_error.NewForbidden("COMMUNITY_LIMIT_REACHED", "Vous gérez déjà une communauté publique. Une demande est nécessaire pour en créer d'autres.", nil)
 				}
 			}
 		}
@@ -46,11 +47,11 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 		if callerLite.Grade >= 3 {
 			// Vérification stricte que le futur propriétaire existe
 			if _, errTarget := cache_service.GetUserLite(ctx, input.OwnerID); errTarget != nil {
-				return 0, nubo_error.NewBadRequest("INVALID_OWNER", "L'utilisateur spécifié comme propriétaire n'existe pas.", errTarget)
+				return conversation_models.CreateCommunityOutput{}, nubo_error.NewBadRequest("INVALID_OWNER", "L'utilisateur spécifié comme propriétaire n'existe pas.", errTarget)
 			}
 			targetOwnerID = input.OwnerID
 		} else {
-			return 0, nubo_error.NewForbidden("INSUFFICIENT_PERMISSIONS", "Seuls les modérateurs et administrateurs peuvent céder la propriété d'une communauté à la création.", nil)
+			return conversation_models.CreateCommunityOutput{}, nubo_error.NewForbidden("INSUFFICIENT_PERMISSIONS", "Seuls les modérateurs et administrateurs peuvent céder la propriété d'une communauté à la création.", nil)
 		}
 	}
 
@@ -58,20 +59,24 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 	now := time.Now().UTC()
 	convID := pkg.GenerateID()
 
-	laws := input.Laws
-	if laws == nil {
-		laws = []int{}
+	output := conversation_models.CreateCommunityOutput{
+		ConversationID: convID,
+	}
+
+	settings := input.Settings
+	if settings == (conversation_models.ConversationSettings{}) {
+		settings = DefaultConversationSettings(3)
 	}
 
 	convPayload := conversation_models.ConversationPayload{
 		ID:            convID,
 		Type:          3,
 		Title:         pkg.CleanStr(input.Title),
-		Description:   "", // NOUVEAU
-		AvatarID:      0,  // NOUVEAU
+		Description:   "",
+		AvatarID:      0,
 		LastMessageID: 0,
 		State:         0,
-		Laws:          laws,
+		Settings:      settings, // NOUVEAU
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
@@ -117,6 +122,16 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 		_ = object_cache_service.SetMemberInObjectCache(ctx, *callerMember)
 		cache_service.RehydrateConversationItemInSpeedCache(ctx, convPayload, *callerMember, 0)
 	}
+	communityLite := lite_models.CommunityLiteRequest{
+		ID:               convID,
+		Name:             input.Title,
+		ProfilePictureID: 0,
+		Description:      "",
+		MemberCount:      1, // Au départ, seul le créateur est membre
+	}
+
+	// Indexation instantanée pour la barre de recherche (O(log N))
+	_ = cache_service.StoreCommunityLiteInSpeedCache(ctx, communityLite)
 
 	// 5. DÉLÉGATION DE LA PERSISTANCE AUX WORKERS (Write-Behind vers L2/L3)
 	// On utilise convID comme clé de partition pour que la conversation et ses membres arrivent sur le même shard
@@ -127,5 +142,14 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 		_ = redis.EnqueueDB(ctx, callerMember.ID, convPayload.ID, redis.EntityMembers, redis.ActionCreate, *callerMember, redis.TargetAll)
 	}
 
-	return convID, nil
+	// ========================================================================
+	// 5. MARQUAGE DU TEMPS (DIRTY FLAG)
+	// ========================================================================
+	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
+	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
+	// et garantit que le client reçoit la date de la fin absolue de la transaction.
+	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
+	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+
+	return output, nil
 }

@@ -51,6 +51,8 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 			c = mongo.Members
 		case redis.EntityMessage:
 			c = mongo.Messages
+		case redis.EntityMessageReaction:
+			c = mongo.MessageReactions
 		case redis.EntitySaved:
 			c = mongo.Saved
 		case redis.EntityNotification:
@@ -76,8 +78,18 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 				dataBytes, _ := bson.Marshal(e.Payload)
 				_ = bson.Unmarshal(dataBytes, &doc)
 				doc["last_use"] = now
-
-				models = append(models, libMongo.NewInsertOneModel().SetDocument(doc))
+				if entity == redis.EntityMessageReaction {
+					// UPSERT basé sur message_id et user_id
+					models = append(models, libMongo.NewUpdateOneModel().
+						SetFilter(bson.M{
+							"message_id": doc["message_id"],
+							"user_id":    doc["user_id"],
+						}).
+						SetUpdate(bson.M{"$set": doc}).
+						SetUpsert(true))
+				} else {
+					models = append(models, libMongo.NewInsertOneModel().SetDocument(doc))
+				}
 
 			case redis.ActionUpdate:
 				if entity == redis.EntityRelation {
@@ -116,16 +128,34 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 						SetFilter(bson.M{"id": e.ID}).
 						SetUpdate(bson.M{"$set": bson.M{"visibility": -1, "last_use": now}}))
 
+					// CASCADES ASYNCHRONES
 					if mongo.Comments != nil {
 						_, _ = mongo.Comments.DB.Collection(mongo.Comments.Name).DeleteMany(ctx, bson.M{"post_id": e.ID})
 					}
 					if mongo.Likes != nil {
 						_, _ = mongo.Likes.DB.Collection(mongo.Likes.Name).DeleteMany(ctx, bson.M{"target_id": e.ID, "target_type": 0})
 					}
+					// ✅ NOUVEAU : CASCADE HARD DELETE DES FAVORIS
+					if mongo.Saved != nil {
+						_, _ = mongo.Saved.DB.Collection(mongo.Saved.Name).DeleteMany(ctx, bson.M{"post_id": e.ID})
+					}
 					if mongo.Media != nil && len(post.MediaIDs) > 0 {
 						models = append(models, libMongo.NewDeleteManyModel().
 							SetFilter(bson.M{"id": bson.M{"$in": post.MediaIDs}}))
 					}
+
+					// ✅ NOUVEAU BLOC : CASCADE POUR LES MESSAGES
+				} else if entity == redis.EntityMessage {
+					// SOFT DELETE du Message + Refresh du TTL
+					models = append(models, libMongo.NewUpdateOneModel().
+						SetFilter(bson.M{"id": e.ID}).
+						SetUpdate(bson.M{"$set": bson.M{"visibility": false, "last_use": now}}))
+
+					// CASCADE HARD DELETE DES RÉACTIONS ASSOCIÉES
+					if mongo.MessageReactions != nil {
+						_, _ = mongo.MessageReactions.DB.Collection(mongo.MessageReactions.Name).DeleteMany(ctx, bson.M{"message_id": e.ID})
+					}
+
 				} else if entity == redis.EntityComment {
 					// SOFT DELETE pour les Commentaires effacés unitairement + Refresh du TTL
 					models = append(models, libMongo.NewUpdateOneModel().
@@ -137,6 +167,16 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 					jsonBytes, _ := json.Marshal(e.Payload)
 					_ = json.Unmarshal(jsonBytes, &rel)
 					models = append(models, libMongo.NewDeleteOneModel().SetFilter(bson.M{"primary_id": rel.PrimaryID, "secondary_id": rel.SecondaryID}))
+				} else if entity == redis.EntityMessageReaction {
+					// DELETE basé sur message_id et user_id (Payload requis)
+					var doc bson.M
+					dataBytes, _ := bson.Marshal(e.Payload)
+					_ = bson.Unmarshal(dataBytes, &doc)
+					models = append(models, libMongo.NewDeleteOneModel().
+						SetFilter(bson.M{
+							"message_id": doc["message_id"],
+							"user_id":    doc["user_id"],
+						}))
 				} else if entity == redis.EntitySaved {
 					// HARD DELETE
 					var sav saved_models.SavedPayload
@@ -170,6 +210,7 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 	commentDeltas := make(map[int64]int)
 	viewDeltas := make(map[int64]int)
 	reportDeltas := make(map[int64]int)
+	messageReactionDeltas := make(map[int64]map[string]int)
 
 	telemetryDwellSum := make(map[int64]float64)
 	telemetryDwellSq := make(map[int64]float64)
@@ -181,26 +222,29 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 			delta = -1
 		}
 
-		jsonBytes, _ := json.Marshal(e.Payload)
+		jsonBytes, err := json.Marshal(e.Payload)
+		if err != nil {
+			logger.Log.Error().Err(err).Interface("payload", e.Payload).Msg("Erreur Marshal Payload dans updateCountersMongo")
+			continue
+		}
 
 		if e.Type == redis.EntityLike {
 			var p struct {
 				TargetType int   `json:"target_type"`
 				TargetID   int64 `json:"target_id"`
 			}
-			_ = json.Unmarshal(jsonBytes, &p)
-
-			if p.TargetType == 0 && p.TargetID != 0 {
-				postLikeDeltas[p.TargetID] += delta
-			} else if p.TargetType == 1 && p.TargetID != 0 {
-				commentLikeDeltas[p.TargetID] += delta
+			if err := json.Unmarshal(jsonBytes, &p); err == nil {
+				if p.TargetType == 0 && p.TargetID != 0 {
+					postLikeDeltas[p.TargetID] += delta
+				} else if p.TargetType == 1 && p.TargetID != 0 {
+					commentLikeDeltas[p.TargetID] += delta
+				}
 			}
 		} else if e.Type == redis.EntityComment {
 			var p struct {
 				PostID int64 `json:"post_id"`
 			}
-			_ = json.Unmarshal(jsonBytes, &p)
-			if p.PostID != 0 {
+			if err := json.Unmarshal(jsonBytes, &p); err == nil && p.PostID != 0 {
 				commentDeltas[p.PostID] += delta
 			}
 		} else if e.Type == redis.EntityView {
@@ -208,20 +252,17 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 				TargetID int64 `json:"target_id"`
 				Count    int   `json:"count"`
 			}
-			_ = json.Unmarshal(jsonBytes, &p)
-			if p.TargetID != 0 {
+			if err := json.Unmarshal(jsonBytes, &p); err == nil && p.TargetID != 0 {
 				if p.Count != 0 {
 					delta = p.Count
 				}
 				viewDeltas[p.TargetID] += delta
 			}
 		} else if e.Type == redis.EntityReport {
-			// ✅ NOUVEAU: INTERCEPTION DES SIGNALEMENTS POUR DÉNORMALISATION
 			var r struct {
 				TargetType int     `json:"target_type"`
 				TargetIDs  []int64 `json:"target_ids"`
 			}
-			// 1 correspond au TargetType d'un Post dans l'enum applicatif
 			if err := json.Unmarshal(jsonBytes, &r); err == nil && r.TargetType == 1 {
 				for _, id := range r.TargetIDs {
 					reportDeltas[id] += delta
@@ -236,9 +277,12 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 				ProfileVisit bool  `json:"profile_visit"`
 			}
 			if err := json.Unmarshal(jsonBytes, &t); err == nil && t.PostID != 0 {
+				// ✅ NOUVEAU : On comptabilise automatiquement une vue classique
+				viewDeltas[t.PostID] += 1
+
 				dwellVal := float64(t.DwellTimeMs)
 				telemetryDwellSum[t.PostID] += dwellVal
-				telemetryDwellSq[t.PostID] += (dwellVal * dwellVal)
+				telemetryDwellSq[t.PostID] += dwellVal * dwellVal
 
 				clicks := 0
 				if t.IsClicked {
@@ -252,15 +296,28 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 				}
 				telemetryClicks[t.PostID] += clicks
 			}
+		} else if e.Type == redis.EntityMessage && e.Action == redis.ActionBuild {
+			var p struct {
+				MessageID int64          `json:"message_id"`
+				Deltas    map[string]int `json:"deltas"`
+			}
+			if err := json.Unmarshal(jsonBytes, &p); err == nil && p.MessageID != 0 {
+				if messageReactionDeltas[p.MessageID] == nil {
+					messageReactionDeltas[p.MessageID] = make(map[string]int)
+				}
+				for emoji, d := range p.Deltas {
+					messageReactionDeltas[p.MessageID][emoji] += d
+				}
+			}
 		}
 	}
 
 	var postModels []libMongo.WriteModel
 	var commentModels []libMongo.WriteModel
+	var messageModels []libMongo.WriteModel
 
 	now := time.Now().UTC()
 
-	// Application simultanée de $inc et du $set pour rafraîchir le `last_use` de l'élément lu
 	for id, delta := range postLikeDeltas {
 		postModels = append(postModels, libMongo.NewUpdateOneModel().SetFilter(bson.M{"id": id}).SetUpdate(bson.M{
 			"$inc": bson.M{"like_count": delta},
@@ -307,10 +364,37 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 		}))
 	}
 
+	for msgID, deltas := range messageReactionDeltas {
+		incMap := bson.M{}
+		for emoji, d := range deltas {
+			if d != 0 {
+				incMap["attachments.reaction_counts."+emoji] = d
+			}
+		}
+
+		if len(incMap) > 0 {
+			messageModels = append(messageModels, libMongo.NewUpdateOneModel().
+				SetFilter(bson.M{"id": msgID}).
+				SetUpdate(bson.M{
+					"$inc": incMap,
+					"$set": bson.M{"last_use": now},
+				}))
+		}
+	}
+
 	if len(postModels) > 0 && mongo.Posts != nil {
-		_, _ = mongo.Posts.DB.Collection(mongo.Posts.Name).BulkWrite(ctx, postModels, options.BulkWrite().SetOrdered(false))
+		if _, err := mongo.Posts.DB.Collection(mongo.Posts.Name).BulkWrite(ctx, postModels, options.BulkWrite().SetOrdered(false)); err != nil {
+			logger.Log.Error().Err(err).Msg("Erreur BulkWrite Posts Mongo")
+		}
 	}
 	if len(commentModels) > 0 && mongo.Comments != nil {
-		_, _ = mongo.Comments.DB.Collection(mongo.Comments.Name).BulkWrite(ctx, commentModels, options.BulkWrite().SetOrdered(false))
+		if _, err := mongo.Comments.DB.Collection(mongo.Comments.Name).BulkWrite(ctx, commentModels, options.BulkWrite().SetOrdered(false)); err != nil {
+			logger.Log.Error().Err(err).Msg("Erreur BulkWrite Comments Mongo")
+		}
+	}
+	if len(messageModels) > 0 && mongo.Messages != nil {
+		if _, err := mongo.Messages.DB.Collection(mongo.Messages.Name).BulkWrite(ctx, messageModels, options.BulkWrite().SetOrdered(false)); err != nil {
+			logger.Log.Error().Err(err).Msg("Erreur BulkWrite Messages Mongo")
+		}
 	}
 }

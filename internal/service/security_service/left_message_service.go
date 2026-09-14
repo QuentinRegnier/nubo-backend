@@ -7,6 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
 
@@ -24,14 +25,23 @@ func LeftMessage(ctx context.Context, messageID int64, userID int64) (message_mo
 		if mongoMsgs, errMongo := mongo.MongoLoadMessagesByIDs([]int64{messageID}); errMongo == nil && len(mongoMsgs) > 0 {
 			msg = mongoMsgs[0]
 			found = true
-			_ = object_cache_service.SetMessageInObjectCache(ctx, msg) // Auto-guérison L1
+
+			// ⬆️ Auto-Guérison L1 (Immédiat en RAM)
+			_ = object_cache_service.SetMessageInObjectCache(ctx, msg)
 		} else {
 			// 3. FALLBACK ABSOLU L3 (PostgreSQL)
 			if pgMsgs, errPg := postgres.FuncLoadMessagesByIDs(ctx, []int64{messageID}); errPg == nil && len(pgMsgs) > 0 {
 				msg = pgMsgs[0]
 				found = true
-				_ = mongo.MongoUpsertMessage(msg)                          // Auto-guérison L2
-				_ = object_cache_service.SetMessageInObjectCache(ctx, msg) // Auto-guérison L1
+
+				// ⬆️ Auto-Guérison L1 (Immédiat en RAM)
+				_ = object_cache_service.SetMessageInObjectCache(ctx, msg)
+
+				// ⬆️ Auto-Guérison L2 (Asynchrone via Worker Mongo)
+				go func(m message_models.MessagePayload) {
+					// PartitionKey = ConversationID pour grouper les messages chronologiquement
+					_ = redis.EnqueueDB(context.Background(), m.ID, m.ConversationID, redis.EntityMessage, redis.ActionUpdate, m, redis.TargetMongo)
+				}(msg)
 			}
 		}
 	}

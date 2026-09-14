@@ -18,7 +18,7 @@ import (
 // @Produce      json
 // @Security     ApiKeyAuth
 // @Param        payload body user_settings_models.UpdatePrivacyInput true "Champs de confidentialité à mettre à jour"
-// @Success      200 {object} map[string]string "Message de succès"
+// @Success      200 {object} user_settings_models.UpdatePrivacyOutput
 // @Failure      400 {object} nubo_error.PublicErrorResponse "JSON invalide"
 // @Failure      401 {object} nubo_error.PublicErrorResponse "Non autorisé"
 // @Failure      500 {object} nubo_error.PublicErrorResponse "Erreur interne"
@@ -39,11 +39,12 @@ func UpdatePrivacyHandler(c *gin.Context) {
 	}
 
 	// 3. Appel du service
-	if err := user_settings_service.UpdatePrivacy(c.Request.Context(), userID, input); err != nil {
+	output, err := user_settings_service.UpdatePrivacy(c.Request.Context(), userID, input)
+	if err != nil {
 		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	// 4. Succès
-	c.JSON(http.StatusOK, gin.H{"message": "Confidentialité mise à jour avec succès"})
+	c.JSON(http.StatusOK, output)
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
@@ -37,8 +38,11 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 			post = pgPosts[0]
 
 			// HYDRATATION EN CASCADE COMPLÈTE (L3 -> L2 -> L1)
-			_ = mongo.MongoUpsertPost(post)
-			_ = object_cache_service.SetPostInObjectCache(ctx, post)
+			go func(p post_models.PostPayload) {
+				bgCtx := context.Background()
+				_ = object_cache_service.SetPostInObjectCache(bgCtx, p)
+				_ = redis.EnqueueDB(bgCtx, p.ID, p.UserID, redis.EntityPost, redis.ActionUpdate, p, redis.TargetMongo)
+			}(post)
 		}
 	}
 
@@ -108,9 +112,15 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 		comments, errPg := postgres.FuncLoadCommentsPaginated(ctx, input.PostID, input.Offset, input.Limit)
 		if errPg == nil {
 			for _, c := range comments {
-				_ = mongo.MongoUpsertComment(c)
-				_ = object_cache_service.SetCommentInObjectCache(ctx, c)
+				// ⬆️ PROMOTION L3 -> L2 & L1
+				go func(comment comment_models.CommentPayload) {
+					bgCtx := context.Background()
+					_ = object_cache_service.SetCommentInObjectCache(bgCtx, comment)
+					_ = redis.EnqueueDB(bgCtx, comment.ID, comment.PostID, redis.EntityComment, redis.ActionUpdate, comment, redis.TargetMongo)
+				}(c)
+
 				_ = object_cache_service.AddCommentToZSET(ctx, c.PostID, c.ID, float64(c.Score))
+
 				// HYDRATATION DE L'AUTEUR
 				results = append(results, hydrateCommentOutput(ctx, input.UserID, c))
 			}

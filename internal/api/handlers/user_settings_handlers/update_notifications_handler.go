@@ -18,7 +18,7 @@ import (
 // @Produce      json
 // @Security     ApiKeyAuth
 // @Param        payload body user_settings_models.UpdateNotificationsInput true "Réglages de notifications à mettre à jour"
-// @Success      200 {object} map[string]string "Message de succès"
+// @Success      200 {object} user_settings_models.UpdateNotificationsOutput
 // @Failure      400 {object} nubo_error.PublicErrorResponse "JSON invalide"
 // @Failure      401 {object} nubo_error.PublicErrorResponse "Non autorisé"
 // @Failure      500 {object} nubo_error.PublicErrorResponse "Erreur interne"
@@ -36,10 +36,11 @@ func UpdateNotificationsHandler(c *gin.Context) {
 		return
 	}
 
-	if err := user_settings_service.UpdateNotifications(c.Request.Context(), userID, input); err != nil {
+	output, err := user_settings_service.UpdateNotifications(c.Request.Context(), userID, input)
+	if err != nil {
 		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Notifications mises à jour avec succès"})
+	c.JSON(http.StatusOK, output)
 }

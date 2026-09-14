@@ -7,6 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
@@ -81,8 +82,16 @@ func fetchCommentsCascade(ctx context.Context, ids []int64) map[int64]comment_mo
 	for _, id := range missingFromL2 {
 		if c, err := postgres.FuncGetComment(ctx, id); err == nil {
 			commentsMap[c.ID] = c
-			_ = mongo.MongoUpsertComment(c)
-			_ = object_cache_service.SetCommentInObjectCache(ctx, c)
+
+			// ⬆️ PROMOTION L3 -> L2 & L1
+			go func(comment comment_models.CommentPayload) {
+				bgCtx := context.Background()
+				// L1 : Hydratation immédiate en RAM
+				_ = object_cache_service.SetCommentInObjectCache(bgCtx, comment)
+
+				// L2 : Asynchrone vers Mongo
+				_ = redis.EnqueueDB(bgCtx, comment.ID, comment.PostID, redis.EntityComment, redis.ActionUpdate, comment, redis.TargetMongo)
+			}(c)
 		}
 	}
 

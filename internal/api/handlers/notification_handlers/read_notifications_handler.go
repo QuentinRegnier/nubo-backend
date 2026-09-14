@@ -20,7 +20,7 @@ import (
 // @Param        X-Signature   header string true  "Signature HMAC de la requête"
 // @Param        X-Timestamp   header string true  "Timestamp Unix de la requête"
 // @Param        data          body   notification_models.ReadNotificationsInput true "ID maximum lu"
-// @Success      200  {object} map[string]string "Statut du succès"
+// @Success      200  {object} notification_models.ReadNotificationsOutput
 // @Failure      400  {object} nubo_error.PublicErrorResponse "Données invalides ou JSON malformé"
 // @Failure      401  {object} nubo_error.PublicErrorResponse "Session expirée ou utilisateur non identifié"
 // @Failure      500  {object} nubo_error.PublicErrorResponse "Erreur interne"
@@ -38,10 +38,11 @@ func ReadNotificationsHandler(c *gin.Context) {
 		return
 	}
 
-	if err := notification_service.MarkNotificationsAsRead(c.Request.Context(), callerID, input); err != nil {
+	output, err := notification_service.MarkNotificationsAsRead(c.Request.Context(), callerID, input)
+	if err != nil {
 		nubo_error.RespondWithError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "success"})
+	c.JSON(http.StatusOK, output)
 }

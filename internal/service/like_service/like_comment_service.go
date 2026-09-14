@@ -97,15 +97,25 @@ func getCommentCascade(ctx context.Context, commentID int64) (comment_models.Com
 	if c, err := object_cache_service.GetCommentFromObjectCache(ctx, commentID); err == nil {
 		return c, nil
 	}
+
 	mongoComments, errMongo := mongo.MongoLoadComments([]int64{commentID})
 	if errMongo == nil && len(mongoComments) > 0 {
 		_ = object_cache_service.SetCommentInObjectCache(ctx, mongoComments[0])
 		return mongoComments[0], nil
 	}
+
 	if pgComment, errPg := postgres.FuncGetComment(ctx, commentID); errPg == nil {
-		_ = mongo.MongoUpsertComment(pgComment)
+		// ⬆️ HYDRATATION L1 (Synchrone)
 		_ = object_cache_service.SetCommentInObjectCache(ctx, pgComment)
+
+		// ⬆️ HYDRATATION L2 (Asynchrone via Worker Mongo)
+		go func(c comment_models.CommentPayload) {
+			bgCtx := context.Background()
+			_ = redis.EnqueueDB(bgCtx, c.ID, c.PostID, redis.EntityComment, redis.ActionUpdate, c, redis.TargetMongo)
+		}(pgComment)
+
 		return pgComment, nil
 	}
+
 	return comment_models.CommentPayload{}, nubo_error.NewNotFound("COMMENT_NOT_FOUND", "Commentaire introuvable.", nil)
 }

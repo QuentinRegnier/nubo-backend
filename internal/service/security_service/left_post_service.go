@@ -7,6 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
 
@@ -37,10 +38,14 @@ func LeftPost(ctx context.Context, postID int64, userID int64) (post_models.Post
 				post = pgPosts[0]
 				found = true
 
-				// PROMOTION L3 -> L2 & L1
+				// ⬆️ PROMOTION L3 -> L1 (Immédiat en RAM)
+				_ = object_cache_service.SetPostInObjectCache(ctx, post)
+
+				// ⬆️ PROMOTION L3 -> L2 (Asynchrone via Worker Mongo)
 				go func(p post_models.PostPayload) {
-					_ = mongo.MongoUpsertPost(p)
-					_ = object_cache_service.SetPostInObjectCache(context.Background(), p)
+					bgCtx := context.Background()
+					// PartitionKey = UserID pour les posts
+					_ = redis.EnqueueDB(bgCtx, p.ID, p.UserID, redis.EntityPost, redis.ActionUpdate, p, redis.TargetMongo)
 				}(post)
 			}
 		}

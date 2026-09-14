@@ -42,14 +42,12 @@ func CreateCommunityHandler(c *gin.Context) {
 	}
 
 	// 3. Appel du service métier pur
-	convID, err := conversation_service.CreateCommunity(c.Request.Context(), callerID, input)
+	output, err := conversation_service.CreateCommunity(c.Request.Context(), callerID, input)
 	if err != nil {
 		nubo_error.RespondWithError(c, err)
 		return
 	}
 
 	// 4. Réponse
-	c.JSON(http.StatusCreated, conversation_models.CreateCommunityOutput{
-		ConversationID: convID,
-	})
+	c.JSON(http.StatusCreated, output)
 }

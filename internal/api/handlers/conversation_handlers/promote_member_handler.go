@@ -22,7 +22,7 @@ import (
 // @Param        X-Signature   header string true "Signature HMAC de la requête"
 // @Param        X-Timestamp   header string true "Timestamp Unix de la requête"
 // @Param        data          body   conversation_models.PromoteMemberInput true "ID du groupe et de l'utilisateur à promouvoir"
-// @Success      200  {object} map[string]string "message: Membre promu avec succès"
+// @Success      200  {object} conversation_models.PromoteMemberOutput
 // @Failure      400  {object} nubo_error.PublicErrorResponse "Format JSON invalide ou champs manquants"
 // @Failure      401  {object} nubo_error.PublicErrorResponse "Utilisateur non identifié"
 // @Failure      403  {object} nubo_error.PublicErrorResponse "Seul le propriétaire peut promouvoir un membre"
@@ -40,9 +40,10 @@ func PromoteMemberHandler(c *gin.Context) {
 		return
 	}
 
-	if err := conversation_service.PromoteMember(c.Request.Context(), callerID, input); err != nil {
+	output, err := conversation_service.PromoteMember(c.Request.Context(), callerID, input)
+	if err != nil {
 		nubo_error.RespondWithError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "Membre promu avec succès"})
+	c.JSON(http.StatusOK, output)
 }

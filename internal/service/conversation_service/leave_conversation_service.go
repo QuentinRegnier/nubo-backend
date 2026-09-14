@@ -15,15 +15,15 @@ import (
 )
 
 // LeaveConversation gère la suppression côté client (MP) et le départ (Groupe/Communauté)
-func LeaveConversation(ctx context.Context, callerID int64, convID int64, input conversation_models.LeaveConversationInput) error {
+func LeaveConversation(ctx context.Context, callerID int64, convID int64, input conversation_models.LeaveConversationInput) (conversation_models.LeaveConversationOutput, error) {
 	// 1. SÉCURITÉ ET RÉCUPÉRATION (Objet Complet)
 	mem, err := security_service.LeftMember(ctx, convID, callerID)
 	if err != nil {
-		return err // L'erreur est déjà une AppError formatée par security_service
+		return conversation_models.LeaveConversationOutput{}, err // L'erreur est déjà une AppError formatée par security_service
 	}
 	conv, err := object_cache_service.GetConversationFromObjectCache(ctx, convID)
 	if err != nil {
-		return nubo_error.NewNotFound("CONV_NOT_FOUND", "Impossible de charger les détails de la conversation.", err)
+		return conversation_models.LeaveConversationOutput{}, nubo_error.NewNotFound("CONV_NOT_FOUND", "Impossible de charger les détails de la conversation.", err)
 	}
 
 	// 2. GESTION DU PROPRIÉTAIRE (Type > 0)
@@ -32,12 +32,12 @@ func LeaveConversation(ctx context.Context, callerID int64, convID int64, input 
 
 	if conv.Type > 0 && mem.Role == 2 && participantCount > 1 {
 		if input.NewOwnerID == 0 {
-			return nubo_error.NewForbidden("MUST_TRANSFER_OWNERSHIP", "Vous devez transférer la propriété à un administrateur avant de quitter.", nil)
+			return conversation_models.LeaveConversationOutput{}, nubo_error.NewForbidden("MUST_TRANSFER_OWNERSHIP", "Vous devez transférer la propriété à un administrateur avant de quitter.", nil)
 		}
 
 		newOwnerMem, err := security_service.LeftMember(ctx, convID, input.NewOwnerID)
 		if err != nil || newOwnerMem.Role != 1 {
-			return nubo_error.NewBadRequest("INVALID_NEW_OWNER", "Le nouveau propriétaire doit être un administrateur existant du groupe.", err)
+			return conversation_models.LeaveConversationOutput{}, nubo_error.NewBadRequest("INVALID_NEW_OWNER", "Le nouveau propriétaire doit être un administrateur existant du groupe.", err)
 		}
 
 		// Promotion du nouveau propriétaire
@@ -84,5 +84,15 @@ func LeaveConversation(ctx context.Context, callerID int64, convID int64, input 
 		_ = redis.EnqueueDB(ctx, conv.ID, conv.ID, redis.EntityConversation, redis.ActionUpdate, conv, redis.TargetAll)
 	}
 
-	return nil
+	output := conversation_models.LeaveConversationOutput{}
+	// ========================================================================
+	// 5. MARQUAGE DU TEMPS (DIRTY FLAG)
+	// ========================================================================
+	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
+	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
+	// et garantit que le client reçoit la date de la fin absolue de la transaction.
+	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
+	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+
+	return output, nil
 }

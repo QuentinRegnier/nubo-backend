@@ -27,13 +27,10 @@ func SeedMostCache() error {
 	// ---------------------------------------------------------
 	logger.Log.Info().Msg("Restauration des tags communautaires depuis SQL...")
 
-	// Appel unique et propre !
 	tagsToSync, err := postgres.FuncLoadAllTags()
 	if err != nil {
 		logger.Log.Error().Err(err).Msg("Erreur lors du chargement des tags")
 	} else if len(tagsToSync) > 0 {
-		// On utilise SAdd pour restaurer le SET Redis (Source pour le Cron Canoniseur)
-		// On convertit en []interface{} pour le driver Redis
 		args := make([]interface{}, len(tagsToSync))
 		for i, v := range tagsToSync {
 			args[i] = v
@@ -46,7 +43,7 @@ func SeedMostCache() error {
 	// ---------------------------------------------------------
 	logger.Log.Info().Msg("Hydratation du MOST Cache depuis SQL (Mode Paginated)...")
 
-	limit := 10000 // Blocs de 10 000 posts pour préserver la RAM
+	limit := 10000
 	offset := 0
 	totalProcessed := 0
 
@@ -55,23 +52,12 @@ func SeedMostCache() error {
 		if err != nil {
 			return nubo_error.NewInternal(err)
 		}
-
 		if len(posts) == 0 {
-			break // La base entière a été scannée
+			break
 		}
 
 		for _, p := range posts {
-			// ⚠️ SUPPRESSION DE L'HYDRATATION L1/L2 ICI !
-			// On ne charge surtout pas les millions de posts en RAM ou dans Mongo pendant le scan.
-			// On laisse le script Lua faire son travail d'élimination impitoyable.
-
-			// 1. Écrémage Mathématique : Routage Temporel et par Tags (TDD)
-			// La fonction calcule S(p, t) avec la pénalité de temps actuel et appelle ZAddWithCap.
-			// Le script Lua va insérer l'ID, vérifier si le bucket dépasse 500, et éjecter le pire instantanément.
 			UpdatePostRecommendationScore(ctx, p)
-
-			// 2. Classements STRICTS (Interface Utilisateur)
-			// Même logique atomique, mais plafonnée à MaxStrictElements (5000).
 			_ = redis.ZAddWithCap(ctx, variables.RedisKeyStrictLikes, float64(p.LikeCount), p.ID, variables.MaxStrictElements)
 			_ = redis.ZAddWithCap(ctx, variables.RedisKeyStrictViews, float64(p.ViewCount), p.ID, variables.MaxStrictElements)
 		}
@@ -86,13 +72,10 @@ func SeedMostCache() error {
 	// ---------------------------------------------------------
 	logger.Log.Info().Msg("Lancement de l'hydratation inversée (Pre-warming L1/L2)...")
 
-	// 1. Collecte des IDs gagnants dans tous les rayons trend:*
 	winnerIDsMap := make(map[int64]bool)
-
-	// On scanne les clés correspondant à la nomenclature unifiée via la primitive d'infrastructure
 	keys, _ := redis.Keys(ctx, "most_cache:trend:*")
+
 	for _, key := range keys {
-		// On récupère tous les membres du ZSET (les IDs des posts d'élite)
 		ids, _ := redis.ZRange(ctx, key, 0, -1)
 		for _, idStr := range ids {
 			if id, err := strconv.ParseInt(idStr, 10, 64); err == nil {
@@ -101,30 +84,25 @@ func SeedMostCache() error {
 		}
 	}
 
-	// 2. Requête massive optimisée vers PostgreSQL pour les gagnants
 	if len(winnerIDsMap) > 0 {
 		var ids []int64
 		for id := range winnerIDsMap {
 			ids = append(ids, id)
 		}
 
-		winners, err := postgres.FuncLoadPosts(ids, 1, 0) // p_order_mode 0 = récents
+		winners, err := postgres.FuncLoadPosts(ids, len(ids), 0)
 		if err == nil {
 			for _, p := range winners {
-				// Sanctuarisation L1 (Redis Object Cache) - Pas de TTL (0)
+				// L1 : Sanctuarisation immédiate en RAM
 				_ = object_cache_service.SetPostInObjectCache(ctx, p)
 
-				// Synchronisation L2 (MongoDB)
-				doc, _ := pkg.ToMap(p)
-				if doc != nil {
-					_ = mongo.Posts.Set(doc)
-				}
+				// L2 : Délégation pour l'insertion par les workers (BulkWrite)
+				_ = redis.EnqueueDB(ctx, p.ID, p.UserID, redis.EntityPost, redis.ActionUpdate, p, redis.TargetMongo)
 			}
-			logger.Log.Info().Int("count", len(winners)).Msg("Posts d'élite sanctuarisés dans l'Object Cache L1.")
+			logger.Log.Info().Int("count", len(winners)).Msg("Posts d'élite sanctuarisés dans l'Object Cache L1 et en cours d'insertion L2.")
 		}
 	}
 
-	// 3. Synchronisation MongoDB (L2) pour le dernier mois
 	logger.Log.Info().Msg("Synchronisation MongoDB pour les posts des 30 derniers jours...")
 	recentPosts, err := postgres.FuncLoadRecentPosts(30)
 	if err == nil {
@@ -137,7 +115,6 @@ func SeedMostCache() error {
 		logger.Log.Info().Int("count", len(recentPosts)).Msg("Posts récents synchronisés dans MongoDB.")
 	}
 
-	// 4. Désactivation du flag de maintenance
 	_ = redis.SystemStatus.SetPrimitive(ctx, "maintenance", "off")
 	logger.Log.Info().Msg("Mode maintenance désactivé. L'API est opérationnelle.")
 
@@ -145,8 +122,27 @@ func SeedMostCache() error {
 }
 
 // ============================================================================
-// 5. AMORÇAGE DU SPEED CACHE (Utilisateurs & Relations)
+// 5. AMORÇAGE DU SPEED CACHE (Utilisateurs & Relations & Communautés)
 // ============================================================================
+
+// SeedCommunitySpeedCache charge les communautés publiques (Type 3) dans la barre de recherche
+func SeedCommunitySpeedCache(ctx context.Context) error {
+	logger.Log.Info().Msg("Amorçage SPEED Cache: Chargement des Communautés (Type 3)...")
+
+	communities, err := postgres.FuncLoadActiveCommunities(ctx)
+	if err != nil {
+		return err
+	}
+
+	count := 0
+	for _, c := range communities {
+		_ = StoreCommunityLiteInSpeedCache(ctx, c)
+		count++
+	}
+
+	logger.Log.Info().Int("count", count).Msg("SPEED Cache Communautés chargé.")
+	return nil
+}
 
 // SeedSpeedCache charge les profils allégés et le graphe social relationnel en RAM
 func SeedSpeedCache() error {
@@ -162,12 +158,9 @@ func SeedSpeedCache() error {
 			logger.Log.Warn().Err(err).Msg("Erreur DB lors du chargement des users")
 			break
 		}
-
 		for _, u := range users {
-			// CORRECTION : Appel de la fonction appropriée pour un objet Lite
 			_ = StoreUserLiteInSpeedCache(ctx, u)
 		}
-
 		offsetUsers += len(users)
 		if len(users) < limit {
 			break
@@ -184,11 +177,9 @@ func SeedSpeedCache() error {
 			logger.Log.Warn().Err(err).Msg("Erreur DB lors du chargement des relations")
 			break
 		}
-
 		for _, rel := range relations {
 			_ = UpdateRelationState(ctx, rel.TargetID, rel.CallerID, rel.State)
 		}
-
 		offsetRels += len(relations)
 		if len(relations) < limit {
 			break
@@ -196,10 +187,16 @@ func SeedSpeedCache() error {
 	}
 	logger.Log.Info().Int("count", offsetRels).Msg("SPEED Cache Relations chargées.")
 
-	// --- 3. Messagerie (Inbox & Conversations) ---
+	// --- 3. Communautés (Nouveau) ---
+	if err := SeedCommunitySpeedCache(ctx); err != nil {
+		logger.Log.Warn().Err(err).Msg("Avertissement lors du seeding des communautés")
+	}
+
+	// --- 4. Messagerie (Inbox & Conversations) ---
 	if err := SeedMessagingSpeedCache(ctx); err != nil {
 		logger.Log.Warn().Err(err).Msg("Avertissement lors du seeding de la messagerie")
 	}
+
 	return nil
 }
 
@@ -214,17 +211,16 @@ func SeedUserCache() error {
 	offset := 0
 
 	logger.Log.Info().Msg("Amorçage USER Cache: Construction des timelines (ZSETs)...")
+
 	for {
 		seeds, err := postgres.FuncLoadTimelineSeedPaginated(limit, offset)
 		if err != nil {
 			logger.Log.Warn().Err(err).Msg("Erreur DB lors du chargement des timelines")
 			break
 		}
-
 		for _, s := range seeds {
 			_ = AddPostToUserProfile(ctx, s.UserID, s.PostID, float64(s.CreatedAt.UnixMilli()))
 		}
-
 		offset += len(seeds)
 		if len(seeds) < limit {
 			break
