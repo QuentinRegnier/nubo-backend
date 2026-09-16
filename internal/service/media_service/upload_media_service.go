@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
@@ -88,8 +89,8 @@ func UploadMedia(file io.ReadSeeker, ownerID int64, mediaID int64, isVisible boo
 		OwnerID:     ownerID,
 		StoragePath: storagePath,
 		Visibility:  isVisible, // <-- S'adapte au contexte (Orphelin ou Direct)
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		CreatedAt:   domain.TimeToMillis(now),
+		UpdatedAt:   domain.TimeToMillis(now),
 	}
 
 	ctx := context.Background()

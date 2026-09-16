@@ -1,7 +1,7 @@
 package mongo
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 )
@@ -33,5 +33,5 @@ func MongoGetRelationState(callerID int64, targetID int64) (int, error) {
 		return stateInt, nil
 	}
 
-	return 0, nubo_error.NewInternal(fmt.Errorf("format de state invalide dans la collection relations"))
+	return 0, nubo_error.NewInternal(errors.New("format de state invalide dans la collection relations"))
 }

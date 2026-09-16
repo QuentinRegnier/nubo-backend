@@ -2,10 +2,10 @@ package post_service
 
 import (
 	"context"
-	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
@@ -30,7 +30,7 @@ func UpdatePost(ctx context.Context, input post_models.UpdatePostInput) error {
 	post.Identifiers = input.Identifiers
 	post.Location = input.Location
 	post.Visibility = input.Visibility
-	post.UpdatedAt = time.Now().UTC()
+	post.UpdatedAt = service.NowMillis()
 
 	// L'IA locale (Edge Computing) saura qu'il faut recalculer ses affinités
 	post.VectorVersion += 1

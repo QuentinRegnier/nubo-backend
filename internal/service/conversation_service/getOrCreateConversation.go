@@ -102,7 +102,7 @@ func hydrateMember(ctx context.Context, convID, userID int64, fromL3 bool) {
 			Role:           mem.Role,
 			Settings:       service.ToMemberSettingsLite(mem.Settings),
 			UnreadCount:    mem.UnreadCount,
-			JoinedAt:       mem.JoinedAt.UnixMilli(),
+			JoinedAt:       mem.JoinedAt,
 		})
 	}
 }

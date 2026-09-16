@@ -2,7 +2,6 @@ package auth_service
 
 import (
 	"context"
-	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -88,7 +87,7 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 		user.ProfilePictureID = input.ProfilePictureID
 	}
 
-	user.UpdatedAt = time.Now().UTC()
+	user.UpdatedAt = service.NowMillis()
 
 	// 5. Mise à jour immédiate du Speed Cache L1 (Auto-complétion et Profil Lite)
 	// CORRECTION : Récupération asynchrone/rapide des settings pour construire l'objet Lite

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
@@ -49,6 +50,8 @@ func FuncLoadUser(ID int64, Username string, Email string, Phone string) (auth_m
 	var location sql.NullString
 	var school sql.NullString
 	var work sql.NullString
+	var createdAt time.Time // NOUVEAU
+	var updatedAt time.Time // NOUVEAU
 
 	err := postgres.PostgresDB.QueryRow(sqlStatement, args...).Scan(
 		&res.ID,
@@ -73,8 +76,8 @@ func FuncLoadUser(ID int64, Username string, Email string, Phone string) (auth_m
 		&res.Banned,
 		&banReason,
 		&banExpiresAt,
-		&res.CreatedAt,
-		&res.UpdatedAt,
+		&createdAt, // AU LIEU DE &res.CreatedAt
+		&updatedAt, // AU LIEU DE &res.UpdatedAt
 	)
 
 	if err != nil {
@@ -91,11 +94,11 @@ func FuncLoadUser(ID int64, Username string, Email string, Phone string) (auth_m
 	if birthdateRaw.Valid {
 		t, errTime := time.Parse(time.RFC3339, birthdateRaw.String)
 		if errTime == nil {
-			res.Birthdate = t
+			res.Birthdate = domain.TimeToMillis(t)
 		} else {
 			t2, errTime2 := time.Parse("02012006", birthdateRaw.String)
 			if errTime2 == nil {
-				res.Birthdate = t2
+				res.Birthdate = domain.TimeToMillis(t2)
 			}
 		}
 	}
@@ -106,7 +109,7 @@ func FuncLoadUser(ID int64, Username string, Email string, Phone string) (auth_m
 		res.BanReason = banReason.String
 	}
 	if banExpiresAt.Valid {
-		res.BanExpiresAt = banExpiresAt.Time
+		res.BanExpiresAt = domain.TimeToMillis(banExpiresAt.Time)
 	}
 	if firstName.Valid {
 		res.FirstName = firstName.String
@@ -126,6 +129,10 @@ func FuncLoadUser(ID int64, Username string, Email string, Phone string) (auth_m
 	if work.Valid {
 		res.Work = work.String
 	}
+
+	// Conversion finale des timestamps
+	res.CreatedAt = domain.TimeToMillis(createdAt)
+	res.UpdatedAt = domain.TimeToMillis(updatedAt)
 
 	return res, nil
 }

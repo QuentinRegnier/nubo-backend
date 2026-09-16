@@ -1,7 +1,5 @@
 package conversation_models
 
-import "time"
-
 // AcceptCommunityRequestInput valide les données pour accepter une candidature.
 type AcceptCommunityRequestInput struct {
 	ConversationID int64 `json:"conversation_id" binding:"required"`
@@ -9,5 +7,5 @@ type AcceptCommunityRequestInput struct {
 }
 
 type AcceptCommunityRequestOutput struct {
-	InboxUpdateAt time.Time `json:"inbox_update_at"`
+	InboxUpdateAt int64 `json:"inbox_update_at"`
 }

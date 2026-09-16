@@ -3,7 +3,6 @@ package cache_service
 import (
 	"context"
 	"strconv"
-	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -11,6 +10,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ func RelationValue(ctx context.Context, targetID int64, callerID int64) int {
 			PrimaryID:   callerID,
 			SecondaryID: targetID,
 			State:       currentState,
-			UpdatedAt:   time.Now().UTC(),
+			UpdatedAt:   service.NowMillis(),
 		}
 		// On envoie un ActionUpdate. Le worker Mongo a été codé pour utiliser PrimaryID/SecondaryID
 		_ = redis.EnqueueDB(bgCtx, 0, targetID, redis.EntityRelation, redis.ActionUpdate, payload, redis.TargetMongo)

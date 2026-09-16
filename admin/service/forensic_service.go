@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	_ "github.com/jdeng/goheif" // HEIC/HEIF (Standard iPhone Apple)
 	_ "golang.org/x/image/tiff" // NOUVEAU : TIFF (Formats bruts ou modifiés via Photoshop)
 	_ "golang.org/x/image/webp" // NOUVEAU : WebP (Captures d'écran / Sauvegardes Android)
@@ -35,7 +36,7 @@ func ExtractForensicData(imageBuffer []byte) (*WatermarkReport, error) {
 		// tester JPEG, PNG, WEBP, TIFF et HEIC grâce aux imports '_' ci-dessus.
 		img, _, err = image.Decode(bytes.NewReader(imageBuffer))
 		if err != nil {
-			return nil, fmt.Errorf("impossible de décoder l'image fuité (formats supportés: AVIF, HEIC, WEBP, JPEG, PNG, TIFF) : %v", err)
+			return nil, nubo_error.NewBadRequest("IMAGE_DECODE_FAILED", "Impossible de décoder l'image fuitée (formats supportés: AVIF, HEIC, WEBP, JPEG, PNG, TIFF).", err)
 		}
 	}
 
@@ -151,7 +152,7 @@ func bitsToString(bits []int) string {
 func parseWatermark(payload string) (*WatermarkReport, error) {
 	parts := strings.Split(payload, "|")
 	if len(parts) != 4 {
-		return nil, fmt.Errorf("format de tatouage corrompu ou inexistant")
+		return nil, nubo_error.NewBadRequest("INVALID_WATERMARK_FORMAT", "Format de tatouage corrompu ou inexistant.", nil)
 	}
 
 	report := &WatermarkReport{}

@@ -2,7 +2,7 @@ package mongo
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"reflect"
 	"time"
 
@@ -99,7 +99,7 @@ func (c *MongoCollection) validate(obj map[string]any, partial bool) error {
 	if !partial {
 		for field := range c.Schema {
 			if _, ok := obj[field]; !ok {
-				return nubo_error.NewInternal(fmt.Errorf("champ manquant dans MongoDB: %s", field))
+				return nubo_error.NewInternal(errors.New("champ manquant dans MongoDB"))
 			}
 		}
 	}
@@ -110,8 +110,7 @@ func (c *MongoCollection) validate(obj map[string]any, partial bool) error {
 			continue
 		}
 		if reflect.TypeOf(val).Kind() != expectedKind {
-			return nubo_error.NewInternal(fmt.Errorf("type invalide pour %s: attendu %s, reçu %s",
-				field, expectedKind, reflect.TypeOf(val).Kind()))
+			return nubo_error.NewInternal(errors.New("type invalide dans MongoDB"))
 		}
 	}
 	return nil
@@ -138,7 +137,7 @@ func (c *MongoCollection) Set(obj map[string]any) error {
 	opts := options.Update().SetUpsert(true)
 
 	_, err := collection.UpdateOne(ctx, filter, update, opts)
-	return nubo_error.NewInternal(fmt.Errorf("erreur lors de l'insertion/mise à jour: %v", err))
+	return nubo_error.NewInternal(err)
 }
 
 // Get récupère les objets correspondant au filtre avec une projection optionnelle
@@ -155,7 +154,7 @@ func (c *MongoCollection) Get(filter map[string]any, projection map[string]any) 
 
 	cur, err := collection.Find(ctx, filter, opts)
 	if err != nil {
-		return nil, nubo_error.NewInternal(fmt.Errorf("erreur lors de la récupération: %v", err))
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	defer func() {
@@ -166,7 +165,7 @@ func (c *MongoCollection) Get(filter map[string]any, projection map[string]any) 
 
 	var results []map[string]any
 	if err := cur.All(ctx, &results); err != nil {
-		return nil, nubo_error.NewInternal(fmt.Errorf("erreur lors de la récupération: %v", err))
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	return results, nil
@@ -216,7 +215,7 @@ func (c *MongoCollection) GetPaginated(filter map[string]any, sort map[string]an
 
 	cur, err := collection.Find(ctx, filter, opts)
 	if err != nil {
-		return nil, nubo_error.NewInternal(fmt.Errorf("erreur lors de la récupération paginée: %v", err))
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	defer func() {
@@ -227,7 +226,7 @@ func (c *MongoCollection) GetPaginated(filter map[string]any, sort map[string]an
 
 	var results []map[string]any
 	if err := cur.All(ctx, &results); err != nil {
-		return nil, nubo_error.NewInternal(fmt.Errorf("erreur lors de la récupération paginée: %v", err))
+		return nil, nubo_error.NewInternal(err)
 	}
 
 	return results, nil

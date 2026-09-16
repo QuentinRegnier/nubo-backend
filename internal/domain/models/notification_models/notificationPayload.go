@@ -1,14 +1,12 @@
 package notification_models
 
-import "time"
-
 // NotificationPayload représente un événement polymorphe dans le flux d'activité global.
 type NotificationPayload struct {
-	ID        int64     `json:"id" bson:"id"`
-	UserID    int64     `json:"user_id" bson:"user_id"`     // Le propriétaire de la boîte aux lettres
-	ActorID   int64     `json:"actor_id" bson:"actor_id"`   // Celui qui a déclenché l'événement
-	Type      string    `json:"type" bson:"type"`           // Polymorphe: "new_message", "post_like", "new_follower", etc.
-	TargetID  int64     `json:"target_id" bson:"target_id"` // L'ID de l'entité concernée (Post, Conversation, etc.)
-	IsRead    bool      `json:"is_read" bson:"is_read"`     // État de lecture (pastille)
-	CreatedAt time.Time `json:"created_at" bson:"created_at"`
+	ID        int64  `json:"id" bson:"id"`
+	UserID    int64  `json:"user_id" bson:"user_id"`     // Le propriétaire de la boîte aux lettres
+	ActorID   int64  `json:"actor_id" bson:"actor_id"`   // Celui qui a déclenché l'événement
+	Type      string `json:"type" bson:"type"`           // Polymorphe: "new_message", "post_like", "new_follower", etc.
+	TargetID  int64  `json:"target_id" bson:"target_id"` // L'ID de l'entité concernée (Post, Conversation, etc.)
+	IsRead    bool   `json:"is_read" bson:"is_read"`     // État de lecture (pastille)
+	CreatedAt int64  `json:"created_at" bson:"created_at"`
 }

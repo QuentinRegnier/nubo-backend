@@ -1,7 +1,7 @@
 package mongo
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -22,11 +22,11 @@ func MongoLoadUser(ID int64, Username string, Email string, Phone string) (auth_
 	} else if Phone != "" {
 		filter["phone"] = Phone
 	} else {
-		return auth_models.UserPayload{}, nubo_error.NewInternal(fmt.Errorf("aucun critère de recherche mongo"))
+		return auth_models.UserPayload{}, nubo_error.NewInternal(errors.New("aucun critère de recherche mongo"))
 	}
 
 	if len(filter) == 0 {
-		return u, nubo_error.NewInternal(fmt.Errorf("MongoLoadUser: no research criteria provided"))
+		return u, nubo_error.NewInternal(errors.New("MongoLoadUser: no research criteria provided"))
 	}
 
 	// Appel à ta fonction utilitaire existante

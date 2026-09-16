@@ -4,9 +4,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
@@ -16,7 +16,7 @@ import (
 func FuncLoadSession(ID int64, UserId int64, FirebaseInstallationID string, MasterToken string) (auth_models.SessionsPayload, error) {
 	// 1. Vérification que les champs sont non nuls
 	if ID == -1 && UserId == -1 && FirebaseInstallationID == "" && MasterToken == "" {
-		return auth_models.SessionsPayload{}, nubo_error.NewInternal(fmt.Errorf("champs requis manquants pour FuncLoadSession"))
+		return auth_models.SessionsPayload{}, nubo_error.NewInternal(errors.New("champs requis manquants pour FuncLoadSession"))
 	}
 
 	// 2. Préparation des arguments (gestion des types spéciaux)
@@ -54,7 +54,7 @@ func FuncLoadSession(ID int64, UserId int64, FirebaseInstallationID string, Mast
 	res.CurrentSecret = ""
 	res.LastSecret = ""
 	res.LastJWT = ""
-	res.ToleranceTime = time.Time{}
+	res.ToleranceTime = domain.TimeToMillis(time.Time{})
 
 	err := postgres.PostgresDB.QueryRow(sqlStatement, args...).Scan(
 		&res.ID,

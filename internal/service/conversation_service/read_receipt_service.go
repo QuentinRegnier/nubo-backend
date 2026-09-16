@@ -2,11 +2,12 @@ package conversation_service
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
@@ -28,7 +29,7 @@ func MarkConversationAsRead(ctx context.Context, callerID int64, convID int64) (
 	}
 
 	mem.UnreadCount = 0
-	mem.UpdatedAt = time.Now().UTC()
+	mem.UpdatedAt = service.NowMillis()
 
 	err = redis.EnqueueDB(ctx, mem.ID, convID, redis.EntityMembers, redis.ActionUpdate, mem, redis.TargetAll)
 	if err != nil {
@@ -41,7 +42,7 @@ func MarkConversationAsRead(ctx context.Context, callerID int64, convID int64) (
 	go func() {
 		err := realtime_service.BroadcastToConversation(context.Background(), convID, "conversation.read_receipt", mem)
 		if err != nil {
-			_ = fmt.Errorf("MarkConversationAsRead: Erreur lors de l'envoi de la notification : %v", err)
+			logger.Log.Error().Err(err).Msg("Erreur lors de l'envoi de la notification de lecture")
 		}
 	}()
 

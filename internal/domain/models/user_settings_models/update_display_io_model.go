@@ -1,7 +1,5 @@
 package user_settings_models
 
-import "time"
-
 // UpdateDisplayInput valide les modifications d'affichage et de contenu
 type UpdateDisplayInput struct {
 	Theme          int  `json:"theme" binding:"omitempty,oneof=0 1 2"`
@@ -10,5 +8,5 @@ type UpdateDisplayInput struct {
 }
 
 type UpdateDisplayOutput struct {
-	UserSettingsUpdateAt time.Time `json:"user_settings_update_at"`
+	UserSettingsUpdateAt int64 `json:"user_settings_update_at"`
 }

@@ -1,7 +1,5 @@
 package auth_models
 
-import "time"
-
 type SessionsPayload struct { // CreateSession
 	ID                     int64          `bson:"id" json:"id"`
 	UserID                 int64          `bson:"user_id" json:"user_id"`
@@ -12,7 +10,7 @@ type SessionsPayload struct { // CreateSession
 	CurrentSecret          string         `bson:"current_secret" json:"current_secret"`
 	LastSecret             string         `bson:"last_secret" json:"last_secret"`
 	LastJWT                string         `bson:"last_jwt" json:"last_jwt"`
-	ToleranceTime          time.Time      `bson:"tolerance_time" json:"tolerance_time"`
-	CreatedAt              time.Time      `bson:"created_at" json:"created_at"`
-	ExpiresAt              time.Time      `bson:"expires_at" json:"expires_at"`
+	ToleranceTime          int64          `bson:"tolerance_time" json:"tolerance_time"`
+	CreatedAt              int64          `bson:"created_at" json:"created_at"`
+	ExpiresAt              int64          `bson:"expires_at" json:"expires_at"`
 }

@@ -2,10 +2,10 @@ package algorithm_service
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"strconv"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
@@ -143,7 +143,7 @@ func StoreLSHBucket(ctx context.Context, postID int64, hash uint32) error {
 	member := strconv.FormatInt(postID, 10)
 
 	if err := redis.LSHBuckets.SAdd(ctx, hash, member); err != nil {
-		return fmt.Errorf("sadd lsh bucket %d: %w", hash, err)
+		return nubo_error.NewInternal(err)
 	}
 
 	// Rafraîchissement du TTL encapsulé (le bucket est partagé entre plusieurs posts)

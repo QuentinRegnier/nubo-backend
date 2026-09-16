@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/saved_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
@@ -38,7 +39,7 @@ func ToggleSaved(ctx context.Context, userID int64, postID int64, action string)
 		ID:        pkg.GenerateID(),
 		UserID:    userID,
 		PostID:    postID,
-		CreatedAt: now,
+		CreatedAt: domain.TimeToMillis(now),
 	}
 
 	// partitionKey = userID (le shard gérant l'utilisateur centralisera ses favoris)

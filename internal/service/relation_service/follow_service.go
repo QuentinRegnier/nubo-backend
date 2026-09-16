@@ -3,11 +3,12 @@ package relation_service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
@@ -60,8 +61,8 @@ func ToggleFollow(ctx context.Context, callerID int64, targetID int64, action st
 		PrimaryID:   callerID,
 		SecondaryID: targetID,
 		State:       newState,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		CreatedAt:   domain.TimeToMillis(now),
+		UpdatedAt:   domain.TimeToMillis(now),
 	}
 
 	// PartitionKey = targetID pour centraliser les requêtes sur le shard de la cible
@@ -71,7 +72,7 @@ func ToggleFollow(ctx context.Context, callerID int64, targetID int64, action st
 		go func() {
 			err := notification_service.DispatchNotification(context.Background(), targetID, callerID, "relation_followed", callerID)
 			if err != nil {
-				_ = fmt.Errorf("ToggleFollow: failed to dispatch notification for follow from %d to %d: %v", callerID, targetID, err)
+				logger.Log.Error().Err(err).Msg("Failed to dispatch notification for follow")
 			}
 		}()
 	}

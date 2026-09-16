@@ -2,7 +2,7 @@ package post_service
 
 import (
 	"context"
-	"fmt"
+	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -20,7 +20,7 @@ func GetUserPosts(ctx context.Context, input post_models.GetUserPostsInput) []po
 	var errCache error
 
 	if input.Force {
-		errCache = fmt.Errorf("forced fallback") // Déclenche artificiellement le fallback (Internal sentinel)
+		errCache = errors.New("forced fallback") // Déclenche artificiellement le fallback (Internal sentinel)
 	} else {
 		ids, errCache = cache_service.GetTopUserPostIDs(ctx, input.TargetUserID, input.Offset, input.Limit)
 	}
@@ -57,7 +57,7 @@ func GetUserPosts(ctx context.Context, input post_models.GetUserPostsInput) []po
 	var postIDs []int64
 	for _, p := range posts {
 		// A. On reconstruit le ZSET de la timeline utilisateur de façon rectiligne
-		_ = cache_service.AddPostToUserProfile(ctx, p.UserID, p.ID, float64(p.CreatedAt.UnixMilli()))
+		_ = cache_service.AddPostToUserProfile(ctx, p.UserID, p.ID, float64(p.CreatedAt))
 		// B. On blinde la RAM L1 avec les payloads complets
 		_ = object_cache_service.SetPostInObjectCache(ctx, p)
 

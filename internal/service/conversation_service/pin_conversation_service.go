@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -54,7 +55,7 @@ func TogglePinConversation(ctx context.Context, callerID int64, input conversati
 	}
 	mem.Settings.Pinned = availableIdx
 
-	mem.UpdatedAt = time.Now().UTC()
+	mem.UpdatedAt = service.NowMillis()
 
 	// 3. Mise à jour synchrone L1 (Object et Speed Cache)
 	_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
@@ -65,7 +66,7 @@ func TogglePinConversation(ctx context.Context, callerID int64, input conversati
 		Settings:        service.ToMemberSettingsLite(mem.Settings),
 		UnreadCount:     mem.UnreadCount,
 		FrozenMessageID: mem.FrozenMessageID,
-		JoinedAt:        mem.JoinedAt.UnixMilli(),
+		JoinedAt:        mem.JoinedAt,
 	})
 
 	// 4. Persistance (Write-Behind)
@@ -79,7 +80,7 @@ func TogglePinConversation(ctx context.Context, callerID int64, input conversati
 	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
 	// et garantit que le client reçoit la date de la fin absolue de la transaction.
 	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
 
 	return output, redis.EnqueueDB(ctx, mem.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, mem, redis.TargetAll)
 }

@@ -1,7 +1,7 @@
 package mongo
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -11,7 +11,7 @@ import (
 // MongoGetConversation récupère le payload complet depuis le Cold Storage L2
 func MongoGetConversation(convID int64) (conversation_models.ConversationPayload, error) {
 	if Conversations == nil {
-		return conversation_models.ConversationPayload{}, nubo_error.NewInternal(fmt.Errorf("mongo collection non initialisée"))
+		return conversation_models.ConversationPayload{}, nubo_error.NewInternal(errors.New("mongo collection non initialisée"))
 	}
 
 	filter := map[string]any{"id": convID}
@@ -22,7 +22,7 @@ func MongoGetConversation(convID int64) (conversation_models.ConversationPayload
 
 	var conv conversation_models.ConversationPayload
 	if err := pkg.ToStruct(docs[0], &conv); err != nil {
-		return conversation_models.ConversationPayload{}, nubo_error.NewInternal(fmt.Errorf("conversion document to struct: %w", err))
+		return conversation_models.ConversationPayload{}, nubo_error.NewInternal(err)
 	}
 
 	return conv, nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -149,7 +150,7 @@ func ComputeContentVectorFull(post post_models.PostPayload, opts *ContentVectorO
 	// TDD §4.1:
 	//   c_{p,k}^(temp) = exp(-(k - h_p)² / (2·σ_h²)) · Z^{-1}
 	//   σ_h = 2 h,  Z = Σ_{k=0}^{23} exp(-(k-h_p)²/(2·σ_h²))
-	computeTempBlock(post.CreatedAt.Hour(), tempBlock)
+	computeTempBlock(domain.MillisToTime(post.CreatedAt).Hour(), tempBlock)
 
 	// ── Bloc 3 : Engagement c_p^(eng) ∈ R^8 ────────────────────────────
 	//

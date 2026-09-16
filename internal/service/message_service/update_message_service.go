@@ -2,13 +2,15 @@ package message_service
 
 import (
 	"context"
-	"fmt"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
@@ -33,7 +35,7 @@ func UpdateMessage(ctx context.Context, callerID int64, input message_models.Upd
 	if msg.Content == "" {
 		return message_models.UpdateMessageOutput{}, nubo_error.NewBadRequest("EMPTY_MESSAGE", "Le message ne peut pas être vide.", nil)
 	}
-	msg.UpdatedAt = time.Now().UTC()
+	msg.UpdatedAt = service.NowMillis()
 
 	// 4. MISE À JOUR IMMÉDIATE L1 (Object Cache)
 	_ = object_cache_service.SetMessageInObjectCache(ctx, msg)
@@ -47,7 +49,7 @@ func UpdateMessage(ctx context.Context, callerID int64, input message_models.Upd
 		go func() {
 			err := realtime_service.BroadcastToConversation(context.Background(), msg.ConversationID, "message.updated", msg)
 			if err != nil {
-				_ = fmt.Errorf("Failed to broadcast message update: %v", err)
+				logger.Log.Error().Err(err).Msg("Failed to broadcast message update")
 			}
 		}()
 	}
@@ -61,7 +63,7 @@ func UpdateMessage(ctx context.Context, callerID int64, input message_models.Upd
 	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
 	// et garantit que le client reçoit la date de la fin absolue de la transaction.
 	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
 
 	return output, err
 }

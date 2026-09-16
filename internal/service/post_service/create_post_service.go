@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -46,8 +47,8 @@ func CreatePost(ctx context.Context, userID int64, input post_models.CreatePostI
 		Visibility:        input.Visibility,
 		PriorityLevel:     priorityLevel,
 		Location:          input.Location,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		CreatedAt:         domain.TimeToMillis(now),
+		UpdatedAt:         domain.TimeToMillis(now),
 		LikeCount:         0,
 		CommentCount:      0,
 		ViewCount:         0,

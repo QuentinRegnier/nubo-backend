@@ -3,11 +3,12 @@ package relation_service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
@@ -63,8 +64,8 @@ func ToggleFriend(ctx context.Context, callerID int64, targetID int64, action st
 		PrimaryID:   callerID,
 		SecondaryID: targetID,
 		State:       newState,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		CreatedAt:   domain.TimeToMillis(now),
+		UpdatedAt:   domain.TimeToMillis(now),
 	}
 
 	// PartitionKey = targetID pour assurer l'ordre chronologique des requêtes sur ce profil
@@ -75,7 +76,7 @@ func ToggleFriend(ctx context.Context, callerID int64, targetID int64, action st
 		go func() {
 			err := notification_service.DispatchNotification(context.Background(), targetID, callerID, "friendship_established", callerID)
 			if err != nil {
-				_ = fmt.Errorf("ToggleFriend: failed to dispatch notification for friendship from %d to %d: %v", callerID, targetID, err)
+				logger.Log.Error().Err(err).Msg("Failed to dispatch notification for friendship")
 			}
 		}()
 	}

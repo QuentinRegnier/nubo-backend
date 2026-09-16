@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
@@ -79,7 +80,7 @@ func CreateUser(ctx context.Context, input auth_models.SignUpInput, ipAddress st
 		PasswordHash:     input.PasswordHash,
 		FirstName:        pkg.CleanStr(input.FirstName),
 		LastName:         pkg.CleanStr(input.LastName),
-		Birthdate:        parsedBirthdate,
+		Birthdate:        domain.TimeToMillis(parsedBirthdate),
 		Sex:              input.Gender,
 		Bio:              pkg.CleanStr(input.Bio),
 		ProfilePictureID: input.ProfilePictureID,
@@ -90,8 +91,8 @@ func CreateUser(ctx context.Context, input auth_models.SignUpInput, ipAddress st
 		Badges:           []string{},
 		Desactivated:     false,
 		Banned:           false,
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		CreatedAt:        domain.TimeToMillis(now),
+		UpdatedAt:        domain.TimeToMillis(now),
 	}
 
 	// B. Hydratation du Payload Session
@@ -101,9 +102,9 @@ func CreateUser(ctx context.Context, input auth_models.SignUpInput, ipAddress st
 		FirebaseInstallationID: input.FirebaseInstallationID,
 		DeviceInfo:             input.DeviceInfo,
 		IPHistory:              []string{ipAddress},
-		CreatedAt:              now,
-		ExpiresAt:              now.Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second),
-		ToleranceTime:          now.Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second),
+		CreatedAt:              domain.TimeToMillis(now),
+		ExpiresAt:              domain.TimeToMillis(now.Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)),
+		ToleranceTime:          domain.TimeToMillis(now.Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second)),
 	}
 
 	// Génération des Tokens
@@ -131,8 +132,8 @@ func CreateUser(ctx context.Context, input auth_models.SignUpInput, ipAddress st
 		TelemetryVector:    nil, // Profil vierge
 		TelemetryTags:      nil, // Profil vierge
 		TelemetryTimestamp: 0,
-		CreatedAt:          now,
-		UpdatedAt:          now,
+		CreatedAt:          domain.TimeToMillis(now),
+		UpdatedAt:          domain.TimeToMillis(now),
 	}
 
 	// 3. MISE EN CACHE IMMÉDIATE (Lecture instantanée L1 - USER & SPEED Caches)

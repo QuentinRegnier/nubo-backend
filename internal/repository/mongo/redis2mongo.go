@@ -1,7 +1,7 @@
 package mongo
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -33,6 +33,6 @@ func Redis2Mongo(entity redis.EntityType) (*MongoCollection, error) {
 	case redis.EntityMessage:
 		return Messages, nil
 	default:
-		return nil, nubo_error.NewInternal(fmt.Errorf("entité non supportée pour vérification Mongo: %s", entity))
+		return nil, nubo_error.NewInternal(errors.New("entité non supportée pour vérification Mongo"))
 	}
 }

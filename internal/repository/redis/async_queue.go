@@ -104,7 +104,7 @@ func EnqueueDB(ctx context.Context, id int64, partitionKey int64, entity EntityT
 
 	bytes, err := json.Marshal(event)
 	if err != nil {
-		return nubo_error.NewInternal(fmt.Errorf("marshal event: %w", err))
+		return nubo_error.NewInternal(err)
 	}
 
 	// C'EST ICI QUE TOUT SE JOUE : Choix du Shard
@@ -127,7 +127,7 @@ func EnqueueDB(ctx context.Context, id int64, partitionKey int64, entity EntityT
 
 	_, err = pipe.Exec(ctx)
 	if err != nil {
-		return nubo_error.NewInternal(fmt.Errorf("redis pipeline failed: %w", err))
+		return nubo_error.NewInternal(err)
 	}
 
 	return nil

@@ -2,12 +2,13 @@ package conversation_service
 
 import (
 	"context"
-	"fmt"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -64,7 +65,7 @@ func UpdateConversation(ctx context.Context, callerID int64, convID int64, input
 		}
 	}
 
-	conv.UpdatedAt = time.Now().UTC()
+	conv.UpdatedAt = service.NowMillis()
 
 	// === MISE À JOUR IMMÉDIATE DU L1 (Object Cache) ===
 	_ = object_cache_service.SetConversationInObjectCache(ctx, conv)
@@ -94,7 +95,7 @@ func UpdateConversation(ctx context.Context, callerID int64, convID int64, input
 	go func() {
 		err := realtime_service.BroadcastToConversation(context.Background(), conv.ID, "conversation.updated", conv)
 		if err != nil {
-			_ = fmt.Errorf("erreur lors de l'envoi de la notification de mise à jour de conversation : %v", err)
+			logger.Log.Error().Err(err).Msg("Erreur lors de l'envoi de la notification de mise à jour de conversation")
 		}
 	}()
 
@@ -107,7 +108,7 @@ func UpdateConversation(ctx context.Context, callerID int64, convID int64, input
 	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
 	// et garantit que le client reçoit la date de la fin absolue de la transaction.
 	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
 
 	return output, nil
 }

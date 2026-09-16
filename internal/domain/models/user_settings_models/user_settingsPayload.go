@@ -1,7 +1,5 @@
 package user_settings_models
 
-import "time"
-
 type PrivacySettings struct {
 	ProfileVisibility      int  `json:"profile_visibility" bson:"profile_visibility"`           // 0: Public, 1: Amis
 	PostVisibilityDefault  int  `json:"post_visibility_default" bson:"post_visibility_default"` // 0: Public, 1: Abonnés, 2: Amis
@@ -44,6 +42,6 @@ type UserSettingsPayload struct {
 	TelemetryVector    []float32                 `json:"telemetry_vector" bson:"telemetry_vector"`
 	TelemetryTags      []string                  `json:"telemetry_tags" bson:"telemetry_tags"`
 	TelemetryTimestamp int64                     `json:"telemetry_timestamp" bson:"telemetry_timestamp"`
-	CreatedAt          time.Time                 `json:"created_at" bson:"created_at"`
-	UpdatedAt          time.Time                 `json:"updated_at" bson:"updated_at"`
+	CreatedAt          int64                     `json:"created_at" bson:"created_at"`
+	UpdatedAt          int64                     `json:"updated_at" bson:"updated_at"`
 }

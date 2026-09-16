@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -34,6 +35,6 @@ func MarkNotificationsAsRead(ctx context.Context, userID int64, input notificati
 	timestampMs := cache_service.TouchActivityTimestamp(ctx, userID)
 
 	return notification_models.ReadNotificationsOutput{
-		ActivityUpdateAt: time.UnixMilli(timestampMs),
+		ActivityUpdateAt: domain.TimeToMillis(time.UnixMilli(timestampMs)),
 	}, broadcastErr
 }

@@ -1,7 +1,5 @@
 package conversation_models
 
-import "time"
-
 // JoinGroupInput valide la demande de l'utilisateur pour rejoindre un groupe.
 type JoinGroupInput struct {
 	ConversationID int64 `json:"conversation_id" binding:"required"`
@@ -9,5 +7,5 @@ type JoinGroupInput struct {
 }
 
 type JoinGroupOutput struct {
-	InboxUpdateAt time.Time `json:"inbox_update_at"`
+	InboxUpdateAt int64 `json:"inbox_update_at"`
 }

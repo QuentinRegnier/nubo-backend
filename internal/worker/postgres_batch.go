@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -175,12 +176,12 @@ func bulkInsertPostgres(ctx context.Context, entity redis.EntityType, events []r
 
 	mapper := GetMapper(entity)
 	if mapper == nil {
-		return nubo_error.NewInternal(fmt.Errorf("pas de mapper Postgres pour %s", entity))
+		return nubo_error.NewInternal(errors.New("pas de mapper Postgres"))
 	}
 
 	tx, err := postgres.PostgresDB.BeginTx(ctx, nil)
 	if err != nil {
-		return nubo_error.NewInternal(fmt.Errorf("BeginTx Insert: %w", err))
+		return nubo_error.NewInternal(err)
 	}
 
 	committed := false
@@ -194,7 +195,7 @@ func bulkInsertPostgres(ctx context.Context, entity redis.EntityType, events []r
 
 	stmt, err := tx.Prepare(copyQuery)
 	if err != nil {
-		return nubo_error.NewInternal(fmt.Errorf("prepare CopyIn: %w", err))
+		return nubo_error.NewInternal(err)
 	}
 	defer func(stmt *sql.Stmt) {
 		err := stmt.Close()
@@ -206,20 +207,20 @@ func bulkInsertPostgres(ctx context.Context, entity redis.EntityType, events []r
 	for _, e := range events {
 		row, err := mapper.ToRow(e.Payload)
 		if err != nil {
-			return nubo_error.NewInternal(fmt.Errorf("mapping payload: %w", err))
+			return nubo_error.NewInternal(err)
 		}
 		if _, err = stmt.Exec(row...); err != nil {
-			return nubo_error.NewInternal(fmt.Errorf("exec CopyIn: %w", err))
+			return nubo_error.NewInternal(err)
 		}
 	}
 
 	// Flush du COPY
 	if _, err := stmt.Exec(); err != nil {
-		return nubo_error.NewInternal(fmt.Errorf("flush CopyIn: %w", err))
+		return nubo_error.NewInternal(err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nubo_error.NewInternal(fmt.Errorf("commit Insert: %w", err))
+		return nubo_error.NewInternal(err)
 	}
 
 	committed = true
@@ -274,7 +275,7 @@ func handleMessageReactionUpsert(ctx context.Context, events []redis.AsyncEvent)
 func bulkUpdatePostgres(ctx context.Context, entity redis.EntityType, events []redis.AsyncEvent) error {
 	mapper := GetMapper(entity)
 	if mapper == nil {
-		return nubo_error.NewInternal(fmt.Errorf("pas de mapper Postgres pour %s", entity))
+		return nubo_error.NewInternal(errors.New("pas de mapper Postgres"))
 	}
 
 	// --- DÉDUPLICATION RAM (Last-Write-Wins) ---
@@ -292,7 +293,7 @@ func bulkUpdatePostgres(ctx context.Context, entity redis.EntityType, events []r
 
 	tx, err := postgres.PostgresDB.BeginTx(ctx, nil)
 	if err != nil {
-		return nubo_error.NewInternal(fmt.Errorf("BeginTx Update: %w", err))
+		return nubo_error.NewInternal(err)
 	}
 
 	committed := false
@@ -307,12 +308,12 @@ func bulkUpdatePostgres(ctx context.Context, entity redis.EntityType, events []r
 
 	queryCreateTable := fmt.Sprintf("CREATE TEMP TABLE %s (LIKE %s INCLUDING ALL) ON COMMIT DROP", tempTable, mapper.TableName())
 	if _, err := tx.ExecContext(ctx, queryCreateTable); err != nil {
-		return nubo_error.NewInternal(fmt.Errorf("création Temp Table: %w", err))
+		return nubo_error.NewInternal(err)
 	}
 
 	stmt, err := tx.Prepare(pq.CopyIn(tempTable, mapper.Columns()...))
 	if err != nil {
-		return nubo_error.NewInternal(fmt.Errorf("prepare CopyIn Temp: %w", err))
+		return nubo_error.NewInternal(err)
 	}
 	defer func(stmt *sql.Stmt) {
 		err := stmt.Close()
@@ -325,24 +326,24 @@ func bulkUpdatePostgres(ctx context.Context, entity redis.EntityType, events []r
 	for _, e := range dedupEvents {
 		row, err := mapper.ToRow(e.Payload)
 		if err != nil {
-			return nubo_error.NewInternal(fmt.Errorf("mapping payload update: %w", err))
+			return nubo_error.NewInternal(err)
 		}
 		if _, err := stmt.Exec(row...); err != nil {
-			return nubo_error.NewInternal(fmt.Errorf("exec CopyIn Temp: %w", err))
+			return nubo_error.NewInternal(err)
 		}
 	}
 
 	if _, err := stmt.Exec(); err != nil {
-		return nubo_error.NewInternal(fmt.Errorf("flush CopyIn Temp: %w", err))
+		return nubo_error.NewInternal(err)
 	}
 
 	queryUpdate := mapper.BuildUpdateQuery(tempTable)
 	if _, err := tx.ExecContext(ctx, queryUpdate); err != nil {
-		return nubo_error.NewInternal(fmt.Errorf("merge Update: %w", err))
+		return nubo_error.NewInternal(err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nubo_error.NewInternal(fmt.Errorf("commit Update: %w", err))
+		return nubo_error.NewInternal(err)
 	}
 
 	committed = true
@@ -355,7 +356,7 @@ func bulkUpdatePostgres(ctx context.Context, entity redis.EntityType, events []r
 func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []redis.AsyncEvent) error {
 	mapper := GetMapper(entity)
 	if mapper == nil {
-		return nubo_error.NewInternal(fmt.Errorf("pas de mapper Postgres pour %s", entity))
+		return nubo_error.NewInternal(errors.New("pas de mapper Postgres"))
 	}
 
 	// 🚨 CAS SPÉCIAL : LES LIKES (Suppression par clé composite)

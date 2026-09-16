@@ -1,7 +1,5 @@
 package post_models
 
-import "time"
-
 // Structure interne correspondant exactement au schéma Postgres content.posts
 type PostPayload struct {
 	ID                int64     `bson:"id" json:"id" msgpack:"id"`
@@ -24,6 +22,6 @@ type PostPayload struct {
 	TelemetryDwellSum float64   `bson:"telemetry_dwell_sum" json:"telemetry_dwell_sum" msgpack:"telemetry_dwell_sum"`
 	TelemetryDwellSq  float64   `bson:"telemetry_dwell_sq" json:"telemetry_dwell_sq" msgpack:"telemetry_dwell_sq"`
 	TelemetryClicks   int       `bson:"telemetry_clicks" json:"telemetry_clicks" msgpack:"telemetry_clicks"`
-	CreatedAt         time.Time `bson:"created_at" json:"created_at" msgpack:"created_at"`
-	UpdatedAt         time.Time `bson:"updated_at" json:"updated_at" msgpack:"updated_at"`
+	CreatedAt         int64     `bson:"created_at" json:"created_at" msgpack:"created_at"`
+	UpdatedAt         int64     `bson:"updated_at" json:"updated_at" msgpack:"updated_at"`
 }

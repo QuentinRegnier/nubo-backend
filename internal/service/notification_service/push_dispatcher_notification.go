@@ -3,11 +3,11 @@ package notification_service
 import (
 	"context"
 	"encoding/json"
-	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
@@ -35,12 +35,12 @@ func DispatchNotification(ctx context.Context, targetUserID int64, actorID int64
 		Type:      eventType,
 		TargetID:  targetID,
 		IsRead:    false,
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: service.NowMillis(),
 	}
 
 	// 1. RAM L1 (JSON + Index ZSET plafonné à 100)
 	_ = object_cache_service.SetNotificationInObjectCache(ctx, notif)
-	_ = cache_service.AddNotificationToZSET(ctx, targetUserID, notif.ID, notif.CreatedAt.UnixMilli())
+	_ = cache_service.AddNotificationToZSET(ctx, targetUserID, notif.ID, notif.CreatedAt)
 
 	// 2. Persistance L2 (Mongo uniquement)
 	_ = redis.EnqueueDB(ctx, notif.ID, targetUserID, redis.EntityNotification, redis.ActionCreate, notif, redis.TargetMongo)

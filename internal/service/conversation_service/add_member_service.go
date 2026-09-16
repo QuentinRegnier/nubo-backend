@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
@@ -113,11 +114,11 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 				UserID:          targetID,
 				Role:            0, // Membre standard
 				Settings:        DefaultMemberSettings(conv.Type),
-				JoinedAt:        now,
+				JoinedAt:        domain.TimeToMillis(now),
 				FrozenMessageID: 0,
 				UnreadCount:     0,
-				CreatedAt:       now,
-				UpdatedAt:       now,
+				CreatedAt:       domain.TimeToMillis(now),
+				UpdatedAt:       domain.TimeToMillis(now),
 			}
 
 			_ = object_cache_service.SetMemberInObjectCache(ctx, memberPayload)
@@ -127,7 +128,7 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 				Role:           0,
 				Settings:       service.ToMemberSettingsLite(DefaultMemberSettings(conv.Type)),
 				UnreadCount:    0,
-				JoinedAt:       memberPayload.JoinedAt.UnixMilli(),
+				JoinedAt:       memberPayload.JoinedAt,
 			})
 
 			_ = redis.EnqueueDB(ctx, memberPayload.ID, conv.ID, redis.EntityMembers, redis.ActionCreate, memberPayload, redis.TargetAll)
@@ -217,7 +218,7 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
 	// et garantit que le client reçoit la date de la fin absolue de la transaction.
 	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
 
 	return output, nil
 }

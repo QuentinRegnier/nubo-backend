@@ -1,7 +1,5 @@
 package conversation_models
 
-import "time"
-
 // RefuseCommunityRequestInput valide les données pour refuser une candidature.
 type RefuseCommunityRequestInput struct {
 	ConversationID int64 `json:"conversation_id" binding:"required"`
@@ -9,5 +7,5 @@ type RefuseCommunityRequestInput struct {
 }
 
 type RefuseCommunityRequestOutput struct {
-	InboxUpdateAt time.Time `json:"inbox_update_at"`
+	InboxUpdateAt int64 `json:"inbox_update_at"`
 }

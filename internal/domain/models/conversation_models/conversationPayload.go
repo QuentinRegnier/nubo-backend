@@ -1,9 +1,5 @@
 package conversation_models
 
-import (
-	"time"
-)
-
 type ConversationSettings struct {
 	JoinApprovalRequired bool `json:"join_approval_required" bson:"join_approval_required" msgpack:"join_approval_required"`
 	WritePermission      int  `json:"write_permission" bson:"write_permission" msgpack:"write_permission"`
@@ -22,6 +18,6 @@ type ConversationPayload struct {
 	LastMessageID int64                `json:"last_message_id" bson:"last_message_id"`
 	State         int                  `json:"state" bson:"state"`       // 0=active, 1=archived
 	Settings      ConversationSettings `json:"settings" bson:"settings"` // Remplacement de Laws []int
-	CreatedAt     time.Time            `json:"created_at" bson:"created_at"`
-	UpdatedAt     time.Time            `json:"updated_at" bson:"updated_at"`
+	CreatedAt     int64                `json:"created_at" bson:"created_at"`
+	UpdatedAt     int64                `json:"updated_at" bson:"updated_at"`
 }

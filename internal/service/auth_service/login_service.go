@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -104,7 +105,7 @@ func Login(
 		isNewSession = true
 		sessions.ID = pkg.GenerateID()
 		sessions.UserID = user.ID
-		sessions.CreatedAt = now
+		sessions.CreatedAt = domain.TimeToMillis(now)
 		sessions.FirebaseInstallationID = firebaseInstallationID
 		sessions.DeviceInfo = input.DeviceInfo
 
@@ -115,7 +116,7 @@ func Login(
 		}
 	}
 
-	sessions.ExpiresAt = now.Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
+	sessions.ExpiresAt = domain.TimeToMillis(now.Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second))
 	sessions.MasterToken, err = pkg.GenerateToken(user.ID, firebaseInstallationID, variables.MasterTokenExpirationSeconds)
 	if err != nil {
 		return -1, auth_models.SessionsPayload{}, "", nubo_error.NewInternal(err)
@@ -124,7 +125,7 @@ func Login(
 	sessions.CurrentSecret = security.DeriveNextSecret(sessions.FirebaseInstallationID, sessions.MasterToken, sessions.MasterToken, sessions.FirebaseInstallationID)
 	sessions.LastSecret = sessions.FirebaseInstallationID
 	sessions.LastJWT = ""
-	sessions.ToleranceTime = time.Time{}
+	sessions.ToleranceTime = domain.TimeToMillis(time.Time{})
 
 	newJWT, err := pkg.GenerateToken(user.ID, sessions.FirebaseInstallationID, variables.JWTExpirationSeconds)
 	if err != nil {

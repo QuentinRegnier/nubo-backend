@@ -1,7 +1,5 @@
 package user_settings_models
 
-import "time"
-
 type UpdatePrivacyInput struct {
 	ProfileVisibility      int  `json:"profile_visibility" binding:"omitempty,oneof=0 1"`
 	PostVisibilityDefault  int  `json:"post_visibility_default" binding:"omitempty,oneof=0 1 2"`
@@ -17,5 +15,5 @@ type UpdatePrivacyInput struct {
 }
 
 type UpdatePrivacyOutput struct {
-	UserSettingsUpdateAt time.Time `json:"user_settings_update_at"`
+	UserSettingsUpdateAt int64 `json:"user_settings_update_at"`
 }

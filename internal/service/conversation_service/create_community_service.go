@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -77,8 +78,8 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 		LastMessageID: 0,
 		State:         0,
 		Settings:      settings, // NOUVEAU
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		CreatedAt:     domain.TimeToMillis(now),
+		UpdatedAt:     domain.TimeToMillis(now),
 	}
 
 	// Le propriétaire hérite du Role 2
@@ -88,11 +89,11 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 		UserID:          targetOwnerID,
 		Role:            2,
 		Settings:        DefaultMemberSettings(convPayload.Type),
-		JoinedAt:        now,
+		JoinedAt:        domain.TimeToMillis(now),
 		UnreadCount:     0,
 		FrozenMessageID: 0,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		CreatedAt:       domain.TimeToMillis(now),
+		UpdatedAt:       domain.TimeToMillis(now),
 	}
 
 	// Le Modérateur hérite d'un Role 0 s'il l'a créée pour quelqu'un d'autre
@@ -104,11 +105,11 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 			UserID:          callerID,
 			Role:            0, // Membre classique
 			Settings:        DefaultMemberSettings(convPayload.Type),
-			JoinedAt:        now,
+			JoinedAt:        domain.TimeToMillis(now),
 			UnreadCount:     0,
 			FrozenMessageID: 0,
-			CreatedAt:       now,
-			UpdatedAt:       now,
+			CreatedAt:       domain.TimeToMillis(now),
+			UpdatedAt:       domain.TimeToMillis(now),
 		}
 	}
 
@@ -149,7 +150,7 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
 	// et garantit que le client reçoit la date de la fin absolue de la transaction.
 	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
 
 	return output, nil
 }

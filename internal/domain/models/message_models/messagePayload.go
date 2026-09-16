@@ -1,7 +1,5 @@
 package message_models
 
-import "time"
-
 // MessagePayload correspond exactement au schéma Postgres messaging.messages
 type MessagePayload struct {
 	ID             int64          `json:"id" bson:"id"`
@@ -11,6 +9,6 @@ type MessagePayload struct {
 	Visibility     bool           `json:"visibility" bson:"visibility"`
 	Content        string         `json:"content" bson:"content"`
 	Attachments    map[string]any `json:"attachments" bson:"attachments"` // JSONB polymorphe
-	CreatedAt      time.Time      `json:"created_at" bson:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at" bson:"updated_at"`
+	CreatedAt      int64          `json:"created_at" bson:"created_at"`
+	UpdatedAt      int64          `json:"updated_at" bson:"updated_at"`
 }

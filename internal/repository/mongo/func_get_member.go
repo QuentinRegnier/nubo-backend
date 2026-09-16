@@ -2,9 +2,9 @@ package mongo
 
 import (
 	"context"
-	"fmt"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
@@ -21,11 +21,11 @@ func MongoGetMember(convID int64, userID int64) (conversation_models.MemberPaylo
 	}
 
 	if err := pkg.ToStruct(docs[0], &mem); err != nil {
-		return mem, nubo_error.NewInternal(fmt.Errorf("conversion document to struct: %w", err))
+		return mem, nubo_error.NewInternal(err)
 	}
 
 	// SMART RE-COUNT : Si le compteur est à 0 ou qu'on a plus de 5s de retard
-	if mem.UnreadCount == 0 || time.Since(mem.UpdatedAt) > 5*time.Second {
+	if mem.UnreadCount == 0 || time.Since(domain.MillisToTime(mem.UpdatedAt)) > 5*time.Second {
 		countFilter := map[string]any{
 			"conversation_id": convID,
 			"sender_id":       map[string]any{"$ne": userID},

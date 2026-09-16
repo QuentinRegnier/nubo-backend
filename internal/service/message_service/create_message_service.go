@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -136,8 +137,8 @@ func CreateMessage(ctx context.Context, senderID int64, convID int64, input mess
 		Visibility:     true,
 		Content:        input.Content,
 		Attachments:    attachMap,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		CreatedAt:      domain.TimeToMillis(now),
+		UpdatedAt:      domain.TimeToMillis(now),
 	}
 
 	// 5. MISE EN CACHE L1 IMMÉDIATE (Object Cache LFU)
@@ -195,7 +196,7 @@ func CreateMessage(ctx context.Context, senderID int64, convID int64, input mess
 	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
 	// et garantit que le client reçoit la date de la fin absolue de la transaction.
 	timestampMs := cache_service.TouchInboxActivity(ctx, senderID)
-	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
 
 	return output, nil
 }

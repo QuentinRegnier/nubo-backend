@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -66,8 +67,8 @@ func ToggleBlock(ctx context.Context, callerID int64, targetID int64, action str
 		PrimaryID:   callerID,
 		SecondaryID: targetID,
 		State:       newState,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		CreatedAt:   domain.TimeToMillis(now),
+		UpdatedAt:   domain.TimeToMillis(now),
 	}
 
 	// PartitionKey = targetID pour assurer l'ordre chronologique des requêtes sur ce profil

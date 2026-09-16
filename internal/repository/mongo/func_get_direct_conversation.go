@@ -2,7 +2,7 @@ package mongo
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
@@ -16,7 +16,7 @@ import (
 // MongoGetDirectConversation interroge L2 via un pipeline d'agrégation performant.
 func MongoGetDirectConversation(user1, user2 int64) (conversation_models.ConversationPayload, error) {
 	if Members == nil || Conversations == nil {
-		return conversation_models.ConversationPayload{}, nubo_error.NewInternal(fmt.Errorf("collections mongo non initialisées"))
+		return conversation_models.ConversationPayload{}, nubo_error.NewInternal(errors.New("collections mongo non initialisées"))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -55,12 +55,12 @@ func MongoGetDirectConversation(user1, user2 int64) (conversation_models.Convers
 	// CORRECTION : Assertion de type pour forcer l'interface{} en bson.M (map[string]any)
 	convMap, ok := results[0]["conv"].(bson.M)
 	if !ok {
-		return conversation_models.ConversationPayload{}, nubo_error.NewInternal(fmt.Errorf("impossible de formater le résultat mongo en map"))
+		return conversation_models.ConversationPayload{}, nubo_error.NewInternal(errors.New("impossible de formater le résultat mongo en map"))
 	}
 
 	var conv conversation_models.ConversationPayload
 	if err := pkg.ToStruct(convMap, &conv); err != nil {
-		return conversation_models.ConversationPayload{}, nubo_error.NewInternal(fmt.Errorf("conversion document to struct: %w", err))
+		return conversation_models.ConversationPayload{}, nubo_error.NewInternal(err)
 	}
 
 	return conv, nil

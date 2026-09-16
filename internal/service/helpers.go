@@ -1,6 +1,8 @@
 package service
 
 import (
+	"time"
+
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 )
@@ -41,4 +43,9 @@ func ToDomainConversationSettings(liteSettings lite_models.ConversationSettingsL
 		AddMemberPermission:  liteSettings.AddMemberPermission,
 		HideSystemMessages:   liteSettings.HideSystemMessages,
 	}
+}
+
+// NowMillis retourne le timestamp actuel en millisecondes UTC.
+func NowMillis() int64 {
+	return time.Now().UTC().UnixMilli()
 }

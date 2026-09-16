@@ -1,8 +1,6 @@
 package auth_models
 
 import (
-	"time"
-
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
 )
@@ -32,7 +30,7 @@ type SignUpResponse struct {
 	UserID             int64                  `json:"user_id" example:"42"`
 	MasterToken        string                 `json:"master_token" example:"eyJhbGciOiJIUzI1Ni..."`
 	JWT                string                 `json:"jwt" example:"eyJhbGciOiJIUzI1Ni..."`
-	ExpiresAt          time.Time              `json:"expires_at"`
+	ExpiresAt          int64                  `json:"expires_at"`
 	Message            string                 `json:"message" example:"User created successfully"`
 	Avatar             media_models.MediaView `json:"avatar"` // <-- REMPLACE ProfilePictureID
 	TelemetryVector    []float32              `json:"telemetry_vector"`

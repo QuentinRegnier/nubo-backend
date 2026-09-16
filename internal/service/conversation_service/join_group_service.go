@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
@@ -133,16 +134,16 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 			UserID:          callerID,
 			Role:            assignedRole, // Rôle dynamique (0 ou -3)
 			Settings:        DefaultMemberSettings(conv.Type),
-			JoinedAt:        now,
+			JoinedAt:        domain.TimeToMillis(now),
 			UnreadCount:     0,
 			FrozenMessageID: 0,
-			CreatedAt:       now,
-			UpdatedAt:       now,
+			CreatedAt:       domain.TimeToMillis(now),
+			UpdatedAt:       domain.TimeToMillis(now),
 		}
 	} else {
 		mem.Role = assignedRole // Rôle dynamique (0 ou -3)
-		mem.JoinedAt = now
-		mem.UpdatedAt = now
+		mem.JoinedAt = domain.TimeToMillis(now)
+		mem.UpdatedAt = domain.TimeToMillis(now)
 		mem.FrozenMessageID = 0
 	}
 
@@ -158,7 +159,7 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 		Settings:        service.ToMemberSettingsLite(mem.Settings),
 		UnreadCount:     mem.UnreadCount,
 		FrozenMessageID: mem.FrozenMessageID,
-		JoinedAt:        mem.JoinedAt.UnixMilli(),
+		JoinedAt:        mem.JoinedAt,
 	}
 
 	if isUpdate {
@@ -222,7 +223,7 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
 	// et garantit que le client reçoit la date de la fin absolue de la transaction.
 	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
 
 	return output, err
 }

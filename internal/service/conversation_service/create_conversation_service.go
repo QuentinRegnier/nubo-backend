@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -83,8 +84,8 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 		AvatarID:    0,
 		State:       0,
 		Settings:    settings, // NOUVEAU
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		CreatedAt:   domain.TimeToMillis(now),
+		UpdatedAt:   domain.TimeToMillis(now),
 	}
 
 	_ = object_cache_service.SetConversationInObjectCache(ctx, convPayload)
@@ -109,10 +110,10 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 				UserID:         userID,
 				Role:           0,
 				Settings:       DefaultMemberSettings(convPayload.Type),
-				JoinedAt:       now,
+				JoinedAt:       domain.TimeToMillis(now),
 				UnreadCount:    0,
-				CreatedAt:      now,
-				UpdatedAt:      now,
+				CreatedAt:      domain.TimeToMillis(now),
+				UpdatedAt:      domain.TimeToMillis(now),
 			}
 			_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
 
@@ -138,11 +139,11 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 			UserID:          callerID,
 			Role:            2, // Propriétaire
 			Settings:        DefaultMemberSettings(convPayload.Type),
-			JoinedAt:        now,
+			JoinedAt:        domain.TimeToMillis(now),
 			FrozenMessageID: 0,
 			UnreadCount:     0,
-			CreatedAt:       now,
-			UpdatedAt:       now,
+			CreatedAt:       domain.TimeToMillis(now),
+			UpdatedAt:       domain.TimeToMillis(now),
 		}
 		_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
 
@@ -153,7 +154,7 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 			Role:           mem.Role,
 			Settings:       service.ToMemberSettingsLite(mem.Settings),
 			UnreadCount:    mem.UnreadCount,
-			JoinedAt:       mem.JoinedAt.UnixMilli(),
+			JoinedAt:       mem.JoinedAt,
 		})
 
 		_ = redis.EnqueueDB(ctx, mem.ID, convID, redis.EntityMembers, redis.ActionCreate, mem, redis.TargetAll)
@@ -184,7 +185,7 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
 	// et garantit que le client reçoit la date de la fin absolue de la transaction.
 	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
 
 	return output, nil
 }

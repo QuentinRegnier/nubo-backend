@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -58,7 +59,7 @@ func RefuseCommunityRequest(ctx context.Context, callerID int64, input conversat
 
 	// 4. APPLICATION DU REJET (Role = -4)
 	targetMem.Role = -4
-	targetMem.UpdatedAt = time.Now().UTC()
+	targetMem.UpdatedAt = service.NowMillis()
 
 	// 5. MISE À JOUR SYNCHRONE DES CACHES (L1)
 	_ = object_cache_service.SetMemberInObjectCache(ctx, targetMem)
@@ -74,7 +75,7 @@ func RefuseCommunityRequest(ctx context.Context, callerID int64, input conversat
 		Settings:        service.ToMemberSettingsLite(targetMem.Settings),
 		UnreadCount:     targetMem.UnreadCount,
 		FrozenMessageID: targetMem.FrozenMessageID,
-		JoinedAt:        targetMem.JoinedAt.UnixMilli(),
+		JoinedAt:        targetMem.JoinedAt,
 	})
 
 	// 6. ENVOI AUX WORKERS (Write-Behind)
@@ -103,7 +104,7 @@ func RefuseCommunityRequest(ctx context.Context, callerID int64, input conversat
 	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
 	// et garantit que le client reçoit la date de la fin absolue de la transaction.
 	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
 
 	return output, err
 }

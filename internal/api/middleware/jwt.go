@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"fmt"
 	"os"
 	"time"
 
@@ -25,7 +24,7 @@ func JWTMiddleware() gin.HandlerFunc {
 
 		keyFunc := func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("algorithme JWT invalide")
+				return nil, nubo_error.NewUnauthorized("INVALID_SIGNING_ALGORITHM", "Algorithme JWT invalide.", nil)
 			}
 			return []byte(os.Getenv("JWT_SECRET")), nil
 		}

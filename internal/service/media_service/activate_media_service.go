@@ -2,10 +2,9 @@ package media_service
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -36,7 +35,7 @@ func ActivateMediaBatch(ctx context.Context, mediaIDs []int64, ownerID int64) er
 
 		// 3. Activation
 		mediaPayload.Visibility = true
-		mediaPayload.UpdatedAt = now
+		mediaPayload.UpdatedAt = domain.TimeToMillis(now)
 
 		// 4. Mise à jour L1 et File Asynchrone
 		_ = object_cache_service.SetMediaInObjectCache(ctx, mediaPayload)
@@ -64,22 +63,22 @@ func DeactivateMediaBatch(ctx context.Context, mediaIDs []int64, ownerID int64) 
 		}
 		mediaPayload, err := object_cache_service.GetMediaFromObjectCache(ctx, mediaID)
 		if err != nil {
-			return fmt.Errorf("le média %d est introuvable ou a expiré", mediaID)
+			return nubo_error.NewNotFound("MEDIA_NOT_FOUND", "Le média est introuvable ou a expiré.", err)
 		}
 
 		// Sécurité Zero-Trust
 		if mediaPayload.OwnerID != ownerID {
-			return errors.New("accès refusé : tentative de suppression d'un média qui ne vous appartient pas")
+			return nubo_error.NewForbidden("ACCESS_DENIED", "Accès refusé : tentative de suppression d'un média qui ne vous appartient pas.", nil)
 		}
 
 		// Désactivation (Mode Fantôme)
 		mediaPayload.Visibility = false
-		mediaPayload.UpdatedAt = now
+		mediaPayload.UpdatedAt = domain.TimeToMillis(now)
 
 		_ = object_cache_service.SetMediaInObjectCache(ctx, mediaPayload)
 		errEnqueue := redis.EnqueueDB(ctx, mediaID, ownerID, redis.EntityMedia, redis.ActionUpdate, mediaPayload, redis.TargetAll)
 		if errEnqueue != nil {
-			return fmt.Errorf("erreur de persistance asynchrone pour la désactivation du média %d: %v", mediaID, errEnqueue)
+			return nubo_error.NewInternal(errEnqueue)
 		}
 	}
 

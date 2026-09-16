@@ -27,7 +27,7 @@ func GetSavedPosts(ctx context.Context, userID int64, limit int, offset int) []p
 			for _, s := range savedsL2 {
 				postIDs = append(postIDs, s.PostID)
 				// Auto-guérison L1
-				_ = object_cache_service.AddSavedToZSET(ctx, userID, s.PostID, float64(s.CreatedAt.UnixMilli()))
+				_ = object_cache_service.AddSavedToZSET(ctx, userID, s.PostID, float64(s.CreatedAt))
 			}
 		} else {
 			// 3. FALLBACK ABSOLU L3 (PostgreSQL)
@@ -37,7 +37,7 @@ func GetSavedPosts(ctx context.Context, userID int64, limit int, offset int) []p
 					postIDs = append(postIDs, s.PostID)
 
 					// Auto-guérison L1 (Synchrone)
-					_ = object_cache_service.AddSavedToZSET(ctx, userID, s.PostID, float64(s.CreatedAt.UnixMilli()))
+					_ = object_cache_service.AddSavedToZSET(ctx, userID, s.PostID, float64(s.CreatedAt))
 
 					// Auto-guérison L2 (Asynchrone via les workers)
 					go func(saved saved_models.SavedPayload) {

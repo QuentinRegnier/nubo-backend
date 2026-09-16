@@ -2,11 +2,11 @@ package user_settings_service
 
 import (
 	"context"
-	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 )
@@ -30,7 +30,7 @@ func UpdateNotifications(ctx context.Context, userID int64, input user_settings_
 	settings.Notifications.NotifyMessages = input.NotifyMessages
 	settings.Notifications.NotifyGroupInvites = input.NotifyGroupInvites
 
-	settings.UpdatedAt = time.Now().UTC()
+	settings.UpdatedAt = service.NowMillis()
 
 	// 3. Mise à jour immédiate du Cache L1
 	if err := object_cache_service.SetUserSettings(ctx, settings); err != nil {

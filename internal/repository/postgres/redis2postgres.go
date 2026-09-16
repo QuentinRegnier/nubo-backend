@@ -1,7 +1,7 @@
 package postgres
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -38,6 +38,6 @@ func Redis2Postgres(entity redis.EntityType) (PostgresTarget, error) {
 	case redis.EntityMessage:
 		return PostgresTarget{Schema: "messaging", Table: "messages"}, nil
 	default:
-		return PostgresTarget{}, nubo_error.NewInternal(fmt.Errorf("entité non supportée pour vérification Postgres: %s", entity))
+		return PostgresTarget{}, nubo_error.NewInternal(errors.New("entité non supportée pour vérification Postgres"))
 	}
 }

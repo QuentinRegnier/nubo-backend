@@ -34,7 +34,7 @@ func SyncActivity(ctx context.Context, callerID int64, input notification_models
 
 	// 2. Date de référence serveur : La date de la notification la plus récente
 	latestNotif := notifs[0]
-	serverUpdated := latestNotif.CreatedAt.UnixMilli()
+	serverUpdated := latestNotif.CreatedAt
 	output.ServerUpdated = serverUpdated
 
 	// 3. Résolution du Delta Sync
@@ -49,7 +49,7 @@ func SyncActivity(ctx context.Context, callerID int64, input notification_models
 	var newNotifs []notification_models.NotificationView
 
 	for _, n := range notifs {
-		if n.ID > input.ReadUpToID || n.CreatedAt.UnixMilli() > input.ClientUpdatedAt {
+		if n.ID > input.ReadUpToID || n.CreatedAt > input.ClientUpdatedAt {
 			newNotifs = append(newNotifs, n)
 		} else {
 			// Le ZSET est trié chronologiquement de manière décroissante.

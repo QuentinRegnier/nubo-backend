@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -26,7 +27,7 @@ func UpdateMemberSettings(ctx context.Context, callerID int64, input conversatio
 	mem.Settings.IsMuted = input.IsMuted
 	mem.Settings.MuteExpireAt = input.MuteExpiresAt
 	mem.Settings.MediaAutoDownload = input.MediaAutoDownload
-	mem.UpdatedAt = time.Now().UTC()
+	mem.UpdatedAt = service.NowMillis()
 
 	// 3. MISE À JOUR SYNCHRONE DU CACHE L1 (Object Cache LFU)
 	_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
@@ -39,7 +40,7 @@ func UpdateMemberSettings(ctx context.Context, callerID int64, input conversatio
 		Settings:        service.ToMemberSettingsLite(mem.Settings),
 		UnreadCount:     mem.UnreadCount,
 		FrozenMessageID: mem.FrozenMessageID,
-		JoinedAt:        mem.JoinedAt.UnixMilli(),
+		JoinedAt:        mem.JoinedAt,
 	})
 
 	// 5. DÉLÉGATION À LA FILE ASYNCHRONE (Write-Behind)
@@ -54,7 +55,7 @@ func UpdateMemberSettings(ctx context.Context, callerID int64, input conversatio
 	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
 	// et garantit que le client reçoit la date de la fin absolue de la transaction.
 	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
 
 	return output, redis.EnqueueDB(ctx, mem.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, mem, redis.TargetAll)
 }

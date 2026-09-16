@@ -2,12 +2,14 @@ package message_service
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
@@ -24,7 +26,7 @@ func DeleteMessage(ctx context.Context, callerID int64, input message_models.Del
 
 	// 2. MODIFICATION DE L'ÉTAT (Soft Delete)
 	msg.Visibility = false
-	msg.UpdatedAt = time.Now().UTC()
+	msg.UpdatedAt = service.NowMillis()
 
 	// 3. PURGE INSTANTANÉE DU CACHE L1 (RAM)
 	// A. On détruit l'objet JSON pour libérer de la place
@@ -42,7 +44,7 @@ func DeleteMessage(ctx context.Context, callerID int64, input message_models.Del
 		go func() {
 			err := realtime_service.BroadcastToConversation(context.Background(), msg.ConversationID, "message.deleted", msg)
 			if err != nil {
-				_ = fmt.Errorf("Failed to broadcast message deletion: %v", err)
+				logger.Log.Error().Err(err).Msg("Failed to broadcast message deletion")
 			}
 		}()
 	}
@@ -56,7 +58,7 @@ func DeleteMessage(ctx context.Context, callerID int64, input message_models.Del
 	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
 	// et garantit que le client reçoit la date de la fin absolue de la transaction.
 	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
 
 	return output, err
 }

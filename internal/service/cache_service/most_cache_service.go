@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -30,7 +31,7 @@ func UpdatePostRecommendationScore(ctx context.Context, p post_models.PostPayloa
 	}
 
 	// ✅ Transmission séparée des Hashtags Directs et Indirects
-	UpdateScoreWithMetrics(ctx, p.ID, p.LikeCount, p.CommentCount, p.ViewCount, mediaCount, p.CreatedAt, p.Hashtags, p.IndirectHashtags, p.Visibility, p.ReportCount, p.PriorityLevel)
+	UpdateScoreWithMetrics(ctx, p.ID, p.LikeCount, p.CommentCount, p.ViewCount, mediaCount, domain.MillisToTime(p.CreatedAt), p.Hashtags, p.IndirectHashtags, p.Visibility, p.ReportCount, p.PriorityLevel)
 }
 
 // EvaluatePostAfterLike force l'insertion du post_service avec sa valeur absolue dans les classements stricts.

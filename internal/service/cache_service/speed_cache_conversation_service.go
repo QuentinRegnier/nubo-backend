@@ -255,7 +255,7 @@ func ProcessNewMessageInSpeedCache(ctx context.Context, msgID int64, convID int6
 						Role:           pgMem.Role,
 						Settings:       service.ToMemberSettingsLite(pgMem.Settings),
 						UnreadCount:    pgMem.UnreadCount + 1, // On ajoute le nouveau message
-						JoinedAt:       pgMem.JoinedAt.UnixMilli(),
+						JoinedAt:       pgMem.JoinedAt,
 					}
 					_ = redis.ConvMembers.SetObject(ctx, memberID, memberLite)
 				}
@@ -336,7 +336,7 @@ func RehydrateConversationItemInSpeedCache(ctx context.Context, fullConv convers
 		Role:           fullMem.Role,
 		Settings:       service.ToMemberSettingsLite(fullMem.Settings),
 		UnreadCount:    fullMem.UnreadCount,
-		JoinedAt:       fullMem.JoinedAt.UnixMilli(),
+		JoinedAt:       fullMem.JoinedAt,
 	}
 
 	// 1. Restauration de la Méta (O(1))

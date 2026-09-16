@@ -39,7 +39,7 @@ func SyncIdentity(ctx context.Context, input auth_models.SyncIdentityInput) (aut
 	}
 
 	if user.ID != 0 {
-		if user.UpdatedAt.UnixMilli() > input.ProfileUpdatedAt {
+		if user.UpdatedAt > input.ProfileUpdatedAt {
 			output.ProfileUpdated = true
 
 			// ✅ MAPPING SÉCURISÉ : On transfère uniquement les champs autorisés
@@ -77,7 +77,7 @@ func SyncIdentity(ctx context.Context, input auth_models.SyncIdentityInput) (aut
 	// =====================================================================
 	settings, errSettings := object_cache_service.GetUserSettingsCascade(ctx, input.UserID)
 	if errSettings == nil && settings.ID != 0 {
-		if settings.UpdatedAt.UnixMilli() > input.SettingsUpdatedAt {
+		if settings.UpdatedAt > input.SettingsUpdatedAt {
 			output.SettingsUpdated = true
 			output.Settings = settings
 		}

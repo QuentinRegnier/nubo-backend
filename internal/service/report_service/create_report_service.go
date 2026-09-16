@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/report_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -23,8 +24,8 @@ func SubmitReport(ctx context.Context, input report_models.CreateReportInput) er
 		Category:   input.Category,
 		Reason:     pkg.CleanStr(input.Reason), // Nettoyage de la raison
 		State:      variables.ReportStatePending,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		CreatedAt:  domain.TimeToMillis(now),
+		UpdatedAt:  domain.TimeToMillis(now),
 	}
 
 	// On envoie dans la file d'attente.

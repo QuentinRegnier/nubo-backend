@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -45,7 +47,7 @@ func DemoteMember(ctx context.Context, callerID int64, input conversation_models
 
 	// 4. APPLICATION DE LA MODIFICATION
 	targetMem.Role = 0
-	targetMem.UpdatedAt = time.Now().UTC()
+	targetMem.UpdatedAt = service.NowMillis()
 
 	callerLite, _ := cache_service.GetUserLite(ctx, callerID)
 	targetLite, _ := cache_service.GetUserLite(ctx, input.TargetUserID)
@@ -67,7 +69,7 @@ func DemoteMember(ctx context.Context, callerID int64, input conversation_models
 		Settings:        service.ToMemberSettingsLite(targetMem.Settings),
 		UnreadCount:     targetMem.UnreadCount,
 		FrozenMessageID: targetMem.FrozenMessageID,
-		JoinedAt:        targetMem.JoinedAt.UnixMilli(),
+		JoinedAt:        targetMem.JoinedAt,
 	})
 
 	// 6. ENVOI AUX WORKERS (Write-Behind)
@@ -78,7 +80,7 @@ func DemoteMember(ctx context.Context, callerID int64, input conversation_models
 		go func() {
 			err := realtime_service.BroadcastToConversation(context.Background(), input.ConversationID, "member.demoted", targetMem)
 			if err != nil {
-				_ = fmt.Errorf("Failed to broadcast member demotion: %v", err)
+				logger.Log.Error().Err(err).Msg("Failed to broadcast member demotion")
 			}
 		}()
 	}
@@ -92,7 +94,7 @@ func DemoteMember(ctx context.Context, callerID int64, input conversation_models
 	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
 	// et garantit que le client reçoit la date de la fin absolue de la transaction.
 	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
 
 	return output, err
 }

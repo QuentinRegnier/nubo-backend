@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -37,7 +36,7 @@ func FuncLoadUserSettings(ctx context.Context, userID int64) (user_settings_mode
 			// Ce n'est pas une erreur, l'utilisateur n'a simplement pas encore de settings
 			return s, nil
 		}
-		return s, nubo_error.NewInternal(fmt.Errorf("erreur lors du chargement des user_settings : %w", err))
+		return s, nubo_error.NewInternal(err)
 	}
 
 	// Conversion des JSONB en Map

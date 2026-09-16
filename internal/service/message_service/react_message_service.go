@@ -2,13 +2,13 @@ package message_service
 
 import (
 	"context"
-	"fmt"
-	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
@@ -53,7 +53,7 @@ func ReactToMessage(ctx context.Context, callerID int64, input message_models.Re
 		MessageID: msg.ID,
 		UserID:    callerID,
 		Reaction:  input.Reaction,
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: service.NowMillis(),
 	}
 
 	// L'ActionCreate déclenchera l'UPSERT côté Worker grâce à la contrainte UNIQUE SQL
@@ -73,7 +73,7 @@ func ReactToMessage(ctx context.Context, callerID int64, input message_models.Re
 
 			errWs := realtime_service.BroadcastToConversation(bgCtx, msg.ConversationID, "message.reacted", msgView)
 			if errWs != nil {
-				_ = fmt.Errorf("Failed to broadcast message reaction: %v", errWs)
+				logger.Log.Error().Err(errWs).Msg("Failed to broadcast message reaction")
 			}
 		}()
 	}

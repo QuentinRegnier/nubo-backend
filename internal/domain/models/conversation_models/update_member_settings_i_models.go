@@ -1,7 +1,5 @@
 package conversation_models
 
-import "time"
-
 // UpdateMemberSettingsInput valide le payload complet envoyé par l'application
 type UpdateMemberSettingsInput struct {
 	ConversationID    int64 `json:"conversation_id" binding:"required"`
@@ -11,5 +9,5 @@ type UpdateMemberSettingsInput struct {
 }
 
 type UpdateMemberSettingsOutput struct {
-	InboxUpdateAt time.Time `json:"inbox_update_at"`
+	InboxUpdateAt int64 `json:"inbox_update_at"`
 }

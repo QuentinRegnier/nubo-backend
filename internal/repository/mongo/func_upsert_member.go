@@ -1,8 +1,6 @@
 package mongo
 
 import (
-	"fmt"
-
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
@@ -12,7 +10,7 @@ import (
 func MongoUpsertMember(mem conversation_models.MemberPayload) error {
 	doc, err := pkg.ToMap(mem)
 	if err != nil || doc == nil {
-		return nubo_error.NewInternal(fmt.Errorf("erreur conversion payload pour Mongo: %w", err))
+		return nubo_error.NewInternal(err)
 	}
 	// On utilise Set car MemberPayload possède un ID Snowflake unique, comme les posts et users
 	return Members.Set(doc)

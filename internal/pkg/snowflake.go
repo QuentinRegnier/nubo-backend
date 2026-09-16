@@ -1,7 +1,7 @@
 package pkg
 
 import (
-	"fmt"
+	"errors"
 	"sync"
 	"time"
 
@@ -35,7 +35,7 @@ type Node struct {
 // nodeID : Un identifiant unique pour ce serveur (entre 0 et 1023).
 func NewNode(nodeID int64) (*Node, error) {
 	if nodeID < 0 || nodeID > variables.NodeMax {
-		return nil, nubo_error.NewInternal(fmt.Errorf("node ID must be between 0 and %d", variables.NodeMax))
+		return nil, nubo_error.NewInternal(errors.New("node ID invalide"))
 	}
 
 	return &Node{

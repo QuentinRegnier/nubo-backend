@@ -1,7 +1,5 @@
 package message_models
 
-import "time"
-
 // CreateMessageInput valide les données entrantes.
 type CreateMessageInput struct {
 	ConversationID int64          `json:"conversation_id" binding:"required"`
@@ -12,6 +10,6 @@ type CreateMessageInput struct {
 }
 
 type CreateMessageOutput struct {
-	MessageID     int64     `json:"message_id"`
-	InboxUpdateAt time.Time `json:"inbox_update_at"`
+	MessageID     int64 `json:"message_id"`
+	InboxUpdateAt int64 `json:"inbox_update_at"`
 }

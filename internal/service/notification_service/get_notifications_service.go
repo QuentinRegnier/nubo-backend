@@ -36,7 +36,7 @@ func GetNotifications(ctx context.Context, callerID int64, input notification_mo
 			for _, n := range notifs {
 				_ = object_cache_service.SetNotificationInObjectCache(bgCtx, n)
 				if currentOffset < 100 {
-					_ = cache_service.AddNotificationToZSET(bgCtx, n.UserID, n.ID, n.CreatedAt.UnixMilli())
+					_ = cache_service.AddNotificationToZSET(bgCtx, n.UserID, n.ID, n.CreatedAt)
 				}
 			}
 		}(mongoNotifs, input.Offset)

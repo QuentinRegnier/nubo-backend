@@ -1,7 +1,5 @@
 package conversation_models
 
-import "time"
-
 // UpdateConversationInput valide les champs modifiables d'une conversation (PUT)
 type UpdateConversationInput struct {
 	ConversationID int64                `json:"conversation_id" binding:"required"`
@@ -12,5 +10,5 @@ type UpdateConversationInput struct {
 }
 
 type UpdateConversationOutput struct {
-	InboxUpdateAt time.Time `json:"inbox_update_at"`
+	InboxUpdateAt int64 `json:"inbox_update_at"`
 }

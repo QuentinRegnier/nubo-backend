@@ -51,7 +51,7 @@ func GetUserConversationsPaginated(ctx context.Context, callerID int64, input co
 						Role:           res.Member.Role,
 						Settings:       service.ToMemberSettingsLite(res.Member.Settings),
 						UnreadCount:    res.Member.UnreadCount,
-						JoinedAt:       res.Member.JoinedAt.UnixMilli(),
+						JoinedAt:       res.Member.JoinedAt,
 					},
 				})
 
@@ -88,7 +88,7 @@ func GetUserConversationsPaginated(ctx context.Context, callerID int64, input co
 						Role:           res.Member.Role,
 						Settings:       service.ToMemberSettingsLite(res.Member.Settings),
 						UnreadCount:    res.Member.UnreadCount,
-						JoinedAt:       res.Member.JoinedAt.UnixMilli(),
+						JoinedAt:       res.Member.JoinedAt,
 					},
 				})
 

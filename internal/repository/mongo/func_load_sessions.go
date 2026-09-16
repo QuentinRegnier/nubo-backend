@@ -1,7 +1,7 @@
 package mongo
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -39,7 +39,7 @@ func MongoLoadSession(ID int64, FirebaseInstallationID string, MasterToken strin
 	}
 
 	if len(filter) == 0 {
-		return s, nubo_error.NewInternal(fmt.Errorf("MongoLoadSession: aucun critère de recherche fourni"))
+		return s, nubo_error.NewInternal(errors.New("MongoLoadSession: aucun critère de recherche fourni"))
 	}
 
 	// Appel à la fonction utilitaire

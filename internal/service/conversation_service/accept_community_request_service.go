@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
@@ -54,8 +55,8 @@ func AcceptCommunityRequest(ctx context.Context, callerID int64, input conversat
 	now := time.Now().UTC()
 	targetMem.Role = 0 // Devient membre officiel
 	targetMem.Settings = DefaultMemberSettings(3)
-	targetMem.JoinedAt = now
-	targetMem.UpdatedAt = now
+	targetMem.JoinedAt = domain.TimeToMillis(now)
+	targetMem.UpdatedAt = domain.TimeToMillis(now)
 
 	// 5. MISE À JOUR SYNCHRONE DES CACHES (L1)
 	_ = object_cache_service.SetMemberInObjectCache(ctx, targetMem)
@@ -68,7 +69,7 @@ func AcceptCommunityRequest(ctx context.Context, callerID int64, input conversat
 		Settings:        service.ToMemberSettingsLite(targetMem.Settings),
 		UnreadCount:     targetMem.UnreadCount,
 		FrozenMessageID: targetMem.FrozenMessageID,
-		JoinedAt:        targetMem.JoinedAt.UnixMilli(),
+		JoinedAt:        targetMem.JoinedAt,
 	})
 
 	// 6. ENVOI AUX WORKERS (Write-Behind)
@@ -127,7 +128,7 @@ func AcceptCommunityRequest(ctx context.Context, callerID int64, input conversat
 	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
 	// et garantit que le client reçoit la date de la fin absolue de la transaction.
 	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = time.UnixMilli(timestampMs)
+	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
 
 	return output, nil
 }

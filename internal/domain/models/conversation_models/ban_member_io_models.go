@@ -1,7 +1,5 @@
 package conversation_models
 
-import "time"
-
 // BanMemberInput valide la demande de bannissement d'un membre.
 type BanMemberInput struct {
 	ConversationID int64 `json:"conversation_id" binding:"required"`
@@ -9,5 +7,5 @@ type BanMemberInput struct {
 }
 
 type BanMemberOutput struct {
-	InboxUpdateAt time.Time `json:"inbox_update_at"`
+	InboxUpdateAt int64 `json:"inbox_update_at"`
 }
