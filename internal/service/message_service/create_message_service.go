@@ -2,16 +2,19 @@ package message_service
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
@@ -43,6 +46,42 @@ func CreateMessage(ctx context.Context, senderID int64, convID int64, input mess
 	if mem.Role < 0 {
 		return message_models.CreateMessageOutput{}, nubo_error.NewForbidden("USER_BANNED", "Accès refusé : vous êtes banni de cette conversation.", nil)
 	}
+
+	// =========================================================================
+	// LE VIDEUR INTRAITABLE (Rejet HTTP si mute actif)
+	// =========================================================================
+	nowMs := service.NowMillis()
+	if mem.Settings.RestrictedUntil > nowMs {
+		return message_models.CreateMessageOutput{}, nubo_error.NewForbidden(
+			"MEMBER_MUTED",
+			"Vous êtes actuellement muet dans cette conversation.",
+			nil,
+		)
+	}
+
+	// =========================================================================
+	// LAZY EVALUATION (Auto-guérison si mute expiré mais toujours en BDD)
+	// =========================================================================
+	if mem.Settings.RestrictedUntil > 0 && mem.Settings.RestrictedUntil <= nowMs {
+		// Le temps a fait son travail. On nettoie.
+		mem.Settings.RestrictedUntil = 0
+		mem.UpdatedAt = nowMs
+
+		// A. Mise à jour L1 instantanée pour la suite de l'exécution
+		memberID := fmt.Sprintf("%d:%d", convID, senderID)
+		var memLite lite_models.MemberLiteRequest
+		if errMem := redis.ConvMembers.GetObject(ctx, memberID, &memLite); errMem == nil {
+			memLite.Settings.RestrictedUntil = 0
+			_ = redis.ConvMembers.SetObject(ctx, memberID, memLite)
+		}
+
+		// B. Envoi asynchrone (Write-Behind) pour nettoyer Postgres/Mongo silencieusement
+		_ = redis.EnqueueDB(ctx, mem.ID, convID, redis.EntityMembers, redis.ActionUpdate, mem, redis.TargetAll)
+
+		// C. Broadcast optionnel (Pour faire sauter l'icône "Muet" sur l'UI des autres)
+		_ = realtime_service.BroadcastToConversation(context.Background(), convID, "member.unmuted", mem)
+	}
+	// === FIN DU LAZY EVALUATION ===
 
 	// === NOUVEAU : CHARGEMENT DE LA CONVERSATION ET MATRICE DE PERMISSIONS (Cascade L1 -> L2 -> L3) ===
 	conv, errConv := object_cache_service.GetConversationFromObjectCache(ctx, convID)

@@ -5,6 +5,7 @@ type MemberSettingsLite struct {
 	MuteExpireAt      int64 `bson:"mute_expire_at" json:"mute_expire_at" msgpack:"mute_expire_at"`
 	Pinned            int   `bson:"pinned" json:"pinned" msgpack:"pinned"`
 	MediaAutoDownload bool  `bson:"media_auto_download" json:"media_auto_download" msgpack:"media_auto_download"`
+	RestrictedUntil   int64 `json:"restricted_until" bson:"restricted_until" msgpack:"restricted_until"`
 }
 
 type MemberLiteRequest struct {

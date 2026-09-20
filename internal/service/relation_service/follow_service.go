@@ -48,14 +48,14 @@ func ToggleFollow(ctx context.Context, callerID int64, targetID int64, action st
 		return errors.New("action non reconnue")
 	}
 
-	// 3. Mise à jour immédiate du Cache L1 (SpeedRelations & SpeedFollowers)
+	// 3. Mise à jour immédiate du Cache L1 (SpeedRelations & SpeedRelationsIndex)
 	// Cela impactera instantanément le rendu UI et les futurs Fan-Outs de posts
-	if err := cache_service.UpdateRelationState(ctx, targetID, callerID, newState); err != nil {
+	now := time.Now().UTC()
+	if err := cache_service.UpdateRelationState(ctx, targetID, callerID, newState, domain.TimeToMillis(now)); err != nil {
 		return err
 	}
 
 	// 4. Persistance asynchrone (Write-Behind vers L2 et L3)
-	now := time.Now().UTC()
 	payload := relation_models.RelationPayload{
 		ID:          pkg.GenerateID(),
 		PrimaryID:   callerID,

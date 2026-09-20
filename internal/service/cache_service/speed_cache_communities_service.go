@@ -19,6 +19,22 @@ func StoreCommunityLiteInSpeedCache(ctx context.Context, lite lite_models.Commun
 	return redis.SpeedCommunity.SetObject(ctx, lite.ID, lite)
 }
 
+// NOUVEAU : Met à jour le compteur de membres en RAM (O(1))
+func UpdateCommunityMemberCountInSpeedCache(ctx context.Context, communityID int64, delta int) {
+	if delta == 0 {
+		return
+	}
+	var c lite_models.CommunityLiteRequest
+	// On modifie silencieusement seulement si c'est bien une communauté présente en L1
+	if err := redis.SpeedCommunity.GetObject(ctx, communityID, &c); err == nil && c.ID != 0 {
+		c.MemberCount += delta
+		if c.MemberCount < 0 {
+			c.MemberCount = 0
+		}
+		_ = redis.SpeedCommunity.SetObject(ctx, c.ID, c)
+	}
+}
+
 // SearchCommunitiesByPrefix recherche des communautés en O(log(N)) RAM et les réhydrate
 func SearchCommunitiesByPrefix(ctx context.Context, prefix string, limit int64) ([]lite_models.CommunityLiteRequest, error) {
 	// 1. Recherche ultra-rapide dans l'index lexicographique

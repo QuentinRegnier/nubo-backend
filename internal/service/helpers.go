@@ -13,6 +13,7 @@ func ToMemberSettingsLite(domainSettings conversation_models.MemberSettings) lit
 		MuteExpireAt:      domainSettings.MuteExpireAt,
 		Pinned:            domainSettings.Pinned,
 		MediaAutoDownload: domainSettings.MediaAutoDownload,
+		RestrictedUntil:   domainSettings.RestrictedUntil,
 	}
 }
 
@@ -22,6 +23,7 @@ func ToDomainMemberSettings(liteSettings lite_models.MemberSettingsLite) convers
 		MuteExpireAt:      liteSettings.MuteExpireAt,
 		Pinned:            liteSettings.Pinned,
 		MediaAutoDownload: liteSettings.MediaAutoDownload,
+		RestrictedUntil:   liteSettings.RestrictedUntil,
 	}
 }
 

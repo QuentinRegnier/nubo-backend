@@ -277,15 +277,27 @@ func ProcessNewMessageInSpeedCache(ctx context.Context, msgID int64, convID int6
 func AddMemberToSpeedCache(ctx context.Context, member lite_models.MemberLiteRequest) error {
 	_ = redis.ConvParticipants.SAdd(ctx, member.ConversationID, member.UserID)
 	memberID := fmt.Sprintf("%d:%d", member.ConversationID, member.UserID)
+
+	// NOUVEAU : On incrémente si le membre est actif (Role >= 0)
+	if member.Role >= 0 {
+		UpdateCommunityMemberCountInSpeedCache(ctx, member.ConversationID, 1)
+	}
+
 	return redis.ConvMembers.SetObject(ctx, memberID, member)
 }
 
 // RemoveMemberFromSpeedCache nettoie les index lorsqu'un membre quitte ou est expulsé
 func RemoveMemberFromSpeedCache(ctx context.Context, convID int64, userID int64) error {
-	_ = redis.ConvParticipants.SRem(ctx, convID, userID)
 	memberID := fmt.Sprintf("%d:%d", convID, userID)
-	_ = redis.ConvMembers.DeleteObject(ctx, memberID)
 
+	// NOUVEAU : Décrémenter le compteur si le membre était actif
+	var oldMember lite_models.MemberLiteRequest
+	if err := redis.ConvMembers.GetObject(ctx, memberID, &oldMember); err == nil && oldMember.Role >= 0 {
+		UpdateCommunityMemberCountInSpeedCache(ctx, convID, -1)
+	}
+
+	_ = redis.ConvParticipants.SRem(ctx, convID, userID)
+	_ = redis.ConvMembers.DeleteObject(ctx, memberID)
 	err := redis.UserInbox.ZRem(ctx, userID, strconv.FormatInt(convID, 10))
 	_ = redis.InboxActivity.SetPrimitive(ctx, userID, time.Now().UnixMilli()) // NOUVEAU
 	return err
@@ -465,10 +477,24 @@ func GetDirectConversationCache(ctx context.Context, u1, u2 int64) (int64, error
 	return 0, errors.New("not found in speed cache") // C'est une sentinelle interne
 }
 
-// UpdateMemberStateInSpeedCache écrase l'état complet du membre en RAM (O(1))
+// UpdateMemberSpeedCache écrase l'état complet du membre en RAM (O(1))
 // et gère dynamiquement sa présence dans les listes de Fan-Out.
 func UpdateMemberSpeedCache(ctx context.Context, member lite_models.MemberLiteRequest) error {
 	memberID := fmt.Sprintf("%d:%d", member.ConversationID, member.UserID)
+
+	// NOUVEAU : Détecter si on passe d'actif à inactif ou inversement
+	var oldMember lite_models.MemberLiteRequest
+	wasActive := false
+	if err := redis.ConvMembers.GetObject(ctx, memberID, &oldMember); err == nil && oldMember.ConversationID != 0 {
+		wasActive = oldMember.Role >= 0
+	}
+	isActive := member.Role >= 0
+
+	if isActive && !wasActive {
+		UpdateCommunityMemberCountInSpeedCache(ctx, member.ConversationID, 1)
+	} else if !isActive && wasActive {
+		UpdateCommunityMemberCountInSpeedCache(ctx, member.ConversationID, -1)
+	}
 
 	// 1. Écrasement total avec le payload frais (Zéro cherry-picking)
 	_ = redis.ConvMembers.SetObject(ctx, memberID, member)
@@ -478,8 +504,8 @@ func UpdateMemberSpeedCache(ctx context.Context, member lite_models.MemberLiteRe
 		_ = redis.ConvParticipants.SRem(ctx, member.ConversationID, member.UserID)
 	} else {
 		_ = redis.ConvParticipants.SAdd(ctx, member.ConversationID, member.UserID)
+		_ = redis.InboxActivity.SetPrimitive(ctx, member.UserID, time.Now().UnixMilli()) // NOUVEAU
 	}
-	_ = redis.InboxActivity.SetPrimitive(ctx, member.UserID, time.Now().UnixMilli()) // NOUVEAU
 	return nil
 }
 

@@ -53,16 +53,16 @@ func ToggleFriend(ctx context.Context, callerID int64, targetID int64, action st
 	}
 
 	// 3. Mise à jour immédiate du Cache L1
-	if err := cache_service.UpdateRelationState(ctx, targetID, callerID, newState); err != nil {
+	now := time.Now().UTC()
+	if err := cache_service.UpdateRelationState(ctx, callerID, targetID, newState, domain.TimeToMillis(now)); err != nil {
 		return err
 	}
 
 	// 4. Persistance Asynchrone
-	now := time.Now().UTC()
 	payload := relation_models.RelationPayload{
 		ID:          pkg.GenerateID(), // ID virtuel, l'update BDD se fera sur primary/secondary ID !
-		PrimaryID:   callerID,
-		SecondaryID: targetID,
+		PrimaryID:   targetID,
+		SecondaryID: callerID,
 		State:       newState,
 		CreatedAt:   domain.TimeToMillis(now),
 		UpdatedAt:   domain.TimeToMillis(now),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
@@ -178,7 +179,8 @@ func SeedSpeedCache() error {
 			break
 		}
 		for _, rel := range relations {
-			_ = UpdateRelationState(ctx, rel.TargetID, rel.CallerID, rel.State)
+			// ✅ NOUVEAU : On passe le Timestamp en millisecondes pour le ZSET
+			_ = UpdateRelationState(ctx, rel.TargetID, rel.CallerID, rel.State, domain.TimeToMillis(rel.CreatedAt))
 		}
 		offsetRels += len(relations)
 		if len(relations) < limit {

@@ -11,7 +11,7 @@ type UpdatePrivacyInput struct {
 	SendReadReceipts       bool `json:"send_read_receipts" binding:"omitempty"` // NOUVEAU
 	SearchByEmailPhone     bool `json:"search_by_email_phone" binding:"omitempty"`
 	ShowLocation           bool `json:"show_location" binding:"omitempty"`
-	HideConnections        bool `json:"hide_connections" binding:"omitempty"` // NOUVEAU
+	HideConnections        int  `json:"hide_connections" binding:"omitempty"` // NOUVEAU
 }
 
 type UpdatePrivacyOutput struct {

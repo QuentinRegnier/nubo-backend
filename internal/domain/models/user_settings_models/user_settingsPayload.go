@@ -11,7 +11,7 @@ type PrivacySettings struct {
 	SendReadReceipts       bool `json:"send_read_receipts" bson:"send_read_receipts"` // NOUVEAU
 	SearchByEmailPhone     bool `json:"search_by_email_phone" bson:"search_by_email_phone"`
 	ShowLocation           bool `json:"show_location" bson:"show_location"`
-	HideConnections        bool `json:"hide_connections" bson:"hide_connections"` // NOUVEAU
+	HideConnections        int  `json:"hide_connections" bson:"hide_connections"` // NOUVEAU
 }
 
 type NotificationSettings struct {

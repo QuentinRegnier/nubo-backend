@@ -165,7 +165,7 @@ func handleSocialFanOut(ctx context.Context, events []redis.AsyncEvent) {
 					continue
 				}
 
-				targetIDs, err = cache_service.GetSpeedFollowers(ctx, authorID)
+				targetIDs, err = cache_service.GetSpeedRelationsIndex(ctx, authorID)
 			}
 
 			if err != nil {

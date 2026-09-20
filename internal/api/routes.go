@@ -123,12 +123,15 @@ func SetupRoutes(r *gin.Engine) {
 	secured.PUT("/comment/update", comment_handlers.UpdateCommentHandler)    //
 	secured.DELETE("/comment/delete", comment_handlers.DeleteCommentHandler) //
 
-	secured.POST("/follow/set", relation_handlers.FollowHandler)        //
+	secured.POST("/follow/set", relation_handlers.FollowHandler) //
+	secured.POST("/follow/get", relation_handlers.GetFollowersHandler)
 	secured.DELETE("/follow/delete", relation_handlers.UnFollowHandler) //
 	secured.POST("/friend/set", relation_handlers.FriendHandler)        //
+	secured.POST("/friend/get", relation_handlers.GetFriendsHandler)
 	secured.DELETE("/friend/delete", relation_handlers.UnFriendHandler) //
 	secured.POST("/block/set", relation_handlers.BlockHandler)          //
-	secured.DELETE("/block/delete", relation_handlers.UnBlockHandler)   //
+	secured.POST("/block/get", relation_handlers.GetBlockedUsersHandler)
+	secured.DELETE("/block/delete", relation_handlers.UnBlockHandler) //
 
 	secured.POST("/saved/get", saved_handlers.GetSavedPostsHandler)   //
 	secured.POST("/saved/set", saved_handlers.SavePostHandler)        //
@@ -166,14 +169,18 @@ func SetupRoutes(r *gin.Engine) {
 	secured.POST("conversation/community/members/requests/refusal", conversation_handlers.RefuseCommunityRequestHandler) //
 	secured.PUT("/conversation/update", conversation_handlers.UpdateConversationHandler)                                 //
 	secured.PATCH("/conversation/settings", conversation_handlers.UpdateMemberSettingsHandler)                           //
-	secured.POST("/conversation/pin", conversation_handlers.PinConversationHandler)                                      //
-	secured.DELETE("/conversation/unpin", conversation_handlers.UnpinConversationHandler)                                //
-	secured.DELETE("/conversation/delete", conversation_handlers.LeaveConversationHandler)                               //
-	secured.POST("/messages/get", message_handlers.GetMessagesHandler)                                                   //
-	secured.POST("messages/reactions/list", message_handlers.GetMessageReactionsHandler)                                 //
+	secured.POST("/conversations/members/mute", conversation_handlers.MuteMemberHandler)
+	secured.POST("/conversations/members/muted", conversation_handlers.GetMutedMembersHandler)
+	secured.POST("/conversation/pin", conversation_handlers.PinConversationHandler)        //
+	secured.DELETE("/conversation/unpin", conversation_handlers.UnpinConversationHandler)  //
+	secured.DELETE("/conversation/delete", conversation_handlers.LeaveConversationHandler) //
+	secured.POST("/messages/get", message_handlers.GetMessagesHandler)                     //
+	secured.POST("/messages/reactions/list", message_handlers.GetMessageReactionsHandler)  //
 
-	secured.POST("/group/user/set", conversation_handlers.AddMemberHandler)            //
-	secured.DELETE("/group/user/delete", conversation_handlers.BanMemberHandler)       //
+	secured.POST("/group/user/set", conversation_handlers.AddMemberHandler)       //
+	secured.DELETE("/group/user/ban/set", conversation_handlers.BanMemberHandler) //
+	secured.POST("/group/user/ban/get", conversation_handlers.GetBannedMembersHandler)
+	secured.POST("/group/user/ban/delete", conversation_handlers.UnbanMembersHandler)
 	secured.POST("/group/promote/set", conversation_handlers.PromoteMemberHandler)     //
 	secured.DELETE("/group/promote/delete", conversation_handlers.DemoteMemberHandler) //
 	secured.POST("/group/join", conversation_handlers.JoinGroupHandler)                //

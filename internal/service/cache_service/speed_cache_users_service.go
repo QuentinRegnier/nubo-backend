@@ -53,7 +53,7 @@ func AddUserToSpeedCache(ctx context.Context, u auth_models.UserPayload, setting
 }
 
 // Dans la fonction UpdateUserSpeedCachePrivacy :
-func UpdateUserSpeedCachePrivacy(ctx context.Context, userID int64, convPerm int, addGroupPerm int, hideConnections bool) error {
+func UpdateUserSpeedCachePrivacy(ctx context.Context, userID int64, convPerm int, addGroupPerm int, hideConnections int) error {
 	var lite lite_models.UserLiteRequest
 	if err := redis.UsersLite.GetObject(ctx, userID, &lite); err == nil && lite.ID != 0 {
 		lite.ConversationPermission = convPerm

@@ -12,6 +12,7 @@ func DefaultMemberSettings(convType int) conversation_models.MemberSettings {
 			MuteExpireAt:      -1,
 			Pinned:            -1,
 			MediaAutoDownload: true,
+			RestrictedUntil:   0,
 		}
 	default:
 		return conversation_models.MemberSettings{
@@ -19,6 +20,7 @@ func DefaultMemberSettings(convType int) conversation_models.MemberSettings {
 			MuteExpireAt:      0,
 			Pinned:            -1,
 			MediaAutoDownload: true,
+			RestrictedUntil:   0,
 		}
 	}
 }

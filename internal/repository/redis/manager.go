@@ -36,16 +36,16 @@ var (
 	NotificationsObj *Collection
 
 	// --- SPEED Cache (Lite Objects & UI) ---
-	UsersLite      *Collection
-	UsersLex       *Collection // ZSET Lexicographique pour l'auto-complétion
-	CommunitiesLex *Collection // ZSET Lexicographique pour l'auto-complétion
-	TagsLex        *Collection // ZSET Lexicographique pour l'auto-complétion
-	ConvMeta       *Collection
-	ConvMembers    *Collection
-	SpeedFollowers *Collection
-	SpeedRelations *Collection
-	SpeedAddable   *Collection
-	SpeedCommunity *Collection
+	UsersLite           *Collection
+	UsersLex            *Collection // ZSET Lexicographique pour l'auto-complétion
+	CommunitiesLex      *Collection // ZSET Lexicographique pour l'auto-complétion
+	TagsLex             *Collection // ZSET Lexicographique pour l'auto-complétion
+	ConvMeta            *Collection
+	ConvMembers         *Collection
+	SpeedRelationsIndex *Collection
+	SpeedRelations      *Collection
+	SpeedAddable        *Collection
+	SpeedCommunity      *Collection
 
 	// --- FEED Cache ---
 	FeedsObject       *Collection
@@ -139,7 +139,7 @@ func InitCacheDatabase() {
 	TagsLex = NewCollection("speed_cache:tag:search", 0)
 	ConvMeta = NewCollection("speed_cache:conversation:meta", variables.StandardTTL)
 	ConvMembers = NewCollection("speed_cache:conversation:members", variables.StandardTTL)
-	SpeedFollowers = NewCollection("speed_cache:followers:default", 0)
+	SpeedRelationsIndex = NewCollection("speed_cache:relations:index:default", 0)
 	SpeedRelations = NewCollection("speed_cache:relations:default", 0)
 	SpeedAddable = NewCollection("speed_cache:addable:default", variables.StandardTTL)
 	SpeedCommunity = NewCollection("speed_cache:community:default", variables.StandardTTL)

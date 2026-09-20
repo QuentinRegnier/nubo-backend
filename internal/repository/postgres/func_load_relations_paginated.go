@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"database/sql"
+	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
@@ -10,9 +11,10 @@ import (
 
 // RelationSeedPayload structure temporaire pour l'amorçage
 type RelationSeedPayload struct {
-	CallerID int64
-	TargetID int64
-	State    int
+	CallerID  int64
+	TargetID  int64
+	State     int
+	CreatedAt time.Time
 }
 
 // FuncLoadRelationsPaginated appelle la fonction SQL auth.func_load_relations_paginated
@@ -31,10 +33,9 @@ func FuncLoadRelationsPaginated(limit, offset int) ([]RelationSeedPayload, error
 
 	var relations []RelationSeedPayload
 	for rows.Next() {
-		var rel RelationSeedPayload
-		// primary_id = Caller, secondary_id = Target
-		if err := rows.Scan(&rel.CallerID, &rel.TargetID, &rel.State); err == nil {
-			relations = append(relations, rel)
+		var r RelationSeedPayload
+		if err := rows.Scan(&r.CallerID, &r.TargetID, &r.State, &r.CreatedAt); err == nil {
+			relations = append(relations, r)
 		}
 	}
 	return relations, nil

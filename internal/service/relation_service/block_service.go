@@ -47,7 +47,8 @@ func ToggleBlock(ctx context.Context, callerID int64, targetID int64, action str
 	}
 
 	// 3. Mise à jour immédiate du Cache L1 (Retire automatiquement des Followers/Friends si newState = -1)
-	if err := cache_service.UpdateRelationState(ctx, targetID, callerID, newState); err != nil {
+	now := time.Now().UTC()
+	if err := cache_service.UpdateRelationState(ctx, targetID, callerID, newState, domain.TimeToMillis(now)); err != nil {
 		return err
 	}
 
@@ -61,7 +62,6 @@ func ToggleBlock(ctx context.Context, callerID int64, targetID int64, action str
 	}
 
 	// 5. Persistance Asynchrone
-	now := time.Now().UTC()
 	payload := relation_models.RelationPayload{
 		ID:          pkg.GenerateID(),
 		PrimaryID:   callerID,

@@ -2,6 +2,7 @@ package cache_service
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
@@ -13,12 +14,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 1. LE MOTEUR D'ACCÈS L1 -> L2 -> L3 (La nouveauté)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// RelationValue retourne l'état strict de la relation (0 = Rien, 1 = Follow, 2 = Ami, -1 = Banni).
-// Fonctionne en cascade : RAM (Redis) -> Cold (Mongo) -> Source (Postgres).
+// 1. LE MOTEUR D'ACCÈS L1 -> L2 -> L3
 func RelationValue(ctx context.Context, targetID int64, callerID int64) int {
 	strCallerID := strconv.FormatInt(callerID, 10)
 
@@ -33,7 +29,6 @@ func RelationValue(ctx context.Context, targetID int64, callerID int64) int {
 	// Étape 2 : Cold Storage L2 (MongoDB, ~5ms)
 	state, errMongo := mongo.MongoGetRelationState(callerID, targetID)
 	if errMongo == nil {
-		// Réhydratation L1
 		_ = redis.SpeedRelations.HSet(ctx, targetID, strCallerID, state)
 		return state
 	}
@@ -42,10 +37,9 @@ func RelationValue(ctx context.Context, targetID int64, callerID int64) int {
 	statePg, errPg := postgres.FuncGetRelationState(ctx, callerID, targetID)
 	if errPg != nil {
 		logger.Log.Error().Err(errPg).Int64("target_id", targetID).Int64("caller_id", callerID).Msg("Erreur L3 RelationValue")
-		return 0 // Par sécurité absolue, on refuse l'accès en cas de crash BDD
+		return 0
 	}
 
-	// Réhydratation L1 (Inclut le Cache Négatif)
 	_ = redis.SpeedRelations.HSet(ctx, targetID, strCallerID, statePg)
 
 	// Réhydratation L2 asynchrone via la queue
@@ -57,72 +51,99 @@ func RelationValue(ctx context.Context, targetID int64, callerID int64) int {
 			State:       currentState,
 			UpdatedAt:   service.NowMillis(),
 		}
-		// On envoie un ActionUpdate. Le worker Mongo a été codé pour utiliser PrimaryID/SecondaryID
 		_ = redis.EnqueueDB(bgCtx, 0, targetID, redis.EntityRelation, redis.ActionUpdate, payload, redis.TargetMongo)
 	}(statePg)
 
 	return statePg
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 2. GESTION DU FAN-OUT ET MISES À JOUR (Rétrocompatibilité)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// UpdateRelationState met à jour l'état de la relation (à appeler depuis les handlers de follow/unfollow/ban)
-func UpdateRelationState(ctx context.Context, targetID int64, callerID int64, newState int) error {
-	// 1. Met à jour le dictionnaire d'accès
+// UpdateRelationState met à jour l'état de la relation ET le tri temporel
+// ✅ NOUVEAU : Ajout du paramètre timestampMs pour le ZSET
+func UpdateRelationState(ctx context.Context, targetID int64, callerID int64, newState int, timestampMs int64) error {
+	// 1. Maintien du dictionnaire d'accès O(1)
 	err := redis.SpeedRelations.HSet(ctx, targetID, strconv.FormatInt(callerID, 10), newState)
 
-	// 2. Maintien de l'ancien Set pour le worker Fan-Out
-	if newState == 1 || newState == 2 {
-		_ = redis.SpeedFollowers.SAdd(ctx, targetID, callerID)
-	} else {
-		_ = redis.SpeedFollowers.SRem(ctx, targetID, callerID)
+	strCaller := strconv.FormatInt(callerID, 10)
+	strTarget := strconv.FormatInt(targetID, 10)
+	score := float64(timestampMs)
+
+	// 2. Gestion des ZSETs chronologiques
+	// (On utilise SpeedRelationsIndex pour tout, en séparant les clés par direction et état)
+	// On nettoie l'ancien état par précaution pour éviter les doublons directionnels
+	_ = redis.SpeedRelationsIndex.ZRem(ctx, fmt.Sprintf("in:1:%d", targetID), strCaller)
+	_ = redis.SpeedRelationsIndex.ZRem(ctx, fmt.Sprintf("in:2:%d", targetID), strCaller)
+	_ = redis.SpeedRelationsIndex.ZRem(ctx, fmt.Sprintf("out:-1:%d", callerID), strTarget)
+
+	// 3. Ajout dans le nouveau ZSET si l'état est actif
+	if newState == 1 { // Follower (Incoming pour targetID)
+		_ = redis.SpeedRelationsIndex.ZAdd(ctx, fmt.Sprintf("in:1:%d", targetID), score, strCaller)
+	} else if newState == 2 { // Ami (Incoming pour targetID)
+		_ = redis.SpeedRelationsIndex.ZAdd(ctx, fmt.Sprintf("in:2:%d", targetID), score, strCaller)
+	} else if newState == -1 { // Bloqué (Outgoing pour callerID)
+		_ = redis.SpeedRelationsIndex.ZAdd(ctx, fmt.Sprintf("out:-1:%d", callerID), score, strTarget)
 	}
 
 	return err
 }
 
-// GetSpeedFollowers récupère les abonnés pour le Fan-Out asynchrone (Worker).
-func GetSpeedFollowers(ctx context.Context, userID int64) ([]int64, error) {
-	followerStrings, err := redis.SpeedFollowers.SMembers(ctx, userID)
+// GetSpeedRelationsIndex récupère les abonnés en O(log N)
+func GetSpeedRelationsIndex(ctx context.Context, userID int64) ([]int64, error) {
+	followerStrings, err := redis.SpeedRelationsIndex.ZRevRange(ctx, fmt.Sprintf("in:1:%d", userID), 0, -1)
 	if err != nil {
 		return nil, nubo_error.NewInternal(err)
 	}
-
 	var followers []int64
 	for _, idStr := range followerStrings {
 		if id, err := strconv.ParseInt(idStr, 10, 64); err == nil {
 			followers = append(followers, id)
 		}
 	}
-
 	return followers, nil
 }
 
-// GetFollowerCount retourne le nombre total d'abonnés d'un utilisateur en O(1).
-// Idéal pour la protection "Anti-Crash Justin Bieber" avant un Fan-Out.
-func GetFollowerCount(ctx context.Context, userID int64) int64 {
-	count, _ := redis.SpeedFollowers.SCard(ctx, userID)
-	return count
-}
-
-// GetSpeedFriends récupère strictement la liste des amis (Relation = 2).
-// Utilisé pour le Fan-Out restreint des posts privés.
+// GetSpeedFriends récupère strictement la liste des amis
 func GetSpeedFriends(ctx context.Context, userID int64) ([]int64, error) {
-	relations, err := redis.SpeedRelations.HGetAll(ctx, userID).Result()
+	friendStrings, err := redis.SpeedRelationsIndex.ZRevRange(ctx, fmt.Sprintf("in:2:%d", userID), 0, -1)
 	if err != nil {
 		return nil, nubo_error.NewInternal(err)
 	}
-
 	var friends []int64
-	for callerIDStr, stateStr := range relations {
-		if stateStr == "2" { // 2 = État "Ami" strict
-			if callerID, err := strconv.ParseInt(callerIDStr, 10, 64); err == nil {
-				friends = append(friends, callerID)
-			}
+	for _, idStr := range friendStrings {
+		if id, err := strconv.ParseInt(idStr, 10, 64); err == nil {
+			friends = append(friends, id)
+		}
+	}
+	return friends, nil
+}
+
+// GetFollowerCount retourne le nombre total d'abonnés en O(1)
+func GetFollowerCount(ctx context.Context, userID int64) int64 {
+	count, _ := redis.SpeedRelationsIndex.ZCard(ctx, fmt.Sprintf("in:1:%d", userID))
+	return count
+}
+
+// GetRelationsByDirectionPaginatedFromCache récupère les IDs ciblés de manière paginée en O(log N) depuis le ZSET (L1)
+func GetRelationsByDirectionPaginatedFromCache(ctx context.Context, primaryID int64, state int, direction string, limit int, offset int) ([]int64, error) {
+	var zsetKey string
+	// Format imposé par UpdateRelationState: in:{state}:{targetID} ou out:{state}:{callerID}
+	if direction == "incoming" {
+		zsetKey = fmt.Sprintf("in:%d:%d", state, primaryID)
+	} else {
+		zsetKey = fmt.Sprintf("out:%d:%d", state, primaryID)
+	}
+
+	// On interroge SpeedRelationsIndex (qui est notre index de graphe social trié)
+	targetIDsStr, err := redis.SpeedRelationsIndex.ZRevRange(ctx, zsetKey, int64(offset), int64(offset+limit-1))
+	if err != nil {
+		return nil, err
+	}
+
+	var matchedIDs []int64
+	for _, idStr := range targetIDsStr {
+		if id, errParse := strconv.ParseInt(idStr, 10, 64); errParse == nil {
+			matchedIDs = append(matchedIDs, id)
 		}
 	}
 
-	return friends, nil
+	return matchedIDs, nil
 }
