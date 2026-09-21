@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -14,7 +15,7 @@ import (
 // LeftConversation vérifie les droits d'administration et retourne la conversation complète.
 func LeftConversation(ctx context.Context, convID int64, userID int64) (conversation_models.ConversationPayload, error) {
 	var conv conversation_models.ConversationPayload
-	var mem conversation_models.MemberPayload
+	var mem member_models.MemberPayload
 	var foundConv, foundMem bool
 
 	// 1. TENTATIVE L1 (OBJECT CACHE - LFU)
@@ -67,7 +68,7 @@ func LeftConversation(ctx context.Context, convID int64, userID int64) (conversa
 			_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
 
 			// ⬆️ Auto-Guérison L2 (Asynchrone via Worker Mongo)
-			go func(m conversation_models.MemberPayload) {
+			go func(m member_models.MemberPayload) {
 				// PartitionKey = ConversationID pour les membres
 				_ = redis.EnqueueDB(context.Background(), m.ID, m.ConversationID, redis.EntityMembers, redis.ActionUpdate, m, redis.TargetMongo)
 			}(mem)

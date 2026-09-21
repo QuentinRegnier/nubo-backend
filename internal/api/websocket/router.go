@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/api/websocket/ws_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -55,7 +56,7 @@ func (c *Client) Route(message []byte) {
 	isValid := security.CheckHMAC(stringToSign, session.CurrentSecret, req.Signature)
 
 	// Tolérance de rotation de clé (Exactement comme en HTTP)
-	if !isValid && session.LastSecret != "" && !session.ToleranceTime.IsZero() && time.Now().Before(session.ToleranceTime) {
+	if !isValid && session.LastSecret != "" && session.ToleranceTime > 0 && time.Now().Before(domain.MillisToTime(session.ToleranceTime)) {
 		isValid = security.CheckHMAC(stringToSign, session.LastSecret, req.Signature)
 	}
 
@@ -87,15 +88,15 @@ func (c *Client) Route(message []byte) {
 
 	// --- CONVERSATIONS ---
 	case "conversation.read":
-		routeErr = ws_handlers.HandleReadReceipt(ctx, c.UserID, req.Payload)
+		resData, routeErr = ws_handlers.HandleReadReceipt(ctx, c.UserID, req.Payload)
 
 	// --- MESSAGES ---
 	case "message.create":
 		resData, routeErr = ws_handlers.HandleCreateMessage(ctx, c.UserID, req.Payload)
 	case "message.update":
-		routeErr = ws_handlers.HandleUpdateMessage(ctx, c.UserID, req.Payload)
+		resData, routeErr = ws_handlers.HandleUpdateMessage(ctx, c.UserID, req.Payload)
 	case "message.delete":
-		routeErr = ws_handlers.HandleDeleteMessage(ctx, c.UserID, req.Payload)
+		resData, routeErr = ws_handlers.HandleDeleteMessage(ctx, c.UserID, req.Payload)
 	case "message.react":
 		routeErr = ws_handlers.HandleReactMessage(ctx, c.UserID, req.Payload)
 	case "message.unreact":

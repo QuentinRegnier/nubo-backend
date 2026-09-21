@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"go.mongodb.org/mongo-driver/bson"
@@ -14,7 +15,7 @@ import (
 // FullInboxResult est le type consolidé retournant les payloads complets depuis Mongo
 type FullInboxResult struct {
 	Conversation conversation_models.ConversationPayload
-	Member       conversation_models.MemberPayload
+	Member       member_models.MemberPayload
 }
 
 // MongoLoadConversationPaginated utilise un pipeline d'agrégation pour joindre les Membres et les Conversations et trier (L2)
@@ -62,7 +63,7 @@ func MongoLoadConversationPaginated(userID int64, limit int64, offset int64) ([]
 		var doc bson.M
 		if err := cursor.Decode(&doc); err == nil {
 			var fullConv conversation_models.ConversationPayload
-			var fullMem conversation_models.MemberPayload
+			var fullMem member_models.MemberPayload
 
 			// Le document joint contient le Full Payload de la conversation
 			metaDoc := doc["conversation_meta"].(bson.M)

@@ -4,7 +4,7 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -15,8 +15,8 @@ import (
 )
 
 // GetConversationMembers récupère la liste détaillée des membres pour un lot de conversations.
-func GetConversationMembers(ctx context.Context, callerID int64, input conversation_models.GetConversationMembersInput) ([]conversation_models.ConversationMembersList, error) {
-	var results []conversation_models.ConversationMembersList
+func GetConversationMembers(ctx context.Context, callerID int64, input member_models.GetConversationMembersInput) ([]member_models.ConversationMembersList, error) {
+	var results []member_models.ConversationMembersList
 
 	for _, convID := range input.ConversationIDs {
 		// 1. SÉCURITÉ : Vérification d'appartenance
@@ -54,7 +54,7 @@ func GetConversationMembers(ctx context.Context, callerID int64, input conversat
 		}
 
 		// 4. HYDRATATION DE CHAQUE MEMBRE
-		var membersView []conversation_models.MemberView
+		var membersView []member_models.MemberView
 		for _, pID := range pIDs {
 			// A. Récupération du MemberPayload (L1 -> L2 -> L3)
 			mem, errMem := object_cache_service.GetMemberFromObjectCache(ctx, convID, pID)
@@ -64,7 +64,7 @@ func GetConversationMembers(ctx context.Context, callerID int64, input conversat
 				mem, errMem = mongo.MongoGetMember(convID, pID)
 				if errMem == nil && mem.ID != 0 {
 					// Auto-Guérison L1
-					go func(m conversation_models.MemberPayload) {
+					go func(m member_models.MemberPayload) {
 						_ = object_cache_service.SetMemberInObjectCache(context.Background(), m)
 					}(mem)
 				} else {
@@ -72,7 +72,7 @@ func GetConversationMembers(ctx context.Context, callerID int64, input conversat
 					mem, _ = postgres.FuncGetMember(ctx, convID, pID)
 					if mem.ID != 0 {
 						// Auto-Guérison L1 & L2 (Asynchrone)
-						go func(m conversation_models.MemberPayload) {
+						go func(m member_models.MemberPayload) {
 							bgCtx := context.Background()
 							_ = object_cache_service.SetMemberInObjectCache(bgCtx, m)
 							_ = redis.EnqueueDB(bgCtx, m.ID, m.ConversationID, redis.EntityMembers, redis.ActionUpdate, m, redis.TargetMongo)
@@ -87,7 +87,7 @@ func GetConversationMembers(ctx context.Context, callerID int64, input conversat
 			}
 
 			// B. Préparation de la vue et statut en ligne
-			view := conversation_models.MemberView{
+			view := member_models.MemberView{
 				MemberPayload: mem,
 				IsOnline:      cache_service.IsUserOnline(ctx, pID), // NOUVEAU (O(1))
 			}
@@ -111,7 +111,7 @@ func GetConversationMembers(ctx context.Context, callerID int64, input conversat
 			membersView = append(membersView, view)
 		}
 
-		results = append(results, conversation_models.ConversationMembersList{
+		results = append(results, member_models.ConversationMembersList{
 			ConversationID: convID,
 			Members:        membersView,
 		})
@@ -119,7 +119,7 @@ func GetConversationMembers(ctx context.Context, callerID int64, input conversat
 
 	// Évite le `null` en JSON si l'utilisateur demande des IDs erronés
 	if results == nil {
-		results = make([]conversation_models.ConversationMembersList, 0)
+		results = make([]member_models.ConversationMembersList, 0)
 	}
 
 	return results, nil

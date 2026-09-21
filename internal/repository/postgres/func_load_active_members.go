@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
@@ -43,7 +43,7 @@ func FuncLoadActiveMembers(ctx context.Context) ([]ActiveMemberResult, error) {
 		if err := rows.Scan(&cid, &uid, &role, &settingsRaw, &unreadCount, &lastMsgID, &joinedAt); err == nil {
 
 			// PARSING DU JSONB VERS LA STRUCT GO
-			var parsedSettings conversation_models.MemberSettings
+			var parsedSettings member_models.MemberSettings
 			if settingsRaw.Valid && settingsRaw.String != "" && settingsRaw.String != "{}" {
 				_ = json.Unmarshal([]byte(settingsRaw.String), &parsedSettings)
 			}

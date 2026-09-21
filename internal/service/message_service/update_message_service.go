@@ -10,7 +10,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
@@ -35,7 +34,7 @@ func UpdateMessage(ctx context.Context, callerID int64, input message_models.Upd
 	if msg.Content == "" {
 		return message_models.UpdateMessageOutput{}, nubo_error.NewBadRequest("EMPTY_MESSAGE", "Le message ne peut pas être vide.", nil)
 	}
-	msg.UpdatedAt = service.NowMillis()
+	msg.UpdatedAt = domain.NowMillis()
 
 	// 4. MISE À JOUR IMMÉDIATE L1 (Object Cache)
 	_ = object_cache_service.SetMessageInObjectCache(ctx, msg)

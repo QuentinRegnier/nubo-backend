@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
@@ -153,7 +154,7 @@ func HMACMiddleware() gin.HandlerFunc {
 		isValid := security.CheckHMAC(stringToSignReq, session.CurrentSecret, clientSig)
 
 		if !isValid && session.LastSecret != "" {
-			if !session.ToleranceTime.IsZero() && time.Now().Before(session.ToleranceTime) {
+			if session.ToleranceTime > 0 && time.Now().Before(domain.MillisToTime(session.ToleranceTime)) {
 				if security.CheckHMAC(stringToSignReq, session.LastSecret, clientSig) {
 					isValid = true
 					usedSecret = session.LastSecret

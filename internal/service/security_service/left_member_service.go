@@ -3,7 +3,7 @@ package security_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -12,8 +12,8 @@ import (
 )
 
 // LeftMember vérifie que l'utilisateur fait partie de la conversation et retourne son profil de membre complet (L1->L2->L3).
-func LeftMember(ctx context.Context, convID int64, userID int64) (conversation_models.MemberPayload, error) {
-	var mem conversation_models.MemberPayload
+func LeftMember(ctx context.Context, convID int64, userID int64) (member_models.MemberPayload, error) {
+	var mem member_models.MemberPayload
 	var found bool
 
 	// 1. TENTATIVE L1 (OBJECT CACHE - LFU)
@@ -41,7 +41,7 @@ func LeftMember(ctx context.Context, convID int64, userID int64) (conversation_m
 			_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
 
 			// ⬆️ Auto-Guérison L2 (Asynchrone via Worker Mongo)
-			go func(m conversation_models.MemberPayload) {
+			go func(m member_models.MemberPayload) {
 				_ = redis.EnqueueDB(context.Background(), m.ID, m.ConversationID, redis.EntityMembers, redis.ActionUpdate, m, redis.TargetMongo)
 			}(mem)
 		}
@@ -49,10 +49,10 @@ func LeftMember(ctx context.Context, convID int64, userID int64) (conversation_m
 
 	// 4. VÉRIFICATION DES RÈGLES
 	if !found {
-		return conversation_models.MemberPayload{}, nubo_error.NewForbidden("NOT_A_MEMBER", "Accès refusé : vous n'êtes pas membre de cette conversation.", nil)
+		return member_models.MemberPayload{}, nubo_error.NewForbidden("NOT_A_MEMBER", "Accès refusé : vous n'êtes pas membre de cette conversation.", nil)
 	}
 	if mem.Role < 0 {
-		return conversation_models.MemberPayload{}, nubo_error.NewForbidden("USER_BANNED", "Accès refusé : vous êtes banni de cette conversation.", nil)
+		return member_models.MemberPayload{}, nubo_error.NewForbidden("USER_BANNED", "Accès refusé : vous êtes banni de cette conversation.", nil)
 	}
 
 	return mem, nil

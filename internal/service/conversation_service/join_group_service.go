@@ -8,6 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
@@ -49,8 +50,28 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 		return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("INVALID_CONV_TYPE", "Impossible de rejoindre un message privé.", nil)
 	}
 
-	// 3. LA BARRIÈRE DE SÉCURITÉ
-	if conv.Type == 1 || conv.Type == 2 {
+	// ========================================================================
+	// 3. LA BARRIÈRE DE SÉCURITÉ (ROUTAGE INTERNAL / EXTERNAL / CLASSIQUE)
+	// ========================================================================
+	if input.Internal {
+		// Accès interne (sans invitation)
+		if conv.Type != 3 {
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("INVALID_CONV_TYPE", "Seules les communautés peuvent être rejointes de manière interne.", nil)
+		}
+		if conv.Settings.JoinApprovalRequired {
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("APPROVAL_REQUIRED", "Cette communauté nécessite une approbation, vous ne pouvez pas la rejoindre directement.", nil)
+		}
+	} else if input.External {
+		// Accès depuis un lien externe
+		if conv.Type != 3 {
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("INVALID_CONV_TYPE", "L'accès via lien externe est réservé aux communautés.", nil)
+		}
+
+		if conv.Settings.JoinWithLinkDuration != 0 && domain.NowMillis() >= conv.Settings.JoinWithLinkDuration {
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("LINK_EXPIRED", "Le lien d'invitation externe a expiré.", nil)
+		}
+	} else {
+		// Flux classique par message d'invitation intra-plateforme (InviteMsgID)
 		if input.InviteMsgID == 0 {
 			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("INVITE_REQUIRED", "Une invitation est requise pour rejoindre ce groupe privé.", nil)
 		}
@@ -85,12 +106,11 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("INVITE_MISMATCH", "Cette invitation ne correspond pas à ce groupe.", nil)
 		}
 	}
-	// Si Type == 3, la porte est ouverte, on passe directement à la suite.
 
 	// ========================================================================
 	// 4. VÉRIFICATION DU STATUT DU MEMBRE
 	// ========================================================================
-	var mem conversation_models.MemberPayload
+	var mem member_models.MemberPayload
 	var isUpdate bool
 
 	mem, err = object_cache_service.GetMemberFromObjectCache(ctx, input.ConversationID, callerID)
@@ -128,12 +148,12 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 	// ========================================================================
 	now := time.Now().UTC()
 	if !isUpdate {
-		mem = conversation_models.MemberPayload{
+		mem = member_models.MemberPayload{
 			ID:              pkg.GenerateID(),
 			ConversationID:  input.ConversationID,
 			UserID:          callerID,
 			Role:            assignedRole, // Rôle dynamique (0 ou -3)
-			Settings:        DefaultMemberSettings(conv.Type),
+			Settings:        member_models.DefaultMemberSettings(conv.Type),
 			JoinedAt:        domain.TimeToMillis(now),
 			UnreadCount:     0,
 			FrozenMessageID: 0,
@@ -190,7 +210,7 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 					_, _ = message_service.CreateMessage(bgCtx, callerID, input.ConversationID, msgInput, true)
 
 					// HYDRATATION CONDITIONNELLE DU DTO WEBSOCKET
-					memView := conversation_models.MemberView{
+					memView := member_models.MemberView{
 						MemberPayload: mem,
 						Username:      callerLite.Username,
 						IsOnline:      cache_service.IsUserOnline(bgCtx, callerID), // NOUVEAU

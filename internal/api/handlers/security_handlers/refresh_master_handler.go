@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/security_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -149,8 +150,8 @@ func RefreshMaster(c *gin.Context) {
 	sessionRaw.MasterToken = newMasterToken
 	sessionRaw.LastSecret = sessionRaw.FirebaseInstallationID
 	sessionRaw.LastJWT = authHeader
-	sessionRaw.ToleranceTime = time.Now().Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second)
-	sessionRaw.ExpiresAt = time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)
+	sessionRaw.ToleranceTime = domain.TimeToMillis(time.Now().Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second))
+	sessionRaw.ExpiresAt = domain.TimeToMillis(time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second))
 
 	if errAdd := cache_service.SetSessionInCache(c, sessionRaw); errAdd != nil {
 		logger.Log.Warn().Err(errAdd).Msg("Warning: Echec update Session Cache L1")

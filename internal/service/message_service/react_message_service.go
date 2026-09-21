@@ -3,12 +3,12 @@ package message_service
 import (
 	"context"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
@@ -53,7 +53,7 @@ func ReactToMessage(ctx context.Context, callerID int64, input message_models.Re
 		MessageID: msg.ID,
 		UserID:    callerID,
 		Reaction:  input.Reaction,
-		CreatedAt: service.NowMillis(),
+		CreatedAt: domain.NowMillis(),
 	}
 
 	// L'ActionCreate déclenchera l'UPSERT côté Worker grâce à la contrainte UNIQUE SQL

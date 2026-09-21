@@ -29,7 +29,7 @@ func UnpinConversation(ctx context.Context, callerID int64, input conversation_m
 
 	// 3. Application du retrait
 	mem.Settings.Pinned = -1
-	mem.UpdatedAt = service.NowMillis()
+	mem.UpdatedAt = domain.NowMillis()
 
 	// 4. Mise à jour synchrone L1 (Object et Speed Cache)
 	_ = object_cache_service.SetMemberInObjectCache(ctx, mem)

@@ -5,14 +5,14 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 )
 
 // MongoGetMember récupère le payload complet d'un membre avec le Smart Fallback (Retard BDD)
-func MongoGetMember(convID int64, userID int64) (conversation_models.MemberPayload, error) {
-	var mem conversation_models.MemberPayload
+func MongoGetMember(convID int64, userID int64) (member_models.MemberPayload, error) {
+	var mem member_models.MemberPayload
 
 	filter := map[string]any{"conversation_id": convID, "user_id": userID}
 	docs, err := Members.Get(filter, nil)

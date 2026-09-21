@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -65,6 +66,8 @@ func hydrateConversationCascade(ctx context.Context, conv conversation_models.Co
 		Description:   conv.Description, // NOUVEAU
 		AvatarID:      conv.AvatarID,    // NOUVEAU
 		LastMessageID: conv.LastMessageID,
+		Settings:      service.ToConversationSettingsLite(conv.Settings),
+		ExternalLink:  conv.ExternalLink,
 	}
 	_ = redis.ConvMeta.SetObject(ctx, conv.ID, convLite)
 
@@ -79,14 +82,14 @@ func hydrateConversationCascade(ctx context.Context, conv conversation_models.Co
 
 // hydrateMember gère l'auto-guérison croisée d'un membre
 func hydrateMember(ctx context.Context, convID, userID int64, fromL3 bool) {
-	var mem conversation_models.MemberPayload
+	var mem member_models.MemberPayload
 	var err error
 
 	if fromL3 {
 		mem, err = postgres.FuncGetMember(ctx, convID, userID)
 		if err == nil {
 			// Réhydratation L2 Asynchrone
-			go func(m conversation_models.MemberPayload) {
+			go func(m member_models.MemberPayload) {
 				_ = redis.EnqueueDB(context.Background(), m.ID, m.ConversationID, redis.EntityMembers, redis.ActionUpdate, m, redis.TargetMongo)
 			}(mem)
 		}

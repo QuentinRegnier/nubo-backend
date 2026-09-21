@@ -50,7 +50,7 @@ func GetNotificationsHandler(c *gin.Context) {
 	}
 
 	if notifs == nil {
-		notifs = make([]notification_models.NotificationPayload, 0)
+		notifs = make([]notification_models.NotificationView, 0)
 	}
 
 	c.JSON(http.StatusOK, notification_models.GetNotificationsOutput{Notifications: notifs})

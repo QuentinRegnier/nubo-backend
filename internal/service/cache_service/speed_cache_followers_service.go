@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
 )
 
 // 1. LE MOTEUR D'ACCÈS L1 -> L2 -> L3
@@ -49,7 +49,7 @@ func RelationValue(ctx context.Context, targetID int64, callerID int64) int {
 			PrimaryID:   callerID,
 			SecondaryID: targetID,
 			State:       currentState,
-			UpdatedAt:   service.NowMillis(),
+			UpdatedAt:   domain.NowMillis(),
 		}
 		_ = redis.EnqueueDB(bgCtx, 0, targetID, redis.EntityRelation, redis.ActionUpdate, payload, redis.TargetMongo)
 	}(statePg)

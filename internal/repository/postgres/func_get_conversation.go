@@ -19,9 +19,10 @@ func FuncGetConversation(ctx context.Context, convID int64) (conversation_models
 	var cAvatarID sql.NullInt64
 	var cLastMsgID sql.NullInt64
 	var settingsRaw sql.NullString
+	var externalLinkRaw sql.NullString
 
 	err := postgres.PostgresDB.QueryRowContext(ctx, query, convID).Scan(
-		&c.ID, &c.Type, &cTitle, &cDescription, &cAvatarID, &cLastMsgID, &c.State, &settingsRaw, &c.CreatedAt, &c.UpdatedAt,
+		&c.ID, &c.Type, &cTitle, &cDescription, &cAvatarID, &cLastMsgID, &c.State, &settingsRaw, &externalLinkRaw, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -44,6 +45,9 @@ func FuncGetConversation(ctx context.Context, convID int64) (conversation_models
 	}
 	if settingsRaw.Valid && settingsRaw.String != "" && settingsRaw.String != "{}" {
 		_ = json.Unmarshal([]byte(settingsRaw.String), &c.Settings)
+	}
+	if externalLinkRaw.Valid && externalLinkRaw.String != "" && externalLinkRaw.String != "{}" {
+		_ = json.Unmarshal([]byte(externalLinkRaw.String), &c.ExternalLink)
 	}
 	return c, nil
 }

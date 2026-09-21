@@ -5,8 +5,10 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -73,19 +75,20 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 	settings := input.Settings
 	// Si le Front n'a rien envoyé (struct vide), on applique les valeurs par défaut selon le type
 	if settings == (conversation_models.ConversationSettings{}) {
-		settings = DefaultConversationSettings(input.Type)
+		settings = conversation_models.DefaultConversationSettings(input.Type)
 	}
 
 	convPayload := conversation_models.ConversationPayload{
-		ID:          convID,
-		Type:        input.Type,
-		Title:       title,
-		Description: "",
-		AvatarID:    0,
-		State:       0,
-		Settings:    settings, // NOUVEAU
-		CreatedAt:   domain.TimeToMillis(now),
-		UpdatedAt:   domain.TimeToMillis(now),
+		ID:           convID,
+		Type:         input.Type,
+		Title:        title,
+		Description:  "",
+		AvatarID:     0,
+		State:        0,
+		Settings:     settings, // NOUVEAU
+		ExternalLink: models.ExternalLinks{},
+		CreatedAt:    domain.TimeToMillis(now),
+		UpdatedAt:    domain.TimeToMillis(now),
 	}
 
 	_ = object_cache_service.SetConversationInObjectCache(ctx, convPayload)
@@ -104,12 +107,12 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 		// --- CRÉATION MP (Type 0) ---
 		membersToAdd := []int64{callerID, input.ParticipantIDs[0]}
 		for _, userID := range membersToAdd {
-			mem := conversation_models.MemberPayload{
+			mem := member_models.MemberPayload{
 				ID:             pkg.GenerateID(),
 				ConversationID: convID,
 				UserID:         userID,
 				Role:           0,
-				Settings:       DefaultMemberSettings(convPayload.Type),
+				Settings:       member_models.DefaultMemberSettings(convPayload.Type),
 				JoinedAt:       domain.TimeToMillis(now),
 				UnreadCount:    0,
 				CreatedAt:      domain.TimeToMillis(now),
@@ -133,12 +136,12 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 		_ = realtime_service.DistributeToUsers(ctx, "conversation.created", convPayload, membersToAdd)
 	} else if input.Type == 1 {
 		// --- CRÉATION GROUPE (Type 1) ---
-		mem := conversation_models.MemberPayload{
+		mem := member_models.MemberPayload{
 			ID:              pkg.GenerateID(),
 			ConversationID:  convID,
 			UserID:          callerID,
 			Role:            2, // Propriétaire
-			Settings:        DefaultMemberSettings(convPayload.Type),
+			Settings:        member_models.DefaultMemberSettings(convPayload.Type),
 			JoinedAt:        domain.TimeToMillis(now),
 			FrozenMessageID: 0,
 			UnreadCount:     0,

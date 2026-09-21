@@ -7,6 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -66,7 +67,7 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 
 	settings := input.Settings
 	if settings == (conversation_models.ConversationSettings{}) {
-		settings = DefaultConversationSettings(3)
+		settings = conversation_models.DefaultConversationSettings(3)
 	}
 
 	convPayload := conversation_models.ConversationPayload{
@@ -77,18 +78,19 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 		AvatarID:      0,
 		LastMessageID: 0,
 		State:         0,
-		Settings:      settings, // NOUVEAU
+		Settings:      settings,
+		ExternalLink:  input.ExternalLink, // ✅ INJECTION ICI
 		CreatedAt:     domain.TimeToMillis(now),
 		UpdatedAt:     domain.TimeToMillis(now),
 	}
 
 	// Le propriétaire hérite du Role 2
-	ownerMember := conversation_models.MemberPayload{
+	ownerMember := member_models.MemberPayload{
 		ID:              pkg.GenerateID(),
 		ConversationID:  convID,
 		UserID:          targetOwnerID,
 		Role:            2,
-		Settings:        DefaultMemberSettings(convPayload.Type),
+		Settings:        member_models.DefaultMemberSettings(convPayload.Type),
 		JoinedAt:        domain.TimeToMillis(now),
 		UnreadCount:     0,
 		FrozenMessageID: 0,
@@ -97,14 +99,14 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 	}
 
 	// Le Modérateur hérite d'un Role 0 s'il l'a créée pour quelqu'un d'autre
-	var callerMember *conversation_models.MemberPayload
+	var callerMember *member_models.MemberPayload
 	if callerID != targetOwnerID {
-		callerMember = &conversation_models.MemberPayload{
+		callerMember = &member_models.MemberPayload{
 			ID:              pkg.GenerateID(),
 			ConversationID:  convID,
 			UserID:          callerID,
 			Role:            0, // Membre classique
-			Settings:        DefaultMemberSettings(convPayload.Type),
+			Settings:        member_models.DefaultMemberSettings(convPayload.Type),
 			JoinedAt:        domain.TimeToMillis(now),
 			UnreadCount:     0,
 			FrozenMessageID: 0,

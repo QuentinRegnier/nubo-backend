@@ -9,6 +9,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
@@ -98,7 +99,7 @@ func (m *UserMapper) ToRow(data any) ([]any, error) {
 		phoneDB = nil
 	}
 	var birthdateDB any = u.Birthdate
-	if u.Birthdate.IsZero() {
+	if u.Birthdate == 0 {
 		birthdateDB = nil
 	}
 	var bioDB any = u.Bio
@@ -126,7 +127,7 @@ func (m *UserMapper) ToRow(data any) ([]any, error) {
 		banReasonDB = nil
 	}
 	var banExpiresDB any = u.BanExpiresAt
-	if u.BanExpiresAt.IsZero() {
+	if u.BanExpiresAt == 0 {
 		banExpiresDB = nil
 	}
 
@@ -239,7 +240,7 @@ func (m *SessionMapper) ToRow(data any) ([]any, error) {
 		lastJwtDB = nil
 	}
 	var tolTimeDB any = s.ToleranceTime
-	if s.ToleranceTime.IsZero() {
+	if s.ToleranceTime == 0 {
 		tolTimeDB = nil
 	}
 
@@ -529,8 +530,7 @@ func (m *ConversationMapper) TableName() string {
 }
 
 func (m *ConversationMapper) Columns() []string {
-	// Remplacement de "laws" par "settings"
-	return []string{"id", "type", "title", "description", "avatar_id", "last_message_id", "state", "settings", "created_at", "updated_at"}
+	return []string{"id", "type", "title", "description", "avatar_id", "last_message_id", "state", "settings", "external_link", "created_at", "updated_at"} // ✅ "external_link" ajouté
 }
 
 func (m *ConversationMapper) ToRow(data any) ([]any, error) {
@@ -565,7 +565,11 @@ func (m *ConversationMapper) ToRow(data any) ([]any, error) {
 	settingsJSON, _ := json.Marshal(c.Settings)
 	var settingsDB any = string(settingsJSON)
 
-	return []any{c.ID, c.Type, titleDB, descDB, avatarDB, lastMsgDB, c.State, settingsDB, c.CreatedAt, c.UpdatedAt}, nil
+	// ✅ SÉRIALISATION DU LIEN EXTERNE
+	linkJSON, _ := json.Marshal(c.ExternalLink)
+	var linkDB any = string(linkJSON)
+
+	return []any{c.ID, c.Type, titleDB, descDB, avatarDB, lastMsgDB, c.State, settingsDB, linkDB, c.CreatedAt, c.UpdatedAt}, nil
 }
 
 func (m *ConversationMapper) BuildUpdateQuery(t string) string {
@@ -588,7 +592,7 @@ func (m *MemberMapper) ToRow(data any) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var mem conversation_models.MemberPayload
+	var mem member_models.MemberPayload
 	if err := json.Unmarshal(jsonBytes, &mem); err != nil {
 		return nil, err
 	}
@@ -624,7 +628,7 @@ func (m *ReportMapper) TableName() string { return "moderation.reports" }
 func (m *ReportMapper) Columns() []string {
 	return []string{
 		"id", "reporter_id", "target_type", "target_ids", "category",
-		"reason", "rationale", "state", "created_at", "updated_at",
+		"reason", "rationale", "state", "importance", "created_at", "updated_at", // ✅ "importance" ajouté
 	}
 }
 
@@ -650,7 +654,7 @@ func (m *ReportMapper) ToRow(data any) ([]any, error) {
 
 	return []any{
 		r.ID, r.ReporterID, r.TargetType, pq.Array(r.TargetIDs),
-		r.Category, reasonDB, rationaleDB, r.State, r.CreatedAt, r.UpdatedAt,
+		r.Category, reasonDB, rationaleDB, r.State, r.Importance, r.CreatedAt, r.UpdatedAt, // ✅ r.Importance ajouté
 	}, nil
 }
 

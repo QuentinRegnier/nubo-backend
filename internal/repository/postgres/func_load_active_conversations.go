@@ -12,7 +12,7 @@ import (
 )
 
 func FuncLoadActiveConversations(ctx context.Context) ([]lite_models.ConvLiteRequest, error) {
-	query := `SELECT id, type, title, description, avatar_id, last_message_id, settings FROM messaging.func_load_active_conversations()`
+	query := `SELECT id, type, title, description, avatar_id, last_message_id, settings, external_link FROM messaging.func_load_active_conversations()`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query)
 	if err != nil {
 		return nil, nubo_error.NewInternal(err)
@@ -33,8 +33,9 @@ func FuncLoadActiveConversations(ctx context.Context) ([]lite_models.ConvLiteReq
 		var description sql.NullString
 		var avatarID sql.NullInt64
 		var settingsRaw sql.NullString
+		var externalLinksRaw sql.NullString
 
-		if err := rows.Scan(&cid, &cType, &title, &description, &avatarID, &lastMsgID, &settingsRaw); err == nil {
+		if err := rows.Scan(&cid, &cType, &title, &description, &avatarID, &lastMsgID, &settingsRaw, &externalLinksRaw); err == nil {
 			meta := lite_models.ConvLiteRequest{ID: cid, Type: cType}
 			if title.Valid {
 				meta.Title = title.String
@@ -50,6 +51,9 @@ func FuncLoadActiveConversations(ctx context.Context) ([]lite_models.ConvLiteReq
 			}
 			if settingsRaw.Valid && settingsRaw.String != "" && settingsRaw.String != "{}" {
 				_ = json.Unmarshal([]byte(settingsRaw.String), &meta.Settings)
+			}
+			if externalLinksRaw.Valid && externalLinksRaw.String != "" {
+				_ = json.Unmarshal([]byte(externalLinksRaw.String), &meta.ExternalLink)
 			}
 			results = append(results, meta)
 		}

@@ -17,3 +17,8 @@ func MillisToTime(ms int64) time.Time {
 	}
 	return time.UnixMilli(ms).UTC()
 }
+
+// NowMillis retourne le timestamp actuel en millisecondes UTC.
+func NowMillis() int64 {
+	return time.Now().UTC().UnixMilli()
+}

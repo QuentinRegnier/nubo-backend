@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
@@ -118,7 +119,11 @@ func GetInboxView(ctx context.Context, userID int64, limit int64, offset int64) 
 					ID:            res.Conversation.ID,
 					Type:          res.Conversation.Type,
 					Title:         res.Conversation.Title,
+					Description:   res.Conversation.Description,
+					AvatarID:      res.Conversation.AvatarID,
 					LastMessageID: res.Conversation.LastMessageID,
+					Settings:      res.Conversation.Settings,
+					ExternalLink:  res.Conversation.ExternalLink,
 				}
 
 				memLite := lite_models.MemberLiteRequest{
@@ -205,7 +210,11 @@ func ProcessNewMessageInSpeedCache(ctx context.Context, msgID int64, convID int6
 				ID:            mongoConv.ID,
 				Type:          mongoConv.Type,
 				Title:         mongoConv.Title,
+				Description:   mongoConv.Description,
+				AvatarID:      mongoConv.AvatarID,
 				LastMessageID: msgID, // On injecte directement le nouveau message
+				Settings:      service.ToConversationSettingsLite(mongoConv.Settings),
+				ExternalLink:  mongoConv.ExternalLink,
 			}
 			_ = redis.ConvMeta.SetObject(ctx, convID, convLite)
 		}
@@ -328,7 +337,7 @@ func PurgeUserConversations(ctx context.Context, userID int64) error {
 }
 
 // RehydrateConversationItemInSpeedCache réhydrate le cache L1 à partir d'une donnée fraîche L2/L3 (Format Complet)
-func RehydrateConversationItemInSpeedCache(ctx context.Context, fullConv conversation_models.ConversationPayload, fullMem conversation_models.MemberPayload, offset int64) {
+func RehydrateConversationItemInSpeedCache(ctx context.Context, fullConv conversation_models.ConversationPayload, fullMem member_models.MemberPayload, offset int64) {
 	// Sécurité RAM : on ne réhydrate le ZSET et les hash que si on est dans le Scope du Speed Cache
 	if offset >= 100 {
 		return
@@ -339,7 +348,11 @@ func RehydrateConversationItemInSpeedCache(ctx context.Context, fullConv convers
 		ID:            fullConv.ID,
 		Type:          fullConv.Type,
 		Title:         fullConv.Title,
+		Description:   fullConv.Description,
+		AvatarID:      fullConv.AvatarID,
 		LastMessageID: fullConv.LastMessageID,
+		Settings:      service.ToConversationSettingsLite(fullConv.Settings),
+		ExternalLink:  fullConv.ExternalLink,
 	}
 
 	memLite := lite_models.MemberLiteRequest{
@@ -388,7 +401,11 @@ func SeedMessagingSpeedCache(ctx context.Context) error {
 			ID:            conv.ID,
 			Type:          conv.Type,
 			Title:         conv.Title,
+			Description:   conv.Description,
+			AvatarID:      conv.AvatarID,
 			LastMessageID: conv.LastMessageID,
+			Settings:      conv.Settings,
+			ExternalLink:  conv.ExternalLink,
 		}
 		_ = redis.ConvMeta.SetObject(ctx, convLite.ID, convLite)
 	}

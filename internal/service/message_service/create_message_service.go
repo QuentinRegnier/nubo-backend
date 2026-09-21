@@ -14,7 +14,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
@@ -28,7 +27,7 @@ func CreateMessage(ctx context.Context, senderID int64, convID int64, input mess
 	// 1. SÉCURITÉ DES TYPES DE MESSAGES (Filtre anti-usurpation)
 	if !isInternal {
 		switch input.MessageType {
-		case 0, 2, 3: // Texte, Image, GIF : OK
+		case 0, 2, 3, 9: // ✅ AJOUT : Texte, Image, GIF, et Sondage (9) : OK
 		case 1, 4: // Vocales, Vidéos : En attente d'implémentation
 			return message_models.CreateMessageOutput{}, nubo_error.NewBadRequest("UNSUPPORTED_MESSAGE_TYPE", "Les messages vocaux et vidéos ne sont pas encore supportés.", nil)
 		case 5, 6, 7, 8: // Systèmes, Invitations, Liens
@@ -50,7 +49,7 @@ func CreateMessage(ctx context.Context, senderID int64, convID int64, input mess
 	// =========================================================================
 	// LE VIDEUR INTRAITABLE (Rejet HTTP si mute actif)
 	// =========================================================================
-	nowMs := service.NowMillis()
+	nowMs := domain.NowMillis()
 	if mem.Settings.RestrictedUntil > nowMs {
 		return message_models.CreateMessageOutput{}, nubo_error.NewForbidden(
 			"MEMBER_MUTED",
@@ -105,6 +104,11 @@ func CreateMessage(ctx context.Context, senderID int64, convID int64, input mess
 		_ = object_cache_service.SetConversationInObjectCache(ctx, conv)
 	}
 
+	// ✅ NOUVEAU : RÈGLE MÉTIER DES SONDAGES (Bloqués en Message Privé)
+	if input.MessageType == 9 && (conv.Type < 1 || !conv.Settings.SendSurveyPermission) {
+		return message_models.CreateMessageOutput{}, nubo_error.NewForbidden("POLLS_NOT_ALLOWED", "Les sondages ne sont disponibles que dans les groupes et les communautés.", nil)
+	}
+
 	if !isInternal && conv.Type > 0 {
 		// Droit d'écriture (1 = Admins seuls, 2 = Annonces & Threads)
 		if conv.Settings.WritePermission == 1 && mem.Role == 0 {
@@ -118,7 +122,7 @@ func CreateMessage(ctx context.Context, senderID int64, convID int64, input mess
 		}
 
 		// Droit d'envoi de médias
-		if input.MessageType == 2 && conv.Settings.SendMediaPermission == 1 && mem.Role == 0 {
+		if input.MessageType == 2 && !conv.Settings.SendMediaPermission && mem.Role == 0 {
 			return message_models.CreateMessageOutput{}, nubo_error.NewForbidden("MEDIA_PERMISSION_DENIED", "Vous n'êtes pas autorisé à envoyer des médias dans ce groupe.", nil)
 		}
 	}

@@ -19,9 +19,10 @@ func FuncGetDirectConversation(ctx context.Context, user1, user2 int64) (convers
 	var cAvatarID sql.NullInt64
 	var cLastMsgID sql.NullInt64
 	var settingsRaw sql.NullString
+	var externalLinkRaw sql.NullString
 
 	err := postgres.PostgresDB.QueryRowContext(ctx, query, user1, user2).Scan(
-		&c.ID, &c.Type, &cTitle, &cDescription, &cAvatarID, &cLastMsgID, &c.State, &settingsRaw, &c.CreatedAt, &c.UpdatedAt,
+		&c.ID, &c.Type, &cTitle, &cDescription, &cAvatarID, &cLastMsgID, &c.State, &settingsRaw, &externalLinkRaw, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -44,6 +45,9 @@ func FuncGetDirectConversation(ctx context.Context, user1, user2 int64) (convers
 	}
 	if settingsRaw.Valid && settingsRaw.String != "" && settingsRaw.String != "{}" {
 		_ = json.Unmarshal([]byte(settingsRaw.String), &c.Settings)
+	}
+	if externalLinkRaw.Valid && externalLinkRaw.String != "" {
+		_ = json.Unmarshal([]byte(externalLinkRaw.String), &c.ExternalLink)
 	}
 	return c, nil
 }

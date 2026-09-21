@@ -55,7 +55,7 @@ func TogglePinConversation(ctx context.Context, callerID int64, input conversati
 	}
 	mem.Settings.Pinned = availableIdx
 
-	mem.UpdatedAt = service.NowMillis()
+	mem.UpdatedAt = domain.NowMillis()
 
 	// 3. Mise à jour synchrone L1 (Object et Speed Cache)
 	_ = object_cache_service.SetMemberInObjectCache(ctx, mem)

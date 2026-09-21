@@ -4,6 +4,8 @@ package conversation_models
 type JoinGroupInput struct {
 	ConversationID int64 `json:"conversation_id" binding:"required"`
 	InviteMsgID    int64 `json:"invite_msg_id" binding:"omitempty"` // Requis si la conversation est un groupe privé
+	External       bool  `json:"external" binding:"omitempty"`
+	Internal       bool  `json:"internal" binding:"omitempty"`
 }
 
 type JoinGroupOutput struct {

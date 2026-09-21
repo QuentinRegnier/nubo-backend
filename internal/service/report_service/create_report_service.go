@@ -16,20 +16,23 @@ func SubmitReport(ctx context.Context, input report_models.CreateReportInput) er
 
 	now := time.Now().UTC()
 
-	payload := report_models.ReportPayload{
+	// 1. Calcul ultra-rapide en RAM (zéro latence DB)
+	economicValue := CalculateEconomicImportance(ctx, input)
+
+	reportPayload := report_models.ReportPayload{
 		ID:         pkg.GenerateID(),
 		ReporterID: input.UserID,
 		TargetType: input.TargetType,
 		TargetIDs:  input.TargetIDs,
 		Category:   input.Category,
-		Reason:     pkg.CleanStr(input.Reason), // Nettoyage de la raison
+		Reason:     input.Reason,
+		Rationale:  "",
 		State:      variables.ReportStatePending,
+		Importance: economicValue, // ✅ Injection du score ici
 		CreatedAt:  domain.TimeToMillis(now),
 		UpdatedAt:  domain.TimeToMillis(now),
 	}
 
-	// On envoie dans la file d'attente.
-	// L'EntityReport n'existe peut-être pas encore dans tes constantes Redis, il faudra l'ajouter !
-	// ActionCreate = On crée un nouveau signalement. TargetPostgres = Seulement besoin du L3 !
-	return redis.EnqueueDB(ctx, payload.ID, 0, redis.EntityReport, redis.ActionCreate, payload, redis.TargetPostgres)
+	// 2. Envoi asynchrone
+	return redis.EnqueueDB(ctx, reportPayload.ID, 0, redis.EntityReport, redis.ActionCreate, reportPayload, redis.TargetPostgres)
 }

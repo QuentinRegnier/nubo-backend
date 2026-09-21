@@ -80,6 +80,7 @@ func GetConversations(ctx context.Context, callerID int64, input conversation_mo
 			Description:    conv.Description, // NOUVEAU
 			AvatarID:       conv.AvatarID,    // NOUVEAU
 			LastMessageID:  conv.LastMessageID,
+			ExternalLink:   conv.ExternalLink,
 			Role:           mem.Role,
 			Settings:       mem.Settings,
 			UnreadCount:    mem.UnreadCount,

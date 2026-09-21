@@ -1,7 +1,7 @@
 package mongo
 
 import (
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"go.mongodb.org/mongo-driver/bson"
 )
@@ -19,7 +19,7 @@ func MongoGetPinnedIndices(userID int64) ([]int, error) {
 
 	var indices []int
 	for _, doc := range docs {
-		var mem conversation_models.MemberPayload
+		var mem member_models.MemberPayload
 		if err := pkg.ToStruct(doc, &mem); err == nil && mem.Settings.Pinned >= 0 {
 			indices = append(indices, mem.Settings.Pinned)
 		}

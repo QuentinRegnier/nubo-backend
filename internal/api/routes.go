@@ -11,9 +11,11 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/feed_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/like_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/media_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/member_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/message_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/notification_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/post_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/profile_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/relation_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/report_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/saved_handlers"
@@ -94,6 +96,7 @@ func SetupRoutes(r *gin.Engine) {
 	secured.POST("/logout", auth_handlers.LogoutHandler)                  //
 	secured.GET("/session/get", auth_handlers.GetSessionsHandler)         //
 	secured.DELETE("/session/delete", auth_handlers.DeleteSessionHandler) //
+	secured.POST("/profile/get", profile_handlers.GetProfileHandler)
 
 	// --- Posts ---
 	secured.POST("/feed/get", feed_handlers.GetFeedHandler) //
@@ -158,32 +161,32 @@ func SetupRoutes(r *gin.Engine) {
 	secured.GET("/information-message", LoadAdminInformationMessageHandler)     // ℹ️❌
 
 	// --- Messagerie / Groupes ---
-	secured.POST("/conversations/user/get", conversation_handlers.GetUserConversationsHandler)                           //
-	secured.POST("/conversations/get", conversation_handlers.GetUserConversationsHandler)                                //
-	secured.POST("/conversation/members/get", conversation_handlers.GetConversationMembersHandler)                       //
-	secured.POST("/conversation/suggest", conversation_handlers.SuggestContactsHandler)                                  //
-	secured.POST("/conversation/set", conversation_handlers.CreateConversationHandler)                                   //
-	secured.POST("/conversation/community/set", conversation_handlers.CreateCommunityHandler)                            //
-	secured.POST("conversation/community/members/requests/get", conversation_handlers.GetCommunityRequestsHandler)       //
-	secured.POST("conversation/community/members/requests/accept", conversation_handlers.AcceptCommunityRequestHandler)  //
-	secured.POST("conversation/community/members/requests/refusal", conversation_handlers.RefuseCommunityRequestHandler) //
-	secured.PUT("/conversation/update", conversation_handlers.UpdateConversationHandler)                                 //
-	secured.PATCH("/conversation/settings", conversation_handlers.UpdateMemberSettingsHandler)                           //
-	secured.POST("/conversations/members/mute", conversation_handlers.MuteMemberHandler)
-	secured.POST("/conversations/members/muted", conversation_handlers.GetMutedMembersHandler)
+	secured.POST("/conversations/user/get", conversation_handlers.GetUserConversationsHandler)                     //
+	secured.POST("/conversations/get", conversation_handlers.GetUserConversationsHandler)                          //
+	secured.POST("/conversation/members/get", member_handlers.GetConversationMembersHandler)                       //
+	secured.POST("/conversation/suggest", conversation_handlers.SuggestContactsHandler)                            //
+	secured.POST("/conversation/set", conversation_handlers.CreateConversationHandler)                             //
+	secured.POST("/conversation/community/set", conversation_handlers.CreateCommunityHandler)                      //
+	secured.POST("conversation/community/members/requests/get", member_handlers.GetCommunityRequestsHandler)       //
+	secured.POST("conversation/community/members/requests/accept", member_handlers.AcceptCommunityRequestHandler)  //
+	secured.POST("conversation/community/members/requests/refusal", member_handlers.RefuseCommunityRequestHandler) //
+	secured.PUT("/conversation/update", conversation_handlers.UpdateConversationHandler)                           //
+	secured.PATCH("/conversation/settings", member_handlers.UpdateMemberSettingsHandler)                           //
+	secured.POST("/conversations/members/mute", member_handlers.MuteMemberHandler)
+	secured.POST("/conversations/members/muted", member_handlers.GetMutedMembersHandler)
 	secured.POST("/conversation/pin", conversation_handlers.PinConversationHandler)        //
 	secured.DELETE("/conversation/unpin", conversation_handlers.UnpinConversationHandler)  //
 	secured.DELETE("/conversation/delete", conversation_handlers.LeaveConversationHandler) //
 	secured.POST("/messages/get", message_handlers.GetMessagesHandler)                     //
 	secured.POST("/messages/reactions/list", message_handlers.GetMessageReactionsHandler)  //
 
-	secured.POST("/group/user/set", conversation_handlers.AddMemberHandler)       //
-	secured.DELETE("/group/user/ban/set", conversation_handlers.BanMemberHandler) //
-	secured.POST("/group/user/ban/get", conversation_handlers.GetBannedMembersHandler)
-	secured.POST("/group/user/ban/delete", conversation_handlers.UnbanMembersHandler)
-	secured.POST("/group/promote/set", conversation_handlers.PromoteMemberHandler)     //
-	secured.DELETE("/group/promote/delete", conversation_handlers.DemoteMemberHandler) //
-	secured.POST("/group/join", conversation_handlers.JoinGroupHandler)                //
+	secured.POST("/group/user/set", conversation_handlers.AddMemberHandler) //
+	secured.DELETE("/group/user/ban/set", member_handlers.BanMemberHandler) //
+	secured.POST("/group/user/ban/get", member_handlers.GetBannedMembersHandler)
+	secured.POST("/group/user/ban/delete", member_handlers.UnbanMembersHandler)
+	secured.POST("/group/promote/set", member_handlers.PromoteMemberHandler)     //
+	secured.DELETE("/group/promote/delete", member_handlers.DemoteMemberHandler) //
+	secured.POST("/group/join", conversation_handlers.JoinGroupHandler)          //
 
 	// --- Media ---
 	secured.POST("/media/upload", media_handlers.UploadMediaHandler) //

@@ -24,7 +24,7 @@ func handleGraphUpdate(ctx context.Context, events []redis.AsyncEvent) {
 				// ✅ Fusionner pour le calcul sémantique
 				allTags := append(post.Hashtags, post.IndirectHashtags...)
 				if len(allTags) > 1 {
-					cache_service.UpdateTagCooccurrences(ctx, allTags, post.CreatedAt.UnixMilli())
+					cache_service.UpdateTagCooccurrences(ctx, allTags, post.CreatedAt)
 				}
 			}
 		}

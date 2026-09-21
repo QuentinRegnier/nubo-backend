@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
@@ -77,7 +78,7 @@ func processHashtagTrends(ctx context.Context) {
 			continue // Sécurité : On ignore les posts privés pour les tendances mondiales
 		}
 
-		ageSeconds := now.Sub(p.CreatedAt).Seconds()
+		ageSeconds := now.Sub(domain.MillisToTime(p.CreatedAt)).Seconds()
 
 		// ✅ NOUVEAU : Agrégation par Tag (On fusionne Directs et Indirects)
 		allTags := append(p.Hashtags, p.IndirectHashtags...)

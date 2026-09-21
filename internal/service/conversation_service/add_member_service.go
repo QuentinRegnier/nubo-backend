@@ -8,6 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
@@ -42,7 +43,7 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 	}
 
 	// === NOUVEAU : VÉRIFICATION DES DROITS D'AJOUT ===
-	if conv.Settings.AddMemberPermission == 1 && callerMem.Role == 0 {
+	if !conv.Settings.AddMemberPermission && callerMem.Role == 0 {
 		return conversation_models.AddMemberOutput{}, nubo_error.NewForbidden("INSUFFICIENT_PERMISSIONS", "Seuls les administrateurs peuvent ajouter des membres à ce groupe.", nil)
 	}
 
@@ -108,12 +109,12 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 
 		if canAddDirectly {
 			// --- CAS A : AJOUT AUTOMATIQUE DIRECT ---
-			memberPayload := conversation_models.MemberPayload{
+			memberPayload := member_models.MemberPayload{
 				ID:              pkg.GenerateID(),
 				ConversationID:  conv.ID,
 				UserID:          targetID,
 				Role:            0, // Membre standard
-				Settings:        DefaultMemberSettings(conv.Type),
+				Settings:        member_models.DefaultMemberSettings(conv.Type),
 				JoinedAt:        domain.TimeToMillis(now),
 				FrozenMessageID: 0,
 				UnreadCount:     0,
@@ -126,7 +127,7 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 				ConversationID: conv.ID,
 				UserID:         targetID,
 				Role:           0,
-				Settings:       service.ToMemberSettingsLite(DefaultMemberSettings(conv.Type)),
+				Settings:       service.ToMemberSettingsLite(member_models.DefaultMemberSettings(conv.Type)),
 				UnreadCount:    0,
 				JoinedAt:       memberPayload.JoinedAt,
 			})
@@ -146,11 +147,11 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 			output.AddedUserIDs = append(output.AddedUserIDs, targetID)
 
 			// Envoie notification (Asynchrone)
-			go func(payload conversation_models.MemberPayload, cID int64, tID int64, cType int, cCaller int64) {
+			go func(payload member_models.MemberPayload, cID int64, tID int64, cType int, cCaller int64) {
 				bgCtx := context.Background()
 
 				// HYDRATATION CONDITIONNELLE DU DTO WEBSOCKET
-				memView := conversation_models.MemberView{
+				memView := member_models.MemberView{
 					MemberPayload: payload,
 					IsOnline:      cache_service.IsUserOnline(bgCtx, payload.UserID), // NOUVEAU
 				}

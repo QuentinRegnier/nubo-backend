@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -44,7 +45,7 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 				var post post_models.PostPayload
 				if err := json.Unmarshal(jsonBytes, &post); err == nil {
 					pipe := redis.TrendGlobalDaily.Pipeline()
-					dateKey := post.CreatedAt.UTC().Format("20060102")
+					dateKey := domain.MillisToTime(post.CreatedAt).UTC().Format("20060102")
 
 					// Bucket global : retrait classique de l'ID
 					pipe.ZRem(ctx, redis.TrendGlobalDaily.Key(dateKey), post.ID)

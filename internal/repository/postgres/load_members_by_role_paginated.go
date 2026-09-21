@@ -5,12 +5,12 @@ import (
 	"database/sql"
 	"log"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
 // FuncLoadMembersByRolePaginated charge les membres d'une conversation par rôle (ex: -3 pour les requêtes)
-func FuncLoadMembersByRolePaginated(ctx context.Context, convID int64, role int, limit int64, offset int64) ([]conversation_models.MemberPayload, error) {
+func FuncLoadMembersByRolePaginated(ctx context.Context, convID int64, role int, limit int64, offset int64) ([]member_models.MemberPayload, error) {
 	query := `SELECT * FROM messaging.func_load_members_by_role_paginated($1, $2, $3, $4)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, convID, role, limit, offset)
 	if err != nil {
@@ -22,9 +22,9 @@ func FuncLoadMembersByRolePaginated(ctx context.Context, convID int64, role int,
 		}
 	}(rows)
 
-	var members []conversation_models.MemberPayload
+	var members []member_models.MemberPayload
 	for rows.Next() {
-		var mem conversation_models.MemberPayload
+		var mem member_models.MemberPayload
 		var frozenDB sql.NullInt64 // Gestion du potentiel NULL
 
 		err := rows.Scan(

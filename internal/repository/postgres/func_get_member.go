@@ -6,16 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
 // FuncGetMember récupère l'intégralité d'un membre depuis L3
-func FuncGetMember(ctx context.Context, convID int64, userID int64) (conversation_models.MemberPayload, error) {
+func FuncGetMember(ctx context.Context, convID int64, userID int64) (member_models.MemberPayload, error) {
 	query := `SELECT id, conversation_id, user_id, role, settings, joined_at, unread_count, frozen_message_id, created_at, updated_at FROM messaging.func_get_member($1, $2)`
 
-	var m conversation_models.MemberPayload
+	var m member_models.MemberPayload
 	var frozenID sql.NullInt64
 	var settingsRaw sql.NullString
 

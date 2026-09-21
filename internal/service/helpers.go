@@ -5,9 +5,10 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 )
 
-func ToMemberSettingsLite(domainSettings conversation_models.MemberSettings) lite_models.MemberSettingsLite {
+func ToMemberSettingsLite(domainSettings member_models.MemberSettings) lite_models.MemberSettingsLite {
 	return lite_models.MemberSettingsLite{
 		IsMuted:           domainSettings.IsMuted,
 		MuteExpireAt:      domainSettings.MuteExpireAt,
@@ -17,8 +18,8 @@ func ToMemberSettingsLite(domainSettings conversation_models.MemberSettings) lit
 	}
 }
 
-func ToDomainMemberSettings(liteSettings lite_models.MemberSettingsLite) conversation_models.MemberSettings {
-	return conversation_models.MemberSettings{
+func ToDomainMemberSettings(liteSettings lite_models.MemberSettingsLite) member_models.MemberSettings {
+	return member_models.MemberSettings{
 		IsMuted:           liteSettings.IsMuted,
 		MuteExpireAt:      liteSettings.MuteExpireAt,
 		Pinned:            liteSettings.Pinned,
@@ -27,23 +28,27 @@ func ToDomainMemberSettings(liteSettings lite_models.MemberSettingsLite) convers
 	}
 }
 
-func ToConversationSettingsLite(domainSettings conversation_models.ConversationSettings) lite_models.ConversationSettingsLite {
-	return lite_models.ConversationSettingsLite{
+func ToConversationSettingsLite(domainSettings conversation_models.ConversationSettings) lite_models.ConversationSettings {
+	return lite_models.ConversationSettings{
 		JoinApprovalRequired: domainSettings.JoinApprovalRequired,
 		WritePermission:      domainSettings.WritePermission,
 		SendMediaPermission:  domainSettings.SendMediaPermission,
 		AddMemberPermission:  domainSettings.AddMemberPermission,
 		HideSystemMessages:   domainSettings.HideSystemMessages,
+		JoinWithLinkDuration: domainSettings.JoinWithLinkDuration,
+		SendSurveyPermission: domainSettings.SendSurveyPermission,
 	}
 }
 
-func ToDomainConversationSettings(liteSettings lite_models.ConversationSettingsLite) conversation_models.ConversationSettings {
+func ToDomainConversationSettings(liteSettings lite_models.ConversationSettings) conversation_models.ConversationSettings {
 	return conversation_models.ConversationSettings{
 		JoinApprovalRequired: liteSettings.JoinApprovalRequired,
 		WritePermission:      liteSettings.WritePermission,
 		SendMediaPermission:  liteSettings.SendMediaPermission,
 		AddMemberPermission:  liteSettings.AddMemberPermission,
 		HideSystemMessages:   liteSettings.HideSystemMessages,
+		JoinWithLinkDuration: liteSettings.JoinWithLinkDuration,
+		SendSurveyPermission: liteSettings.SendSurveyPermission,
 	}
 }
 

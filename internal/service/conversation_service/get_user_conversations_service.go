@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis" // ✅ NOUVEAU
@@ -44,6 +45,8 @@ func GetUserConversationsPaginated(ctx context.Context, callerID int64, input co
 						Description:   res.Conversation.Description, // NOUVEAU
 						AvatarID:      res.Conversation.AvatarID,    // NOUVEAU
 						LastMessageID: res.Conversation.LastMessageID,
+						Settings:      service.ToConversationSettingsLite(res.Conversation.Settings),
+						ExternalLink:  res.Conversation.ExternalLink,
 					},
 					Member: lite_models.MemberLiteRequest{
 						ConversationID: res.Member.ConversationID,
@@ -56,7 +59,7 @@ func GetUserConversationsPaginated(ctx context.Context, callerID int64, input co
 				})
 
 				// RÉHYDRATATION : Hit Mongo (L2) -> Réhydrate Redis (L1) !
-				go func(fConv conversation_models.ConversationPayload, fMem conversation_models.MemberPayload, o int64) {
+				go func(fConv conversation_models.ConversationPayload, fMem member_models.MemberPayload, o int64) {
 					bgCtx := context.Background()
 					// 1. Réhydratation de l'Object Cache (Full Payloads)
 					_ = object_cache_service.SetConversationInObjectCache(bgCtx, fConv)
@@ -81,6 +84,8 @@ func GetUserConversationsPaginated(ctx context.Context, callerID int64, input co
 						Description:   res.Conversation.Description, // NOUVEAU
 						AvatarID:      res.Conversation.AvatarID,    // NOUVEAU
 						LastMessageID: res.Conversation.LastMessageID,
+						Settings:      service.ToConversationSettingsLite(res.Conversation.Settings),
+						ExternalLink:  res.Conversation.ExternalLink,
 					},
 					Member: lite_models.MemberLiteRequest{
 						ConversationID: res.Member.ConversationID,
@@ -93,7 +98,7 @@ func GetUserConversationsPaginated(ctx context.Context, callerID int64, input co
 				})
 
 				// ⬆️ PROMOTION L3 -> L2 (Mongo) -> L1 (Redis)
-				go func(fConv conversation_models.ConversationPayload, fMem conversation_models.MemberPayload, o int64) {
+				go func(fConv conversation_models.ConversationPayload, fMem member_models.MemberPayload, o int64) {
 					bgCtx := context.Background()
 
 					// A. Réhydratation L2 (MongoDB) asynchrone via les workers
@@ -152,6 +157,7 @@ func GetUserConversationsPaginated(ctx context.Context, callerID int64, input co
 			LastMessageID:  item.Conversation.LastMessageID,
 			Role:           item.Member.Role,
 			Settings:       service.ToDomainMemberSettings(item.Member.Settings),
+			ExternalLink:   item.Conversation.ExternalLink,
 			UnreadCount:    item.Member.UnreadCount,
 			Avatars:        avatars,
 			IsOnline:       isOnline, // NOUVEAU

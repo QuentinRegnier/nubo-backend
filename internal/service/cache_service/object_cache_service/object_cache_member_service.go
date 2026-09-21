@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
 // GetMemberFromObjectCache récupère le payload complet d'un membre depuis le cache LFU
-func GetMemberFromObjectCache(ctx context.Context, convID int64, userID int64) (conversation_models.MemberPayload, error) {
-	var m conversation_models.MemberPayload
+func GetMemberFromObjectCache(ctx context.Context, convID int64, userID int64) (member_models.MemberPayload, error) {
+	var m member_models.MemberPayload
 	// Utilisation d'une clé composite
 	memberID := fmt.Sprintf("%d:%d", convID, userID)
 	err := redis.Members.GetObject(ctx, memberID, &m)
@@ -18,7 +18,7 @@ func GetMemberFromObjectCache(ctx context.Context, convID int64, userID int64) (
 }
 
 // SetMemberInObjectCache insère ou met à jour un membre dans le cache LFU
-func SetMemberInObjectCache(ctx context.Context, member conversation_models.MemberPayload) error {
+func SetMemberInObjectCache(ctx context.Context, member member_models.MemberPayload) error {
 	memberID := fmt.Sprintf("%d:%d", member.ConversationID, member.UserID)
 	return redis.Members.SetObject(ctx, memberID, member)
 }

@@ -9,7 +9,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
@@ -44,14 +43,14 @@ func LeaveConversation(ctx context.Context, callerID int64, convID int64, input 
 
 		// Promotion du nouveau propriétaire
 		newOwnerMem.Role = 2
-		newOwnerMem.UpdatedAt = service.NowMillis()
+		newOwnerMem.UpdatedAt = domain.NowMillis()
 		_ = object_cache_service.SetMemberInObjectCache(ctx, newOwnerMem)
 		_ = redis.EnqueueDB(ctx, newOwnerMem.ID, convID, redis.EntityMembers, redis.ActionUpdate, newOwnerMem, redis.TargetAll)
 	}
 
 	// 3. APPLICATION DU DÉPART (Rôle = -1)
 	mem.Role = -1
-	mem.UpdatedAt = service.NowMillis()
+	mem.UpdatedAt = domain.NowMillis()
 	_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
 
 	// === NOUVEAU : PURGE SYNCHRONE DU SPEED CACHE ===
@@ -79,7 +78,7 @@ func LeaveConversation(ctx context.Context, callerID int64, convID int64, input 
 		} else {
 			conv.State = -2 // Groupe/Communauté Supprimé
 		}
-		conv.UpdatedAt = service.NowMillis()
+		conv.UpdatedAt = domain.NowMillis()
 
 		// Mise à jour L1 et File Asynchrone
 		_ = object_cache_service.SetConversationInObjectCache(ctx, conv)

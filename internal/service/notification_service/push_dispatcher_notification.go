@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
@@ -35,7 +35,7 @@ func DispatchNotification(ctx context.Context, targetUserID int64, actorID int64
 		Type:      eventType,
 		TargetID:  targetID,
 		IsRead:    false,
-		CreatedAt: service.NowMillis(),
+		CreatedAt: domain.NowMillis(),
 	}
 
 	// 1. RAM L1 (JSON + Index ZSET plafonné à 100)

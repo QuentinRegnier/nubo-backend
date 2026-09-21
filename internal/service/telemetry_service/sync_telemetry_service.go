@@ -3,10 +3,10 @@ package telemetry_service
 import (
 	"context"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/telemetry_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -53,7 +53,7 @@ func ProcessSyncTelemetry(ctx context.Context, input telemetry_models.SyncTeleme
 			settings.TelemetryVector = input.Payload.Vector.Values
 			settings.TelemetryTags = input.Payload.TopTags
 			settings.TelemetryTimestamp = clientTimestamp
-			settings.UpdatedAt = service.NowMillis()
+			settings.UpdatedAt = domain.NowMillis()
 
 			// 1. On remet l'objet complet à jour dans l'Object Cache (L1)
 			_ = object_cache_service.SetUserSettings(ctx, settings)

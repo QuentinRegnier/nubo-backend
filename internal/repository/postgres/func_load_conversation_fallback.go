@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
@@ -44,8 +44,9 @@ func FuncLoadConversationFallback(ctx context.Context, userID int64, convIDs []i
 		var frozenID sql.NullInt64
 		var joinedAt time.Time
 		var memSettingsRaw sql.NullString
+		var externalLink sql.NullString
 
-		if err := rows.Scan(&cid, &title, &description, &avatarID, &cType, &convSettingsRaw, &lastMsgID, &role, &memSettingsRaw, &frozenID, &unreadCount, &joinedAt); err == nil {
+		if err := rows.Scan(&cid, &title, &description, &avatarID, &cType, &convSettingsRaw, &lastMsgID, &role, &memSettingsRaw, &externalLink, &frozenID, &unreadCount, &joinedAt); err == nil {
 			conv := lite_models.ConvLiteRequest{ID: cid, Type: cType}
 			if title.Valid {
 				conv.Title = title.String
@@ -62,8 +63,11 @@ func FuncLoadConversationFallback(ctx context.Context, userID int64, convIDs []i
 			if convSettingsRaw.Valid && convSettingsRaw.String != "" && convSettingsRaw.String != "{}" {
 				_ = json.Unmarshal([]byte(convSettingsRaw.String), &conv.Settings)
 			}
+			if externalLink.Valid && externalLink.String != "" {
+				_ = json.Unmarshal([]byte(externalLink.String), &conv.ExternalLink)
+			}
 
-			var parsedMemSettings conversation_models.MemberSettings
+			var parsedMemSettings member_models.MemberSettings
 			if memSettingsRaw.Valid && memSettingsRaw.String != "" && memSettingsRaw.String != "{}" {
 				_ = json.Unmarshal([]byte(memSettingsRaw.String), &parsedMemSettings)
 			}

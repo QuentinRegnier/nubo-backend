@@ -3,10 +3,10 @@ package user_settings_service
 import (
 	"context"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 )
@@ -22,7 +22,7 @@ func UpdateDisplay(ctx context.Context, userID int64, input user_settings_models
 	settings.DisplayAndContent.Language = input.Language
 	settings.DisplayAndContent.Theme = input.Theme
 	settings.DisplayAndContent.SafeForCommute = input.SafeForCommute
-	settings.UpdatedAt = service.NowMillis()
+	settings.UpdatedAt = domain.NowMillis()
 
 	// Sauvegarde L1
 	if err := object_cache_service.SetUserSettings(ctx, settings); err != nil {
