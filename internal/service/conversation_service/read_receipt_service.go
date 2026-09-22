@@ -6,7 +6,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -14,44 +14,42 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
 )
 
-// MarkConversationAsRead remet le compteur de messages non lus à 0 pour l'utilisateur.
+// MarkConversationAsRead remet à zéro le compteur de non-lus et émet l'événement WS si autorisé.
 func MarkConversationAsRead(ctx context.Context, callerID int64, convID int64) (conversation_models.ReadReceiptOutput, error) {
 	mem, err := security_service.LeftMember(ctx, convID, callerID)
 	if err != nil {
-		return conversation_models.ReadReceiptOutput{}, err
+		return conversation_models.ReadReceiptOutput{}, nubo_error.NewForbidden("NOT_A_MEMBER", "Vous n'êtes pas membre de cette conversation.", err)
 	}
 
-	// Même si le compteur est déjà à 0, on renvoie un timestamp valide pour le WS
-	if mem.UnreadCount == 0 {
-		return conversation_models.ReadReceiptOutput{
-			InboxUpdateAt: time.Now().UnixMilli(),
-		}, nil
+	if mem.UnreadCount > 0 {
+		// 1. MODIFICATION DE L'ÉTAT
+		mem.UnreadCount = 0
+		mem.UpdatedAt = domain.NowMillis()
+
+		// 2. MISE À JOUR IMMÉDIATE L1 (Object Cache & Speed Cache)
+		_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
+		_ = cache_service.ResetMemberUnreadCountInSpeedCache(ctx, convID, callerID)
+
+		// 3. PERSISTANCE ASYNCHRONE (Write-Behind)
+		_ = redis.EnqueueDB(ctx, mem.ID, convID, redis.EntityMembers, redis.ActionUpdate, mem, redis.TargetAll)
 	}
 
-	mem.UnreadCount = 0
-	mem.UpdatedAt = domain.NowMillis()
+	// 4. RÉCUPÉRATION DES PARAMÈTRES ET BLOCAGE CONDITIONNEL DU BROADCAST WS
+	settings, errSet := object_cache_service.GetUserSettingsCascade(ctx, callerID)
 
-	err = redis.EnqueueDB(ctx, mem.ID, convID, redis.EntityMembers, redis.ActionUpdate, mem, redis.TargetAll)
-	if err != nil {
-		return conversation_models.ReadReceiptOutput{}, err
-	}
-
-	_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
-	_ = cache_service.ResetMemberUnreadCountInSpeedCache(ctx, convID, callerID)
-
-	go func() {
-		err := realtime_service.BroadcastToConversation(context.Background(), convID, "conversation.read_receipt", mem)
-		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur lors de l'envoi de la notification de lecture")
+	// ✅ APPLICATION: Send Read Receipts
+	if errSet == nil && settings.Privacy.SendReadReceipts {
+		payload := map[string]any{
+			"conversation_id": convID,
+			"user_id":         callerID,
 		}
-	}()
+		// On broadcast la confirmation aux autres participants
+		_ = realtime_service.BroadcastToConversation(ctx, convID, "conversation.read", payload)
+	}
 
-	// ========================================================================
-	// MARQUAGE DU TEMPS (DIRTY FLAG)
-	// ========================================================================
+	// 5. DIRTY FLAG
 	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-
 	return conversation_models.ReadReceiptOutput{
-		InboxUpdateAt: timestampMs, // Ton modèle attend bien un int64 ici
+		InboxUpdateAt: domain.TimeToMillis(time.UnixMilli(timestampMs)),
 	}, nil
 }

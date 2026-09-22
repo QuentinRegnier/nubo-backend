@@ -150,10 +150,16 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 			go func(payload member_models.MemberPayload, cID int64, tID int64, cType int, cCaller int64) {
 				bgCtx := context.Background()
 
+				// ✅ APPLICATION: Show Online Status
+				isOnline := cache_service.IsUserOnline(bgCtx, payload.UserID)
+				if targetLite.ShowOnlineStatus == false {
+					isOnline = false
+				}
+
 				// HYDRATATION CONDITIONNELLE DU DTO WEBSOCKET
 				memView := member_models.MemberView{
 					MemberPayload: payload,
-					IsOnline:      cache_service.IsUserOnline(bgCtx, payload.UserID), // NOUVEAU
+					IsOnline:      isOnline,
 				}
 
 				if targetLite, errLite := cache_service.GetUserLite(bgCtx, payload.UserID); errLite == nil {

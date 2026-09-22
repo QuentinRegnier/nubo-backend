@@ -6,6 +6,7 @@ import (
 	"html"
 	"os"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -162,4 +163,33 @@ func GetUserIDFromContext(c *gin.Context) (int64, error) {
 	default:
 		return 0, nubo_error.NewInternal(errors.New("type userID inconnu"))
 	}
+}
+
+// =========================================================================
+// UTILITAIRES DE TEXTE ET MENTIONS
+// =========================================================================
+
+// Compilation globale de la regex pour des performances optimales (O(N) sans recompilation).
+// On cherche le motif @{id}, ex: @{123456}
+var mentionRegex = regexp.MustCompile(`@{([0-9]+)}`)
+
+// ExtractMentions parse une chaîne de caractères et retourne une liste
+// dédupliquée des IDs d'utilisateurs mentionnés.
+func ExtractMentions(content string) []int64 {
+	matches := mentionRegex.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	var ids []int64
+	for _, match := range matches {
+		if len(match) == 2 {
+			if id, err := strconv.ParseInt(match[1], 10, 64); err == nil {
+				ids = append(ids, id)
+			}
+		}
+	}
+
+	// Déduplication via l'utilitaire existant dans ce même package
+	return SliceUniqueInt64(ids)
 }

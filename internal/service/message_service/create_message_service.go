@@ -166,7 +166,7 @@ func CreateMessage(ctx context.Context, senderID int64, convID int64, input mess
 
 	// === NOUVEAU : EXTRACTION DES MENTIONS ===
 	// On le fait ici car on est certain que le texte est propre et validé.
-	mentionedUserIDs := ExtractMentions(input.Content)
+	mentionedUserIDs := pkg.ExtractMentions(input.Content)
 
 	// 4. PRÉPARATION DU MESSAGE
 	msgID := pkg.GenerateID()

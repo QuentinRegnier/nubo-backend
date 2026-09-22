@@ -29,11 +29,9 @@ func StoreUserLiteInSpeedCache(ctx context.Context, lite lite_models.UserLiteReq
 
 // AddUserToSpeedCache insère un nouvel utilisateur dans l'index de recherche et le store SPEED cache
 func AddUserToSpeedCache(ctx context.Context, u auth_models.UserPayload, settings user_settings_models.UserSettingsPayload) error {
-	// 1. Insertion dans l'index lexicographique
 	lexValue := fmt.Sprintf("%s:%d", strings.ToLower(u.Username), u.ID)
-	_ = redis.UsersLex.ZAdd(ctx, "lex", 0, lexValue) // L'ID "lex" créera la clé "speed_cache:search:lex"
+	_ = redis.UsersLex.ZAdd(ctx, "lex", 0, lexValue)
 
-	// 2. Construction de la structure Lite enrichie
 	userLite := lite_models.UserLiteRequest{
 		ID:                     u.ID,
 		Username:               u.Username,
@@ -45,10 +43,12 @@ func AddUserToSpeedCache(ctx context.Context, u auth_models.UserPayload, setting
 		Badges:                 u.Badges,
 		ConversationPermission: settings.Privacy.ConversationPermission,
 		AddGroupPermission:     settings.Privacy.AddGroupPermission,
-		HideConnections:        settings.Privacy.HideConnections, // ✅ NOUVEAU
+		HideConnections:        settings.Privacy.HideConnections,
+		ShowOnlineStatus:       settings.Privacy.ShowOnlineStatus, // ✅ NOUVEAU
+		AllowTagging:           settings.Privacy.AllowTagging,     // ✅ NOUVEAU
+		AllowMentions:          settings.Privacy.AllowMentions,    // ✅ NOUVEAU
 	}
 
-	// 3. Sauvegarde L1
 	return redis.UsersLite.SetObject(ctx, u.ID, userLite)
 }
 

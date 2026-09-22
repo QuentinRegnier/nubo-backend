@@ -16,14 +16,23 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-// SuggestContacts orchestre la suggestion de membres pour les groupes et les MP.
+// SuggestContacts orchestre la suggestion de membres selon l'intention et la confidentialité.
 func SuggestContacts(ctx context.Context, callerID int64, input conversation_models.SuggestInput) (conversation_models.SuggestOutput, error) {
 	excludedIDs := make(map[int64]bool)
 	isGroupContext := input.ConversationID > 0
 
+	// Déduction de l'intention si non fournie par le front
+	intent := input.Intent
+	if intent == "" {
+		if isGroupContext {
+			intent = "group"
+		} else {
+			intent = "dm"
+		}
+	}
+
 	// 1. GESTION DU CONTEXTE ET DES EXCLUSIONS
-	if isGroupContext {
-		// A. Contexte Groupe : Le caller doit être membre et on exclut les membres actuels
+	if isGroupContext && intent == "group" {
 		callerMem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
 		if err != nil || callerMem.Role < 0 {
 			return conversation_models.SuggestOutput{}, nubo_error.NewForbidden("NOT_A_MEMBER", "Accès refusé : vous ne faites pas partie de ce groupe.", err)
@@ -35,9 +44,7 @@ func SuggestContacts(ctx context.Context, callerID int64, input conversation_mod
 				excludedIDs[id] = true
 			}
 		}
-	} else {
-		// B. Contexte MP : On exclut les utilisateurs avec qui on a déjà une conversation active
-		// On lit l'inbox du Speed Cache (ultra-rapide car cappée à 100[cite: 9])
+	} else if intent == "dm" {
 		convIDStrings, _ := redis.UserInbox.ZRevRange(ctx, callerID, 0, -1)
 		var convIDs []int64
 		for _, idStr := range convIDStrings {
@@ -50,7 +57,6 @@ func SuggestContacts(ctx context.Context, callerID int64, input conversation_mod
 		for cid, data := range metaRes.Found {
 			var meta lite_models.ConvLiteRequest
 			if err := msgpack.Unmarshal(data, &meta); err == nil && meta.Type == 0 {
-				// C'est un MP, on cherche l'autre participant
 				participants, _ := redis.ConvParticipants.SMembers(ctx, cid)
 				for _, pStr := range participants {
 					if id, errParse := strconv.ParseInt(pStr, 10, 64); errParse == nil && id != callerID {
@@ -61,10 +67,10 @@ func SuggestContacts(ctx context.Context, callerID int64, input conversation_mod
 		}
 	}
 
-	// 2. RÉCUPÉRATION DES CANDIDATS (Aiguillage Query vs Carnet d'adresses)
+	// 2. RÉCUPÉRATION DES CANDIDATS
 	var validUsers []auth_models.UserLiteView
 	currentOffset := input.Offset
-	maxIterations := 3 // Sécurité anti-boucle infinie
+	maxIterations := 3
 
 	for int64(len(validUsers)) < input.Limit && maxIterations > 0 {
 		fetchLimit := input.Limit * 2
@@ -85,7 +91,6 @@ func SuggestContacts(ctx context.Context, callerID int64, input conversation_mod
 				break
 			}
 
-			// Exclusion de soi-même ou d'un utilisateur déjà présent/existant
 			if target.ID == callerID || excludedIDs[target.ID] {
 				continue
 			}
@@ -97,9 +102,9 @@ func SuggestContacts(ctx context.Context, callerID int64, input conversation_mod
 
 			canCommunicate := false
 
-			// AIGUILLAGE DU VERROU DE CONFIDENTIALITÉ
-			if isGroupContext {
-				// On évalue la permission d'ajout aux groupes
+			// === AIGUILLAGE DYNAMIQUE DES PERMISSIONS ===
+			switch intent {
+			case "group":
 				switch target.AddGroupPermission {
 				case 0:
 					canCommunicate = true
@@ -108,8 +113,7 @@ func SuggestContacts(ctx context.Context, callerID int64, input conversation_mod
 				case 2:
 					canCommunicate = false // Invitation uniquement
 				}
-			} else {
-				// On évalue la permission de Message Privé
+			case "dm":
 				switch target.ConversationPermission {
 				case 0:
 					canCommunicate = true
@@ -117,14 +121,41 @@ func SuggestContacts(ctx context.Context, callerID int64, input conversation_mod
 					canCommunicate = (relationState >= 1)
 				case 2:
 					canCommunicate = (relationState == 2)
+				case 3:
+					canCommunicate = false
 				}
+			case "tag":
+				switch target.AllowTagging {
+				case 0:
+					canCommunicate = true
+				case 1:
+					canCommunicate = (relationState >= 1)
+				case 2:
+					canCommunicate = (relationState == 2)
+				}
+			case "mention":
+				switch target.AllowMentions {
+				case 0:
+					canCommunicate = true
+				case 1:
+					canCommunicate = (relationState >= 1)
+				case 2:
+					canCommunicate = (relationState == 2)
+				}
+			default:
+				canCommunicate = true
 			}
 
 			if !canCommunicate {
 				continue
 			}
 
-			// 4. HYDRATATION DE L'AVATAR
+			// 4. HYDRATATION ET GESTION DU STATUT EN LIGNE
+			isOnline := cache_service.IsUserOnline(ctx, target.ID)
+			if !target.ShowOnlineStatus {
+				isOnline = false // ✅ Masquage du statut
+			}
+
 			var avatar media_models.MediaView
 			if target.ProfilePictureID > 0 {
 				if view, errMedia := media_service.GenerateMediaViewCascade(ctx, target.ProfilePictureID, target.ID, 0, callerID); errMedia == nil {
@@ -135,12 +166,12 @@ func SuggestContacts(ctx context.Context, callerID int64, input conversation_mod
 			validUsers = append(validUsers, auth_models.UserLiteView{
 				User:     target,
 				Avatar:   avatar,
-				IsOnline: cache_service.IsUserOnline(ctx, target.ID),
+				IsOnline: isOnline,
 			})
 		}
 
 		if input.Query != "" {
-			break // Pas d'offset géré sur l'index lexicographique
+			break
 		}
 		currentOffset += fetchLimit
 		maxIterations--
