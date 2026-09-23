@@ -86,32 +86,34 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 
 	// Le propriétaire hérite du Role 2
 	ownerMember := member_models.MemberPayload{
-		ID:              pkg.GenerateID(),
-		ConversationID:  convID,
-		UserID:          targetOwnerID,
-		Role:            2,
-		Settings:        member_models.DefaultMemberSettings(convPayload.Type),
-		JoinedAt:        domain.TimeToMillis(now),
-		UnreadCount:     0,
-		FrozenMessageID: 0,
-		CreatedAt:       domain.TimeToMillis(now),
-		UpdatedAt:       domain.TimeToMillis(now),
+		ID:                pkg.GenerateID(),
+		ConversationID:    convID,
+		UserID:            targetOwnerID,
+		Role:              2,
+		Settings:          member_models.DefaultMemberSettings(convPayload.Type),
+		JoinedAt:          domain.TimeToMillis(now),
+		UnreadCount:       0,
+		FrozenMessageID:   0,
+		LastReadMessageID: 0,
+		CreatedAt:         domain.TimeToMillis(now),
+		UpdatedAt:         domain.TimeToMillis(now),
 	}
 
 	// Le Modérateur hérite d'un Role 0 s'il l'a créée pour quelqu'un d'autre
 	var callerMember *member_models.MemberPayload
 	if callerID != targetOwnerID {
 		callerMember = &member_models.MemberPayload{
-			ID:              pkg.GenerateID(),
-			ConversationID:  convID,
-			UserID:          callerID,
-			Role:            0, // Membre classique
-			Settings:        member_models.DefaultMemberSettings(convPayload.Type),
-			JoinedAt:        domain.TimeToMillis(now),
-			UnreadCount:     0,
-			FrozenMessageID: 0,
-			CreatedAt:       domain.TimeToMillis(now),
-			UpdatedAt:       domain.TimeToMillis(now),
+			ID:                pkg.GenerateID(),
+			ConversationID:    convID,
+			UserID:            callerID,
+			Role:              0, // Membre classique
+			Settings:          member_models.DefaultMemberSettings(convPayload.Type),
+			JoinedAt:          domain.TimeToMillis(now),
+			UnreadCount:       0,
+			FrozenMessageID:   0,
+			LastReadMessageID: 0,
+			CreatedAt:         domain.TimeToMillis(now),
+			UpdatedAt:         domain.TimeToMillis(now),
 		}
 	}
 

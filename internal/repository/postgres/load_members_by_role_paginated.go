@@ -26,14 +26,18 @@ func FuncLoadMembersByRolePaginated(ctx context.Context, convID int64, role int,
 	for rows.Next() {
 		var mem member_models.MemberPayload
 		var frozenDB sql.NullInt64 // Gestion du potentiel NULL
+		var lastDB sql.NullInt64
 
 		err := rows.Scan(
 			&mem.ID, &mem.ConversationID, &mem.UserID, &mem.Role,
-			&mem.JoinedAt, &mem.UnreadCount, &frozenDB, &mem.CreatedAt, &mem.UpdatedAt,
+			&mem.JoinedAt, &mem.UnreadCount, &frozenDB, &lastDB, &mem.CreatedAt, &mem.UpdatedAt,
 		)
 		if err == nil {
 			if frozenDB.Valid {
 				mem.FrozenMessageID = frozenDB.Int64
+			}
+			if lastDB.Valid {
+				mem.LastReadMessageID = lastDB.Int64
 			}
 			members = append(members, mem)
 		}

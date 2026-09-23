@@ -2,6 +2,7 @@ package message_service
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
@@ -46,10 +47,21 @@ func UpdateMessage(ctx context.Context, callerID int64, input message_models.Upd
 	// 6. ENVOI NOTIFICATION (Asynchrone)
 	if err == nil {
 		go func() {
-			err := realtime_service.BroadcastToConversation(context.Background(), msg.ConversationID, "message.updated", msg)
-			if err != nil {
-				logger.Log.Error().Err(err).Msg("Failed to broadcast message update")
+			bgCtx := context.Background()
+			errWS := realtime_service.BroadcastToConversation(bgCtx, msg.ConversationID, "message.updated", msg)
+			if errWS != nil {
+				logger.Log.Error().Err(errWS).Msg("Failed to broadcast message update")
 			}
+
+			// ✅ NOUVEAU : SYNC LEDGER (Trigger granulaire)
+			participantsStr, _ := redis.ConvParticipants.SMembers(bgCtx, msg.ConversationID)
+			var pIDs []int64
+			for _, p := range participantsStr {
+				if id, err := strconv.ParseInt(p, 10, 64); err == nil {
+					pIDs = append(pIDs, id)
+				}
+			}
+			_ = cache_service.RecordMessageMutation(bgCtx, msg.ConversationID, msg.ID, pIDs)
 		}()
 	}
 

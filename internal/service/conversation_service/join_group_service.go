@@ -149,16 +149,17 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 	now := time.Now().UTC()
 	if !isUpdate {
 		mem = member_models.MemberPayload{
-			ID:              pkg.GenerateID(),
-			ConversationID:  input.ConversationID,
-			UserID:          callerID,
-			Role:            assignedRole, // Rôle dynamique (0 ou -3)
-			Settings:        member_models.DefaultMemberSettings(conv.Type),
-			JoinedAt:        domain.TimeToMillis(now),
-			UnreadCount:     0,
-			FrozenMessageID: 0,
-			CreatedAt:       domain.TimeToMillis(now),
-			UpdatedAt:       domain.TimeToMillis(now),
+			ID:                pkg.GenerateID(),
+			ConversationID:    input.ConversationID,
+			UserID:            callerID,
+			Role:              assignedRole, // Rôle dynamique (0 ou -3)
+			Settings:          member_models.DefaultMemberSettings(conv.Type),
+			JoinedAt:          domain.TimeToMillis(now),
+			UnreadCount:       0,
+			FrozenMessageID:   0,
+			LastReadMessageID: 0,
+			CreatedAt:         domain.TimeToMillis(now),
+			UpdatedAt:         domain.TimeToMillis(now),
 		}
 	} else {
 		mem.Role = assignedRole // Rôle dynamique (0 ou -3)
@@ -173,13 +174,14 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 
 	// === MISE À JOUR SYNCHRONE DU SPEED CACHE ===
 	memLite := lite_models.MemberLiteRequest{
-		ConversationID:  mem.ConversationID,
-		UserID:          mem.UserID,
-		Role:            mem.Role,
-		Settings:        service.ToMemberSettingsLite(mem.Settings),
-		UnreadCount:     mem.UnreadCount,
-		FrozenMessageID: mem.FrozenMessageID,
-		JoinedAt:        mem.JoinedAt,
+		ConversationID:    mem.ConversationID,
+		UserID:            mem.UserID,
+		Role:              mem.Role,
+		Settings:          service.ToMemberSettingsLite(mem.Settings),
+		UnreadCount:       mem.UnreadCount,
+		FrozenMessageID:   mem.FrozenMessageID,
+		LastReadMessageID: mem.LastReadMessageID,
+		JoinedAt:          mem.JoinedAt,
 	}
 
 	if isUpdate {

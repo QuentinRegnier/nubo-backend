@@ -3,6 +3,7 @@ package member_service
 import (
 	"context"
 	"fmt"
+	"strconv" // ✅ NOUVEAU : Requis pour parser les ID dans le trigger
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
@@ -13,6 +14,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service" // ✅ NOUVEAU : Import pour le Ledger
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
@@ -92,6 +94,19 @@ func MuteMember(ctx context.Context, callerID int64, input member_models.MuteMem
 
 	// 6. PERSISTANCE ASYNCHRONE
 	errQueue := redis.EnqueueDB(ctx, targetMem.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMem, redis.TargetAll)
+
+	// ✅ NOUVEAU : SYNC LEDGER (Trigger global)
+	go func(cID int64) {
+		bgCtx := context.Background()
+		participantsStr, _ := redis.ConvParticipants.SMembers(bgCtx, cID)
+		var pIDs []int64
+		for _, p := range participantsStr {
+			if id, err := strconv.ParseInt(p, 10, 64); err == nil {
+				pIDs = append(pIDs, id)
+			}
+		}
+		_ = cache_service.RecordConversationMutation(bgCtx, cID, pIDs)
+	}(input.ConversationID)
 
 	if errQueue == nil {
 		// 7. DIFFUSION TEMPS RÉEL DE L'ÉTAT DU MEMBRE

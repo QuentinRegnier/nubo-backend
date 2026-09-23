@@ -85,6 +85,10 @@ var (
 	UserInbox        *Collection
 	MessagesIndex    *Collection
 	LSHBuckets       *Collection
+	ConvWatermarks   *Collection
+
+	UserSyncLedger    *Collection // ZSET des conversations modifiées par utilisateur
+	ConvMessageLedger *Collection // ZSET des messages modifiés par conversation
 
 	// --- RÉACTIONS AUX MESSAGES ---
 	MessageReactionCounts *Collection // Hash: msg_id -> emoji -> count
@@ -182,6 +186,10 @@ func InitCacheDatabase() {
 	UserInbox = NewCollection("inbox:user", 0)
 	MessagesIndex = NewCollection("messages:idx", 24*time.Hour)
 	LSHBuckets = NewCollection("lsh:bucket", variables.StandardTTL)
+	ConvWatermarks = NewCollection("conv:watermarks", variables.StandardTTL)
+
+	UserSyncLedger = NewCollection("sync:ledger:user", 30*24*time.Hour)
+	ConvMessageLedger = NewCollection("sync:ledger:conv_msg", 30*24*time.Hour)
 
 	// --- RÉACTIONS AUX MESSAGES ---
 	MessageReactionCounts = NewCollection("msg_react_counts", variables.StandardTTL)

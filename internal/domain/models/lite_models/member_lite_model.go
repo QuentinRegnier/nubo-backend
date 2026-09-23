@@ -9,11 +9,12 @@ type MemberSettingsLite struct {
 }
 
 type MemberLiteRequest struct {
-	ConversationID  int64              `bson:"conversation_id" json:"conversation_id" msgpack:"conversation_id"`
-	UserID          int64              `bson:"user_id" json:"user_id" msgpack:"user_id"`
-	Role            int                `bson:"role" json:"role" msgpack:"role"`
-	Settings        MemberSettingsLite `bson:"settings" json:"settings" msgpack:"settings"`
-	UnreadCount     int                `bson:"unread_count" json:"unread_count" msgpack:"unread_count"`
-	FrozenMessageID int64              `bson:"frozen_message_id" json:"frozen_message_id" msgpack:"frozen_message_id"`
-	JoinedAt        int64              `bson:"joined_at" json:"joined_at" msgpack:"joined_at"`
+	ConversationID    int64              `bson:"conversation_id" json:"conversation_id" msgpack:"conversation_id"`
+	UserID            int64              `bson:"user_id" json:"user_id" msgpack:"user_id"`
+	Role              int                `bson:"role" json:"role" msgpack:"role"`
+	Settings          MemberSettingsLite `bson:"settings" json:"settings" msgpack:"settings"`
+	UnreadCount       int                `bson:"unread_count" json:"unread_count" msgpack:"unread_count"`
+	FrozenMessageID   int64              `bson:"frozen_message_id" json:"frozen_message_id" msgpack:"frozen_message_id"`
+	LastReadMessageID int64              `bson:"last_read_message_id" json:"last_read_message_id" msgpack:"last_read_message_id"` // ✅ NOUVEAU
+	JoinedAt          int64              `bson:"joined_at" json:"joined_at" msgpack:"joined_at"`
 }

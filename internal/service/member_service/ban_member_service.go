@@ -71,13 +71,14 @@ func BanMember(ctx context.Context, callerID int64, input member_models.BanMembe
 	// === NOUVEAU : MISE À JOUR SYNCHRONE DU SPEED CACHE ===
 	// Retire le membre du Fan-Out et met à jour son rôle en RAM
 	_ = cache_service.UpdateMemberSpeedCache(ctx, lite_models.MemberLiteRequest{
-		ConversationID:  targetMem.ConversationID,
-		UserID:          targetMem.UserID,
-		Role:            targetMem.Role,
-		Settings:        service.ToMemberSettingsLite(targetMem.Settings),
-		UnreadCount:     targetMem.UnreadCount,
-		FrozenMessageID: targetMem.FrozenMessageID,
-		JoinedAt:        targetMem.JoinedAt,
+		ConversationID:    targetMem.ConversationID,
+		UserID:            targetMem.UserID,
+		Role:              targetMem.Role,
+		Settings:          service.ToMemberSettingsLite(targetMem.Settings),
+		UnreadCount:       targetMem.UnreadCount,
+		FrozenMessageID:   targetMem.FrozenMessageID,
+		LastReadMessageID: targetMem.LastReadMessageID,
+		JoinedAt:          targetMem.JoinedAt,
 	})
 
 	err = redis.EnqueueDB(ctx, targetMem.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMem, redis.TargetAll)

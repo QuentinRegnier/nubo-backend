@@ -2,6 +2,7 @@ package message_service
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
@@ -71,10 +72,21 @@ func ReactToMessage(ctx context.Context, callerID int64, input message_models.Re
 				// UserReaction n'est pas envoyé en broadcast car spécifique à chaque receveur
 			}
 
+			// UserReaction n'est pas envoy  en broadcast car sp cifique   chaque receveur
 			errWs := realtime_service.BroadcastToConversation(bgCtx, msg.ConversationID, "message.reacted", msgView)
 			if errWs != nil {
 				logger.Log.Error().Err(errWs).Msg("Failed to broadcast message reaction")
 			}
+
+			// ✅ NOUVEAU : SYNC LEDGER (Trigger granulaire)
+			participantsStr, _ := redis.ConvParticipants.SMembers(bgCtx, msg.ConversationID)
+			var pIDs []int64
+			for _, p := range participantsStr {
+				if id, err := strconv.ParseInt(p, 10, 64); err == nil {
+					pIDs = append(pIDs, id)
+				}
+			}
+			_ = cache_service.RecordMessageMutation(bgCtx, msg.ConversationID, msg.ID, pIDs)
 		}()
 	}
 

@@ -20,7 +20,7 @@ import (
 func GetProfile(ctx context.Context, callerID int64, input profile_models.GetProfileInput) (profile_models.GetProfileOutput, error) {
 	targetID := input.TargetID
 	if targetID == 0 {
-		targetID = callerID
+		targetID = callerID // Si pas de cible, on charge notre propre profil
 	}
 
 	output := profile_models.GetProfileOutput{
@@ -31,21 +31,28 @@ func GetProfile(ctx context.Context, callerID int64, input profile_models.GetPro
 
 	isSelf := callerID == targetID
 
-	// 1. MATRICE DE RELATIONS
+	// ========================================================================
+	// 1. MATRICE DE RELATIONS (O(1) en RAM)
+	// ========================================================================
 	if !isSelf {
 		output.RelationViewerToTarget = cache_service.RelationValue(ctx, targetID, callerID)
 		output.RelationTargetToViewer = cache_service.RelationValue(ctx, callerID, targetID)
 
+		// Bouclier de sécurité : si la cible nous a bloqués, on simule une 404 (Shadow ban)
 		if output.RelationTargetToViewer == -1 {
 			return profile_models.GetProfileOutput{}, nubo_error.NewNotFound("USER_NOT_FOUND", "Utilisateur introuvable.", nil)
 		}
+		// Si NOUS l'avons bloqué (ViewerToTarget == -1), on laisse passer pour pouvoir le débloquer/signaler via l'UI.
 	}
 
-	// 2. RÉCUPÉRATION DES PARAMÈTRES ET APPLICATION DES VERROUS
+	// ========================================================================
+	// 2. RÉCUPÉRATION DES PARAMÈTRES & VÉRIFICATION DE VISIBILITÉ DU PROFIL
+	// ========================================================================
+	// Lecture L1 -> L2 -> L3 pour récupérer les réglages de confidentialité de la cible
 	settings, errSet := object_cache_service.GetUserSettingsCascade(ctx, targetID)
 
 	if errSet == nil && !isSelf {
-		// ✅ APPLICATION: Profile Visibility
+		// ✅ APPLICATION : Profile Visibility (0: Public, 1: Abonnés, 2: Amis)
 		canViewProfile := false
 		switch settings.Privacy.ProfileVisibility {
 		case 0:
@@ -54,35 +61,44 @@ func GetProfile(ctx context.Context, callerID int64, input profile_models.GetPro
 			canViewProfile = (output.RelationViewerToTarget >= 1)
 		case 2:
 			canViewProfile = (output.RelationViewerToTarget == 2)
+		default:
+			canViewProfile = true
 		}
+
 		if !canViewProfile {
+			// Si on rejette, on s'arrête ici : on économise la BDD (pas de chargement des posts, etc.)
 			return profile_models.GetProfileOutput{}, nubo_error.NewForbidden("PROFILE_PRIVATE", "Ce profil est privé.", nil)
 		}
 	}
 
-	// 3. IDENTITÉ DE L'UTILISATEUR
+	// ========================================================================
+	// 3. IDENTITÉ DE L'UTILISATEUR (Cascade L2 -> L3)
+	// ========================================================================
 	user, err := mongo.MongoLoadUser(targetID, "", "", "")
 	if err != nil || user.ID == 0 {
 		user, err = postgres.FuncLoadUser(targetID, "", "", "")
 		if err != nil || user.ID == 0 {
 			return profile_models.GetProfileOutput{}, nubo_error.NewNotFound("USER_NOT_FOUND", "Utilisateur introuvable.", err)
 		}
+		// Promotion L3 -> L2 asynchrone (Auto-Guérison)
 		go func(u auth_models.UserPayload) {
 			_ = redis.EnqueueDB(context.Background(), u.ID, 0, redis.EntityUser, redis.ActionUpdate, u, redis.TargetMongo)
 		}(user)
 	}
 
-	// ✅ APPLICATION: Show Location
+	// ✅ APPLICATION : Show Location (Masquage de la localisation si refusé)
+	location := user.Location
 	if errSet == nil && !settings.Privacy.ShowLocation && !isSelf {
-		user.Location = ""
+		location = "" // On censure la donnée
 	}
 
-	// ✅ APPLICATION: Show Online Status
+	// ✅ APPLICATION : Show Online Status (Masquage du statut en ligne si refusé)
 	isOnline := cache_service.IsUserOnline(ctx, user.ID)
 	if errSet == nil && !settings.Privacy.ShowOnlineStatus && !isSelf {
-		isOnline = false
+		isOnline = false // On censure l'état de connexion
 	}
 
+	// Mapping sécurisé des champs utiles
 	output.User = auth_models.UserProfileView{
 		ID:        user.ID,
 		Username:  user.Username,
@@ -92,23 +108,27 @@ func GetProfile(ctx context.Context, callerID int64, input profile_models.GetPro
 		Sex:       user.Sex,
 		Bio:       user.Bio,
 		Grade:     user.Grade,
-		Location:  user.Location,
+		Location:  location, // Cible censurée ou non
 		School:    user.School,
 		Work:      user.Work,
 		Badges:    user.Badges,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
-		IsOnline:  isOnline,
+		IsOnline:  isOnline, // Statut censuré ou non
 	}
 
-	// 4. AVATAR
+	// ========================================================================
+	// 4. AVATAR (Génération du lien HMAC signé)
+	// ========================================================================
 	if user.ProfilePictureID > 0 {
 		if view, errMedia := media_service.GenerateMediaViewCascade(ctx, user.ProfilePictureID, targetID, 0, callerID); errMedia == nil {
 			output.Avatar = view
 		}
 	}
 
-	// 5. CONVERSATION DIRECTE
+	// ========================================================================
+	// 5. CONVERSATION DIRECTE (O(log N) RAM L1 + Fallback L2/L3)
+	// ========================================================================
 	if !isSelf {
 		convID, errCache := cache_service.GetDirectConversationCache(ctx, callerID, targetID)
 		if errCache == nil && convID > 0 {
@@ -121,7 +141,9 @@ func GetProfile(ctx context.Context, callerID int64, input profile_models.GetPro
 		}
 	}
 
+	// ========================================================================
 	// 6. CHARGEMENT DU BATCH DE POSTS
+	// ========================================================================
 	postInput := post_models.GetUserPostsInput{
 		TargetUserID: targetID,
 		Limit:        input.Limit,
@@ -129,10 +151,12 @@ func GetProfile(ctx context.Context, callerID int64, input profile_models.GetPro
 		Force:        false,
 	}
 	postsOutput := post_service.GetUserPosts(ctx, postInput)
-
 	if len(postsOutput) > 0 {
 		output.Posts = postsOutput
 
+		// ====================================================================
+		// 7. INTERACTIONS (Likes & Saved) APPARTENANT AU CALLER
+		// ====================================================================
 		batchPostIDs := make([]int64, 0, len(postsOutput))
 		for _, p := range postsOutput {
 			batchPostIDs = append(batchPostIDs, p.PostID)

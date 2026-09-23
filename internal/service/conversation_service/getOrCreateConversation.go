@@ -100,12 +100,14 @@ func hydrateMember(ctx context.Context, convID, userID int64, fromL3 bool) {
 	if err == nil && mem.ID != 0 {
 		_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
 		_ = cache_service.AddMemberToSpeedCache(ctx, lite_models.MemberLiteRequest{
-			ConversationID: mem.ConversationID,
-			UserID:         mem.UserID,
-			Role:           mem.Role,
-			Settings:       service.ToMemberSettingsLite(mem.Settings),
-			UnreadCount:    mem.UnreadCount,
-			JoinedAt:       mem.JoinedAt,
+			ConversationID:    mem.ConversationID,
+			UserID:            mem.UserID,
+			Role:              mem.Role,
+			Settings:          service.ToMemberSettingsLite(mem.Settings),
+			FrozenMessageID:   mem.FrozenMessageID,
+			LastReadMessageID: mem.LastReadMessageID,
+			UnreadCount:       mem.UnreadCount,
+			JoinedAt:          mem.JoinedAt,
 		})
 	}
 }

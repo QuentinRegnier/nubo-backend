@@ -21,6 +21,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/saved_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/search_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/security_handlers"
+	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/sync_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/telemetry_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/user_settings_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/api/websocket"
@@ -115,6 +116,8 @@ func SetupRoutes(r *gin.Engine) {
 	secured.POST("/sync/inbox", conversation_handlers.SyncInboxHandler)       //
 	secured.POST("/sync/identity", auth_handlers.SyncIdentityHandler)         //
 	secured.POST("/sync/activity", notification_handlers.SyncActivityHandler) //
+	secured.POST("/sync/deltas", sync_handlers.GetDeltasHandler)
+	secured.POST("/sync/conversations/messages", sync_handlers.SyncMessagesHandler)
 
 	// --- Actions Sociales ---
 	secured.POST("/like/post/set", like_handlers.LikePostHandler)       //
@@ -161,8 +164,8 @@ func SetupRoutes(r *gin.Engine) {
 	secured.GET("/information-message", LoadAdminInformationMessageHandler)     // ℹ️❌
 
 	// --- Messagerie / Groupes ---
-	secured.POST("/conversations/user/get", conversation_handlers.GetUserConversationsHandler)                     //
-	secured.POST("/conversations/get", conversation_handlers.GetUserConversationsHandler)                          //
+	secured.POST("/conversation/user/get", conversation_handlers.GetUserConversationsHandler)                      //
+	secured.POST("/conversation/get", conversation_handlers.GetUserConversationsHandler)                           //
 	secured.POST("/conversation/members/get", member_handlers.GetConversationMembersHandler)                       //
 	secured.POST("/conversation/suggest", conversation_handlers.SuggestContactsHandler)                            //
 	secured.POST("/conversation/set", conversation_handlers.CreateConversationHandler)                             //
@@ -177,8 +180,9 @@ func SetupRoutes(r *gin.Engine) {
 	secured.POST("/conversation/pin", conversation_handlers.PinConversationHandler)        //
 	secured.DELETE("/conversation/unpin", conversation_handlers.UnpinConversationHandler)  //
 	secured.DELETE("/conversation/delete", conversation_handlers.LeaveConversationHandler) //
-	secured.POST("/messages/get", message_handlers.GetMessagesHandler)                     //
-	secured.POST("/messages/reactions/list", message_handlers.GetMessageReactionsHandler)  //
+	secured.POST("/conversation/watermarks/get", conversation_handlers.GetWatermarksHandler)
+	secured.POST("/messages/get", message_handlers.GetMessagesHandler)                    //
+	secured.POST("/messages/reactions/list", message_handlers.GetMessageReactionsHandler) //
 
 	secured.POST("/group/user/set", conversation_handlers.AddMemberHandler) //
 	secured.DELETE("/group/user/ban/set", member_handlers.BanMemberHandler) //

@@ -34,17 +34,27 @@ func UpdateMemberSettings(ctx context.Context, callerID int64, input member_mode
 
 	// 4. MISE À JOUR SYNCHRONE DU SPEED CACHE (Lite Models pour la barre de recherche/inbox)
 	_ = cache_service.UpdateMemberSpeedCache(ctx, lite_models.MemberLiteRequest{
-		ConversationID:  mem.ConversationID,
-		UserID:          mem.UserID,
-		Role:            mem.Role,
-		Settings:        service.ToMemberSettingsLite(mem.Settings),
-		UnreadCount:     mem.UnreadCount,
-		FrozenMessageID: mem.FrozenMessageID,
-		JoinedAt:        mem.JoinedAt,
+		ConversationID:    mem.ConversationID,
+		UserID:            mem.UserID,
+		Role:              mem.Role,
+		Settings:          service.ToMemberSettingsLite(mem.Settings),
+		UnreadCount:       mem.UnreadCount,
+		FrozenMessageID:   mem.FrozenMessageID,
+		LastReadMessageID: mem.LastReadMessageID,
+		JoinedAt:          mem.JoinedAt,
 	})
 
 	// 5. DÉLÉGATION À LA FILE ASYNCHRONE (Write-Behind)
 	// PartitionKey = input.ConversationID pour s'assurer que les événements de cette conversation soient traités dans le bon ordre
+	errQueue := redis.EnqueueDB(ctx, mem.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, mem, redis.TargetAll)
+
+	// ✅ NOUVEAU : SYNC LEDGER (Trigger local)
+	// Le changement de paramètre n'affecte QUE l'utilisateur appelant, donc on ne déclenche
+	// la mutation que pour lui.
+	go func(cID int64, uID int64) {
+		bgCtx := context.Background()
+		_ = cache_service.RecordConversationMutation(bgCtx, cID, []int64{uID})
+	}(input.ConversationID, callerID)
 
 	output := member_models.UpdateMemberSettingsOutput{}
 
@@ -57,5 +67,5 @@ func UpdateMemberSettings(ctx context.Context, callerID int64, input member_mode
 	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
 	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
 
-	return output, redis.EnqueueDB(ctx, mem.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, mem, redis.TargetAll)
+	return output, errQueue
 }

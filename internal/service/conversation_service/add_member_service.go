@@ -3,6 +3,7 @@ package conversation_service
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
@@ -110,26 +111,29 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 		if canAddDirectly {
 			// --- CAS A : AJOUT AUTOMATIQUE DIRECT ---
 			memberPayload := member_models.MemberPayload{
-				ID:              pkg.GenerateID(),
-				ConversationID:  conv.ID,
-				UserID:          targetID,
-				Role:            0, // Membre standard
-				Settings:        member_models.DefaultMemberSettings(conv.Type),
-				JoinedAt:        domain.TimeToMillis(now),
-				FrozenMessageID: 0,
-				UnreadCount:     0,
-				CreatedAt:       domain.TimeToMillis(now),
-				UpdatedAt:       domain.TimeToMillis(now),
+				ID:                pkg.GenerateID(),
+				ConversationID:    conv.ID,
+				UserID:            targetID,
+				Role:              0, // Membre standard
+				Settings:          member_models.DefaultMemberSettings(conv.Type),
+				JoinedAt:          domain.TimeToMillis(now),
+				FrozenMessageID:   0,
+				LastReadMessageID: 0,
+				UnreadCount:       0,
+				CreatedAt:         domain.TimeToMillis(now),
+				UpdatedAt:         domain.TimeToMillis(now),
 			}
 
 			_ = object_cache_service.SetMemberInObjectCache(ctx, memberPayload)
 			_ = cache_service.AddMemberToSpeedCache(ctx, lite_models.MemberLiteRequest{
-				ConversationID: conv.ID,
-				UserID:         targetID,
-				Role:           0,
-				Settings:       service.ToMemberSettingsLite(member_models.DefaultMemberSettings(conv.Type)),
-				UnreadCount:    0,
-				JoinedAt:       memberPayload.JoinedAt,
+				ConversationID:    conv.ID,
+				UserID:            targetID,
+				Role:              0,
+				Settings:          service.ToMemberSettingsLite(member_models.DefaultMemberSettings(conv.Type)),
+				FrozenMessageID:   0,
+				LastReadMessageID: 0,
+				UnreadCount:       0,
+				JoinedAt:          memberPayload.JoinedAt,
 			})
 
 			_ = redis.EnqueueDB(ctx, memberPayload.ID, conv.ID, redis.EntityMembers, redis.ActionCreate, memberPayload, redis.TargetAll)
@@ -150,13 +154,11 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 			go func(payload member_models.MemberPayload, cID int64, tID int64, cType int, cCaller int64) {
 				bgCtx := context.Background()
 
-				// ✅ APPLICATION: Show Online Status
 				isOnline := cache_service.IsUserOnline(bgCtx, payload.UserID)
 				if targetLite.ShowOnlineStatus == false {
 					isOnline = false
 				}
 
-				// HYDRATATION CONDITIONNELLE DU DTO WEBSOCKET
 				memView := member_models.MemberView{
 					MemberPayload: payload,
 					IsOnline:      isOnline,
@@ -166,10 +168,9 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 					memView.Username = targetLite.Username
 
 					if cType == 2 || cType == 3 {
-						memView.AvatarCommunityID = targetLite.ProfilePictureID // Twitch Mode
+						memView.AvatarCommunityID = targetLite.ProfilePictureID
 					} else {
 						if targetLite.ProfilePictureID > 0 {
-							// Mode Classique : URL HMAC signée
 							if avatarView, errMedia := media_service.GenerateMediaViewCascade(bgCtx, targetLite.ProfilePictureID, payload.UserID, 0, cCaller); errMedia == nil {
 								memView.Avatar = avatarView
 							}
@@ -177,11 +178,18 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 					}
 				}
 
-				// Diffusion du MemberView au lieu du MemberPayload brut !
 				_ = realtime_service.BroadcastToConversation(bgCtx, cID, "member.added", memView)
-
-				// On notifie la cible qu'elle a une nouvelle conversation !
 				_ = realtime_service.DistributeToUsers(bgCtx, "conversation.created", conv, []int64{tID})
+
+				// ✅ NOUVEAU : SYNC LEDGER (Trigger global)
+				participantsStr, _ := redis.ConvParticipants.SMembers(bgCtx, cID)
+				var pIDs []int64
+				for _, p := range participantsStr {
+					if id, err := strconv.ParseInt(p, 10, 64); err == nil {
+						pIDs = append(pIDs, id)
+					}
+				}
+				_ = cache_service.RecordConversationMutation(bgCtx, cID, pIDs)
 
 			}(memberPayload, conv.ID, targetID, conv.Type, callerID)
 		} else {

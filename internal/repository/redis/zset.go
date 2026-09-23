@@ -315,3 +315,28 @@ func ZScores(ctx context.Context, key string, members []string) ([]float64, erro
 	}
 	return scores, nil
 }
+
+// ZAddMultiple ajoute plusieurs éléments dans des ZSETs distincts (une clé = un ZSET)
+// avec le même membre et le même score, en un seul appel réseau via Pipeline.
+// Utile pour le système de Sync Ledger (ex: "ajouter le convID à tous les participants").
+func (c *Collection) ZAddMultiple(ctx context.Context, ids []int64, score float64, member string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	pipe := c.Client.Pipeline()
+	for _, id := range ids {
+		key := c.Key(id)
+		pipe.ZAdd(ctx, key, &redis.Z{
+			Score:  score,
+			Member: member,
+		})
+		// Si la collection a un TTL par défaut défini (comme le Ledger), on l'applique
+		if c.DefaultTTL > 0 {
+			pipe.Expire(ctx, key, c.DefaultTTL)
+		}
+	}
+
+	_, err := pipe.Exec(ctx)
+	return err
+}

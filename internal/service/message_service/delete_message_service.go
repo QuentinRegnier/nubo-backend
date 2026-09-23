@@ -39,12 +39,24 @@ func DeleteMessage(ctx context.Context, callerID int64, input message_models.Del
 	err = redis.EnqueueDB(ctx, msg.ID, msg.ConversationID, redis.EntityMessage, redis.ActionUpdate, msg, redis.TargetAll)
 
 	// ENVOI NOTIFICATION (Asynchrone)
+	// ENVOI NOTIFICATION (Asynchrone)
 	if err == nil {
 		go func() {
-			err := realtime_service.BroadcastToConversation(context.Background(), msg.ConversationID, "message.deleted", msg)
-			if err != nil {
-				logger.Log.Error().Err(err).Msg("Failed to broadcast message deletion")
+			bgCtx := context.Background()
+			errWS := realtime_service.BroadcastToConversation(bgCtx, msg.ConversationID, "message.deleted", msg)
+			if errWS != nil {
+				logger.Log.Error().Err(errWS).Msg("Failed to broadcast message deletion")
 			}
+
+			// ✅ NOUVEAU : SYNC LEDGER (Trigger granulaire)
+			participantsStr, _ := redis.ConvParticipants.SMembers(bgCtx, msg.ConversationID)
+			var pIDs []int64
+			for _, p := range participantsStr {
+				if id, err := strconv.ParseInt(p, 10, 64); err == nil {
+					pIDs = append(pIDs, id)
+				}
+			}
+			_ = cache_service.RecordMessageMutation(bgCtx, msg.ConversationID, msg.ID, pIDs)
 		}()
 	}
 

@@ -19,7 +19,7 @@ type InboxFallbackResult struct {
 }
 
 func FuncLoadConversationFallback(ctx context.Context, userID int64, convIDs []int64) ([]InboxFallbackResult, error) {
-	query := `SELECT conversation_id, title, description, avatar_id, type, conversation_settings, last_message_id, role, settings, frozen_message_id, unread_count, joined_at FROM messaging.func_load_conversation_fallback($1, $2)`
+	query := `SELECT conversation_id, title, description, avatar_id, type, conversation_settings, last_message_id, role, settings, frozen_message_id, last_read_message_id, unread_count, joined_at FROM messaging.func_load_conversation_fallback($1, $2)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, userID, convIDs)
 	if err != nil {
 		return nil, nubo_error.NewInternal(err)
@@ -42,11 +42,12 @@ func FuncLoadConversationFallback(ctx context.Context, userID int64, convIDs []i
 		var lastMsgID sql.NullInt64
 		var role, unreadCount int
 		var frozenID sql.NullInt64
+		var lastReadMsgID sql.NullInt64
 		var joinedAt time.Time
 		var memSettingsRaw sql.NullString
 		var externalLink sql.NullString
 
-		if err := rows.Scan(&cid, &title, &description, &avatarID, &cType, &convSettingsRaw, &lastMsgID, &role, &memSettingsRaw, &externalLink, &frozenID, &unreadCount, &joinedAt); err == nil {
+		if err := rows.Scan(&cid, &title, &description, &avatarID, &cType, &convSettingsRaw, &lastMsgID, &role, &memSettingsRaw, &externalLink, &frozenID, &lastReadMsgID, &unreadCount, &joinedAt); err == nil {
 			conv := lite_models.ConvLiteRequest{ID: cid, Type: cType}
 			if title.Valid {
 				conv.Title = title.String
@@ -87,6 +88,9 @@ func FuncLoadConversationFallback(ctx context.Context, userID int64, convIDs []i
 			}
 			if frozenID.Valid {
 				mem.FrozenMessageID = frozenID.Int64
+			}
+			if lastReadMsgID.Valid {
+				mem.LastReadMessageID = lastReadMsgID.Int64
 			}
 			results = append(results, InboxFallbackResult{Conversation: conv, Member: mem})
 		}

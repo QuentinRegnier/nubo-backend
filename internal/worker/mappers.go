@@ -584,7 +584,12 @@ func (m *MemberMapper) TableName() string {
 }
 
 func (m *MemberMapper) Columns() []string {
-	return []string{"id", "conversation_id", "user_id", "role", "settings", "joined_at", "unread_count", "frozen_message_id", "created_at", "updated_at"}
+	return []string{
+		"id", "conversation_id", "user_id", "role", "settings",
+		"joined_at", "unread_count", "frozen_message_id",
+		"last_read_message_id", // ✅ NOUVEAU
+		"created_at", "updated_at",
+	}
 }
 
 func (m *MemberMapper) ToRow(data any) ([]any, error) {
@@ -597,18 +602,33 @@ func (m *MemberMapper) ToRow(data any) ([]any, error) {
 		return nil, err
 	}
 
-	// Sérialisation du Settings (La structure garantit un JSON valide)
+	// Sérialisation du Settings
 	settingsJSON, _ := json.Marshal(mem.Settings)
 	var settingsDB any = string(settingsJSON)
 
+	// TRADUCTION DES NULLs (Zéro-valeur = Nil en BDD pour Snowflake IDs)
 	var frozenDB any = mem.FrozenMessageID
 	if mem.FrozenMessageID == 0 {
 		frozenDB = nil
 	}
 
+	var lastReadDB any = mem.LastReadMessageID
+	if mem.LastReadMessageID == 0 {
+		lastReadDB = nil
+	}
+
 	return []any{
-		mem.ID, mem.ConversationID, mem.UserID, mem.Role, settingsDB,
-		mem.JoinedAt, mem.UnreadCount, frozenDB, mem.CreatedAt, mem.UpdatedAt,
+		mem.ID,
+		mem.ConversationID,
+		mem.UserID,
+		mem.Role,
+		settingsDB,
+		mem.JoinedAt,
+		mem.UnreadCount,
+		frozenDB,
+		lastReadDB, // ✅ NOUVEAU
+		mem.CreatedAt,
+		mem.UpdatedAt,
 	}, nil
 }
 

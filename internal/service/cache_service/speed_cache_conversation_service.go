@@ -127,12 +127,14 @@ func GetInboxView(ctx context.Context, userID int64, limit int64, offset int64) 
 				}
 
 				memLite := lite_models.MemberLiteRequest{
-					ConversationID: res.Member.ConversationID,
-					UserID:         userID, // On connaît le UserID puisqu'on l'a passé à la fonction
-					Role:           res.Member.Role,
-					Settings:       res.Member.Settings,
-					UnreadCount:    res.Member.UnreadCount,
-					JoinedAt:       res.Member.JoinedAt,
+					ConversationID:    res.Member.ConversationID,
+					UserID:            userID, // On connaît le UserID puisqu'on l'a passé à la fonction
+					Role:              res.Member.Role,
+					Settings:          res.Member.Settings,
+					FrozenMessageID:   res.Member.FrozenMessageID,
+					LastReadMessageID: res.Member.LastReadMessageID,
+					UnreadCount:       res.Member.UnreadCount,
+					JoinedAt:          res.Member.JoinedAt,
 				}
 
 				// ✅ ASSIGNATION SÉCURISÉE
@@ -259,12 +261,14 @@ func ProcessNewMessageInSpeedCache(ctx context.Context, msgID int64, convID int6
 				// CACHE MISS MEMBER : On réhydrate l'objet Member complet depuis L2/L3
 				if pgMem, errPg := postgres.FuncGetMember(ctx, convID, participantID); errPg == nil && pgMem.ID != 0 {
 					memberLite = lite_models.MemberLiteRequest{
-						ConversationID: pgMem.ConversationID,
-						UserID:         pgMem.UserID,
-						Role:           pgMem.Role,
-						Settings:       service.ToMemberSettingsLite(pgMem.Settings),
-						UnreadCount:    pgMem.UnreadCount + 1, // On ajoute le nouveau message
-						JoinedAt:       pgMem.JoinedAt,
+						ConversationID:    pgMem.ConversationID,
+						UserID:            pgMem.UserID,
+						Role:              pgMem.Role,
+						Settings:          service.ToMemberSettingsLite(pgMem.Settings),
+						FrozenMessageID:   pgMem.FrozenMessageID,
+						LastReadMessageID: pgMem.LastReadMessageID,
+						UnreadCount:       pgMem.UnreadCount + 1, // On ajoute le nouveau message
+						JoinedAt:          pgMem.JoinedAt,
 					}
 					_ = redis.ConvMembers.SetObject(ctx, memberID, memberLite)
 				}
@@ -312,16 +316,23 @@ func RemoveMemberFromSpeedCache(ctx context.Context, convID int64, userID int64)
 	return err
 }
 
-// ResetMemberUnreadCountInSpeedCache remet le compteur de messages non lus à 0 pour un membre (Mode DDD)
-func ResetMemberUnreadCountInSpeedCache(ctx context.Context, convID int64, userID int64) error {
+// ResetMemberUnreadCountInSpeedCache remet le compteur de messages non lus à 0 pour un membre
+// et met à jour son curseur de lecture (Mode DDD)
+func ResetMemberUnreadCountInSpeedCache(ctx context.Context, convID int64, userID int64, lastReadMessageID int64) error {
 	var memberLite lite_models.MemberLiteRequest
 	memberID := fmt.Sprintf("%d:%d", convID, userID)
 
 	// Si le membre est en Speed Cache, on le met à jour
 	if err := redis.ConvMembers.GetObject(ctx, memberID, &memberLite); err == nil {
 		memberLite.UnreadCount = 0
+
+		// ✅ NOUVEAU : Mise à jour du watermark en RAM L1
+		if lastReadMessageID > memberLite.LastReadMessageID {
+			memberLite.LastReadMessageID = lastReadMessageID
+		}
+
 		errSet := redis.ConvMembers.SetObject(ctx, memberID, memberLite)
-		_ = redis.InboxActivity.SetPrimitive(ctx, userID, time.Now().UnixMilli()) // NOUVEAU
+		_ = redis.InboxActivity.SetPrimitive(ctx, userID, time.Now().UnixMilli())
 		return errSet
 	}
 	return nil // Ne pas faire d'erreur si l'utilisateur n'a pas chargé cette info en RAM récemment
@@ -356,12 +367,14 @@ func RehydrateConversationItemInSpeedCache(ctx context.Context, fullConv convers
 	}
 
 	memLite := lite_models.MemberLiteRequest{
-		ConversationID: fullMem.ConversationID,
-		UserID:         fullMem.UserID,
-		Role:           fullMem.Role,
-		Settings:       service.ToMemberSettingsLite(fullMem.Settings),
-		UnreadCount:    fullMem.UnreadCount,
-		JoinedAt:       fullMem.JoinedAt,
+		ConversationID:    fullMem.ConversationID,
+		UserID:            fullMem.UserID,
+		Role:              fullMem.Role,
+		Settings:          service.ToMemberSettingsLite(fullMem.Settings),
+		FrozenMessageID:   fullMem.FrozenMessageID,
+		LastReadMessageID: fullMem.LastReadMessageID,
+		UnreadCount:       fullMem.UnreadCount,
+		JoinedAt:          fullMem.JoinedAt,
 	}
 
 	// 1. Restauration de la Méta (O(1))
@@ -421,12 +434,14 @@ func SeedMessagingSpeedCache(ctx context.Context) error {
 		memberID := fmt.Sprintf("%d:%d", activeMem.Member.ConversationID, activeMem.Member.UserID)
 
 		memLite := lite_models.MemberLiteRequest{
-			ConversationID: activeMem.Member.ConversationID,
-			UserID:         activeMem.Member.UserID,
-			Role:           activeMem.Member.Role,
-			Settings:       activeMem.Member.Settings,
-			UnreadCount:    activeMem.Member.UnreadCount,
-			JoinedAt:       activeMem.Member.JoinedAt,
+			ConversationID:    activeMem.Member.ConversationID,
+			UserID:            activeMem.Member.UserID,
+			Role:              activeMem.Member.Role,
+			Settings:          activeMem.Member.Settings,
+			FrozenMessageID:   activeMem.Member.FrozenMessageID,
+			LastReadMessageID: activeMem.Member.LastReadMessageID,
+			UnreadCount:       activeMem.Member.UnreadCount,
+			JoinedAt:          activeMem.Member.JoinedAt,
 		}
 
 		// A. Remplissage ConvMembers (Object Cache)

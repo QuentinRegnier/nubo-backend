@@ -69,13 +69,14 @@ func RefuseCommunityRequest(ctx context.Context, callerID int64, input member_mo
 
 	// Mais on maintient son empreinte Lite dans le SpeedCache avec son nouveau rôle pour les vérifications rapides
 	_ = cache_service.UpdateMemberSpeedCache(ctx, lite_models.MemberLiteRequest{
-		ConversationID:  targetMem.ConversationID,
-		UserID:          targetMem.UserID,
-		Role:            targetMem.Role, // -4
-		Settings:        service.ToMemberSettingsLite(targetMem.Settings),
-		UnreadCount:     targetMem.UnreadCount,
-		FrozenMessageID: targetMem.FrozenMessageID,
-		JoinedAt:        targetMem.JoinedAt,
+		ConversationID:    targetMem.ConversationID,
+		UserID:            targetMem.UserID,
+		Role:              targetMem.Role, // -4
+		Settings:          service.ToMemberSettingsLite(targetMem.Settings),
+		UnreadCount:       targetMem.UnreadCount,
+		FrozenMessageID:   targetMem.FrozenMessageID,
+		LastReadMessageID: targetMem.LastReadMessageID,
+		JoinedAt:          targetMem.JoinedAt,
 	})
 
 	// 6. ENVOI AUX WORKERS (Write-Behind)

@@ -49,12 +49,14 @@ func GetUserConversationsPaginated(ctx context.Context, callerID int64, input co
 						ExternalLink:  res.Conversation.ExternalLink,
 					},
 					Member: lite_models.MemberLiteRequest{
-						ConversationID: res.Member.ConversationID,
-						UserID:         res.Member.UserID,
-						Role:           res.Member.Role,
-						Settings:       service.ToMemberSettingsLite(res.Member.Settings),
-						UnreadCount:    res.Member.UnreadCount,
-						JoinedAt:       res.Member.JoinedAt,
+						ConversationID:    res.Member.ConversationID,
+						UserID:            res.Member.UserID,
+						Role:              res.Member.Role,
+						Settings:          service.ToMemberSettingsLite(res.Member.Settings),
+						FrozenMessageID:   res.Member.FrozenMessageID,
+						LastReadMessageID: res.Member.LastReadMessageID,
+						UnreadCount:       res.Member.UnreadCount,
+						JoinedAt:          res.Member.JoinedAt,
 					},
 				})
 
@@ -88,12 +90,14 @@ func GetUserConversationsPaginated(ctx context.Context, callerID int64, input co
 						ExternalLink:  res.Conversation.ExternalLink,
 					},
 					Member: lite_models.MemberLiteRequest{
-						ConversationID: res.Member.ConversationID,
-						UserID:         res.Member.UserID,
-						Role:           res.Member.Role,
-						Settings:       service.ToMemberSettingsLite(res.Member.Settings),
-						UnreadCount:    res.Member.UnreadCount,
-						JoinedAt:       res.Member.JoinedAt,
+						ConversationID:    res.Member.ConversationID,
+						UserID:            res.Member.UserID,
+						Role:              res.Member.Role,
+						Settings:          service.ToMemberSettingsLite(res.Member.Settings),
+						FrozenMessageID:   res.Member.FrozenMessageID,
+						LastReadMessageID: res.Member.LastReadMessageID,
+						UnreadCount:       res.Member.UnreadCount,
+						JoinedAt:          res.Member.JoinedAt,
 					},
 				})
 

@@ -2,6 +2,7 @@ package message_service
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -61,6 +62,16 @@ func UnreactToMessage(ctx context.Context, callerID int64, input message_models.
 			if errWs != nil {
 				logger.Log.Error().Err(errWs).Msg("Failed to broadcast message unreaction")
 			}
+
+			// ✅ NOUVEAU : SYNC LEDGER (Trigger granulaire)
+			participantsStr, _ := redis.ConvParticipants.SMembers(bgCtx, msg.ConversationID)
+			var pIDs []int64
+			for _, p := range participantsStr {
+				if id, err := strconv.ParseInt(p, 10, 64); err == nil {
+					pIDs = append(pIDs, id)
+				}
+			}
+			_ = cache_service.RecordMessageMutation(bgCtx, msg.ConversationID, msg.ID, pIDs)
 		}()
 	}
 

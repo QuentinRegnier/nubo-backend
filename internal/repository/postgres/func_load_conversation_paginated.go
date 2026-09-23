@@ -18,7 +18,7 @@ type FullInboxResult struct {
 }
 
 func FuncLoadConversationPaginated(ctx context.Context, userID int64, limit int64, offset int64) ([]FullInboxResult, error) {
-	query := `SELECT conv_id, conv_type, conv_title, conv_description, conv_avatar_id, conv_last_msg_id, conv_state, conv_settings, external_link, conv_created, conv_updated, mem_id, mem_conv_id, mem_user_id, mem_role, mem_settings, mem_joined, mem_unread, mem_frozen_id, mem_created, mem_updated FROM messaging.func_load_conversation_paginated($1, $2, $3)`
+	query := `SELECT conv_id, conv_type, conv_title, conv_description, conv_avatar_id, conv_last_msg_id, conv_state, conv_settings, external_link, conv_created, conv_updated, mem_id, mem_conv_id, mem_user_id, mem_role, mem_settings, mem_joined, mem_unread, mem_frozen_id, mem_last_read_message_id, mem_created, mem_updated FROM messaging.func_load_conversation_paginated($1, $2, $3)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, userID, limit, offset)
 	if err != nil {
 		return nil, nubo_error.NewInternal(err)
@@ -38,10 +38,11 @@ func FuncLoadConversationPaginated(ctx context.Context, userID int64, limit int6
 		var cAvatarID, cLastMsgID sql.NullInt64
 		var convSettingsRaw, memSettingsRaw, externalLink sql.NullString
 		var memFrozenID sql.NullInt64
+		var memLastID sql.NullInt64
 
 		err := rows.Scan(
 			&c.ID, &c.Type, &cTitle, &cDescription, &cAvatarID, &cLastMsgID, &c.State, &convSettingsRaw, &externalLink, &c.CreatedAt, &c.UpdatedAt,
-			&m.ID, &m.ConversationID, &m.UserID, &m.Role, &memSettingsRaw, &m.JoinedAt, &m.UnreadCount, &memFrozenID, &m.CreatedAt, &m.UpdatedAt,
+			&m.ID, &m.ConversationID, &m.UserID, &m.Role, &memSettingsRaw, &m.JoinedAt, &m.UnreadCount, &memFrozenID, &memLastID, &m.CreatedAt, &m.UpdatedAt,
 		)
 		if err == nil {
 			if cTitle.Valid {
@@ -58,6 +59,9 @@ func FuncLoadConversationPaginated(ctx context.Context, userID int64, limit int6
 			}
 			if memFrozenID.Valid {
 				m.FrozenMessageID = memFrozenID.Int64
+			}
+			if memLastID.Valid {
+				m.LastReadMessageID = memLastID.Int64
 			}
 
 			if convSettingsRaw.Valid && convSettingsRaw.String != "" && convSettingsRaw.String != "{}" {

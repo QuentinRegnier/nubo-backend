@@ -108,25 +108,29 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 		membersToAdd := []int64{callerID, input.ParticipantIDs[0]}
 		for _, userID := range membersToAdd {
 			mem := member_models.MemberPayload{
-				ID:             pkg.GenerateID(),
-				ConversationID: convID,
-				UserID:         userID,
-				Role:           0,
-				Settings:       member_models.DefaultMemberSettings(convPayload.Type),
-				JoinedAt:       domain.TimeToMillis(now),
-				UnreadCount:    0,
-				CreatedAt:      domain.TimeToMillis(now),
-				UpdatedAt:      domain.TimeToMillis(now),
+				ID:                pkg.GenerateID(),
+				ConversationID:    convID,
+				UserID:            userID,
+				Role:              0,
+				Settings:          member_models.DefaultMemberSettings(convPayload.Type),
+				JoinedAt:          domain.TimeToMillis(now),
+				FrozenMessageID:   0,
+				LastReadMessageID: 0,
+				UnreadCount:       0,
+				CreatedAt:         domain.TimeToMillis(now),
+				UpdatedAt:         domain.TimeToMillis(now),
 			}
 			_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
 
 			// === NOUVEAU : MISE À JOUR SYNCHRONE DU SPEED CACHE ===
 			_ = cache_service.AddMemberToSpeedCache(ctx, lite_models.MemberLiteRequest{
-				ConversationID: mem.ConversationID,
-				UserID:         mem.UserID,
-				Role:           mem.Role,
-				Settings:       service.ToMemberSettingsLite(mem.Settings),
-				UnreadCount:    mem.UnreadCount,
+				ConversationID:    mem.ConversationID,
+				UserID:            mem.UserID,
+				Role:              mem.Role,
+				Settings:          service.ToMemberSettingsLite(mem.Settings),
+				FrozenMessageID:   mem.FrozenMessageID,
+				LastReadMessageID: mem.LastReadMessageID,
+				UnreadCount:       mem.UnreadCount,
 			})
 
 			// ENVOI NOTIFICATION
@@ -137,27 +141,30 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 	} else if input.Type == 1 {
 		// --- CRÉATION GROUPE (Type 1) ---
 		mem := member_models.MemberPayload{
-			ID:              pkg.GenerateID(),
-			ConversationID:  convID,
-			UserID:          callerID,
-			Role:            2, // Propriétaire
-			Settings:        member_models.DefaultMemberSettings(convPayload.Type),
-			JoinedAt:        domain.TimeToMillis(now),
-			FrozenMessageID: 0,
-			UnreadCount:     0,
-			CreatedAt:       domain.TimeToMillis(now),
-			UpdatedAt:       domain.TimeToMillis(now),
+			ID:                pkg.GenerateID(),
+			ConversationID:    convID,
+			UserID:            callerID,
+			Role:              2, // Propriétaire
+			Settings:          member_models.DefaultMemberSettings(convPayload.Type),
+			JoinedAt:          domain.TimeToMillis(now),
+			FrozenMessageID:   0,
+			LastReadMessageID: 0,
+			UnreadCount:       0,
+			CreatedAt:         domain.TimeToMillis(now),
+			UpdatedAt:         domain.TimeToMillis(now),
 		}
 		_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
 
 		// === NOUVEAU : MISE À JOUR SYNCHRONE DU SPEED CACHE ===
 		_ = cache_service.AddMemberToSpeedCache(ctx, lite_models.MemberLiteRequest{
-			ConversationID: mem.ConversationID,
-			UserID:         mem.UserID,
-			Role:           mem.Role,
-			Settings:       service.ToMemberSettingsLite(mem.Settings),
-			UnreadCount:    mem.UnreadCount,
-			JoinedAt:       mem.JoinedAt,
+			ConversationID:    mem.ConversationID,
+			UserID:            mem.UserID,
+			Role:              mem.Role,
+			Settings:          service.ToMemberSettingsLite(mem.Settings),
+			FrozenMessageID:   mem.FrozenMessageID,
+			LastReadMessageID: mem.LastReadMessageID,
+			UnreadCount:       mem.UnreadCount,
+			JoinedAt:          mem.JoinedAt,
 		})
 
 		_ = redis.EnqueueDB(ctx, mem.ID, convID, redis.EntityMembers, redis.ActionCreate, mem, redis.TargetAll)

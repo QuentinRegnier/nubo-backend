@@ -34,13 +34,14 @@ func UnpinConversation(ctx context.Context, callerID int64, input conversation_m
 	// 4. Mise à jour synchrone L1 (Object et Speed Cache)
 	_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
 	_ = cache_service.UpdateMemberSpeedCache(ctx, lite_models.MemberLiteRequest{
-		ConversationID:  mem.ConversationID,
-		UserID:          mem.UserID,
-		Role:            mem.Role,
-		Settings:        service.ToMemberSettingsLite(mem.Settings),
-		UnreadCount:     mem.UnreadCount,
-		FrozenMessageID: mem.FrozenMessageID,
-		JoinedAt:        mem.JoinedAt,
+		ConversationID:    mem.ConversationID,
+		UserID:            mem.UserID,
+		Role:              mem.Role,
+		Settings:          service.ToMemberSettingsLite(mem.Settings),
+		UnreadCount:       mem.UnreadCount,
+		FrozenMessageID:   mem.FrozenMessageID,
+		LastReadMessageID: mem.LastReadMessageID,
+		JoinedAt:          mem.JoinedAt,
 	})
 
 	// 5. Persistance Asynchrone (Write-Behind)

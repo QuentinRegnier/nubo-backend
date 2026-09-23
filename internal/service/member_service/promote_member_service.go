@@ -60,13 +60,14 @@ func PromoteMember(ctx context.Context, callerID int64, input member_models.Prom
 
 	// === NOUVEAU : MISE À JOUR SYNCHRONE DU SPEED CACHE ===
 	_ = cache_service.UpdateMemberSpeedCache(ctx, lite_models.MemberLiteRequest{
-		ConversationID:  targetMem.ConversationID,
-		UserID:          targetMem.UserID,
-		Role:            targetMem.Role,
-		Settings:        service.ToMemberSettingsLite(targetMem.Settings),
-		UnreadCount:     targetMem.UnreadCount,
-		FrozenMessageID: targetMem.FrozenMessageID,
-		JoinedAt:        targetMem.JoinedAt,
+		ConversationID:    targetMem.ConversationID,
+		UserID:            targetMem.UserID,
+		Role:              targetMem.Role,
+		Settings:          service.ToMemberSettingsLite(targetMem.Settings),
+		UnreadCount:       targetMem.UnreadCount,
+		FrozenMessageID:   targetMem.FrozenMessageID,
+		LastReadMessageID: targetMem.LastReadMessageID,
+		JoinedAt:          targetMem.JoinedAt,
 	})
 
 	// 7. ENVOI AUX WORKERS (Write-Behind Asynchrone)

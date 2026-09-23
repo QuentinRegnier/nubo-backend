@@ -2,6 +2,7 @@ package conversation_service
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
@@ -66,6 +67,18 @@ func LeaveConversation(ctx context.Context, callerID int64, convID int64, input 
 			if err != nil {
 				logger.Log.Error().Err(err).Msg("Failed to broadcast member left")
 			}
+
+			// ✅ NOUVEAU : SYNC LEDGER (Trigger global)
+			participantsStr, _ := redis.ConvParticipants.SMembers(context.Background(), convID)
+			var pIDs []int64
+			for _, p := range participantsStr {
+				if id, err := strconv.ParseInt(p, 10, 64); err == nil {
+					pIDs = append(pIDs, id)
+				}
+			}
+			// On ajoute le partant pour que son client efface localement au prochain /sync
+			pIDs = append(pIDs, mem.UserID)
+			_ = cache_service.RecordConversationMutation(context.Background(), convID, pIDs)
 		}()
 	}
 
