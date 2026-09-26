@@ -10,151 +10,152 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// CreateCommunity orchestre la création d'une communauté publique (Type 3) en respectant les droits et le DDD.
+// ############################################################################
+// # SERVICE : CRÉATION D'UNE COMMUNAUTÉ PUBLIQUE (TYPE 3)
+// ############################################################################
+
+// CreateCommunity valide les prérequis de réputation, instancie la communauté
+// et initialise ses structures de recherche et de Speed Cache.
 func CreateCommunity(ctx context.Context, callerID int64, input conversation_models.CreateCommunityInput) (conversation_models.CreateCommunityOutput, error) {
-	// 1. IDENTITÉ & DROITS (Lecture O(1) depuis le Speed Cache)
-	callerLite, err := cache_service.GetUserLite(ctx, callerID)
-	if err != nil {
-		return conversation_models.CreateCommunityOutput{}, err
+
+	// ── ÉTAPE 1 : CONTRÔLE DE RANG ET DE QUOTA ──────────────────────────────
+	callerLite, errCaller := cache_service.GetUserLite(ctx, callerID)
+	if errCaller != nil || callerLite.ID == 0 {
+		return conversation_models.CreateCommunityOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Profil demandeur introuvable.", errCaller)
 	}
 
-	// Grades: 0=Normal, 1=Certifié, 2=Collaborateur/Partenaire, 3=Modérateur, 4=Admin
-	if callerLite.Grade < 2 {
-		return conversation_models.CreateCommunityOutput{}, nubo_error.NewForbidden("INSUFFICIENT_GRADE", "Vous n'avez pas le grade requis pour créer une communauté publique.", nil)
+	if callerLite.Grade < variables.CommunityMinCreationGrade {
+		return conversation_models.CreateCommunityOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous n'avez pas le grade requis pour créer une communauté publique.", nil)
 	}
 
-	// Règle spécifique Collaborateurs (Grade 2) : Max 1 communauté publique gérée
-	if callerLite.Grade == 2 {
-		// Exploitation du Speed Cache Inbox L1 pour compter sans surcharger Postgres
-		inbox, errInbox := cache_service.GetInboxView(ctx, callerID, 1000, 0)
+	// Plafond pour les collaborateurs (Grade 2)
+	if callerLite.Grade == variables.CommunityMinCreationGrade {
+		inboxItems, errInbox := cache_service.GetInboxView(ctx, callerID, 1000, 0)
 		if errInbox == nil {
-			for _, item := range inbox {
-				if item.Conversation.Type == 3 && item.Member.Role == 2 {
-					return conversation_models.CreateCommunityOutput{}, nubo_error.NewForbidden("COMMUNITY_LIMIT_REACHED", "Vous gérez déjà une communauté publique. Une demande est nécessaire pour en créer d'autres.", nil)
+			activeOwnedCount := 0
+			for _, item := range inboxItems {
+				if item.Conversation.Type == variables.ConversationTypeCommunityPub && item.Member.Role == variables.MemberRoleOwner {
+					activeOwnedCount++
 				}
 			}
-		}
-	}
-
-	// 2. DÉFINITION DU PROPRIÉTAIRE (Owner)
-	targetOwnerID := callerID
-
-	// Si le Modérateur/Admin crée la communauté pour un tiers
-	if input.OwnerID != 0 && input.OwnerID != callerID {
-		if callerLite.Grade >= 3 {
-			// Vérification stricte que le futur propriétaire existe
-			if _, errTarget := cache_service.GetUserLite(ctx, input.OwnerID); errTarget != nil {
-				return conversation_models.CreateCommunityOutput{}, nubo_error.NewBadRequest("INVALID_OWNER", "L'utilisateur spécifié comme propriétaire n'existe pas.", errTarget)
+			if activeOwnedCount >= variables.MaxPublicCommunitiesColl {
+				return conversation_models.CreateCommunityOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous gérez déjà une communauté publique. Une validation est nécessaire pour en créer d'autres.", nil)
 			}
-			targetOwnerID = input.OwnerID
-		} else {
-			return conversation_models.CreateCommunityOutput{}, nubo_error.NewForbidden("INSUFFICIENT_PERMISSIONS", "Seuls les modérateurs et administrateurs peuvent céder la propriété d'une communauté à la création.", nil)
 		}
 	}
 
-	// 3. CONSTRUCTION DES OBJETS MÉTIER
-	now := time.Now().UTC()
-	convID := pkg.GenerateID()
+	// ── ÉTAPE 2 : DÉFINITION DU PROPRIÉTAIRE INITIAL ────────────────────────
+	designatedOwnerID := callerID
 
-	output := conversation_models.CreateCommunityOutput{
-		ConversationID: convID,
+	if input.OwnerID != 0 && input.OwnerID != callerID {
+		if callerLite.Grade >= variables.UserGradeModerator {
+			if targetOwnerLite, errTarget := cache_service.GetUserLite(ctx, input.OwnerID); errTarget != nil || targetOwnerLite.ID == 0 {
+				return conversation_models.CreateCommunityOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "L'utilisateur désigné comme propriétaire n'existe pas.", errTarget)
+			}
+			designatedOwnerID = input.OwnerID
+		} else {
+			return conversation_models.CreateCommunityOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seuls les modérateurs et administrateurs peuvent attribuer la propriété à un tiers.", nil)
+		}
 	}
 
-	settings := input.Settings
-	if settings == (conversation_models.ConversationSettings{}) {
-		settings = conversation_models.DefaultConversationSettings(3)
+	// ── ÉTAPE 3 : INITIALISATION DES PAYLOADS MÉTIER ────────────────────────
+	currentTime := time.Now().UTC()
+	newConversationID := pkg.GenerateID()
+
+	conversationSettings := input.Settings
+	if conversationSettings == (conversation_models.ConversationSettings{}) {
+		conversationSettings = conversation_models.DefaultConversationSettings(variables.ConversationTypeCommunityPub)
 	}
 
-	convPayload := conversation_models.ConversationPayload{
-		ID:            convID,
-		Type:          3,
+	communityPayload := conversation_models.ConversationPayload{
+		ID:            newConversationID,
+		Type:          variables.ConversationTypeCommunityPub,
 		Title:         pkg.CleanStr(input.Title),
 		Description:   "",
 		AvatarID:      0,
 		LastMessageID: 0,
 		State:         0,
-		Settings:      settings,
-		ExternalLink:  input.ExternalLink, // ✅ INJECTION ICI
-		CreatedAt:     domain.TimeToMillis(now),
-		UpdatedAt:     domain.TimeToMillis(now),
+		Settings:      conversationSettings,
+		ExternalLink:  input.ExternalLink,
+		CreatedAt:     domain.TimeToMillis(currentTime),
+		UpdatedAt:     domain.TimeToMillis(currentTime),
 	}
 
-	// Le propriétaire hérite du Role 2
-	ownerMember := member_models.MemberPayload{
+	ownerMemberPayload := member_models.MemberPayload{
 		ID:                pkg.GenerateID(),
-		ConversationID:    convID,
-		UserID:            targetOwnerID,
-		Role:              2,
-		Settings:          member_models.DefaultMemberSettings(convPayload.Type),
-		JoinedAt:          domain.TimeToMillis(now),
+		ConversationID:    newConversationID,
+		UserID:            designatedOwnerID,
+		Role:              variables.MemberRoleOwner,
+		Settings:          member_models.DefaultMemberSettings(communityPayload.Type),
+		JoinedAt:          domain.TimeToMillis(currentTime),
 		UnreadCount:       0,
 		FrozenMessageID:   0,
 		LastReadMessageID: 0,
-		CreatedAt:         domain.TimeToMillis(now),
-		UpdatedAt:         domain.TimeToMillis(now),
+		CreatedAt:         domain.TimeToMillis(currentTime),
+		UpdatedAt:         domain.TimeToMillis(currentTime),
 	}
 
-	// Le Modérateur hérite d'un Role 0 s'il l'a créée pour quelqu'un d'autre
-	var callerMember *member_models.MemberPayload
-	if callerID != targetOwnerID {
-		callerMember = &member_models.MemberPayload{
+	var adminCreatorPayload *member_models.MemberPayload
+	if callerID != designatedOwnerID {
+		adminCreatorPayload = &member_models.MemberPayload{
 			ID:                pkg.GenerateID(),
-			ConversationID:    convID,
+			ConversationID:    newConversationID,
 			UserID:            callerID,
-			Role:              0, // Membre classique
-			Settings:          member_models.DefaultMemberSettings(convPayload.Type),
-			JoinedAt:          domain.TimeToMillis(now),
+			Role:              variables.MemberRoleNormal,
+			Settings:          member_models.DefaultMemberSettings(communityPayload.Type),
+			JoinedAt:          domain.TimeToMillis(currentTime),
 			UnreadCount:       0,
 			FrozenMessageID:   0,
 			LastReadMessageID: 0,
-			CreatedAt:         domain.TimeToMillis(now),
-			UpdatedAt:         domain.TimeToMillis(now),
+			CreatedAt:         domain.TimeToMillis(currentTime),
+			UpdatedAt:         domain.TimeToMillis(currentTime),
 		}
 	}
 
-	// 4. SAUVEGARDE SYNCHRONE EN CACHE L1 (Disponibilité immédiate UI)
-	_ = object_cache_service.SetConversationInObjectCache(ctx, convPayload)
-	_ = object_cache_service.SetMemberInObjectCache(ctx, ownerMember)
-	// RehydrateConversationItemInSpeedCache gère automatiquement ConvMeta, ConvMembers, Participants et l'Inbox
-	cache_service.RehydrateConversationItemInSpeedCache(ctx, convPayload, ownerMember, 0)
+	// ── ÉTAPE 4 : INDEXATION EN CACHE L1 ET SPEED CACHE ─────────────────────
+	_ = object_cache_service.SetConversationInObjectCache(ctx, communityPayload)
+	_ = object_cache_service.SetMemberInObjectCache(ctx, ownerMemberPayload)
+	cache_service.RehydrateConversationItemInSpeedCache(ctx, communityPayload, ownerMemberPayload, 0)
 
-	if callerMember != nil {
-		_ = object_cache_service.SetMemberInObjectCache(ctx, *callerMember)
-		cache_service.RehydrateConversationItemInSpeedCache(ctx, convPayload, *callerMember, 0)
+	if adminCreatorPayload != nil {
+		_ = object_cache_service.SetMemberInObjectCache(ctx, *adminCreatorPayload)
+		cache_service.RehydrateConversationItemInSpeedCache(ctx, communityPayload, *adminCreatorPayload, 0)
 	}
-	communityLite := lite_models.CommunityLiteRequest{
-		ID:               convID,
+
+	communitySearchRecord := lite_models.CommunityLiteRequest{
+		ID:               newConversationID,
 		Name:             input.Title,
 		ProfilePictureID: 0,
 		Description:      "",
-		MemberCount:      1, // Au départ, seul le créateur est membre
+		MemberCount:      1,
+	}
+	_ = cache_service.StoreCommunityLiteInSpeedCache(ctx, communitySearchRecord)
+
+	// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE WRITE-BEHIND ───────────────────────
+	if errQueue := redis.EnqueueDB(ctx, communityPayload.ID, communityPayload.ID, redis.EntityConversation, redis.ActionCreate, communityPayload, redis.TargetAll); errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("conv_id", communityPayload.ID).Msg("Échec d'enqueue de la communauté")
 	}
 
-	// Indexation instantanée pour la barre de recherche (O(log N))
-	_ = cache_service.StoreCommunityLiteInSpeedCache(ctx, communityLite)
-
-	// 5. DÉLÉGATION DE LA PERSISTANCE AUX WORKERS (Write-Behind vers L2/L3)
-	// On utilise convID comme clé de partition pour que la conversation et ses membres arrivent sur le même shard
-	_ = redis.EnqueueDB(ctx, convPayload.ID, convPayload.ID, redis.EntityConversation, redis.ActionCreate, convPayload, redis.TargetAll)
-	_ = redis.EnqueueDB(ctx, ownerMember.ID, convPayload.ID, redis.EntityMembers, redis.ActionCreate, ownerMember, redis.TargetAll)
-
-	if callerMember != nil {
-		_ = redis.EnqueueDB(ctx, callerMember.ID, convPayload.ID, redis.EntityMembers, redis.ActionCreate, *callerMember, redis.TargetAll)
+	if errQueue := redis.EnqueueDB(ctx, ownerMemberPayload.ID, communityPayload.ID, redis.EntityMembers, redis.ActionCreate, ownerMemberPayload, redis.TargetAll); errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("member_id", ownerMemberPayload.ID).Msg("Échec d'enqueue du propriétaire de la communauté")
 	}
 
-	// ========================================================================
-	// 5. MARQUAGE DU TEMPS (DIRTY FLAG)
-	// ========================================================================
-	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
-	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
-	// et garantit que le client reçoit la date de la fin absolue de la transaction.
+	if adminCreatorPayload != nil {
+		_ = redis.EnqueueDB(ctx, adminCreatorPayload.ID, communityPayload.ID, redis.EntityMembers, redis.ActionCreate, *adminCreatorPayload, redis.TargetAll)
+	}
+
+	// ── ÉTAPE 6 : MARQUAGE D'ACTIVITÉ ───────────────────────────────────────
 	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
 
-	return output, nil
+	return conversation_models.CreateCommunityOutput{
+		ConversationID: newConversationID,
+		InboxUpdateAt:  domain.TimeToMillis(time.UnixMilli(timestampMs)),
+	}, nil
 }

@@ -113,9 +113,9 @@ func SetupRoutes(r *gin.Engine) {
 
 	// --- Sync ---
 	secured.PATCH("/sync/telemetry", telemetry_handlers.SyncTelemetryHandler) //
-	secured.POST("/sync/inbox", conversation_handlers.SyncInboxHandler)       //
-	secured.POST("/sync/identity", auth_handlers.SyncIdentityHandler)         //
-	secured.POST("/sync/activity", notification_handlers.SyncActivityHandler) //
+	secured.POST("/sync/inbox", sync_handlers.SyncInboxHandler)               //
+	secured.POST("/sync/identity", sync_handlers.SyncIdentityHandler)         //
+	secured.POST("/sync/activity", sync_handlers.SyncActivityHandler)         //
 	secured.POST("/sync/deltas", sync_handlers.GetDeltasHandler)
 	secured.POST("/sync/conversations/messages", sync_handlers.SyncMessagesHandler)
 

@@ -7,6 +7,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -14,58 +16,66 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
 )
 
-// UpdateMemberSettings gère la mise à jour partielle des paramètres d'un membre pour une conversation spécifique.
+// ############################################################################
+// # SERVICE : MISE À JOUR DES PARAMÈTRES PERSONNELS DU MEMBRE
+// ############################################################################
+
+// UpdateMemberSettings gère la mise à jour partielle des paramètres de silence et de médias
+// d'un membre pour une conversation spécifique.
 func UpdateMemberSettings(ctx context.Context, callerID int64, input member_models.UpdateMemberSettingsInput) (member_models.UpdateMemberSettingsOutput, error) {
-	// 1. SÉCURITÉ : Récupération sécurisée du membre (Cascade L1->L2->L3 avec vérification d'appartenance)
-	// LeftMember renvoie une nubo_error 403 propre si l'utilisateur n'est pas dans la conversation ou est banni.
-	mem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
-	if err != nil {
-		return member_models.UpdateMemberSettingsOutput{}, err
+
+	// ── ÉTAPE 1 : RÉCUPÉRATION ET CONTRÔLE D'ACCÈS ──────────────────────────
+
+	memberPayload, errSecurity := security_service.LeftMember(ctx, input.ConversationID, callerID)
+	if errSecurity != nil {
+		return member_models.UpdateMemberSettingsOutput{}, errSecurity
 	}
 
-	// 2. MODIFICATION PARTIELLE DU DICTIONNAIRE (Seulement si la valeur a été fournie)
-	mem.Settings.IsMuted = input.IsMuted
-	mem.Settings.MuteExpireAt = input.MuteExpiresAt
-	mem.Settings.MediaAutoDownload = input.MediaAutoDownload
-	mem.UpdatedAt = domain.NowMillis()
+	// ── ÉTAPE 2 : MODIFICATION PARTIELLE ────────────────────────────────────
 
-	// 3. MISE À JOUR SYNCHRONE DU CACHE L1 (Object Cache LFU)
-	_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
+	memberPayload.Settings.IsMuted = input.IsMuted
+	memberPayload.Settings.MuteExpireAt = input.MuteExpiresAt
+	memberPayload.Settings.MediaAutoDownload = input.MediaAutoDownload
+	memberPayload.UpdatedAt = domain.NowMillis()
 
-	// 4. MISE À JOUR SYNCHRONE DU SPEED CACHE (Lite Models pour la barre de recherche/inbox)
-	_ = cache_service.UpdateMemberSpeedCache(ctx, lite_models.MemberLiteRequest{
-		ConversationID:    mem.ConversationID,
-		UserID:            mem.UserID,
-		Role:              mem.Role,
-		Settings:          service.ToMemberSettingsLite(mem.Settings),
-		UnreadCount:       mem.UnreadCount,
-		FrozenMessageID:   mem.FrozenMessageID,
-		LastReadMessageID: mem.LastReadMessageID,
-		JoinedAt:          mem.JoinedAt,
-	})
+	// ── ÉTAPE 3 : MISE À JOUR SYNCHRONE DU CACHE RAM L1 ─────────────────────
 
-	// 5. DÉLÉGATION À LA FILE ASYNCHRONE (Write-Behind)
-	// PartitionKey = input.ConversationID pour s'assurer que les événements de cette conversation soient traités dans le bon ordre
-	errQueue := redis.EnqueueDB(ctx, mem.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, mem, redis.TargetAll)
+	_ = object_cache_service.SetMemberInObjectCache(ctx, memberPayload)
 
-	// ✅ NOUVEAU : SYNC LEDGER (Trigger local)
-	// Le changement de paramètre n'affecte QUE l'utilisateur appelant, donc on ne déclenche
-	// la mutation que pour lui.
+	liteMemberRequest := lite_models.MemberLiteRequest{
+		ConversationID:    memberPayload.ConversationID,
+		UserID:            memberPayload.UserID,
+		Role:              memberPayload.Role,
+		Settings:          service.ToMemberSettingsLite(memberPayload.Settings),
+		UnreadCount:       memberPayload.UnreadCount,
+		FrozenMessageID:   memberPayload.FrozenMessageID,
+		LastReadMessageID: memberPayload.LastReadMessageID,
+		JoinedAt:          memberPayload.JoinedAt,
+	}
+	_ = cache_service.UpdateMemberSpeedCache(ctx, liteMemberRequest)
+
+	// ── ÉTAPE 4 : PERSISTANCE ASYNCHRONE ────────────────────────────────────
+
+	errQueue := redis.EnqueueDB(ctx, memberPayload.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, memberPayload, redis.TargetAll)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("conv_id", input.ConversationID).Msg("Échec du Write-Behind pour la mise à jour des paramètres du membre")
+		return member_models.UpdateMemberSettingsOutput{}, nubo_error.NewInternal()
+	}
+
+	// ── ÉTAPE 5 : SYNC LEDGER (TRIGGER D'INVALIDATION LOCAL) ────────────────
+
 	go func(cID int64, uID int64) {
 		bgCtx := context.Background()
+		// Le changement de paramètre (ex: Mute) n'affecte QUE l'utilisateur appelant,
+		// on ne déclenche donc le signal de mutation que pour lui.
 		_ = cache_service.RecordConversationMutation(bgCtx, cID, []int64{uID})
 	}(input.ConversationID, callerID)
 
-	output := member_models.UpdateMemberSettingsOutput{}
+	// ── ÉTAPE 6 : MARQUAGE D'ACTIVITÉ (DIRTY FLAG) ──────────────────────────
 
-	// ========================================================================
-	// MARQUAGE DU TEMPS (DIRTY FLAG)
-	// ========================================================================
-	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
-	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
-	// et garantit que le client reçoit la date de la fin absolue de la transaction.
-	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
+	latestActivityTimestampMs := cache_service.TouchInboxActivity(ctx, callerID)
 
-	return output, errQueue
+	return member_models.UpdateMemberSettingsOutput{
+		InboxUpdateAt: domain.TimeToMillis(time.UnixMilli(latestActivityTimestampMs)),
+	}, nil
 }

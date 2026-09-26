@@ -5,60 +5,79 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
 
+// ############################################################################
+// # SERVICE DE SÉCURITÉ : DROITS DE PROPRIÉTÉ D'UNE PUBLICATION
+// ############################################################################
+
+// LeftPost récupère une publication complète (L1 -> L2 -> L3) et vérifie
+// que l'utilisateur appelant en est bien l'auteur légitime.
 func LeftPost(ctx context.Context, postID int64, userID int64) (post_models.PostPayload, error) {
-	var post post_models.PostPayload
-	var found bool
+	var postPayload post_models.PostPayload
+	var isPostFound bool
 
-	// 1. CASCADE DE LECTURE (L1 -> L2 -> L3) AVEC AUTO-GUÉRISON
-	if p, err := object_cache_service.GetPostFromObjectCache(ctx, postID); err == nil {
-		post = p
-		found = true
+	// ── ÉTAPE 1 : TENTATIVE L1 (OBJECT CACHE - LFU) ─────────────────────────
+
+	if cachedPost, errCache := object_cache_service.GetPostFromObjectCache(ctx, postID); errCache == nil && cachedPost.ID != 0 {
+		postPayload = cachedPost
+		isPostFound = true
 	} else {
-		// TENTATIVE L2 (MongoDB)
-		mongoPosts, errMongo := mongo.MongoLoadPosts([]int64{postID})
-		if errMongo == nil && len(mongoPosts) > 0 {
-			post = mongoPosts[0]
-			found = true
 
-			// PROMOTION L2 -> L1
+		// ── ÉTAPE 2 : TENTATIVE L2 (MONGODB WARM STORAGE) ───────────────────
+
+		mongoPostsList, errMongo := mongo.MongoLoadPosts([]int64{postID})
+		if errMongo == nil && len(mongoPostsList) > 0 {
+			postPayload = mongoPostsList[0]
+			isPostFound = true
+
+			// AUTO-GUÉRISON L1 (Immédiat en RAM dans une goroutine pour libérer le thread)
 			go func(p post_models.PostPayload) {
-				_ = object_cache_service.SetPostInObjectCache(context.Background(), p)
-			}(post)
+				backgroundCtx := context.Background()
+				_ = object_cache_service.SetPostInObjectCache(backgroundCtx, p)
+			}(postPayload)
 
 		} else {
-			// TENTATIVE L3 (PostgreSQL)
-			pgPosts, errPg := postgres.FuncLoadPosts([]int64{postID}, 1, 0)
-			if errPg == nil && len(pgPosts) > 0 {
-				post = pgPosts[0]
-				found = true
 
-				// ⬆️ PROMOTION L3 -> L1 (Immédiat en RAM)
-				_ = object_cache_service.SetPostInObjectCache(ctx, post)
+			// ── ÉTAPE 3 : FALLBACK ABSOLU L3 (POSTGRESQL COLD STORAGE) ──────
 
-				// ⬆️ PROMOTION L3 -> L2 (Asynchrone via Worker Mongo)
+			pgPostsList, errPg := postgres.FuncLoadPosts([]int64{postID}, 1, 0)
+			if errPg != nil {
+				logger.Log.Error().Err(errPg).Int64("post_id", postID).Msg("Erreur L3 lors de la vérification de sécurité d'un post")
+				return post_models.PostPayload{}, nubo_error.NewInternal()
+			}
+
+			if len(pgPostsList) > 0 {
+				postPayload = pgPostsList[0]
+				isPostFound = true
+
+				// AUTO-GUÉRISON L1 (Immédiat en RAM)
+				_ = object_cache_service.SetPostInObjectCache(ctx, postPayload)
+
+				// AUTO-GUÉRISON L2 (Asynchrone via Worker Mongo)
 				go func(p post_models.PostPayload) {
-					bgCtx := context.Background()
-					// PartitionKey = UserID pour les posts
-					_ = redis.EnqueueDB(bgCtx, p.ID, p.UserID, redis.EntityPost, redis.ActionUpdate, p, redis.TargetMongo)
-				}(post)
+					backgroundCtx := context.Background()
+					// PartitionKey = UserID pour le sharding des posts
+					_ = redis.EnqueueDB(backgroundCtx, p.ID, p.UserID, redis.EntityPost, redis.ActionUpdate, p, redis.TargetMongo)
+				}(postPayload)
 			}
 		}
 	}
 
-	if !found {
-		return post_models.PostPayload{}, nubo_error.NewNotFound("POST_NOT_FOUND", "Post introuvable ou supprimé.", nil)
+	// ── ÉTAPE 4 : VÉRIFICATION DES RÈGLES DE SÉCURITÉ ───────────────────────
+
+	if !isPostFound {
+		return post_models.PostPayload{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Publication introuvable ou supprimée.", nil)
 	}
 
-	// 2. CONTRÔLE D'AUTORISATION
-	if post.UserID != userID {
-		return post_models.PostPayload{}, nubo_error.NewForbidden("ACCESS_DENIED", "Vous n'êtes pas autorisé à réaliser cette action sur ce post.", nil)
+	if postPayload.UserID != userID {
+		return post_models.PostPayload{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous n'êtes pas autorisé à réaliser cette action sur cette publication.", nil)
 	}
 
-	return post, nil
+	return postPayload, nil
 }

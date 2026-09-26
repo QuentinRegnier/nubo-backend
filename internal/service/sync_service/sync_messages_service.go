@@ -7,128 +7,150 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/sync_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// SyncMessages récupère les payloads frais (et hydratés) des messages ayant muté depuis sinceMs.
+// ############################################################################
+// # SERVICE : SYNCHRONISATION DES MESSAGES MUTÉS
+// ############################################################################
+
+// SyncMessages récupère les payloads frais et hydratés des messages ayant muté
+// depuis sinceMs (Création, Édition, Soft Delete).
 func SyncMessages(ctx context.Context, callerID int64, input sync_models.SyncMessagesInput) (sync_models.SyncMessagesOutput, error) {
-	// 1. SÉCURITÉ ZERO-TRUST : L'utilisateur doit être membre de la conversation
-	_, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
-	if err != nil {
-		return sync_models.SyncMessagesOutput{}, nubo_error.NewForbidden("NOT_A_MEMBER", "Vous n'êtes pas membre de cette conversation.", err)
+
+	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS ZERO-TRUST (CASCADE) ─────────────────────
+
+	_, errSecurity := security_service.LeftMember(ctx, input.ConversationID, callerID)
+	if errSecurity != nil {
+		return sync_models.SyncMessagesOutput{}, errSecurity
 	}
 
-	// 2. RÉCUPÉRATION DES IDs DES MESSAGES AYANT MUTÉ (O(log N) L1 Cache)
-	msgIDs, errCache := cache_service.GetModifiedMessageIDs(ctx, input.ConversationID, input.SinceMs)
+	// ── ÉTAPE 2 : RÉCUPÉRATION DES ID MUTÉS (O(log N) RAM L1) ───────────────
+
+	modifiedMessageIDs, errCache := cache_service.GetModifiedMessageIDs(ctx, input.ConversationID, input.SinceMs)
 	if errCache != nil {
-		return sync_models.SyncMessagesOutput{}, nubo_error.NewInternal(errCache)
+		logger.Log.Error().Err(errCache).Int64("conv_id", input.ConversationID).Msg("Échec L1 lors de la récupération des deltas de messages")
+		return sync_models.SyncMessagesOutput{}, nubo_error.NewInternal()
 	}
 
-	if len(msgIDs) == 0 {
-		return sync_models.SyncMessagesOutput{Messages: []message_models.MessageView{}}, nil
+	if len(modifiedMessageIDs) == 0 {
+		return sync_models.SyncMessagesOutput{
+			Messages: make([]message_models.MessageView, 0),
+		}, nil
 	}
 
-	// 3. HYDRATATION DES MESSAGES
-	// On récupère le type de la conversation pour le formatage des avatars
-	conv, _ := object_cache_service.GetConversationFromObjectCache(ctx, input.ConversationID)
+	// ── ÉTAPE 3 : RÉCUPÉRATION MASSIVE DES MESSAGES (L1 -> L3) ──────────────
 
-	var views []message_models.MessageView
-	var missingIDs []int64
-	tempMsgs := make(map[int64]message_models.MessagePayload)
+	// On récupère le type de la conversation pour le formatage des avatars Twitch.
+	conversationPayload, _ := object_cache_service.GetConversationFromObjectCache(ctx, input.ConversationID)
+
+	var hydratedMessageViews []message_models.MessageView
+	var missingMessageIDsFromL1 []int64
+	temporaryMessagesMap := make(map[int64]message_models.MessagePayload)
 
 	// A. Lecture directe de l'Object Cache (L1)
-	// On n'utilise pas object_cache_service.GetMessagesView car ce dernier filtre les messages avec "visibility = false".
-	// Le client a BESOIN des messages supprimés pour mettre à jour son SQLite local.
-	for _, msgID := range msgIDs {
-		msg, errL1 := object_cache_service.GetMessageFromObjectCache(ctx, msgID)
-		if errL1 == nil && msg.ID != 0 {
-			tempMsgs[msg.ID] = msg
+	// /!\ On n'utilise pas object_cache_service.GetMessagesView car ce dernier filtre les messages
+	// avec "visibility = false". Le client a BESOIN des messages supprimés pour purger son SQLite local.
+	for _, messageID := range modifiedMessageIDs {
+		messagePayload, errL1 := object_cache_service.GetMessageFromObjectCache(ctx, messageID)
+		if errL1 == nil && messagePayload.ID != 0 {
+			temporaryMessagesMap[messagePayload.ID] = messagePayload
 		} else {
-			missingIDs = append(missingIDs, msgID)
+			missingMessageIDsFromL1 = append(missingMessageIDsFromL1, messageID)
 		}
 	}
 
-	// B. Fallback L3 (Postgres) pour les Cache Misses éventuels
-	if len(missingIDs) > 0 {
-		pgMsgs, errPg := postgres.FuncLoadMessagesByIDs(ctx, missingIDs)
-		if errPg == nil {
-			for _, m := range pgMsgs {
-				tempMsgs[m.ID] = m
+	// B. Fallback L3 (PostgreSQL) pour les Cache Misses éventuels (Bypass Mongo pour la sûreté des données mutables)
+	if len(missingMessageIDsFromL1) > 0 {
+		pgMessagesList, errPg := postgres.FuncLoadMessagesByIDs(ctx, missingMessageIDsFromL1)
+
+		if errPg != nil {
+			logger.Log.Error().Err(errPg).Msg("Échec L3 lors de la réhydratation des messages pour le Delta Sync")
+		} else {
+			for _, pgMessage := range pgMessagesList {
+				temporaryMessagesMap[pgMessage.ID] = pgMessage
+
 				// Auto-guérison L1 silencieuse
 				go func(payload message_models.MessagePayload) {
-					_ = object_cache_service.SetMessageInObjectCache(context.Background(), payload)
-				}(m)
+					backgroundCtx := context.Background()
+					_ = object_cache_service.SetMessageInObjectCache(backgroundCtx, payload)
+				}(pgMessage)
 			}
 		}
 	}
 
-	// 4. ASSEMBLAGE ET HYDRATATION DES DTOs (Vues)
-	for _, msgID := range msgIDs {
-		msg, exists := tempMsgs[msgID]
-		if !exists {
+	// ── ÉTAPE 4 : ASSEMBLAGE ET HYDRATATION DES VUES (DTO) ──────────────────
+
+	for _, messageID := range modifiedMessageIDs {
+		messagePayload, isMessageResolved := temporaryMessagesMap[messageID]
+		if !isMessageResolved {
 			continue
 		}
 
-		// Hydratation de l'image rattachée
-		if msg.Attachments != nil {
-			if rawMediaID, hasMedia := msg.Attachments["media_id"]; hasMedia {
-				var mediaID int64
-				switch v := rawMediaID.(type) {
+		// A. Hydratation de l'image rattachée avec signature HMAC (S3/MinIO)
+		if messagePayload.Attachments != nil {
+			if rawMediaID, hasMedia := messagePayload.Attachments["media_id"]; hasMedia {
+				var targetMediaID int64
+
+				switch parsedValue := rawMediaID.(type) {
 				case float64:
-					mediaID = int64(v)
+					targetMediaID = int64(parsedValue)
 				case int64:
-					mediaID = v
+					targetMediaID = parsedValue
 				}
-				if mediaID > 0 {
-					if view, errMedia := media_service.GenerateMediaViewCascade(ctx, mediaID, msg.SenderID, msg.ID, callerID); errMedia == nil {
-						msg.Attachments["media_view"] = view
+
+				if targetMediaID > 0 {
+					if mediaView, errMedia := media_service.GenerateMediaViewCascade(ctx, targetMediaID, messagePayload.SenderID, messagePayload.ID, callerID); errMedia == nil {
+						messagePayload.Attachments["media_view"] = mediaView
 					}
 				}
 			}
 		}
 
-		// Hydratation de l'expéditeur
-		var senderUsername string
-		var senderAvatar media_models.MediaView
-		var senderAvatarCommunityID int64
+		// B. Hydratation de l'expéditeur (Profil Lite L1)
+		var resolvedSenderUsername string
+		var resolvedSenderAvatar media_models.MediaView
+		var resolvedSenderAvatarCommunityID int64
 
-		if userLite, errLite := cache_service.GetUserLite(ctx, msg.SenderID); errLite == nil {
-			senderUsername = userLite.Username
-			if conv.Type == 2 || conv.Type == 3 {
-				senderAvatarCommunityID = userLite.ProfilePictureID // Twitch mode
-			} else {
-				if userLite.ProfilePictureID > 0 {
-					if avatarView, errAvatar := media_service.GenerateMediaViewCascade(ctx, userLite.ProfilePictureID, msg.SenderID, 0, callerID); errAvatar == nil {
-						senderAvatar = avatarView
-					}
+		if senderUserLite, errLite := cache_service.GetUserLite(ctx, messagePayload.SenderID); errLite == nil {
+			resolvedSenderUsername = senderUserLite.Username
+
+			if conversationPayload.Type == variables.ConversationTypeCommunityPriv || conversationPayload.Type == variables.ConversationTypeCommunityPub {
+				resolvedSenderAvatarCommunityID = senderUserLite.ProfilePictureID // Mode Twitch pour les salons
+			} else if senderUserLite.ProfilePictureID > 0 {
+				// contextID = 0 (Avatar)
+				if avatarView, errAvatar := media_service.GenerateMediaViewCascade(ctx, senderUserLite.ProfilePictureID, messagePayload.SenderID, 0, callerID); errAvatar == nil {
+					resolvedSenderAvatar = avatarView
 				}
 			}
 		}
 
-		// Hydratation des réactions (Fast Path L1)
-		counts, _ := cache_service.GetMessageReactionCounts(ctx, msg.ID)
-		userReaction, _ := cache_service.GetUserReaction(ctx, msg.ID, callerID)
+		// C. Hydratation des réactions (Fast Path L1)
+		reactionCountsMap, _ := cache_service.GetMessageReactionCounts(ctx, messagePayload.ID)
+		userSpecificReaction, _ := cache_service.GetUserReaction(ctx, messagePayload.ID, callerID)
 
-		views = append(views, message_models.MessageView{
-			MessagePayload:          msg,
-			SenderUsername:          senderUsername,
-			SenderAvatar:            senderAvatar,
-			SenderAvatarCommunityID: senderAvatarCommunityID,
-			ReactionCounts:          counts,
-			UserReaction:            userReaction,
+		// D. Composition du DTO
+		hydratedMessageViews = append(hydratedMessageViews, message_models.MessageView{
+			MessagePayload:          messagePayload,
+			SenderUsername:          resolvedSenderUsername,
+			SenderAvatar:            resolvedSenderAvatar,
+			SenderAvatarCommunityID: resolvedSenderAvatarCommunityID,
+			ReactionCounts:          reactionCountsMap,
+			UserReaction:            userSpecificReaction,
 		})
 	}
 
-	// Prévention du `null` JSON
-	if views == nil {
-		views = make([]message_models.MessageView, 0)
+	if hydratedMessageViews == nil {
+		hydratedMessageViews = make([]message_models.MessageView, 0)
 	}
 
 	return sync_models.SyncMessagesOutput{
-		Messages: views,
+		Messages: hydratedMessageViews,
 	}, nil
 }

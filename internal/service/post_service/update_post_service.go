@@ -5,51 +5,56 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
 )
 
-// UpdatePost gère la modification en récupérant l'objet complet pour nourrir le Bulk Update des workers.
+// ############################################################################
+// # SERVICE : MISE À JOUR D'UNE PUBLICATION (POST)
+// ############################################################################
+
+// UpdatePost gère la modification des métadonnées et du contenu d'un post en récupérant l'objet complet pour nourrir le Bulk Update des workers.
 func UpdatePost(ctx context.Context, input post_models.UpdatePostInput) error {
-	// ─────────────────────────────────────────────────────────────────────────
-	// 1. VERIFICATION DROIT D'ACCÈS ET RÉCUPÉRATION DE L'OBJET COMPLET (Nécessaire pour les étapes suivantes)
-	// ─────────────────────────────────────────────────────────────────────────
 
-	post, err := security_service.LeftPost(ctx, input.PostID, input.UserID)
-	if err != nil {
-		return err
+	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS ZERO-TRUST ET RÉCUPÉRATION DE L'OBJET ────
+	postPayload, errSecurity := security_service.LeftPost(ctx, input.PostID, input.UserID)
+	if errSecurity != nil {
+		return nubo_error.NewInternal()
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// 2. APPLICATION DES MODIFICATIONS
-	// ─────────────────────────────────────────────────────────────────────────
-	post.Content = input.Content
-	post.Hashtags = input.Hashtags
-	post.Identifiers = input.Identifiers
-	post.Location = input.Location
-	post.Visibility = input.Visibility
-	post.UpdatedAt = domain.NowMillis()
+	// ── ÉTAPE 2 : APPLICATION DES MODIFICATIONS MÉTIER ──────────────────────
+	postPayload.Content = input.Content
+	postPayload.Hashtags = input.Hashtags
+	postPayload.Identifiers = input.Identifiers
+	postPayload.Location = input.Location
+	postPayload.Visibility = input.Visibility
+	postPayload.UpdatedAt = domain.NowMillis()
 
-	// L'IA locale (Edge Computing) saura qu'il faut recalculer ses affinités
-	post.VectorVersion += 1
+	// L'IA locale (Edge Computing) saura qu'il faut recalculer ses affinités grâce à l'incrémentation.
+	postPayload.VectorVersion += 1
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// 3. RE-VECTORISATION SYNCHRONE DU CONTENU
-	// ─────────────────────────────────────────────────────────────────────────
+	// ── ÉTAPE 3 : RE-VECTORISATION SYNCHRONE DU CONTENU ─────────────────────
 	// On met à jour le vecteur avec les nouvelles données textuelles/thématiques.
-	post.Vector = algorithm_service.ComputeContentVectorFull(post, nil)
+	postPayload.Vector = algorithm_service.ComputeContentVectorFull(postPayload, nil)
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// 4. SAUVEGARDE ET DÉLÉGATION AUX WORKERS BATCH
-	// ─────────────────────────────────────────────────────────────────────────
+	// ── ÉTAPE 4 : SAUVEGARDE ET DÉLÉGATION AUX WORKERS BATCH ────────────────
 
-	// 1. Écrasement LFU immédiat
-	if err := object_cache_service.SetPostInObjectCache(ctx, post); err != nil {
-		return err
+	// 1. Écrasement LFU immédiat en RAM
+	errCache := object_cache_service.SetPostInObjectCache(ctx, postPayload)
+	if errCache != nil {
+		logger.Log.Warn().Err(errCache).Int64("post_id", postPayload.ID).Msg("Échec de la mise à jour du post dans le cache L1")
 	}
 
-	// 2. Envoi de l'objet COMPLET dans la file asynchrone pour que tes bulkUpdate fonctionnent
-	return redis.EnqueueDB(ctx, post.ID, 0, redis.EntityPost, redis.ActionUpdate, post, redis.TargetAll)
+	// 2. Envoi de l'objet COMPLET dans la file asynchrone pour que les workers BulkUpdate fonctionnent
+	errQueue := redis.EnqueueDB(ctx, postPayload.ID, 0, redis.EntityPost, redis.ActionUpdate, postPayload, redis.TargetAll)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("post_id", postPayload.ID).Msg("Échec du Write-Behind pour la mise à jour du post")
+		return nubo_error.NewInternal()
+	}
+
+	return nil
 }

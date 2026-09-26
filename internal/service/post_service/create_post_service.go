@@ -2,114 +2,135 @@ package post_service
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// CreatePost orchestre la publication d'un post.
-func CreatePost(ctx context.Context, userID int64, input post_models.CreatePostInput) (int64, error) {
-	// ========================================================================
-	// 0. BOUCLIER DE CONFIDENTIALITÉ ACTIF (Tags et Mentions)
-	// ========================================================================
-	// Extraction des IDs mentionnés dans le texte via la regex globale (pkg)
-	mentionedIDs := pkg.ExtractMentions(input.Content)
+// ############################################################################
+// # SERVICE : CRÉATION D'UNE PUBLICATION (POST)
+// ############################################################################
 
-	// Fonction interne de vérification des permissions respectant le DDD et la matrice de relation
-	checkPermissions := func(targetIDs []int64, permType string) error {
-		for _, tID := range targetIDs {
-			if tID == userID {
-				continue // S'auto-identifier ou s'auto-mentionner est toujours autorisé
+// CreatePost orchestre la publication d'un post en vérifiant les droits
+// d'identification, en activant les médias et en calculant le vecteur sémantique.
+func CreatePost(ctx context.Context, callerID int64, input post_models.CreatePostInput) (int64, error) {
+
+	// ── ÉTAPE 1 : BOUCLIER DE CONFIDENTIALITÉ (TAGS ET MENTIONS) ────────────
+
+	mentionedUserIDs := pkg.ExtractMentions(input.Content)
+
+	verifyPrivacyPermissions := func(targetUserIDs []int64, permissionType string) error {
+		for _, targetID := range targetUserIDs {
+			if targetID == callerID {
+				continue
 			}
 
-			// Récupération de l'empreinte Speed Cache (L1) de la cible
-			tLite, err := cache_service.GetUserLite(ctx, tID)
-			if err != nil || tLite.ID == 0 {
-				continue // Si l'utilisateur n'existe pas en cache, on laisse passer ou le validateur gérera
+			targetUserLite, errLite := cache_service.GetUserLite(ctx, targetID)
+			if errLite != nil || targetUserLite.ID == 0 {
+				continue // Utilisateur introuvable ignoré silencieusement
 			}
 
-			// "Qu'est-ce que la Cible (tID) pense du Demandeur (userID) ?"
-			relState := cache_service.RelationValue(ctx, tID, userID)
-			if relState == -1 {
-				return nubo_error.NewForbidden("USER_BLOCKED", "Action impossible : vous ne pouvez pas identifier un utilisateur qui vous a bloqué.", nil)
+			relationState := cache_service.RelationValue(ctx, targetID, callerID)
+			if relationState == variables.RelationStateBlocked {
+				return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Action impossible : vous ne pouvez pas identifier un utilisateur qui vous a bloqué.", nil)
 			}
 
-			// Sélection de la règle selon qu'il s'agit d'un tag de média ou d'une mention textuelle
-			perm := tLite.AllowTagging
-			if permType == "mention" {
-				perm = tLite.AllowMentions
+			activePermission := targetUserLite.AllowTagging
+			if permissionType == "mention" {
+				activePermission = targetUserLite.AllowMentions
 			}
 
-			allowed := false
-			switch perm {
-			case 0: // Tout le monde
-				allowed = true
-			case 1: // Abonnés uniquement (relation >= 1 : Follower ou Ami)
-				allowed = (relState >= 1)
-			case 2: // Amis uniquement (relation == 2)
-				allowed = (relState == 2)
-			case 3: // Personne
-				allowed = false
+			isActionAllowed := false
+			switch activePermission {
+			case variables.TagPermissionEveryone:
+				isActionAllowed = true
+			case variables.TagPermissionFollowers:
+				isActionAllowed = (relationState >= 1)
+			case variables.TagPermissionFriends:
+				isActionAllowed = (relationState == 2)
+			case variables.TagPermissionNobody:
+				isActionAllowed = false
 			}
 
-			if !allowed {
-				return nubo_error.NewForbidden("PRIVACY_RESTRICTION", "Un des utilisateurs identifiés restreint les identifications ou mentions.", nil)
+			if !isActionAllowed {
+				return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Un des utilisateurs identifiés restreint les identifications ou mentions.", nil)
 			}
 		}
 		return nil
 	}
 
-	// A. Vérification des tags sur les médias (Identifiers) -> S'appuie sur AllowTagging
-	if err := checkPermissions(input.Identifiers, "tag"); err != nil {
-		return -1, err
+	if errTags := verifyPrivacyPermissions(input.Identifiers, "tag"); errTags != nil {
+		return -1, errTags
 	}
 
-	// B. Vérification des mentions textuelles (@{id}) -> S'appuie sur AllowMentions
-	if err := checkPermissions(mentionedIDs, "mention"); err != nil {
-		return -1, err
+	if errMentions := verifyPrivacyPermissions(mentionedUserIDs, "mention"); errMentions != nil {
+		return -1, errMentions
 	}
 
-	now := time.Now().UTC()
-	postID := pkg.GenerateID()
+	currentTime := time.Now().UTC()
+	newPostID := pkg.GenerateID()
 
-	// 1. DÉLÉGATION : Activation des médias fantômes
-	if err := media_service.ActivateMediaBatch(ctx, input.MediaIDs, userID); err != nil {
-		return -1, err
+	// ── ÉTAPE 2 : DÉLÉGATION - ACTIVATION DES MÉDIAS FANTÔMES ───────────────
+
+	if errMedia := media_service.ActivateMediaBatch(ctx, input.MediaIDs, callerID); errMedia != nil {
+		return -1, errMedia // ActivateMediaBatch gère déjà ses propres nubo_error
 	}
 
-	// 2. DÉLÉGATION : Évaluation dynamique de la priorité
-	priorityLevel := 0
-	if userLite, err := cache_service.GetUserLite(ctx, userID); err == nil {
-		gradeToPriority := map[int]int{
+	// ── ÉTAPE 3 : ÉVALUATION DYNAMIQUE DE LA PRIORITÉ ───────────────────────
+
+	authorPriorityLevel := 0
+	if callerUserLite, errLite := cache_service.GetUserLite(ctx, callerID); errLite == nil {
+		gradeToPriorityMap := map[int]int{
 			0: 0, 1: 1, 2: 2, 3: 3, 4: 4,
 		}
-		if p, ok := gradeToPriority[userLite.Grade]; ok {
-			priorityLevel = p
+		if priorityValue, exists := gradeToPriorityMap[callerUserLite.Grade]; exists {
+			authorPriorityLevel = priorityValue
 		}
 	}
 
-	// 3. ASSEMBLAGE : Création de l'objet Post
-	post := post_models.PostPayload{
-		ID:                postID,
-		UserID:            userID,
+	// ── ÉTAPE 4 : OPTIMISATION ALGORITHMIQUE (AUTO-TAG AUTEUR) ──────────────
+
+	authorHashtag := fmt.Sprintf("%s%d", variables.AuthorTagPrefix, callerID)
+	isAuthorAlreadyTagged := false
+
+	for _, hashtag := range input.Hashtags {
+		if hashtag == authorHashtag {
+			isAuthorAlreadyTagged = true
+			break
+		}
+	}
+
+	finalHashtagsList := input.Hashtags
+	if !isAuthorAlreadyTagged {
+		finalHashtagsList = append(finalHashtagsList, authorHashtag)
+	}
+
+	// ── ÉTAPE 5 : ASSEMBLAGE DE L'OBJET POST ────────────────────────────────
+
+	postPayload := post_models.PostPayload{
+		ID:                newPostID,
+		UserID:            callerID,
 		Content:           pkg.CleanStr(input.Content),
-		Hashtags:          input.Hashtags,
-		IndirectHashtags:  nil, // Initialisation stricte anti-fantôme
+		Hashtags:          finalHashtagsList,
+		IndirectHashtags:  nil,
 		Identifiers:       input.Identifiers,
 		MediaIDs:          input.MediaIDs,
 		Visibility:        input.Visibility,
-		PriorityLevel:     priorityLevel,
+		PriorityLevel:     authorPriorityLevel,
 		Location:          input.Location,
-		CreatedAt:         domain.TimeToMillis(now),
-		UpdatedAt:         domain.TimeToMillis(now),
+		CreatedAt:         domain.TimeToMillis(currentTime),
+		UpdatedAt:         domain.TimeToMillis(currentTime),
 		LikeCount:         0,
 		CommentCount:      0,
 		ViewCount:         0,
@@ -121,17 +142,25 @@ func CreatePost(ctx context.Context, userID int64, input post_models.CreatePostI
 		TelemetryClicks:   0,
 	}
 
-	// 4. DÉLÉGATION : Vectorisation synchrone du contenu (O(1))
-	post.Vector = algorithm_service.ComputeContentVectorFull(post, nil)
+	// ── ÉTAPE 6 : VECTORISATION SÉMANTIQUE SYNCHRONE (O(1)) ─────────────────
 
-	// 5. DÉLÉGATION : Cache Redis (LFU Init) & Timeline
-	if err := object_cache_service.SetPostInObjectCache(ctx, post); err != nil {
-		return -1, err
+	postPayload.Vector = algorithm_service.ComputeContentVectorFull(postPayload, nil)
+
+	// ── ÉTAPE 7 : CACHE REDIS L1 ET INDEXATION TIMELINE ─────────────────────
+
+	if errCache := object_cache_service.SetPostInObjectCache(ctx, postPayload); errCache != nil {
+		logger.Log.Warn().Err(errCache).Int64("post_id", newPostID).Msg("Échec de la mise en cache de la publication")
 	}
-	_ = cache_service.AddPostToUserProfile(ctx, userID, postID, float64(now.UnixMilli()))
 
-	// 6. DÉLÉGATION : Persistance Asynchrone (Write-Behind)
-	err := redis.EnqueueDB(ctx, postID, 0, redis.EntityPost, redis.ActionCreate, post, redis.TargetAll)
+	_ = cache_service.AddPostToUserProfile(ctx, callerID, newPostID, float64(currentTime.UnixMilli()))
 
-	return postID, err
+	// ── ÉTAPE 8 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
+
+	errQueue := redis.EnqueueDB(ctx, newPostID, 0, redis.EntityPost, redis.ActionCreate, postPayload, redis.TargetAll)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("post_id", newPostID).Msg("Échec du Write-Behind lors de la création d'un post")
+		return -1, nubo_error.NewInternal()
+	}
+
+	return newPostID, nil
 }

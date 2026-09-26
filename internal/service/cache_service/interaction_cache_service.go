@@ -6,24 +6,35 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
-// getIdempotencyCollection retourne la bonne Collection L1 selon le type de cible
-func getIdempotencyCollection(targetType int) *redis.Collection {
-	if targetType == 1 {
+// ############################################################################
+// # SERVICE : GESTION DE L'IDEMPOTENCE DES INTERACTIONS
+// ############################################################################
+
+// getIdempotencyCollection retourne le Set Redis L1 approprié selon le type de cible.
+func getIdempotencyCollection(targetEntityType int) *redis.Collection {
+	if targetEntityType == 1 {
 		return redis.CommentLikesSet
 	}
 	return redis.PostLikesSet
 }
 
-// TryAddLikeIdempotency gère l'idempotence pour posts et commentaires de manière thread-safe.
-func TryAddLikeIdempotency(ctx context.Context, targetType int, targetID int64, userID int64) bool {
-	col := getIdempotencyCollection(targetType)
-	added, err := col.SAddCount(ctx, targetID, userID)
-	return err == nil && added > 0
+// TryAddLikeIdempotency gère l'idempotence pour l'ajout de Likes de manière thread-safe (O(1)).
+// Retourne true si l'ajout est un succès (l'utilisateur n'avait pas encore liké).
+func TryAddLikeIdempotency(ctx context.Context, targetEntityType int, targetID int64, userID int64) bool {
+	redisCollection := getIdempotencyCollection(targetEntityType)
+
+	elementsAddedCount, errRedis := redisCollection.SAddCount(ctx, targetID, userID)
+
+	// Si errRedis != nil, cela échouera (false), ce qui est le comportement de sécurité souhaité.
+	return errRedis == nil && elementsAddedCount > 0
 }
 
-// TryRemoveLikeIdempotency gère la suppression d'idempotence pour posts et commentaires.
-func TryRemoveLikeIdempotency(ctx context.Context, targetType int, targetID int64, userID int64) bool {
-	col := getIdempotencyCollection(targetType)
-	removed, err := col.SRemCount(ctx, targetID, userID)
-	return err == nil && removed > 0
+// TryRemoveLikeIdempotency gère la suppression d'idempotence pour les Likes (O(1)).
+// Retourne true si le retrait est un succès (l'utilisateur avait bien liké).
+func TryRemoveLikeIdempotency(ctx context.Context, targetEntityType int, targetID int64, userID int64) bool {
+	redisCollection := getIdempotencyCollection(targetEntityType)
+
+	elementsRemovedCount, errRedis := redisCollection.SRemCount(ctx, targetID, userID)
+
+	return errRedis == nil && elementsRemovedCount > 0
 }

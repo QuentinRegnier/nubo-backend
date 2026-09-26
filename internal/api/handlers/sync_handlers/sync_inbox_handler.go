@@ -1,31 +1,31 @@
-package notification_handlers
+package sync_handlers
 
 import (
 	"net/http"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/sync_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/service/sync_service"
 	"github.com/gin-gonic/gin"
 )
 
-// SyncActivityHandler godoc
-// @Summary      Synchroniser les notifications (Delta Sync)
-// @Description  Vérifie le Delta Sync des activités. Si le client est à jour, retourne need_update=false. Sinon, retourne les notifications manquantes.
-// @Tags         notifications
+// SyncInboxHandler godoc
+// @Summary      Synchroniser la boîte de réception
+// @Description  Vérifie le Delta Sync. Si le client est à jour, retourne HTTP 200 avec need_update=false. Sinon, hydrate et retourne l'inbox complète.
+// @Tags         conversations
 // @Accept       json
 // @Produce      json
 // @Param        Authorization header string true  "Bearer <votre_jwt>"
 // @Param        X-Signature   header string true  "Signature HMAC de la requête"
 // @Param        X-Timestamp   header string true  "Timestamp Unix de la requête"
-// @Param        data          body   notification_models.SyncActivityInput true "État du cache local"
-// @Success      200  {object} notification_models.SyncActivityOutput
+// @Param        data          body   sync_models.SyncInboxInput true "Date de dernière mise à jour locale"
+// @Success      200  {object} sync_models.SyncInboxOutput
 // @Failure      400  {object} nubo_error.PublicErrorResponse "Données invalides"
 // @Failure      401  {object} nubo_error.PublicErrorResponse "Non autorisé"
-// @Router       /sync/activity [post]
-func SyncActivityHandler(c *gin.Context) {
-	var input notification_models.SyncActivityInput
+// @Router       /sync/inbox [post]
+func SyncInboxHandler(c *gin.Context) {
+	var input sync_models.SyncInboxInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide.", err))
 		return
@@ -37,7 +37,7 @@ func SyncActivityHandler(c *gin.Context) {
 		return
 	}
 
-	output, err := notification_service.SyncActivity(c.Request.Context(), callerID, input)
+	output, err := sync_service.SyncInbox(c.Request.Context(), callerID, input)
 	if err != nil {
 		nubo_error.RespondWithError(c, err)
 		return

@@ -3,7 +3,7 @@ package member_service
 import (
 	"context"
 	"fmt"
-	"strconv" // ✅ NOUVEAU : Requis pour parser les ID dans le trigger
+	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
@@ -11,114 +11,141 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service" // ✅ NOUVEAU : Import pour le Ledger
+	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
+
+// ############################################################################
+// # SERVICE : RESTRICTION TEMPORELLE (MUTE) D'UN MEMBRE
+// ############################################################################
 
 // MuteMember gère l'interdiction de parler pour un membre.
 func MuteMember(ctx context.Context, callerID int64, input member_models.MuteMemberInput) error {
-	// 1. SÉCURITÉ : Vérifier que le Caller est Admin (1) ou Propriétaire (2)
-	callerMem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
-	if err != nil {
-		return err
+
+	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS ET HIERARCHIE ────────────────────────────
+
+	callerMemberPayload, errCaller := security_service.LeftMember(ctx, input.ConversationID, callerID)
+	if errCaller != nil {
+		return errCaller
 	}
-	if callerMem.Role < 1 {
-		return nubo_error.NewForbidden("NOT_ADMIN", "Seuls les administrateurs peuvent muter un membre.", nil)
+	if callerMemberPayload.Role < variables.MemberRoleAdmin {
+		return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seuls les administrateurs peuvent appliquer une restriction à un membre.", nil)
 	}
 
-	// 2. SÉCURITÉ : Cible et hiérarchie
-	targetMem, err := security_service.LeftMember(ctx, input.ConversationID, input.TargetUserID)
-	if err != nil {
-		return err
-	}
-	if targetMem.Role >= callerMem.Role {
-		return nubo_error.NewForbidden("HIERARCHY_ERROR", "Vous ne pouvez pas muter un membre de rang égal ou supérieur.", nil)
+	targetMemberPayload, errTarget := security_service.LeftMember(ctx, input.ConversationID, input.TargetUserID)
+	if errTarget != nil {
+		return errTarget
 	}
 
-	// 3. LOGIQUE ALGORITHMIQUE : Ne pas muter quelqu'un qui n'a déjà pas le droit de parler
-	conv, _ := object_cache_service.GetConversationFromObjectCache(ctx, input.ConversationID)
-	if conv.ID == 0 {
-		// TENTATIVE L2 (MongoDB)
-		conv, _ = mongo.MongoGetConversation(input.ConversationID)
-		if conv.ID != 0 {
-			// =========================================================
-			// RÉHYDRATATION L2 -> L1
-			// =========================================================
-			_ = object_cache_service.SetConversationInObjectCache(ctx, conv)
+	// Un administrateur ne peut pas muter un autre administrateur ou un propriétaire.
+	if targetMemberPayload.Role >= callerMemberPayload.Role {
+		return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous ne pouvez pas restreindre un membre de rang égal ou supérieur au vôtre.", nil)
+	}
+
+	// ── ÉTAPE 2 : LOGIQUE ALGORITHMIQUE ET CASCADE (L1 -> L2 -> L3) ─────────
+	// Objectif : Ne pas muter quelqu'un qui n'a déjà pas le droit de parler selon les lois du groupe.
+
+	var conversationPayload conversation_models.ConversationPayload
+
+	conversationPayload, errCache := object_cache_service.GetConversationFromObjectCache(ctx, input.ConversationID)
+
+	if errCache != nil || conversationPayload.ID == 0 {
+		var errMongo error
+		conversationPayload, errMongo = mongo.MongoGetConversation(input.ConversationID)
+
+		if errMongo == nil && conversationPayload.ID != 0 {
+			// AUTO-GUÉRISON L2 -> L1
+			_ = object_cache_service.SetConversationInObjectCache(ctx, conversationPayload)
 		} else {
-			// FALLBACK ABSOLU L3 (PostgreSQL)
-			conv, _ = postgres.FuncGetConversation(ctx, input.ConversationID)
-			if conv.ID != 0 {
-				// =========================================================
-				// RÉHYDRATATION L3 -> L2 & L1
-				// =========================================================
+			// FALLBACK L3 (PostgreSQL)
+			var errPg error
+			conversationPayload, errPg = postgres.FuncGetConversation(ctx, input.ConversationID)
+			if errPg != nil {
+				logger.Log.Error().Err(errPg).Int64("conv_id", input.ConversationID).Msg("Échec de la récupération L3 de la conversation pour le Mute")
+				return nubo_error.NewInternal()
+			}
 
-				// PROMOTION L3 -> L2 (Asynchrone via la queue)
+			if conversationPayload.ID != 0 {
+				// AUTO-GUÉRISON L3 -> L2 & L1
 				go func(c conversation_models.ConversationPayload) {
 					bgCtx := context.Background()
 					_ = redis.EnqueueDB(bgCtx, c.ID, c.ID, redis.EntityConversation, redis.ActionUpdate, c, redis.TargetMongo)
-				}(conv)
+				}(conversationPayload)
 
-				// PROMOTION L3 -> L1 (Immédiat en RAM)
-				_ = object_cache_service.SetConversationInObjectCache(ctx, conv)
+				_ = object_cache_service.SetConversationInObjectCache(ctx, conversationPayload)
 			}
 		}
 	}
 
-	if conv.ID != 0 {
-		// Si la WritePermission est à 1 (Admins seulement) et que la cible est membre (0)
-		if conv.Settings.WritePermission == 1 && targetMem.Role == 0 {
-			return nubo_error.NewForbidden("ALREADY_MUTED_BY_LAWS", "Ce membre n'a déjà pas le droit de parole dans cette communauté à cause des permissions de base.", nil)
-		}
-	} else {
-		return nubo_error.NewNotFound("CONV_NOT_FOUND", "Conversation introuvable ou inactive.", err)
+	if conversationPayload.ID == 0 {
+		return nubo_error.NewNotFound(nubo_error.CodeNotFound, "Conversation introuvable ou inactive.", nil)
 	}
 
-	// 4. APPLICATION DE LA PUNITION
-	targetMem.Settings.RestrictedUntil = input.RestrictedUntil
-	targetMem.UpdatedAt = domain.NowMillis()
-
-	// 5. MISE À JOUR L1 INSTANTANÉE
-	memberID := fmt.Sprintf("%d:%d", input.ConversationID, input.TargetUserID)
-	var memLite lite_models.MemberLiteRequest
-	if errCache := redis.ConvMembers.GetObject(ctx, memberID, &memLite); errCache == nil {
-		memLite.Settings.RestrictedUntil = input.RestrictedUntil
-		_ = redis.ConvMembers.SetObject(ctx, memberID, memLite)
+	// Règle métier : Si le groupe est en mode "Admins Uniquement" (WritePermission = 1),
+	// le membre standard n'a déjà pas le droit de parole, la sanction est inutile.
+	if conversationPayload.Settings.WritePermission == 1 && targetMemberPayload.Role == variables.MemberRoleNormal {
+		return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Ce membre n'a déjà pas le droit de parole en raison des permissions actuelles du groupe.", nil)
 	}
 
-	// 6. PERSISTANCE ASYNCHRONE
-	errQueue := redis.EnqueueDB(ctx, targetMem.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMem, redis.TargetAll)
+	// ── ÉTAPE 3 : APPLICATION DE LA PUNITION ────────────────────────────────
 
-	// ✅ NOUVEAU : SYNC LEDGER (Trigger global)
+	targetMemberPayload.Settings.RestrictedUntil = input.RestrictedUntil
+	targetMemberPayload.UpdatedAt = domain.NowMillis()
+
+	// ── ÉTAPE 4 : MISE À JOUR SYNCHRONE (L1 OBJECT ET SPEED CACHE) ──────────
+
+	_ = object_cache_service.SetMemberInObjectCache(ctx, targetMemberPayload)
+
+	memberCompositeID := fmt.Sprintf("%d:%d", input.ConversationID, input.TargetUserID)
+	var liteMember lite_models.MemberLiteRequest
+
+	if errSpeedCache := redis.ConvMembers.GetObject(ctx, memberCompositeID, &liteMember); errSpeedCache == nil {
+		liteMember.Settings.RestrictedUntil = input.RestrictedUntil
+		_ = redis.ConvMembers.SetObject(ctx, memberCompositeID, liteMember)
+	}
+
+	// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE ET LEDGER (WRITE-BEHIND) ───────────
+
+	errQueue := redis.EnqueueDB(ctx, targetMemberPayload.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMemberPayload, redis.TargetAll)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("user_id", targetMemberPayload.UserID).Msg("Échec du Write-Behind pour la restriction d'un membre")
+		return nubo_error.NewInternal()
+	}
+
+	// SYNC LEDGER (Trigger d'invalidation mutuelle)
 	go func(cID int64) {
 		bgCtx := context.Background()
-		participantsStr, _ := redis.ConvParticipants.SMembers(bgCtx, cID)
-		var pIDs []int64
-		for _, p := range participantsStr {
-			if id, err := strconv.ParseInt(p, 10, 64); err == nil {
-				pIDs = append(pIDs, id)
+		participantsStringList, _ := redis.ConvParticipants.SMembers(bgCtx, cID)
+
+		var syncTargetIDs []int64
+		for _, pStr := range participantsStringList {
+			if id, errParse := strconv.ParseInt(pStr, 10, 64); errParse == nil {
+				syncTargetIDs = append(syncTargetIDs, id)
 			}
 		}
-		_ = cache_service.RecordConversationMutation(bgCtx, cID, pIDs)
+		_ = cache_service.RecordConversationMutation(bgCtx, cID, syncTargetIDs)
 	}(input.ConversationID)
 
-	if errQueue == nil {
-		// 7. DIFFUSION TEMPS RÉEL DE L'ÉTAT DU MEMBRE
-		go func() {
-			bgCtx := context.Background()
-			_ = realtime_service.BroadcastToConversation(bgCtx, input.ConversationID, "member.muted", targetMem)
-		}()
+	// ── ÉTAPE 6 : NOTIFICATION ET MESSAGE SYSTÈME ───────────────────────────
 
-		// 8. ENVOI DU MESSAGE SYSTÈME (Dans le flux de la conversation)
-		sysMsgInput := message_models.CreateMessageInput{
+	go func() {
+		bgCtx := context.Background()
+
+		// A. Diffusion temps réel de la pénalité pour l'interface UI
+		_ = realtime_service.BroadcastToConversation(bgCtx, input.ConversationID, "member.muted", targetMemberPayload)
+
+		// B. Message Système pour historique
+		systemMessageInput := message_models.CreateMessageInput{
 			ConversationID: input.ConversationID,
-			MessageType:    8, // 8 = System Event
+			MessageType:    variables.MessageTypeSystem,
 			Content:        "Un membre a été restreint.",
 			Attachments: map[string]any{
 				"event_type":       "member_muted",
@@ -126,9 +153,10 @@ func MuteMember(ctx context.Context, callerID int64, input member_models.MuteMem
 				"restricted_until": input.RestrictedUntil,
 			},
 		}
-		// On envoie en "isInternal = true" pour bypasser les droits de l'admin s'il est par hasard en mode lecture
-		_, _ = message_service.CreateMessage(ctx, callerID, input.ConversationID, sysMsgInput, true)
-	}
 
-	return errQueue
+		// By-pass du mode lecture-seule pour l'Admin s'il était lui-même restreint (isInternal = true)
+		_, _ = message_service.CreateMessage(bgCtx, callerID, input.ConversationID, systemMessageInput, true)
+	}()
+
+	return nil
 }

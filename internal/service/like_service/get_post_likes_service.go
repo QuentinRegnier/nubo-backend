@@ -3,142 +3,145 @@ package like_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models" // ✅ NOUVEAU
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/like_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service" // ✅ NOUVEAU
+	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
+
+// ############################################################################
+// # SERVICE : RÉCUPÉRATION DES ABONNÉS AYANT LIKÉ UN POST
+// ############################################################################
 
 // GetPostLikes récupère les abonnés ayant liké un post en appliquant les règles de visibilité.
 func GetPostLikes(ctx context.Context, input like_models.GetPostLikesInput) (like_models.GetPostLikesOutput, error) {
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// 1. SÉCURITÉ : VÉRIFICATION DES DROITS D'ACCÈS AU POST (L1 -> L2 -> L3)
-	// ─────────────────────────────────────────────────────────────────────────
-	var post post_models.PostPayload
-	var found bool
+	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS AU POST (CASCADE L1 -> L2 -> L3) ─────────
 
-	// Lecture ultra-rapide du post pour checker les droits
-	if p, err := object_cache_service.GetPostFromObjectCache(ctx, input.PostID); err == nil {
-		post = p
-		found = true
+	var postPayload post_models.PostPayload
+	var isPostFound bool
+
+	if cachedPost, errCache := object_cache_service.GetPostFromObjectCache(ctx, input.PostID); errCache == nil {
+		postPayload = cachedPost
+		isPostFound = true
 	} else {
-		// TENTATIVE L2 (MongoDB)
-		mongoPosts, errMongo := mongo.MongoLoadPosts([]int64{input.PostID})
-		if errMongo == nil && len(mongoPosts) > 0 {
-			post = mongoPosts[0]
-			found = true
+		// TENTATIVE L2 (MongoDB - Warm Storage)
+		postsFromMongo, errMongo := mongo.MongoLoadPosts([]int64{input.PostID})
+		if errMongo == nil && len(postsFromMongo) > 0 {
+			postPayload = postsFromMongo[0]
+			isPostFound = true
 
 			go func(p post_models.PostPayload) {
 				_ = object_cache_service.SetPostInObjectCache(context.Background(), p)
-			}(post)
+			}(postPayload)
 
 		} else {
-			// TENTATIVE L3 (PostgreSQL)
-			pgPosts, errPg := postgres.FuncLoadPosts([]int64{input.PostID}, 1, 0)
-			if errPg == nil && len(pgPosts) > 0 {
-				post = pgPosts[0]
-				found = true
+			// TENTATIVE L3 (PostgreSQL - Cold Storage)
+			postsFromPostgres, errPg := postgres.FuncLoadPosts([]int64{input.PostID}, 1, 0)
+			if errPg != nil {
+				logger.Log.Error().Err(errPg).Int64("post_id", input.PostID).Msg("Erreur L3 lors de la vérification du post pour GetPostLikes")
+				return like_models.GetPostLikesOutput{}, nubo_error.NewInternal()
+			}
 
-				// ⬆️ PROMOTION L3/L2 -> L1 (Immédiat en RAM)
-				_ = object_cache_service.SetPostInObjectCache(ctx, post)
+			if len(postsFromPostgres) > 0 {
+				postPayload = postsFromPostgres[0]
+				isPostFound = true
 
-				// ⬆️ PROMOTION L3 -> L2 (Asynchrone via Worker)
+				_ = object_cache_service.SetPostInObjectCache(ctx, postPayload)
+
 				go func(p post_models.PostPayload) {
 					bgCtx := context.Background()
 					_ = redis.EnqueueDB(bgCtx, p.ID, p.UserID, redis.EntityPost, redis.ActionUpdate, p, redis.TargetMongo)
-				}(post)
+				}(postPayload)
 			}
 		}
 	}
 
-	if !found || post.Visibility == -1 {
-		return like_models.GetPostLikesOutput{}, nubo_error.NewNotFound("POST_NOT_FOUND", "Publication introuvable.", nil)
+	if !isPostFound || postPayload.Visibility == variables.PostVisibilityDeleted {
+		return like_models.GetPostLikesOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Publication introuvable ou supprimée.", nil)
 	}
 
 	// Matrice de Confidentialité
-	if post.UserID != input.CallerID {
-		relationState := cache_service.RelationValue(ctx, post.UserID, input.CallerID)
-		if relationState == -1 {
-			return like_models.GetPostLikesOutput{}, nubo_error.NewForbidden("USER_BANNED", "Accès refusé.", nil)
+	if postPayload.UserID != input.CallerID {
+		relationState := cache_service.RelationValue(ctx, postPayload.UserID, input.CallerID)
+
+		if relationState == variables.RelationStateBlocked {
+			return like_models.GetPostLikesOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé.", nil)
 		}
-		if post.Visibility == 1 && relationState < 1 { // Abonnés
-			return like_models.GetPostLikesOutput{}, nubo_error.NewForbidden("SUBSCRIBERS_ONLY", "Action non autorisée.", nil)
+		if postPayload.Visibility == variables.PostVisibilitySubcriber && relationState < variables.RelationStateFollow { // Réservé aux Abonnés
+			return like_models.GetPostLikesOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Liste des likes réservée aux abonnés de l'auteur.", nil)
 		}
-		if post.Visibility == 2 && relationState != 2 { // Amis
-			return like_models.GetPostLikesOutput{}, nubo_error.NewForbidden("FRIENDS_ONLY", "Action non autorisée.", nil)
+		if postPayload.Visibility == variables.PostVisibilityFriend && relationState != variables.RelationStateFriend { // Réservé aux Amis
+			return like_models.GetPostLikesOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Liste des likes réservée aux amis de l'auteur.", nil)
 		}
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// 2. RÉCUPÉRATION DES LIKES (L2 Mongo -> L3 Postgres)
-	// ─────────────────────────────────────────────────────────────────────────
-	var userIDs []int64
+	// ── ÉTAPE 2 : RÉCUPÉRATION DES LIKES (L2 Mongo -> L3 Postgres) ──────────
+
+	var userIDsThatLiked []int64
 
 	// On tente Mongo (L2) d'abord
-	userIDs, errMongo := mongo.MongoGetPostLikes(input.PostID, input.Limit, input.Offset)
+	userIDsThatLiked, errMongo := mongo.MongoGetPostLikes(input.PostID, input.Limit, input.Offset)
 
 	// Si Mongo échoue ou ne renvoie rien (Cache miss), on tape Postgres (L3)
-	if errMongo != nil || len(userIDs) == 0 {
-		// On charge les objets Likes COMPLETS pour pouvoir réhydrater Mongo
-		likesPg, errPg := postgres.FuncLoadLikes(ctx, 0, input.PostID, 0, input.Limit, 0)
-		if errPg == nil {
-			for _, l := range likesPg {
-				userIDs = append(userIDs, l.UserID)
+	if errMongo != nil || len(userIDsThatLiked) == 0 {
+		likesFromPostgres, errPg := postgres.FuncLoadLikes(ctx, 0, input.PostID, 0, input.Limit, 0)
+		if errPg != nil {
+			logger.Log.Error().Err(errPg).Int64("post_id", input.PostID).Msg("Erreur L3 lors de la récupération de la liste des likes")
+			return like_models.GetPostLikesOutput{}, nubo_error.NewInternal()
+		}
 
-				// ⬆️ PROMOTION L3 -> L2 (Asynchrone via Worker)
-				go func(like like_models.LikePayload) {
-					bgCtx := context.Background()
-					// PartitionKey = targetID (le post) pour grouper les opérations
-					_ = redis.EnqueueDB(bgCtx, like.ID, like.TargetID, redis.EntityLike, redis.ActionUpdate, like, redis.TargetMongo)
-				}(l)
-			}
+		for _, likePayload := range likesFromPostgres {
+			userIDsThatLiked = append(userIDsThatLiked, likePayload.UserID)
+
+			go func(l like_models.LikePayload) {
+				bgCtx := context.Background()
+				_ = redis.EnqueueDB(bgCtx, l.ID, l.TargetID, redis.EntityLike, redis.ActionUpdate, l, redis.TargetMongo)
+			}(likePayload)
 		}
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// 3. HYDRATATION EN MASSE (SPEED CACHE + DOMAINE MÉDIA)
-	// ─────────────────────────────────────────────────────────────────────────
-	if len(userIDs) == 0 {
+	// ── ÉTAPE 3 : HYDRATATION EN MASSE (SPEED CACHE + DOMAINE MÉDIA) ────────
+
+	if len(userIDsThatLiked) == 0 {
 		return like_models.GetPostLikesOutput{
 			PostID: input.PostID,
-			Users:  make([]auth_models.UserLiteView, 0), // ✅ Tableau vide propre, pas de 'null' en JSON
+			Users:  make([]auth_models.UserLiteView, 0), // Prévention du `null` en JSON
 		}, nil
 	}
 
-	var hydratedUsers []auth_models.UserLiteView
+	var hydratedUsersList []auth_models.UserLiteView
 
-	for _, uID := range userIDs {
-		// A. Récupération du pseudo et des métadonnées O(1) depuis le Speed Cache
-		if userLite, err := cache_service.GetUserLite(ctx, uID); err == nil {
+	for _, targetUserID := range userIDsThatLiked {
 
-			// B. Signature HMAC de l'avatar si l'utilisateur en a un
-			var avatarView media_models.MediaView
-			if userLite.ProfilePictureID > 0 {
-				// targetID = 0 (L'avatar n'est pas lié à un post spécifique), readerID = CallerID
-				if view, errMedia := media_service.GenerateMediaViewCascade(ctx, userLite.ProfilePictureID, uID, 0, input.CallerID); errMedia == nil {
-					avatarView = view
+		if userLiteData, errCache := cache_service.GetUserLite(ctx, targetUserID); errCache == nil {
+
+			var userAvatarView media_models.MediaView
+			if userLiteData.ProfilePictureID > 0 {
+				if generatedView, errMedia := media_service.GenerateMediaViewCascade(ctx, userLiteData.ProfilePictureID, targetUserID, 0, input.CallerID); errMedia == nil {
+					userAvatarView = generatedView
 				}
 			}
 
-			// C. Assemblage de la UserLiteView
-			hydratedUsers = append(hydratedUsers, auth_models.UserLiteView{
-				User:     userLite,
-				Avatar:   avatarView,
-				IsOnline: cache_service.IsUserOnline(ctx, uID),
+			hydratedUsersList = append(hydratedUsersList, auth_models.UserLiteView{
+				User:     userLiteData,
+				Avatar:   userAvatarView,
+				IsOnline: cache_service.IsUserOnline(ctx, targetUserID),
 			})
 		}
 	}
 
 	return like_models.GetPostLikesOutput{
 		PostID: input.PostID,
-		Users:  hydratedUsers, // ✅ Remplacé : La donnée est maintenant 100% exploitable
+		Users:  hydratedUsersList,
 	}, nil
 }

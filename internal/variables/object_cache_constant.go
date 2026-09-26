@@ -6,3 +6,8 @@ import "time"
 const (
 	StandardTTL = 7 * 24 * time.Hour // TTL STANDARD : 7 Jours (Pragmatique, évite la saturation).
 )
+
+// objectif_cache_comment_service.go
+const (
+	MaxZsetPostComment = 100
+)

@@ -7,74 +7,104 @@ import (
 	"strings"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-// StoreCommunityLiteInSpeedCache sauvegarde directement un objet CommunityLiteRequest et met à jour l'index Lexicographique
-// (Prêt pour être utilisé par les workers à l'avenir)
-func StoreCommunityLiteInSpeedCache(ctx context.Context, lite lite_models.CommunityLiteRequest) error {
-	lexValue := fmt.Sprintf("%s:%d", strings.ToLower(lite.Name), lite.ID)
-	_ = redis.CommunitiesLex.ZAdd(ctx, "lex", 0, lexValue)
-	return redis.SpeedCommunity.SetObject(ctx, lite.ID, lite)
+// ############################################################################
+// # SERVICE : SPEED CACHE (COMMUNAUTÉS)
+// ############################################################################
+
+// StoreCommunityLiteInSpeedCache sauvegarde un objet CommunityLiteRequest
+// et met à jour l'index Lexicographique pour l'autocomplétion.
+func StoreCommunityLiteInSpeedCache(ctx context.Context, communityLitePayload lite_models.CommunityLiteRequest) error {
+	lexicographicValue := fmt.Sprintf("%s:%d", strings.ToLower(communityLitePayload.Name), communityLitePayload.ID)
+
+	errZAdd := redis.CommunitiesLex.ZAdd(ctx, variables.LexicographicGlobalKey, 0, lexicographicValue)
+	if errZAdd != nil {
+		logger.Log.Error().Err(errZAdd).Int64("community_id", communityLitePayload.ID).Msg("Impossible d'indexer la communauté dans le dictionnaire Lexicographique")
+		return nubo_error.NewInternal()
+	}
+
+	errSet := redis.SpeedCommunity.SetObject(ctx, communityLitePayload.ID, communityLitePayload)
+	if errSet != nil {
+		logger.Log.Error().Err(errSet).Int64("community_id", communityLitePayload.ID).Msg("Impossible de sauvegarder la communauté dans l'Object Cache")
+		return nubo_error.NewInternal()
+	}
+
+	return nil
 }
 
-// NOUVEAU : Met à jour le compteur de membres en RAM (O(1))
+// UpdateCommunityMemberCountInSpeedCache met à jour le compteur de membres en RAM (O(1)).
 func UpdateCommunityMemberCountInSpeedCache(ctx context.Context, communityID int64, delta int) {
 	if delta == 0 {
 		return
 	}
-	var c lite_models.CommunityLiteRequest
-	// On modifie silencieusement seulement si c'est bien une communauté présente en L1
-	if err := redis.SpeedCommunity.GetObject(ctx, communityID, &c); err == nil && c.ID != 0 {
-		c.MemberCount += delta
-		if c.MemberCount < 0 {
-			c.MemberCount = 0
+
+	var communityLitePayload lite_models.CommunityLiteRequest
+
+	// On modifie silencieusement seulement si la communauté est bien présente en L1
+	errGet := redis.SpeedCommunity.GetObject(ctx, communityID, &communityLitePayload)
+	if errGet == nil && communityLitePayload.ID != 0 {
+		communityLitePayload.MemberCount += delta
+		if communityLitePayload.MemberCount < 0 {
+			communityLitePayload.MemberCount = 0
 		}
-		_ = redis.SpeedCommunity.SetObject(ctx, c.ID, c)
+
+		errSet := redis.SpeedCommunity.SetObject(ctx, communityLitePayload.ID, communityLitePayload)
+		if errSet != nil {
+			logger.Log.Warn().Err(errSet).Int64("community_id", communityID).Msg("Échec de la mise à jour du compteur de membres en L1")
+		}
 	}
 }
 
-// SearchCommunitiesByPrefix recherche des communautés en O(log(N)) RAM et les réhydrate
-func SearchCommunitiesByPrefix(ctx context.Context, prefix string, limit int64) ([]lite_models.CommunityLiteRequest, error) {
+// SearchCommunitiesByPrefix recherche des communautés en O(log(N)) RAM et les réhydrate.
+func SearchCommunitiesByPrefix(ctx context.Context, searchPrefix string, resultLimit int64) ([]lite_models.CommunityLiteRequest, error) {
+
 	// 1. Recherche ultra-rapide dans l'index lexicographique
-	lexResults, err := redis.CommunitiesLex.ZRangeByLex(ctx, "lex", strings.ToLower(prefix), limit)
-	if err != nil {
-		return nil, err
+	lexicographicResultsList, errLex := redis.CommunitiesLex.ZRangeByLex(ctx, variables.LexicographicGlobalKey, strings.ToLower(searchPrefix), resultLimit)
+	if errLex != nil {
+		logger.Log.Error().Err(errLex).Str("prefix", searchPrefix).Msg("Erreur lors du ZRangeByLex des communautés")
+		return nil, nubo_error.NewInternal()
 	}
 
-	if len(lexResults) == 0 {
+	if len(lexicographicResultsList) == 0 {
 		return []lite_models.CommunityLiteRequest{}, nil
 	}
 
 	// 2. Extraction des IDs
-	var ids []int64
-	for _, res := range lexResults {
+	var extractedCommunityIDs []int64
+	for _, lexResultString := range lexicographicResultsList {
 		// Le format stocké est "nom:id"
-		parts := strings.Split(res, ":")
-		if len(parts) == 2 {
-			if id, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
-				ids = append(ids, id)
+		lexParts := strings.Split(lexResultString, ":")
+		if len(lexParts) == 2 {
+			if parsedID, errParse := strconv.ParseInt(lexParts[1], 10, 64); errParse == nil {
+				extractedCommunityIDs = append(extractedCommunityIDs, parsedID)
 			}
 		}
 	}
 
 	// 3. Hydratation via MGET sur la collection SpeedCommunity
-	getRes, err := redis.SpeedCommunity.GetMany(ctx, ids)
-	if err != nil {
-		return nil, err
+	multiGetResult, errMGet := redis.SpeedCommunity.GetMany(ctx, extractedCommunityIDs)
+	if errMGet != nil {
+		logger.Log.Error().Err(errMGet).Msg("Erreur lors de l'hydratation massive des communautés depuis le Speed Cache")
+		return nil, nubo_error.NewInternal()
 	}
 
-	var communities []lite_models.CommunityLiteRequest
-	// 4. On boucle sur ids pour conserver l'ordre alphabétique exact renvoyé par l'index
-	for _, id := range ids {
-		if data, ok := getRes.Found[id]; ok {
-			var c lite_models.CommunityLiteRequest
-			if err := msgpack.Unmarshal(data, &c); err == nil {
-				communities = append(communities, c)
+	var hydratedCommunitiesList []lite_models.CommunityLiteRequest
+
+	// 4. On boucle sur l'array originel pour conserver l'ordre alphabétique exact renvoyé par l'index
+	for _, requestedID := range extractedCommunityIDs {
+		if binaryData, isFound := multiGetResult.Found[requestedID]; isFound {
+			var communityLitePayload lite_models.CommunityLiteRequest
+			if errUnmarshal := msgpack.Unmarshal(binaryData, &communityLitePayload); errUnmarshal == nil {
+				hydratedCommunitiesList = append(hydratedCommunitiesList, communityLitePayload)
 			}
 		}
 	}
 
-	return communities, nil
+	return hydratedCommunitiesList, nil
 }

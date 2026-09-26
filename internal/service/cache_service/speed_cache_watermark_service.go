@@ -4,42 +4,55 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
-// SetWatermarkInSpeedCache met à jour le curseur de lecture d'un utilisateur dans une conversation (O(1)).
-func SetWatermarkInSpeedCache(ctx context.Context, convID int64, userID int64, lastReadMessageID int64) error {
+// ############################################################################
+// # SERVICE : SPEED CACHE (CURSEURS DE LECTURE / WATERMARKS)
+// ############################################################################
+
+// SetWatermarkInSpeedCache met à jour le curseur de lecture d'un utilisateur
+// dans une conversation (O(1)).
+func SetWatermarkInSpeedCache(ctx context.Context, conversationID int64, userID int64, lastReadMessageID int64) error {
+
 	// Le HSET crée la clé si elle n'existe pas, ou met à jour le champ (userID) avec la nouvelle valeur.
-	err := redis.ConvWatermarks.HSet(ctx, convID, strconv.FormatInt(userID, 10), lastReadMessageID)
+	errRedis := redis.ConvWatermarks.HSet(ctx, conversationID, strconv.FormatInt(userID, 10), lastReadMessageID)
+	if errRedis != nil {
+		logger.Log.Error().Err(errRedis).Int64("conv_id", conversationID).Msg("Impossible de mettre à jour le watermark dans le Speed Cache L1")
+		return nubo_error.NewInternal()
+	}
 
 	// On prolonge la durée de vie de cette structure en RAM à chaque activité
-	if err == nil {
-		_ = redis.ConvWatermarks.RefreshTTL(ctx, convID)
-	}
-	return err
+	_ = redis.ConvWatermarks.RefreshTTL(ctx, conversationID)
+
+	return nil
 }
 
 // GetWatermarksFromSpeedCache récupère tous les curseurs de lecture d'une conversation d'un seul coup (O(1)).
-func GetWatermarksFromSpeedCache(ctx context.Context, convID int64) (map[int64]int64, error) {
-	rawMap, err := redis.ConvWatermarks.HGetAll(ctx, convID).Result()
-	if err != nil {
-		return nil, err
+func GetWatermarksFromSpeedCache(ctx context.Context, conversationID int64) (map[int64]int64, error) {
+
+	rawWatermarksMap, errRedis := redis.ConvWatermarks.HGetAll(ctx, conversationID).Result()
+	if errRedis != nil {
+		logger.Log.Error().Err(errRedis).Int64("conv_id", conversationID).Msg("Erreur L1 lors de la récupération des watermarks de la conversation")
+		return nil, nubo_error.NewInternal()
 	}
 
-	watermarks := make(map[int64]int64)
-	for userIDStr, msgIDStr := range rawMap {
-		uID, errU := strconv.ParseInt(userIDStr, 10, 64)
-		mID, errM := strconv.ParseInt(msgIDStr, 10, 64)
+	parsedWatermarksMap := make(map[int64]int64)
+	for userIDString, messageIDString := range rawWatermarksMap {
+		parsedUserID, errParseUser := strconv.ParseInt(userIDString, 10, 64)
+		parsedMessageID, errParseMsg := strconv.ParseInt(messageIDString, 10, 64)
 
-		if errU == nil && errM == nil {
-			watermarks[uID] = mID
+		if errParseUser == nil && errParseMsg == nil {
+			parsedWatermarksMap[parsedUserID] = parsedMessageID
 		}
 	}
 
 	// Si des données sont présentes, on maintient le cache en vie (LFU/LRU behavior)
-	if len(watermarks) > 0 {
-		_ = redis.ConvWatermarks.RefreshTTL(ctx, convID)
+	if len(parsedWatermarksMap) > 0 {
+		_ = redis.ConvWatermarks.RefreshTTL(ctx, conversationID)
 	}
 
-	return watermarks, nil
+	return parsedWatermarksMap, nil
 }

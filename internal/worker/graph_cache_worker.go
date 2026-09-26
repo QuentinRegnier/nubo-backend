@@ -24,9 +24,21 @@ func handleGraphUpdate(ctx context.Context, events []redis.AsyncEvent) {
 				// ✅ Fusionner pour le calcul sémantique
 				allTags := append(post.Hashtags, post.IndirectHashtags...)
 				if len(allTags) > 1 {
+					filterSemanticTags(allTags)
 					cache_service.UpdateTagCooccurrences(ctx, allTags, post.CreatedAt)
 				}
 			}
 		}
 	}
+}
+
+func filterSemanticTags(tags []string) []string {
+	semantic := make([]string, 0, len(tags))
+	for _, t := range tags {
+		if len(t) > 5 && t[:5] == "user_" {
+			continue
+		}
+		semantic = append(semantic, t)
+	}
+	return semantic
 }

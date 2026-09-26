@@ -6,41 +6,58 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/search_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 )
 
-// SearchCommunities orchestre la recherche ultrarapide via le Speed Cache et hydrate les avatars.
+// ############################################################################
+// # SERVICE : RECHERCHE DE COMMUNAUTÉS
+// ############################################################################
+
+// SearchCommunities orchestre la recherche ultrarapide de communautés publiques
+// via le Speed Cache (O(log(N))) et génère les URL signées pour les avatars.
 func SearchCommunities(ctx context.Context, callerID int64, input search_models.CommunitySearchInput) (search_models.CommunitySearchOutput, error) {
-	// 1. Appel du Cache Service (Pur DDD : O(log(N)) en RAM)
-	liteCommunities, err := cache_service.SearchCommunitiesByPrefix(ctx, input.Prefix, input.Limit)
-	if err != nil {
-		return search_models.CommunitySearchOutput{}, err
+
+	// ── ÉTAPE 1 : RÉSOLUTION DE L'INDEX DANS LE SPEED CACHE (L1) ────────────
+
+	liteCommunitiesResults, errRedis := cache_service.SearchCommunitiesByPrefix(ctx, input.Prefix, input.Limit)
+	if errRedis != nil {
+		logger.Log.Error().Err(errRedis).Str("prefix", input.Prefix).Msg("Erreur L1 lors de la recherche des communautés")
+		return search_models.CommunitySearchOutput{}, nubo_error.NewInternal()
 	}
 
-	if len(liteCommunities) == 0 {
-		return search_models.CommunitySearchOutput{Communities: make([]conversation_models.CommunityLiteView, 0)}, nil
+	if len(liteCommunitiesResults) == 0 {
+		return search_models.CommunitySearchOutput{
+			Communities: make([]conversation_models.CommunityLiteView, 0),
+		}, nil
 	}
 
-	// 2. Hydratation via le Domaine Média
-	views := make([]conversation_models.CommunityLiteView, 0, len(liteCommunities))
-	for _, c := range liteCommunities {
-		var avatar media_models.MediaView // Zéro-valeur
+	// ── ÉTAPE 2 : HYDRATATION EN MASSE VIA LE DOMAINE MÉDIA ─────────────────
 
-		if c.ProfilePictureID > 0 {
-			if view, errMedia := media_service.GenerateMediaViewCascade(ctx, c.ProfilePictureID, c.ID, 0, callerID); errMedia == nil {
-				avatar = view
+	hydratedCommunityViews := make([]conversation_models.CommunityLiteView, 0, len(liteCommunitiesResults))
+
+	for _, communityLite := range liteCommunitiesResults {
+
+		var resolvedAvatar media_models.MediaView
+
+		if communityLite.ProfilePictureID > 0 {
+			if mediaView, errMedia := media_service.GenerateMediaViewCascade(ctx, communityLite.ProfilePictureID, communityLite.ID, 0, callerID); errMedia == nil {
+				resolvedAvatar = mediaView
 			}
 		}
 
-		views = append(views, conversation_models.CommunityLiteView{
-			ID:          c.ID,
-			Name:        c.Name,
-			Avatar:      avatar,
-			Description: c.Description,
-			MemberCount: c.MemberCount,
+		hydratedCommunityViews = append(hydratedCommunityViews, conversation_models.CommunityLiteView{
+			ID:          communityLite.ID,
+			Name:        communityLite.Name,
+			Avatar:      resolvedAvatar,
+			Description: communityLite.Description,
+			MemberCount: communityLite.MemberCount,
 		})
 	}
 
-	return search_models.CommunitySearchOutput{Communities: views}, nil
+	return search_models.CommunitySearchOutput{
+		Communities: hydratedCommunityViews,
+	}, nil
 }

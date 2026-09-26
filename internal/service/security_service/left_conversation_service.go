@@ -6,86 +6,116 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// LeftConversation vérifie les droits d'administration et retourne la conversation complète.
-func LeftConversation(ctx context.Context, convID int64, userID int64) (conversation_models.ConversationPayload, error) {
-	var conv conversation_models.ConversationPayload
-	var mem member_models.MemberPayload
-	var foundConv, foundMem bool
+// ############################################################################
+// # SERVICE DE SÉCURITÉ : DROITS D'ADMINISTRATION DE CONVERSATION
+// ############################################################################
 
-	// 1. TENTATIVE L1 (OBJECT CACHE - LFU)
-	if c, err := object_cache_service.GetConversationFromObjectCache(ctx, convID); err == nil && c.ID != 0 {
-		conv = c
-		foundConv = true
-	}
-	if m, err := object_cache_service.GetMemberFromObjectCache(ctx, convID, userID); err == nil && m.ID != 0 {
-		mem = m
-		foundMem = true
-	}
+// LeftConversation vérifie les droits d'administration de l'utilisateur sur une conversation
+// et retourne la conversation hydratée avec un mécanisme de cascade L1 -> L2 -> L3.
+func LeftConversation(ctx context.Context, conversationID int64, userID int64) (conversation_models.ConversationPayload, error) {
+	var conversationPayload conversation_models.ConversationPayload
+	var memberPayload member_models.MemberPayload
+	var isConversationFound, isMemberFound bool
 
-	// 2. CASCADE L2 (MONGODB)
-	if !foundConv {
-		if mongoConv, err := mongo.MongoGetConversation(convID); err == nil && mongoConv.ID != 0 {
-			conv = mongoConv
-			foundConv = true
-			_ = object_cache_service.SetConversationInObjectCache(ctx, conv) // Auto-Guérison L1
-		}
-	}
-	if !foundMem {
-		if mongoMem, err := mongo.MongoGetMember(convID, userID); err == nil && mongoMem.ID != 0 {
-			mem = mongoMem
-			foundMem = true
-			_ = object_cache_service.SetMemberInObjectCache(ctx, mem) // Auto-Guérison L1
-		}
+	// ── ÉTAPE 1 : TENTATIVE L1 (OBJECT CACHE - LFU) ─────────────────────────
+
+	if cachedConversation, err := object_cache_service.GetConversationFromObjectCache(ctx, conversationID); err == nil && cachedConversation.ID != 0 {
+		conversationPayload = cachedConversation
+		isConversationFound = true
 	}
 
-	// 3. CASCADE ABSOLUE L3 (POSTGRESQL)
-	if !foundConv {
-		if pgConv, err := postgres.FuncGetConversation(ctx, convID); err == nil && pgConv.ID != 0 {
-			conv = pgConv
-			foundConv = true
-
-			// ⬆️ Auto-Guérison L1 (Immédiat en RAM)
-			_ = object_cache_service.SetConversationInObjectCache(ctx, conv)
-
-			// ⬆️ Auto-Guérison L2 (Asynchrone via Worker Mongo)
-			go func(c conversation_models.ConversationPayload) {
-				_ = redis.EnqueueDB(context.Background(), c.ID, c.ID, redis.EntityConversation, redis.ActionUpdate, c, redis.TargetMongo)
-			}(conv)
-		}
+	if cachedMember, err := object_cache_service.GetMemberFromObjectCache(ctx, conversationID, userID); err == nil && cachedMember.ID != 0 {
+		memberPayload = cachedMember
+		isMemberFound = true
 	}
-	if !foundMem {
-		if pgMem, err := postgres.FuncGetMember(ctx, convID, userID); err == nil && pgMem.ID != 0 {
-			mem = pgMem
-			foundMem = true
 
-			// ⬆️ Auto-Guérison L1 (Immédiat en RAM)
-			_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
+	// ── ÉTAPE 2 : CASCADE L2 (MONGODB WARM STORAGE) ─────────────────────────
 
-			// ⬆️ Auto-Guérison L2 (Asynchrone via Worker Mongo)
-			go func(m member_models.MemberPayload) {
-				// PartitionKey = ConversationID pour les membres
-				_ = redis.EnqueueDB(context.Background(), m.ID, m.ConversationID, redis.EntityMembers, redis.ActionUpdate, m, redis.TargetMongo)
-			}(mem)
+	if !isConversationFound {
+		if mongoConversation, err := mongo.MongoGetConversation(conversationID); err == nil && mongoConversation.ID != 0 {
+			conversationPayload = mongoConversation
+			isConversationFound = true
+			_ = object_cache_service.SetConversationInObjectCache(ctx, conversationPayload) // Auto-Guérison L1
 		}
 	}
 
-	// 4. VÉRIFICATION DES RÈGLES MÉTIER ET DE SÉCURITÉ
-	if !foundConv || conv.State == 1 {
-		return conversation_models.ConversationPayload{}, nubo_error.NewNotFound("CONV_NOT_FOUND", "Conversation introuvable ou archivée.", nil)
-	}
-	if !foundMem {
-		return conversation_models.ConversationPayload{}, nubo_error.NewForbidden("NOT_A_MEMBER", "Accès refusé : vous n'êtes pas membre de cette conversation.", nil)
-	}
-	// Le rôle doit être au moins Admin (1) ou Propriétaire (2) pour modifier la conversation
-	if mem.Role < 1 {
-		return conversation_models.ConversationPayload{}, nubo_error.NewForbidden("INSUFFICIENT_PERMISSIONS", "Accès refusé : droits d'administration requis.", nil)
+	if !isMemberFound {
+		if mongoMember, err := mongo.MongoGetMember(conversationID, userID); err == nil && mongoMember.ID != 0 {
+			memberPayload = mongoMember
+			isMemberFound = true
+			_ = object_cache_service.SetMemberInObjectCache(ctx, memberPayload) // Auto-Guérison L1
+		}
 	}
 
-	return conv, nil
+	// ── ÉTAPE 3 : CASCADE ABSOLUE L3 (POSTGRESQL COLD STORAGE) ──────────────
+
+	if !isConversationFound {
+		pgConversation, errPg := postgres.FuncGetConversation(ctx, conversationID)
+		if errPg != nil {
+			logger.Log.Error().Err(errPg).Int64("conv_id", conversationID).Msg("Erreur L3 lors de la récupération de la conversation")
+			return conversation_models.ConversationPayload{}, nubo_error.NewInternal()
+		}
+
+		if pgConversation.ID != 0 {
+			conversationPayload = pgConversation
+			isConversationFound = true
+
+			// AUTO-GUÉRISON L1 (Immédiat en RAM)
+			_ = object_cache_service.SetConversationInObjectCache(ctx, conversationPayload)
+
+			// AUTO-GUÉRISON L2 (Asynchrone via Worker Mongo)
+			go func(conv conversation_models.ConversationPayload) {
+				backgroundCtx := context.Background()
+				_ = redis.EnqueueDB(backgroundCtx, conv.ID, conv.ID, redis.EntityConversation, redis.ActionUpdate, conv, redis.TargetMongo)
+			}(conversationPayload)
+		}
+	}
+
+	if !isMemberFound {
+		pgMember, errPg := postgres.FuncGetMember(ctx, conversationID, userID)
+		if errPg != nil {
+			logger.Log.Error().Err(errPg).Int64("user_id", userID).Msg("Erreur L3 lors de la récupération du membre")
+			return conversation_models.ConversationPayload{}, nubo_error.NewInternal()
+		}
+
+		if pgMember.ID != 0 {
+			memberPayload = pgMember
+			isMemberFound = true
+
+			// AUTO-GUÉRISON L1 (Immédiat en RAM)
+			_ = object_cache_service.SetMemberInObjectCache(ctx, memberPayload)
+
+			// AUTO-GUÉRISON L2 (Asynchrone via Worker Mongo)
+			go func(mem member_models.MemberPayload) {
+				backgroundCtx := context.Background()
+				// PartitionKey = ConversationID pour grouper les requêtes membres d'une même conversation
+				_ = redis.EnqueueDB(backgroundCtx, mem.ID, mem.ConversationID, redis.EntityMembers, redis.ActionUpdate, mem, redis.TargetMongo)
+			}(memberPayload)
+		}
+	}
+
+	// ── ÉTAPE 4 : VÉRIFICATION DES RÈGLES MÉTIER ET DE SÉCURITÉ ─────────────
+
+	if !isConversationFound || conversationPayload.State == variables.ConversationStateArchived {
+		return conversation_models.ConversationPayload{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Conversation introuvable ou archivée.", nil)
+	}
+
+	if !isMemberFound || memberPayload.Role < variables.MemberRoleNormal {
+		return conversation_models.ConversationPayload{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : vous ne faites pas ou plus partie de cette conversation.", nil)
+	}
+
+	// Le rôle doit être au moins Admin (1) ou Propriétaire (2) pour satisfaire ce middleware
+	if memberPayload.Role < variables.MemberRoleAdmin {
+		return conversation_models.ConversationPayload{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : droits d'administration requis pour cette opération.", nil)
+	}
+
+	return conversationPayload, nil
 }

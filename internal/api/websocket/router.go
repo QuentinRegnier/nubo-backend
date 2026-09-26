@@ -79,7 +79,13 @@ func (c *Client) Route(message []byte) {
 		routeErr = cache_service.MarkUserOnline(ctx, c.UserID)
 		// 2. On renvoie simplement un petit objet vide (ou juste le status "success" via resData)
 		resData = map[string]string{"status": "pong"}
+	// --- CAS A : SYNC PRÉSENCE EN LOT (INBOX "DOOM") ---
+	case "presence.sync":
+		resData, routeErr = ws_handlers.HandleSyncPresence(ctx, req.Payload)
 
+	// --- CAS B : PRÉSENCE INSTANTANÉE EN CONVERSATION ACTIVE ---
+	case "conversation.focus":
+		routeErr = ws_handlers.HandleFocusConversation(ctx, c.UserID, req.Payload)
 	// --- TYPING (Volatil) ---
 	case "typing.started":
 		routeErr = ws_handlers.HandleTyping(ctx, c.UserID, req.Payload, true)

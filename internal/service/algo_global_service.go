@@ -6,120 +6,111 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// ============================================================================
-// PILIER 2 — ALGORITHME DE RECOMMANDATION GLOBAL (DÉTECTION DES TENDANCES)
-// TDD §3.1, §3.2, §3.3, §3.4
-// ============================================================================
+// ############################################################################
+// # PILIER 2 : ALGORITHME DE RECOMMANDATION GLOBAL (DÉTECTION DES TENDANCES)
+// ############################################################################
 
 // ScoreOptions contient les métriques brutes nécessaires au calcul de S(p,t).
 type ScoreOptions struct {
-	// ── Signaux d'engagement (TDD §3.1) ─────────────────────────────────
-	LikesCount    int // n_like(p)
-	CommentsCount int // n_comment(p)
-	ViewCount     int // n_view(p)
-	MediaCount    int // n_media(p) = |media_ids(p)|
+	// ── Signaux d'engagement ──────────────────────────────────────────────
+	LikesCount    int // Le nombre total de likes
+	CommentsCount int // Le nombre total de commentaires
+	ViewCount     int // Le nombre total de vues
+	MediaCount    int // Le nombre de médias attachés au post
 
-	// ── Contexte auteur (TDD §3.2) ───────────────────────────────────────
-	AuthorGrade         int // g_author ∈ {0,1,2,3}
-	AuthorPostsInWindow int // k_author(p,W) — posts du même auteur dans le ZSET courant
+	// ── Contexte auteur ───────────────────────────────────────────────────
+	AuthorGrade         int // Niveau de confiance de l'auteur (0=Normal, 1=Certifié, etc.)
+	AuthorPostsInWindow int // Nombre de posts du même auteur dans la fenêtre temporelle actuelle
 
-	// ── Contexte temporel ────────────────────────────────────────────────
-	AgeSeconds float64 // Δt = t - t_p (secondes)
+	// ── Contexte temporel ─────────────────────────────────────────────────
+	AgeSeconds float64 // Âge du post en secondes depuis sa création
 
-	// ── Facteur de modération Φ_mod (TDD §3.2) ───────────────────────────
-	IsDeleted   bool
-	ReportCount int
+	// ── Facteur de modération ─────────────────────────────────────────────
+	IsDeleted   bool // True si le post a été supprimé
+	ReportCount int  // Nombre de signalements par les utilisateurs
 }
 
 // CalculateRecommendationScore calcule S(p, t) — le score de tendance global.
+// C'est ce score qui détermine si un post devient viral mondialement.
 //
-// TDD §3.2 — Formule composite complète:
-//
-//	S(p, t) = S_base(p, t) · D_exp(p, t) · Φ(p) · V(p)
-//
-// Complexité: O(1) — opérations scalaires uniquement.
-func CalculateRecommendationScore(_ int64, opts ScoreOptions) float64 {
+// Formule composite complète :
+// S(p, t) = BaseScore(p, t) · ExponentialDecay(p, t) · QualityFactor(p) · DiversityFactor(p)
+func CalculateRecommendationScore(_ int64, options ScoreOptions) float64 {
 
-	// 1. Facteur de modération phi_mod(p)
-	if opts.IsDeleted {
+	// 1. FACTEUR DE MODÉRATION (phi_mod)
+	if options.IsDeleted {
 		return 0.0
 	}
 
-	phiMod := 1.0
-	// ✅ PROTECTION ANTI-BRIGADING : Seuil absolu (ex: min 10 signalements) + Ratio d'engagement
-	if opts.ReportCount >= 10 {
-		// Le ratio de signalement doit dépasser 1% des vues (avec un minimum mathématique de 100 vues pour lisser)
-		reportRatio := float64(opts.ReportCount) / math.Max(100.0, float64(opts.ViewCount))
+	var moderationPenalty = 1.0
+
+	// PROTECTION ANTI-BRIGADING : Seuil absolu (ex: min 10 signalements) + Ratio d'engagement
+	if options.ReportCount >= 10 {
+		// Le ratio de signalement doit dépasser 1% des vues (avec un plancher à 100 vues pour lisser)
+		reportRatio := float64(options.ReportCount) / math.Max(100.0, float64(options.ViewCount))
 		if reportRatio > 0.01 {
-			phiMod = variables.TDDPhiReported // ex: 0.5 (Pénalité algorithmique validée)
+			moderationPenalty = variables.TDDPhiReported // Applique la pénalité (ex: 0.5)
 		}
 	}
 
-	// 2. Somme pondérée des signaux d'engagement (Σ w_s · n_s(p))
-	engagementSum := variables.TDDWeightLike*float64(opts.LikesCount) +
-		variables.TDDWeightComment*float64(opts.CommentsCount) +
-		variables.TDDWeightView*float64(opts.ViewCount) +
-		variables.TDDWeightMedia*float64(opts.MediaCount)
+	// 2. SOMME PONDÉRÉE DE L'ENGAGEMENT
+	weightedEngagementSum := (variables.TDDWeightLike * float64(options.LikesCount)) +
+		(variables.TDDWeightComment * float64(options.CommentsCount)) +
+		(variables.TDDWeightView * float64(options.ViewCount)) +
+		(variables.TDDWeightMedia * float64(options.MediaCount))
 
-	if engagementSum <= 0 {
+	if weightedEngagementSum <= 0 {
 		return 0.0
 	}
 
-	// 3. S_base(p, t) : Score de base avec déclin polynomial
-	ageHours := math.Max(0.0, opts.AgeSeconds/3600.0)
-	numerator := math.Pow(engagementSum, variables.TDDAlpha)
-	denominator := math.Pow(ageHours+variables.TDDTheta, variables.TDDBeta)
-	sBase := numerator / denominator
+	// 3. SCORE DE BASE (S_base) : Déclin polynomial selon la Loi de Zipf
+	ageInHours := math.Max(0.0, options.AgeSeconds/3600.0)
+	baseNumerator := math.Pow(weightedEngagementSum, variables.TDDAlpha)
+	baseDenominator := math.Pow(ageInHours+variables.TDDTheta, variables.TDDBeta)
+	baseScore := baseNumerator / baseDenominator
 
-	// 4. D_exp(p, t) : Déclin exponentiel post_service-grâce
-	dExp := 1.0
-	if ageHours > variables.TDDTGrace {
-		dExp = math.Exp(-variables.TDDLambdaDecay * (ageHours - variables.TDDTGrace))
+	// 4. DÉCLIN EXPONENTIEL (D_exp) : Période post-grâce
+	var exponentialDecay = 1.0
+	if ageInHours > variables.TDDTGrace {
+		exponentialDecay = math.Exp(-variables.TDDLambdaDecay * (ageInHours - variables.TDDTGrace))
 	}
 
-	// 5. Φ(p) : Facteur de qualité du contenu
-	phiMedia := 1.0
-	if opts.MediaCount > 0 {
-		phiMedia = 1.0 + variables.TDDPhiMedia
+	// 5. FACTEUR DE QUALITÉ (Phi) : Richesse du contenu et statut de l'auteur
+	var mediaBonus = 1.0
+	if options.MediaCount > 0 {
+		mediaBonus = 1.0 + variables.TDDPhiMedia
 	}
 
-	gradeRatio := math.Min(1.0, float64(opts.AuthorGrade)/variables.TDDGradeMax)
-	phiAuthor := 1.0 + variables.TDDPhiGrade*gradeRatio
+	normalizedAuthorGrade := math.Min(1.0, float64(options.AuthorGrade)/variables.TDDGradeMax)
+	authorBonus := 1.0 + (variables.TDDPhiGrade * normalizedAuthorGrade)
 
-	phi := phiMedia * phiAuthor * phiMod
+	qualityFactor := mediaBonus * authorBonus * moderationPenalty
 
-	// 6. V(p) : Facteur de diversité auteur
-	vFactor := math.Exp(-variables.TDDGammaAuth * float64(opts.AuthorPostsInWindow))
+	// 6. FACTEUR DE DIVERSITÉ (V) : Empêche un même auteur d'inonder le feed
+	diversityFactor := math.Exp(-variables.TDDGammaAuth * float64(options.AuthorPostsInWindow))
 
-	// Formule finale
-	return sBase * dExp * phi * vFactor
+	// FORMULE FINALE
+	return baseScore * exponentialDecay * qualityFactor * diversityFactor
 }
 
-// ============================================================================
-// CALCUL DES TENDANCES DE HASHTAGS (TDD §3.3)
-// ============================================================================
+// ############################################################################
+// # CALCUL DES TENDANCES DE HASHTAGS
+// ############################################################################
 
 // ComputeHashtagTrendScore calcule T(h, t) — le score de tendance d'un hashtag canonique.
-//
-// TDD §3.3 — Formule:
-//
-//	T(h, t) = Σ_{p ∈ P_h} S(p,t) · I[Δt(p) ≤ 48·3600]
-//
-// Paramètres:
-//   - postScores: map[postID → S(p,t)] pour les posts contenant le hashtag h
-//   - postAges: map[postID → Δt(p) en secondes]
-func ComputeHashtagTrendScore(postScores map[int64]float64, postAges map[int64]float64) float64 {
-	// Utilisation de la constante paramétrable depuis la table de mixage
-	maxAgeSecs := variables.TDDHashtagWindowHours * 3600.0
-	var totalScore float64
+// Il additionne les scores de tendance de tous les posts récents contenant ce hashtag.
+func ComputeHashtagTrendScore(postScoresMap map[int64]float64, postAgesMap map[int64]float64) float64 {
+	maxAllowedAgeInSeconds := variables.TDDHashtagWindowHours * 3600.0
+	var totalTrendScore = 0.0
 
-	for postID, score := range postScores {
-		age, exists := postAges[postID]
-		// Fonction indicatrice I : on n'additionne que si le post_service est dans la fenêtre temporelle
-		if exists && age <= maxAgeSecs {
-			totalScore += score
+	for postID, currentScore := range postScoresMap {
+		ageInSeconds, isAgeKnown := postAgesMap[postID]
+
+		// Filtre Temporel : On n'additionne que si le post est dans la fenêtre autorisée (ex: 48h)
+		if isAgeKnown && ageInSeconds <= maxAllowedAgeInSeconds {
+			totalTrendScore += currentScore
 		}
 	}
 
-	return totalScore
+	return totalTrendScore
 }

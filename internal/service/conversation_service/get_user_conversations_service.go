@@ -2,149 +2,152 @@ package conversation_service
 
 import (
 	"context"
-	"strconv" // ✅ NOUVEAU
+	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis" // ✅ NOUVEAU
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// GetUserConversationsPaginated récupère la liste des conversations avec une cascade complète L1 -> L2 -> L3
-func GetUserConversationsPaginated(ctx context.Context, callerID int64, input conversation_models.GetUserConversationsInput) (conversation_models.GetUserInboxOutput, error) {
-	var inboxItems []cache_service.InboxItemView
+// ############################################################################
+// # SERVICE : RÉCUPÉRATION DE L'INBOX PAGINÉE (CASCADE L1 -> L2 -> L3)
+// ############################################################################
 
-	// 0. GESTION DU MODE FORCE (Contournement et purge du L1 via DDD)
+// GetUserConversationsPaginated récupère l'inbox avec une cascade complète et promotion en mémoire.
+func GetUserConversationsPaginated(ctx context.Context, callerID int64, input conversation_models.GetUserConversationsInput) (conversation_models.GetUserInboxOutput, error) {
+	var rawInboxItems []cache_service.InboxItemView
+
+	// ── ÉTAPE 0 : GESTION DU MODE FORCE (PURGE RAM L1) ──────────────────────
 	if input.Force {
 		_ = cache_service.PurgeUserConversations(ctx, callerID)
 	}
 
-	// 1. TENTATIVE L1 (SPEED CACHE) - Uniquement si on ne dépasse pas la limite RAM (100 max) et pas en Force
-	if input.Offset < 100 && !input.Force {
-		items, err := cache_service.GetInboxView(ctx, callerID, input.Limit, input.Offset)
-		if err == nil && len(items) > 0 {
-			inboxItems = items
+	// ── ÉTAPE 1 : TENTATIVE L1 (SPEED CACHE) ────────────────────────────────
+	// Réservé aux premiers éléments (< 100) et hors mode Forcé pour protéger la RAM.
+	if input.Offset < variables.MaxZsetInbox && !input.Force {
+		cachedItems, errCache := cache_service.GetInboxView(ctx, callerID, input.Limit, input.Offset)
+		if errCache == nil && len(cachedItems) > 0 {
+			rawInboxItems = cachedItems
 		}
 	}
 
-	// 2. FALLBACK L2 (MONGO)
-	if len(inboxItems) == 0 {
-		mongoResults, err := mongo.MongoLoadConversationPaginated(callerID, input.Limit, input.Offset)
-		if err == nil && len(mongoResults) > 0 {
-			for _, res := range mongoResults {
-				inboxItems = append(inboxItems, cache_service.InboxItemView{
+	// ── ÉTAPE 2 : FALLBACK L2 (MONGODB - WARM STORAGE) ──────────────────────
+	if len(rawInboxItems) == 0 {
+		mongoConversations, errMongo := mongo.MongoLoadConversationPaginated(callerID, input.Limit, input.Offset)
+		if errMongo == nil && len(mongoConversations) > 0 {
+			for _, record := range mongoConversations {
+				rawInboxItems = append(rawInboxItems, cache_service.InboxItemView{
 					Conversation: lite_models.ConvLiteRequest{
-						ID:            res.Conversation.ID,
-						Type:          res.Conversation.Type,
-						Title:         res.Conversation.Title,
-						Description:   res.Conversation.Description, // NOUVEAU
-						AvatarID:      res.Conversation.AvatarID,    // NOUVEAU
-						LastMessageID: res.Conversation.LastMessageID,
-						Settings:      service.ToConversationSettingsLite(res.Conversation.Settings),
-						ExternalLink:  res.Conversation.ExternalLink,
+						ID:            record.Conversation.ID,
+						Type:          record.Conversation.Type,
+						Title:         record.Conversation.Title,
+						Description:   record.Conversation.Description,
+						AvatarID:      record.Conversation.AvatarID,
+						LastMessageID: record.Conversation.LastMessageID,
+						Settings:      service.ToConversationSettingsLite(record.Conversation.Settings),
+						ExternalLink:  record.Conversation.ExternalLink,
 					},
 					Member: lite_models.MemberLiteRequest{
-						ConversationID:    res.Member.ConversationID,
-						UserID:            res.Member.UserID,
-						Role:              res.Member.Role,
-						Settings:          service.ToMemberSettingsLite(res.Member.Settings),
-						FrozenMessageID:   res.Member.FrozenMessageID,
-						LastReadMessageID: res.Member.LastReadMessageID,
-						UnreadCount:       res.Member.UnreadCount,
-						JoinedAt:          res.Member.JoinedAt,
+						ConversationID:    record.Member.ConversationID,
+						UserID:            record.Member.UserID,
+						Role:              record.Member.Role,
+						Settings:          service.ToMemberSettingsLite(record.Member.Settings),
+						FrozenMessageID:   record.Member.FrozenMessageID,
+						LastReadMessageID: record.Member.LastReadMessageID,
+						UnreadCount:       record.Member.UnreadCount,
+						JoinedAt:          record.Member.JoinedAt,
 					},
 				})
 
-				// RÉHYDRATATION : Hit Mongo (L2) -> Réhydrate Redis (L1) !
-				go func(fConv conversation_models.ConversationPayload, fMem member_models.MemberPayload, o int64) {
+				// AUTO-GUÉRISON : Hit Mongo L2 -> Réhydratation Redis L1 (Object et Speed)
+				go func(fullConv conversation_models.ConversationPayload, fullMember member_models.MemberPayload, offsetVal int64) {
 					bgCtx := context.Background()
-					// 1. Réhydratation de l'Object Cache (Full Payloads)
-					_ = object_cache_service.SetConversationInObjectCache(bgCtx, fConv)
-					_ = object_cache_service.SetMemberInObjectCache(bgCtx, fMem)
-					// 2. Réhydratation du Speed Cache (Lite Payloads & ZSET)
-					cache_service.RehydrateConversationItemInSpeedCache(bgCtx, fConv, fMem, o)
-				}(res.Conversation, res.Member, input.Offset)
+					_ = object_cache_service.SetConversationInObjectCache(bgCtx, fullConv)
+					_ = object_cache_service.SetMemberInObjectCache(bgCtx, fullMember)
+					cache_service.RehydrateConversationItemInSpeedCache(bgCtx, fullConv, fullMember, offsetVal)
+				}(record.Conversation, record.Member, input.Offset)
 			}
 		}
 	}
 
-	// 3. FALLBACK ABSOLU L3 (POSTGRES)
-	if len(inboxItems) == 0 {
-		pgResults, err := postgres.FuncLoadConversationPaginated(ctx, callerID, input.Limit, input.Offset)
-		if err == nil {
-			for _, res := range pgResults {
-				inboxItems = append(inboxItems, cache_service.InboxItemView{
-					Conversation: lite_models.ConvLiteRequest{
-						ID:            res.Conversation.ID,
-						Type:          res.Conversation.Type,
-						Title:         res.Conversation.Title,
-						Description:   res.Conversation.Description, // NOUVEAU
-						AvatarID:      res.Conversation.AvatarID,    // NOUVEAU
-						LastMessageID: res.Conversation.LastMessageID,
-						Settings:      service.ToConversationSettingsLite(res.Conversation.Settings),
-						ExternalLink:  res.Conversation.ExternalLink,
-					},
-					Member: lite_models.MemberLiteRequest{
-						ConversationID:    res.Member.ConversationID,
-						UserID:            res.Member.UserID,
-						Role:              res.Member.Role,
-						Settings:          service.ToMemberSettingsLite(res.Member.Settings),
-						FrozenMessageID:   res.Member.FrozenMessageID,
-						LastReadMessageID: res.Member.LastReadMessageID,
-						UnreadCount:       res.Member.UnreadCount,
-						JoinedAt:          res.Member.JoinedAt,
-					},
-				})
+	// ── ÉTAPE 3 : FALLBACK ULTIME L3 (POSTGRESQL - SOURCE DE VÉRITÉ) ────────
+	if len(rawInboxItems) == 0 {
+		postgresConversations, errPostgres := postgres.FuncLoadConversationPaginated(ctx, callerID, input.Limit, input.Offset)
+		if errPostgres != nil {
+			logger.Log.Error().Err(errPostgres).Int64("user_id", callerID).Msg("Erreur L3 lors du chargement de l'inbox")
+			return conversation_models.GetUserInboxOutput{}, nubo_error.NewInternal() // Erreur SQL protégée
+		}
 
-				// ⬆️ PROMOTION L3 -> L2 (Mongo) -> L1 (Redis)
-				go func(fConv conversation_models.ConversationPayload, fMem member_models.MemberPayload, o int64) {
-					bgCtx := context.Background()
+		for _, record := range postgresConversations {
+			rawInboxItems = append(rawInboxItems, cache_service.InboxItemView{
+				Conversation: lite_models.ConvLiteRequest{
+					ID:            record.Conversation.ID,
+					Type:          record.Conversation.Type,
+					Title:         record.Conversation.Title,
+					Description:   record.Conversation.Description,
+					AvatarID:      record.Conversation.AvatarID,
+					LastMessageID: record.Conversation.LastMessageID,
+					Settings:      service.ToConversationSettingsLite(record.Conversation.Settings),
+					ExternalLink:  record.Conversation.ExternalLink,
+				},
+				Member: lite_models.MemberLiteRequest{
+					ConversationID:    record.Member.ConversationID,
+					UserID:            record.Member.UserID,
+					Role:              record.Member.Role,
+					Settings:          service.ToMemberSettingsLite(record.Member.Settings),
+					FrozenMessageID:   record.Member.FrozenMessageID,
+					LastReadMessageID: record.Member.LastReadMessageID,
+					UnreadCount:       record.Member.UnreadCount,
+					JoinedAt:          record.Member.JoinedAt,
+				},
+			})
 
-					// A. Réhydratation L2 (MongoDB) asynchrone via les workers
-					_ = redis.EnqueueDB(bgCtx, fConv.ID, fConv.ID, redis.EntityConversation, redis.ActionUpdate, fConv, redis.TargetMongo)
-					_ = redis.EnqueueDB(bgCtx, fMem.ID, fMem.ConversationID, redis.EntityMembers, redis.ActionUpdate, fMem, redis.TargetMongo)
+			// PROMOTION L3 -> L2 (Mongo) & L1 (Redis)
+			go func(fullConv conversation_models.ConversationPayload, fullMember member_models.MemberPayload, offsetVal int64) {
+				bgCtx := context.Background()
 
-					// B. Réhydratation L1 (OBJECT CACHE) avec les FULL Payloads
-					_ = object_cache_service.SetConversationInObjectCache(bgCtx, fConv)
-					_ = object_cache_service.SetMemberInObjectCache(bgCtx, fMem)
+				// A. Persistance asynchrone Mongo L2
+				_ = redis.EnqueueDB(bgCtx, fullConv.ID, fullConv.ID, redis.EntityConversation, redis.ActionUpdate, fullConv, redis.TargetMongo)
+				_ = redis.EnqueueDB(bgCtx, fullMember.ID, fullMember.ConversationID, redis.EntityMembers, redis.ActionUpdate, fullMember, redis.TargetMongo)
 
-					// C. Réhydratation L1 (SPEED CACHE) avec le parsing interne Full->Lite
-					cache_service.RehydrateConversationItemInSpeedCache(bgCtx, fConv, fMem, o)
-				}(res.Conversation, res.Member, input.Offset)
-			}
+				// B. Hydratation L1 Object Cache & Speed Cache
+				_ = object_cache_service.SetConversationInObjectCache(bgCtx, fullConv)
+				_ = object_cache_service.SetMemberInObjectCache(bgCtx, fullMember)
+				cache_service.RehydrateConversationItemInSpeedCache(bgCtx, fullConv, fullMember, offsetVal)
+			}(record.Conversation, record.Member, input.Offset)
 		}
 	}
 
-	// 4. MAPPING FINAL VERS L'API
-	var result []conversation_models.InboxConversationView
-	callerIDStr := strconv.FormatInt(callerID, 10) // ✅ NOUVEAU
+	// ── ÉTAPE 4 : MAPPING ET ENRICHISSEMENT VERS LE MODÈLE PUBLIC ───────────
+	finalInboxView := make([]conversation_models.InboxConversationView, 0, len(rawInboxItems))
+	callerIDString := strconv.FormatInt(callerID, 10)
 
-	for _, item := range inboxItems {
-		// ==== CALCUL DYNAMIQUE DES AVATARS ====
-		avatars := GetConversationAvatars(ctx, item.Conversation.ID, callerID, item.Conversation.Type)
+	for _, item := range rawInboxItems {
+		conversationAvatars := GetConversationAvatars(ctx, item.Conversation.ID, callerID, item.Conversation.Type)
 
-		// === HYDRATATION DU TITRE ET STATUT EN LIGNE (MESSAGES PRIVÉS) ===
-		title := item.Conversation.Title
-		isOnline := false // Par défaut hors-ligne
+		displayTitle := item.Conversation.Title
+		isUserOnline := false
 
-		if item.Conversation.Type == 0 {
-			participantsStr, errPart := redis.ConvParticipants.SMembers(ctx, item.Conversation.ID)
-			if errPart == nil {
-				for _, pStr := range participantsStr {
-					if pStr != callerIDStr {
-						// On isole l'autre participant
-						if otherID, errParse := strconv.ParseInt(pStr, 10, 64); errParse == nil {
-							// 1. Fetch de son pseudo
-							if otherLite, errLite := cache_service.GetUserLite(ctx, otherID); errLite == nil {
-								title = otherLite.Username
+		// Résolution de l'interlocuteur pour les messages privés
+		if item.Conversation.Type == variables.ConversationTypeDirect {
+			participantsStringList, errParticipants := redis.ConvParticipants.SMembers(ctx, item.Conversation.ID)
+			if errParticipants == nil {
+				for _, participantStr := range participantsStringList {
+					if participantStr != callerIDString {
+						if otherParticipantID, errParse := strconv.ParseInt(participantStr, 10, 64); errParse == nil {
+							if otherUserLite, errLite := cache_service.GetUserLite(ctx, otherParticipantID); errLite == nil {
+								displayTitle = otherUserLite.Username
 							}
-							// 2. Fetch de sa présence (NOUVEAU)
-							isOnline = cache_service.IsUserOnline(ctx, otherID)
+							isUserOnline = cache_service.IsUserOnline(ctx, otherParticipantID)
 							break
 						}
 					}
@@ -152,10 +155,10 @@ func GetUserConversationsPaginated(ctx context.Context, callerID int64, input co
 			}
 		}
 
-		view := conversation_models.InboxConversationView{
+		finalInboxView = append(finalInboxView, conversation_models.InboxConversationView{
 			ConversationID: item.Conversation.ID,
 			Type:           item.Conversation.Type,
-			Title:          title,
+			Title:          displayTitle,
 			Description:    item.Conversation.Description,
 			AvatarID:       item.Conversation.AvatarID,
 			LastMessageID:  item.Conversation.LastMessageID,
@@ -163,15 +166,17 @@ func GetUserConversationsPaginated(ctx context.Context, callerID int64, input co
 			Settings:       service.ToDomainMemberSettings(item.Member.Settings),
 			ExternalLink:   item.Conversation.ExternalLink,
 			UnreadCount:    item.Member.UnreadCount,
-			Avatars:        avatars,
-			IsOnline:       isOnline, // NOUVEAU
-		}
-		result = append(result, view)
+			Avatars:        conversationAvatars,
+			IsOnline:       isUserOnline,
+		})
 	}
 
 	// Renvoie un tableau vide plutôt que 'null' en JSON si pas de conversation
-	if result == nil {
-		result = make([]conversation_models.InboxConversationView, 0)
+	if finalInboxView == nil {
+		finalInboxView = make([]conversation_models.InboxConversationView, 0)
 	}
-	return conversation_models.GetUserInboxOutput{Conversations: result}, nil
+
+	return conversation_models.GetUserInboxOutput{
+		Conversations: finalInboxView,
+	}, nil
 }

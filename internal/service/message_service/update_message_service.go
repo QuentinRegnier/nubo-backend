@@ -2,7 +2,6 @@ package message_service
 
 import (
 	"context"
-	"strconv"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
@@ -15,66 +14,72 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
+
+// ############################################################################
+// # SERVICE : MISE À JOUR D'UN MESSAGE TEXTE (ÉDITION)
+// ############################################################################
 
 // UpdateMessage gère la modification d'un message texte existant.
 func UpdateMessage(ctx context.Context, callerID int64, input message_models.UpdateMessageInput) (message_models.UpdateMessageOutput, error) {
-	// 1. SÉCURITÉ : Récupération du message complet et vérification d'appartenance
-	msg, err := security_service.LeftMessage(ctx, input.MessageID, callerID)
-	if err != nil {
-		return message_models.UpdateMessageOutput{}, err // L'erreur est déjà formatée par LeftMessage
+
+	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS ZERO-TRUST (CASCADE L1->L2->L3) ──────────
+
+	messagePayload, errSecurity := security_service.LeftMessage(ctx, input.MessageID, callerID)
+	if errSecurity != nil {
+		return message_models.UpdateMessageOutput{}, errSecurity
 	}
 
-	// 2. RÈGLE MÉTIER STRICTE : Seul le type 0 (Texte) est modifiable
-	if msg.MessageType != 0 {
-		return message_models.UpdateMessageOutput{}, nubo_error.NewBadRequest("UNSUPPORTED_MESSAGE_TYPE", "Seul un message de type texte peut être modifié.", nil)
+	// ── ÉTAPE 2 : RÈGLES MÉTIER STRICTES ────────────────────────────────────
+
+	if messagePayload.MessageType != variables.MessageTypeText {
+		return message_models.UpdateMessageOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Seul un message de type texte classique peut être modifié.", nil)
 	}
 
-	// 3. APPLICATION DES MODIFICATIONS
-	msg.Content = pkg.CleanStr(input.Content)
-	if msg.Content == "" {
-		return message_models.UpdateMessageOutput{}, nubo_error.NewBadRequest("EMPTY_MESSAGE", "Le message ne peut pas être vide.", nil)
+	cleanedContent := pkg.CleanStr(input.Content)
+	if cleanedContent == "" {
+		return message_models.UpdateMessageOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Le message ne peut pas être vide.", nil)
 	}
-	msg.UpdatedAt = domain.NowMillis()
 
-	// 4. MISE À JOUR IMMÉDIATE L1 (Object Cache)
-	_ = object_cache_service.SetMessageInObjectCache(ctx, msg)
+	// ── ÉTAPE 3 : APPLICATION DES MODIFICATIONS ─────────────────────────────
 
-	// 5. ENVOI AUX WORKERS (Write-Behind)
+	messagePayload.Content = cleanedContent
+	messagePayload.UpdatedAt = domain.NowMillis()
+
+	// ── ÉTAPE 4 : MISE À JOUR IMMÉDIATE L1 (OBJECT CACHE) ───────────────────
+
+	_ = object_cache_service.SetMessageInObjectCache(ctx, messagePayload)
+
+	// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
+
 	// PartitionKey = msg.ConversationID pour garantir l'ordre chronologique des opérations sur cette conversation
-	err = redis.EnqueueDB(ctx, msg.ID, msg.ConversationID, redis.EntityMessage, redis.ActionUpdate, msg, redis.TargetAll)
-
-	// 6. ENVOI NOTIFICATION (Asynchrone)
-	if err == nil {
-		go func() {
-			bgCtx := context.Background()
-			errWS := realtime_service.BroadcastToConversation(bgCtx, msg.ConversationID, "message.updated", msg)
-			if errWS != nil {
-				logger.Log.Error().Err(errWS).Msg("Failed to broadcast message update")
-			}
-
-			// ✅ NOUVEAU : SYNC LEDGER (Trigger granulaire)
-			participantsStr, _ := redis.ConvParticipants.SMembers(bgCtx, msg.ConversationID)
-			var pIDs []int64
-			for _, p := range participantsStr {
-				if id, err := strconv.ParseInt(p, 10, 64); err == nil {
-					pIDs = append(pIDs, id)
-				}
-			}
-			_ = cache_service.RecordMessageMutation(bgCtx, msg.ConversationID, msg.ID, pIDs)
-		}()
+	errQueue := redis.EnqueueDB(ctx, messagePayload.ID, messagePayload.ConversationID, redis.EntityMessage, redis.ActionUpdate, messagePayload, redis.TargetAll)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("msg_id", messagePayload.ID).Msg("Échec du Write-Behind pour UpdateMessage")
+		return message_models.UpdateMessageOutput{}, nubo_error.NewInternal()
 	}
 
-	output := message_models.UpdateMessageOutput{}
+	// ── ÉTAPE 6 : DIFFUSION TEMPS RÉEL (ASYNCHRONE) ─────────────────────────
 
-	// ========================================================================
-	// MARQUAGE DU TEMPS (DIRTY FLAG)
-	// ========================================================================
-	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
-	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
-	// et garantit que le client reçoit la date de la fin absolue de la transaction.
-	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
+	go func() {
+		backgroundCtx := context.Background()
 
-	return output, err
+		errBroadcast := realtime_service.BroadcastToConversation(backgroundCtx, messagePayload.ConversationID, "message.updated", messagePayload)
+		if errBroadcast != nil {
+			logger.Log.Error().Err(errBroadcast).Msg("Échec de la diffusion WebSocket pour message.updated")
+		}
+
+		// SYNC LEDGER (Trigger granulaire)
+		participantIDs := GetParticipantIDsForLedgerSync(backgroundCtx, messagePayload.ConversationID)
+		_ = cache_service.RecordMessageMutation(backgroundCtx, messagePayload.ConversationID, messagePayload.ID, participantIDs)
+	}()
+
+	// ── ÉTAPE 7 : MARQUAGE D'ACTIVITÉ (DIRTY FLAG) ──────────────────────────
+
+	latestActivityTimestampMs := cache_service.TouchInboxActivity(ctx, callerID)
+
+	return message_models.UpdateMessageOutput{
+		InboxUpdateAt: domain.TimeToMillis(time.UnixMilli(latestActivityTimestampMs)),
+	}, nil
 }

@@ -7,54 +7,73 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// GetMutedMembers récupère la liste des utilisateurs mutés (Accessible aux Admins/Owners).
+// ############################################################################
+// # SERVICE : LISTE DES MEMBRES RESTREINTS (MUTE)
+// ############################################################################
+
+// GetMutedMembers récupère la liste des utilisateurs mutés (Interdiction d'écrire).
+// Réservé aux administrateurs (1) et propriétaires (2) du groupe.
 func GetMutedMembers(ctx context.Context, callerID int64, input member_models.GetMutedMembersInput) (member_models.GetMutedMembersOutput, error) {
-	// 1. SÉCURITÉ : Vérifier que le Caller est Admin (1) ou Propriétaire (2)
-	callerMem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
-	if err != nil {
-		return member_models.GetMutedMembersOutput{}, err
+
+	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS (SÉCURITÉ ZERO-TRUST) ────────────────────
+
+	callerMemberPayload, errSecurity := security_service.LeftMember(ctx, input.ConversationID, callerID)
+	if errSecurity != nil {
+		return member_models.GetMutedMembersOutput{}, errSecurity
 	}
-	if callerMem.Role < 1 {
-		return member_models.GetMutedMembersOutput{}, nubo_error.NewForbidden("NOT_ADMIN", "Seuls les administrateurs ont accès à cette liste.", nil)
+	if callerMemberPayload.Role < variables.MemberRoleAdmin {
+		return member_models.GetMutedMembersOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seuls les administrateurs ont accès à cette liste.", nil)
 	}
 
-	// 2. RÉCUPÉRATION BDD L3 (Source of Truth)
-	records, errPg := postgres.FuncLoadMutedMembersPaginated(ctx, input.ConversationID, input.Limit, input.Offset)
+	// ── ÉTAPE 2 : RÉCUPÉRATION DEPUIS LA SOURCE DE VÉRITÉ (POSTGRESQL L3) ───
+
+	// Note architecturale : Les membres mutés ne sont pas isolés dans le Speed Cache L1.
+	// On interroge donc directement le stockage à froid pour filtrer sur "RestrictedUntil".
+	mutedRecords, errPg := postgres.FuncLoadMutedMembersPaginated(ctx, input.ConversationID, input.Limit, input.Offset)
 	if errPg != nil {
-		return member_models.GetMutedMembersOutput{}, nubo_error.NewInternal(errPg)
+		logger.Log.Error().Err(errPg).Int64("conv_id", input.ConversationID).Msg("Échec L3 lors de la récupération de la liste des membres mutés")
+		return member_models.GetMutedMembersOutput{}, nubo_error.NewInternal()
 	}
 
-	// 3. HYDRATATION EN MASSE VIA SPEED CACHE (L1)
-	var mutedViews []member_models.MutedUserView
-	for _, rec := range records {
-		if userLite, errLite := cache_service.GetUserLite(ctx, rec.UserID); errLite == nil {
-			var avatarView media_models.MediaView
-			if userLite.ProfilePictureID > 0 {
-				if view, errMedia := media_service.GenerateMediaViewCascade(ctx, userLite.ProfilePictureID, rec.UserID, 0, callerID); errMedia == nil {
-					avatarView = view
+	// ── ÉTAPE 3 : HYDRATATION EN MASSE VIA SPEED CACHE (L1) ─────────────────
+
+	var mutedUserViews []member_models.MutedUserView
+
+	for _, record := range mutedRecords {
+		if userLiteData, errLite := cache_service.GetUserLite(ctx, record.UserID); errLite == nil {
+
+			var userAvatarView media_models.MediaView
+			if userLiteData.ProfilePictureID > 0 {
+				if mediaView, errMedia := media_service.GenerateMediaViewCascade(ctx, userLiteData.ProfilePictureID, record.UserID, 0, callerID); errMedia == nil {
+					userAvatarView = mediaView
 				}
 			}
 
-			mutedViews = append(mutedViews, member_models.MutedUserView{
+			mutedUserViews = append(mutedUserViews, member_models.MutedUserView{
 				UserLiteView: auth_models.UserLiteView{
-					User:     userLite,
-					Avatar:   avatarView,
-					IsOnline: cache_service.IsUserOnline(ctx, rec.UserID),
+					User:     userLiteData,
+					Avatar:   userAvatarView,
+					IsOnline: cache_service.IsUserOnline(ctx, record.UserID),
 				},
-				RestrictedUntil: rec.RestrictedUntil,
+				RestrictedUntil: record.RestrictedUntil,
 			})
 		}
 	}
 
-	if mutedViews == nil {
-		mutedViews = make([]member_models.MutedUserView, 0)
+	// Prévention stricte du `null` en JSON
+	if mutedUserViews == nil {
+		mutedUserViews = make([]member_models.MutedUserView, 0)
 	}
 
-	return member_models.GetMutedMembersOutput{MutedUsers: mutedViews}, nil
+	return member_models.GetMutedMembersOutput{
+		MutedUsers: mutedUserViews,
+	}, nil
 }

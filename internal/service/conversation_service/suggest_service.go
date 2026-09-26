@@ -9,177 +9,205 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-// SuggestContacts orchestre la suggestion de membres selon l'intention et la confidentialité.
-func SuggestContacts(ctx context.Context, callerID int64, input conversation_models.SuggestInput) (conversation_models.SuggestOutput, error) {
-	excludedIDs := make(map[int64]bool)
-	isGroupContext := input.ConversationID > 0
+// ############################################################################
+// # SERVICE : SUGGESTION DE CONTACTS (AUTCOMPLÉTION & LISTES)
+// ############################################################################
 
-	// Déduction de l'intention si non fournie par le front
-	intent := input.Intent
-	if intent == "" {
-		if isGroupContext {
-			intent = "group"
+// SuggestContacts orchestre la suggestion de membres selon l'intention demandée (Groupe, DM, Tag, Mention).
+// Elle filtre automatiquement les utilisateurs qui ne peuvent pas être contactés.
+func SuggestContacts(ctx context.Context, callerID int64, input conversation_models.SuggestInput) (conversation_models.SuggestOutput, error) {
+	excludedUserIDsMap := make(map[int64]bool)
+	isContextGroup := input.ConversationID > 0
+
+	// Déduction de l'intention métier (Fallback)
+	intentAction := input.Intent
+	if intentAction == "" {
+		if isContextGroup {
+			intentAction = "group"
 		} else {
-			intent = "dm"
+			intentAction = "dm"
 		}
 	}
 
-	// 1. GESTION DU CONTEXTE ET DES EXCLUSIONS
-	if isGroupContext && intent == "group" {
-		callerMem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
-		if err != nil || callerMem.Role < 0 {
-			return conversation_models.SuggestOutput{}, nubo_error.NewForbidden("NOT_A_MEMBER", "Accès refusé : vous ne faites pas partie de ce groupe.", err)
+	// ── ÉTAPE 1 : GESTION DU CONTEXTE ET DES EXCLUSIONS PRÉALABLES ──────────
+
+	if isContextGroup && intentAction == "group" {
+		callerMemberPayload, errSecurity := security_service.LeftMember(ctx, input.ConversationID, callerID)
+		if errSecurity != nil || callerMemberPayload.Role < variables.MemberRoleNormal {
+			return conversation_models.SuggestOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : vous ne faites pas partie de ce groupe.", errSecurity)
 		}
 
-		participantsStr, _ := redis.ConvParticipants.SMembers(ctx, input.ConversationID)
-		for _, pStr := range participantsStr {
-			if id, errParse := strconv.ParseInt(pStr, 10, 64); errParse == nil {
-				excludedIDs[id] = true
+		// On exclut les utilisateurs déjà présents dans le groupe
+		participantsStringList, _ := redis.ConvParticipants.SMembers(ctx, input.ConversationID)
+		for _, participantStr := range participantsStringList {
+			if parsedID, errParse := strconv.ParseInt(participantStr, 10, 64); errParse == nil {
+				excludedUserIDsMap[parsedID] = true
 			}
 		}
-	} else if intent == "dm" {
-		convIDStrings, _ := redis.UserInbox.ZRevRange(ctx, callerID, 0, -1)
-		var convIDs []int64
-		for _, idStr := range convIDStrings {
-			if id, err := strconv.ParseInt(idStr, 10, 64); err == nil {
-				convIDs = append(convIDs, id)
+	} else if intentAction == "dm" {
+		// On exclut les utilisateurs avec lesquels on a déjà un MP actif
+		inboxConversationIDStrings, _ := redis.UserInbox.ZRevRange(ctx, callerID, 0, -1)
+		var inboxConversationIDs []int64
+		for _, idStr := range inboxConversationIDStrings {
+			if id, errParse := strconv.ParseInt(idStr, 10, 64); errParse == nil {
+				inboxConversationIDs = append(inboxConversationIDs, id)
 			}
 		}
 
-		metaRes, _ := redis.ConvMeta.GetMany(ctx, convIDs)
-		for cid, data := range metaRes.Found {
-			var meta lite_models.ConvLiteRequest
-			if err := msgpack.Unmarshal(data, &meta); err == nil && meta.Type == 0 {
-				participants, _ := redis.ConvParticipants.SMembers(ctx, cid)
-				for _, pStr := range participants {
-					if id, errParse := strconv.ParseInt(pStr, 10, 64); errParse == nil && id != callerID {
-						excludedIDs[id] = true
+		conversationMetasBatch, _ := redis.ConvMeta.GetMany(ctx, inboxConversationIDs)
+		for convID, rawData := range conversationMetasBatch.Found {
+			var liteConversation lite_models.ConvLiteRequest
+			if errUnpack := msgpack.Unmarshal(rawData, &liteConversation); errUnpack == nil && liteConversation.Type == variables.ConversationTypeDirect {
+
+				// Pour chaque MP, on exclut l'autre participant
+				directParticipantsStringList, _ := redis.ConvParticipants.SMembers(ctx, convID)
+				for _, pStr := range directParticipantsStringList {
+					if targetID, errParse := strconv.ParseInt(pStr, 10, 64); errParse == nil && targetID != callerID {
+						excludedUserIDsMap[targetID] = true
 					}
 				}
 			}
 		}
 	}
 
-	// 2. RÉCUPÉRATION DES CANDIDATS
-	var validUsers []auth_models.UserLiteView
+	// ── ÉTAPE 2 : RÉCUPÉRATION ET FILTRAGE DES CANDIDATS ────────────────────
+
+	var validatedUsersList []auth_models.UserLiteView
 	currentOffset := input.Offset
-	maxIterations := 3
+	maxFetchIterations := 3 // Prévention de boucle infinie sur une DB immense très restrictive
 
-	for int64(len(validUsers)) < input.Limit && maxIterations > 0 {
-		fetchLimit := input.Limit * 2
-		var candidates []lite_models.UserLiteRequest
+	for int64(len(validatedUsersList)) < input.Limit && maxFetchIterations > 0 {
+		fetchBatchLimit := input.Limit * 2
+		var potentialCandidates []lite_models.UserLiteRequest
 
+		// Route A : Suggestion de base (Amis > Abonnés) vs Route B : Recherche textuelle
 		if input.Query == "" {
-			candidates, _ = cache_service.GetAddableUsersFromSpeedCache(ctx, callerID, fetchLimit, currentOffset, false)
+			var errCache error
+			potentialCandidates, errCache = cache_service.GetAddableUsersFromSpeedCache(ctx, callerID, fetchBatchLimit, currentOffset, false)
+			if errCache != nil {
+				logger.Log.Warn().Err(errCache).Msg("Erreur lors de la récupération des AddableUsers en RAM")
+			}
 		} else {
-			candidates, _ = cache_service.SearchUserByPrefix(ctx, input.Query, fetchLimit)
-			if len(candidates) == 0 {
+			var errCache error
+			potentialCandidates, errCache = cache_service.SearchUserByPrefix(ctx, input.Query, fetchBatchLimit)
+			if errCache != nil {
+				logger.Log.Warn().Err(errCache).Msg("Erreur lors de la recherche par préfixe en RAM")
+			}
+			if len(potentialCandidates) == 0 {
 				break
 			}
 		}
 
-		// 3. FILTRAGE ET MATRICE DE CONFIDENTIALITÉ
-		for _, target := range candidates {
-			if int64(len(validUsers)) >= input.Limit {
+		// ── ÉTAPE 3 : APPLICATION DE LA MATRICE DE CONFIDENTIALITÉ ──────────
+
+		for _, targetUserLite := range potentialCandidates {
+			if int64(len(validatedUsersList)) >= input.Limit {
 				break
 			}
 
-			if target.ID == callerID || excludedIDs[target.ID] {
+			if targetUserLite.ID == callerID || excludedUserIDsMap[targetUserLite.ID] {
 				continue
 			}
 
-			relationState := cache_service.RelationValue(ctx, callerID, target.ID)
-			if relationState == -1 {
-				continue // Utilisateur bloqué
+			// (0=Rien, 1=Abonné, 2=Ami, -1=Bloqué)
+			relationState := cache_service.RelationValue(ctx, callerID, targetUserLite.ID)
+			if relationState == variables.RelationStateBlocked {
+				continue // Exclusion totale (Blocage)
 			}
 
-			canCommunicate := false
+			isCommunicationAllowed := false
 
-			// === AIGUILLAGE DYNAMIQUE DES PERMISSIONS ===
-			switch intent {
+			// AIGUILLAGE SÉCURITAIRE DYNAMIQUE
+			switch intentAction {
 			case "group":
-				switch target.AddGroupPermission {
+				switch targetUserLite.AddGroupPermission {
 				case 0:
-					canCommunicate = true
+					isCommunicationAllowed = true
 				case 1:
-					canCommunicate = (relationState == 2)
+					isCommunicationAllowed = (relationState == 2)
 				case 2:
-					canCommunicate = false // Invitation uniquement
+					isCommunicationAllowed = false // Invitation uniquement
 				}
 			case "dm":
-				switch target.ConversationPermission {
+				switch targetUserLite.ConversationPermission {
 				case 0:
-					canCommunicate = true
+					isCommunicationAllowed = true
 				case 1:
-					canCommunicate = (relationState >= 1)
+					isCommunicationAllowed = (relationState >= 1)
 				case 2:
-					canCommunicate = (relationState == 2)
+					isCommunicationAllowed = (relationState == 2)
 				case 3:
-					canCommunicate = false
+					isCommunicationAllowed = false
 				}
 			case "tag":
-				switch target.AllowTagging {
+				switch targetUserLite.AllowTagging {
 				case 0:
-					canCommunicate = true
+					isCommunicationAllowed = true
 				case 1:
-					canCommunicate = (relationState >= 1)
+					isCommunicationAllowed = (relationState >= 1)
 				case 2:
-					canCommunicate = (relationState == 2)
+					isCommunicationAllowed = (relationState == 2)
 				}
 			case "mention":
-				switch target.AllowMentions {
+				switch targetUserLite.AllowMentions {
 				case 0:
-					canCommunicate = true
+					isCommunicationAllowed = true
 				case 1:
-					canCommunicate = (relationState >= 1)
+					isCommunicationAllowed = (relationState >= 1)
 				case 2:
-					canCommunicate = (relationState == 2)
+					isCommunicationAllowed = (relationState == 2)
 				}
 			default:
-				canCommunicate = true
+				isCommunicationAllowed = true
 			}
 
-			if !canCommunicate {
+			if !isCommunicationAllowed {
 				continue
 			}
 
-			// 4. HYDRATATION ET GESTION DU STATUT EN LIGNE
-			isOnline := cache_service.IsUserOnline(ctx, target.ID)
-			if !target.ShowOnlineStatus {
-				isOnline = false // ✅ Masquage du statut
+			// ── ÉTAPE 4 : HYDRATATION FINALE (Présence et Média) ────────────
+
+			isUserOnline := cache_service.IsUserOnline(ctx, targetUserLite.ID)
+			if !targetUserLite.ShowOnlineStatus {
+				isUserOnline = false // Règle de confidentialité respectée
 			}
 
-			var avatar media_models.MediaView
-			if target.ProfilePictureID > 0 {
-				if view, errMedia := media_service.GenerateMediaViewCascade(ctx, target.ProfilePictureID, target.ID, 0, callerID); errMedia == nil {
-					avatar = view
+			var userAvatarView media_models.MediaView
+			if targetUserLite.ProfilePictureID > 0 {
+				if mediaView, errMedia := media_service.GenerateMediaViewCascade(ctx, targetUserLite.ProfilePictureID, targetUserLite.ID, 0, callerID); errMedia == nil {
+					userAvatarView = mediaView
 				}
 			}
 
-			validUsers = append(validUsers, auth_models.UserLiteView{
-				User:     target,
-				Avatar:   avatar,
-				IsOnline: isOnline,
+			validatedUsersList = append(validatedUsersList, auth_models.UserLiteView{
+				User:     targetUserLite,
+				Avatar:   userAvatarView,
+				IsOnline: isUserOnline,
 			})
 		}
 
 		if input.Query != "" {
+			// Les recherches textuelles complètes n'ont pas besoin d'itérer sur des offsets,
+			// Redis retourne déjà le meilleur match global.
 			break
 		}
-		currentOffset += fetchLimit
-		maxIterations--
+
+		currentOffset += fetchBatchLimit
+		maxFetchIterations--
 	}
 
-	if validUsers == nil {
-		validUsers = make([]auth_models.UserLiteView, 0)
+	if validatedUsersList == nil {
+		validatedUsersList = make([]auth_models.UserLiteView, 0)
 	}
 
-	return conversation_models.SuggestOutput{Users: validUsers}, nil
+	return conversation_models.SuggestOutput{Users: validatedUsersList}, nil
 }

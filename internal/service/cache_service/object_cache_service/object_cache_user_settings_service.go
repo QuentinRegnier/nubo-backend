@@ -4,56 +4,80 @@ import (
 	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
-// GetUserSettings lit uniquement depuis la RAM (O(1))
+// ############################################################################
+// # SERVICE : OBJECT CACHE (PARAMÈTRES UTILISATEUR LFU)
+// ############################################################################
+
+// GetUserSettings lit uniquement depuis la RAM L1 (O(1)).
 func GetUserSettings(ctx context.Context, userID int64) (user_settings_models.UserSettingsPayload, error) {
-	var settings user_settings_models.UserSettingsPayload
-	// On utilise l'ID de l'utilisateur comme clé car c'est une relation 1-to-1
-	err := redis.UserSettings.GetObject(ctx, userID, &settings)
-	return settings, err
+	var userSettingsPayload user_settings_models.UserSettingsPayload
+
+	// On utilise l'ID de l'utilisateur comme clé car c'est une relation 1-to-1 stricte
+	errRedis := redis.UserSettings.GetObject(ctx, userID, &userSettingsPayload)
+	if errRedis != nil {
+		return user_settings_models.UserSettingsPayload{}, errRedis
+	}
+
+	return userSettingsPayload, nil
 }
 
-// SetUserSettings sauvegarde l'objet en RAM
-func SetUserSettings(ctx context.Context, settings user_settings_models.UserSettingsPayload) error {
-	return redis.UserSettings.SetObject(ctx, settings.UserID, settings)
+// SetUserSettings sauvegarde l'objet de paramètres en RAM L1.
+func SetUserSettings(ctx context.Context, userSettingsPayload user_settings_models.UserSettingsPayload) error {
+	errRedis := redis.UserSettings.SetObject(ctx, userSettingsPayload.UserID, userSettingsPayload)
+	if errRedis != nil {
+		logger.Log.Error().Err(errRedis).Int64("user_id", userSettingsPayload.UserID).Msg("Impossible de sauvegarder les UserSettings en RAM L1")
+		return nubo_error.NewInternal()
+	}
+	return nil
 }
 
 // GetUserSettingsCascade tente le L1, puis le L2 (Mongo), puis le L3 (Postgres), et réhydrate la RAM.
 func GetUserSettingsCascade(ctx context.Context, userID int64) (user_settings_models.UserSettingsPayload, error) {
-	// 1. TENTATIVE L1 (Redis)
-	if s, err := GetUserSettings(ctx, userID); err == nil && s.ID != 0 {
-		return s, nil
+
+	// ── ÉTAPE 1 : TENTATIVE L1 (REDIS RAM) ──────────────────────────────────
+	cachedSettings, errL1 := GetUserSettings(ctx, userID)
+	if errL1 == nil && cachedSettings.ID != 0 {
+		return cachedSettings, nil
 	}
 
-	// 2. TENTATIVE L2 (MongoDB)
-	var settings user_settings_models.UserSettingsPayload
-	docs, errMongo := mongo.UserSettings.Get(map[string]any{"user_id": userID}, nil)
-	if errMongo == nil && len(docs) > 0 {
-		if err := pkg.ToStruct(docs[0], &settings); err == nil {
-			_ = SetUserSettings(ctx, settings) // Réhydratation L1
-			return settings, nil
+	// ── ÉTAPE 2 : TENTATIVE L2 (MONGODB WARM STORAGE) ────────────────────────
+	var mongoSettingsPayload user_settings_models.UserSettingsPayload
+	mongoDocumentsList, errMongo := mongo.UserSettings.Get(map[string]any{"user_id": userID}, nil)
+
+	if errMongo == nil && len(mongoDocumentsList) > 0 {
+		if errStruct := pkg.ToStruct(mongoDocumentsList[0], &mongoSettingsPayload); errStruct == nil {
+			_ = SetUserSettings(ctx, mongoSettingsPayload) // Réhydratation L1 silencieuse
+			return mongoSettingsPayload, nil
 		}
 	}
 
-	// 3. TENTATIVE L3 (PostgreSQL)
-	sPg, errPg := postgres.FuncLoadUserSettings(ctx, userID)
-	if errPg == nil && sPg.ID != 0 {
-		// A. Réhydratation L1 (Redis - Immédiate en RAM)
-		_ = SetUserSettings(ctx, sPg)
-
-		// B. Réhydratation L2 (Mongo - Asynchrone via les workers)
-		go func(settings user_settings_models.UserSettingsPayload) {
-			bgCtx := context.Background() // Détaché de la requête HTTP
-			_ = redis.EnqueueDB(bgCtx, settings.ID, settings.UserID, redis.EntityUserSettings, redis.ActionUpdate, settings, redis.TargetMongo)
-		}(sPg)
-
-		return sPg, nil
+	// ── ÉTAPE 3 : TENTATIVE L3 (POSTGRESQL COLD STORAGE) ────────────────────
+	postgresSettings, errPg := postgres.FuncLoadUserSettings(ctx, userID)
+	if errPg != nil {
+		logger.Log.Error().Err(errPg).Int64("user_id", userID).Msg("Erreur critique L3 lors du chargement des UserSettings")
+		return user_settings_models.UserSettingsPayload{}, nubo_error.NewInternal()
 	}
 
-	return user_settings_models.UserSettingsPayload{}, nil
+	if postgresSettings.ID != 0 {
+		// A. Réhydratation L1 (Redis - Immédiate en RAM)
+		_ = SetUserSettings(ctx, postgresSettings)
+
+		// B. Réhydratation L2 (Mongo - Asynchrone via les workers de la file d'attente)
+		go func(payloadToSync user_settings_models.UserSettingsPayload) {
+			backgroundCtx := context.Background() // Contexte détaché de la requête HTTP
+			_ = redis.EnqueueDB(backgroundCtx, payloadToSync.ID, payloadToSync.UserID, redis.EntityUserSettings, redis.ActionUpdate, payloadToSync, redis.TargetMongo)
+		}(postgresSettings)
+
+		return postgresSettings, nil
+	}
+
+	return user_settings_models.UserSettingsPayload{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Paramètres utilisateur introuvables.", nil)
 }

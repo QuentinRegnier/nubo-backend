@@ -88,7 +88,7 @@ func HMACMiddleware() gin.HandlerFunc {
 		firebaseInstallationID := fmt.Sprintf("%v", firebaseInstallationIDRaw)
 
 		var session auth_models.SessionsPayload
-		var sessionFound bool = false
+		var sessionFound = false
 
 		// A. Essai Cache L1
 		session, err := cache_service.LoadSessionFromCache(c, userID, firebaseInstallationID, "")

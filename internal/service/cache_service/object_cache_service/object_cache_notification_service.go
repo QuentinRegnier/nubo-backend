@@ -4,60 +4,76 @@ import (
 	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-func SetNotificationInObjectCache(ctx context.Context, notif notification_models.NotificationPayload) error {
-	return redis.NotificationsObj.SetObject(ctx, notif.ID, notif)
+// ############################################################################
+// # SERVICE : OBJECT CACHE (NOTIFICATIONS LFU & PIPELINE D'HYDRATATION)
+// ############################################################################
+
+// SetNotificationInObjectCache sauvegarde une notification dans le cache LFU.
+func SetNotificationInObjectCache(ctx context.Context, notificationPayload notification_models.NotificationPayload) error {
+	errRedis := redis.NotificationsObj.SetObject(ctx, notificationPayload.ID, notificationPayload)
+	if errRedis != nil {
+		logger.Log.Error().Err(errRedis).Int64("notif_id", notificationPayload.ID).Msg("Impossible de sauvegarder la notification dans l'Object Cache")
+		return nubo_error.NewInternal()
+	}
+	return nil
 }
 
-// GetNotificationsView : Le Pipeline d'Hydratation L1 -> L2
-// Renvoie strictement les Payloads bruts (La couche haute s'occupera de la View).
-func GetNotificationsView(ctx context.Context, ids []int64) ([]notification_models.NotificationPayload, error) {
-	if len(ids) == 0 {
+// GetNotificationsView est le Pipeline d'Hydratation L1 -> L2 pour les notifications.
+// Renvoie strictement les Payloads bruts (La couche haute s'occupera de forger la View).
+func GetNotificationsView(ctx context.Context, targetNotificationIDs []int64) ([]notification_models.NotificationPayload, error) {
+	if len(targetNotificationIDs) == 0 {
 		return []notification_models.NotificationPayload{}, nil
 	}
 
-	finalNotifs := make([]notification_models.NotificationPayload, 0, len(ids))
-	tempMap := make(map[int64]notification_models.NotificationPayload)
+	finalHydratedNotificationsList := make([]notification_models.NotificationPayload, 0, len(targetNotificationIDs))
+	temporaryNotificationsMap := make(map[int64]notification_models.NotificationPayload)
 
-	// 1. TENTATIVE L1 (MGET)
-	result, err := redis.NotificationsObj.GetMany(ctx, ids)
-	if err != nil {
-		result = &redis.GetManyResult{MissingIDs: ids}
+	// ── ÉTAPE 1 : TENTATIVE L1 (MGET) ───────────────────────────────────────
+	mgetResult, errMGet := redis.NotificationsObj.GetMany(ctx, targetNotificationIDs)
+	if errMGet != nil {
+		mgetResult = &redis.GetManyResult{MissingIDs: targetNotificationIDs}
 	} else {
-		for id, data := range result.Found {
-			var n notification_models.NotificationPayload
-			if errDecode := msgpack.Unmarshal(data, &n); errDecode == nil {
-				tempMap[id] = n
+		for notificationID, binaryData := range mgetResult.Found {
+			var notificationPayload notification_models.NotificationPayload
+			if errDecode := msgpack.Unmarshal(binaryData, &notificationPayload); errDecode == nil {
+				temporaryNotificationsMap[notificationID] = notificationPayload
 			} else {
-				result.MissingIDs = append(result.MissingIDs, id)
+				mgetResult.MissingIDs = append(mgetResult.MissingIDs, notificationID)
 			}
 		}
 	}
 
-	// 2. FALLBACK L2 (MONGO)
-	if len(result.MissingIDs) > 0 {
-		mongoNotifs, err := mongo.MongoLoadNotificationsByIDs(result.MissingIDs)
-		if err == nil {
-			for _, n := range mongoNotifs {
-				tempMap[n.ID] = n
-				// PROMOTION L2 -> L1 (Auto-guérison)
-				go func(notif notification_models.NotificationPayload) {
-					_ = SetNotificationInObjectCache(context.Background(), notif)
-				}(n)
+	// ── ÉTAPE 2 : FALLBACK L2 (MONGO WARM STORAGE) ──────────────────────────
+	if len(mgetResult.MissingIDs) > 0 {
+		mongoNotificationsList, errMongo := mongo.MongoLoadNotificationsByIDs(mgetResult.MissingIDs)
+		if errMongo == nil {
+			for _, mongoNotification := range mongoNotificationsList {
+				temporaryNotificationsMap[mongoNotification.ID] = mongoNotification
+
+				// PROMOTION L2 -> L1 (Auto-guérison asynchrone)
+				go func(notifToPromote notification_models.NotificationPayload) {
+					backgroundCtx := context.Background()
+					_ = SetNotificationInObjectCache(backgroundCtx, notifToPromote)
+				}(mongoNotification)
 			}
+		} else {
+			logger.Log.Warn().Err(errMongo).Msg("Échec L2 lors du chargement des notifications par IDs")
 		}
 	}
 
-	// 3. ASSEMBLAGE
-	for _, id := range ids {
-		if n, ok := tempMap[id]; ok {
-			finalNotifs = append(finalNotifs, n)
+	// ── ÉTAPE 3 : ASSEMBLAGE FINAL ──────────────────────────────────────────
+	for _, targetID := range targetNotificationIDs {
+		if notificationPayload, isExists := temporaryNotificationsMap[targetID]; isExists {
+			finalHydratedNotificationsList = append(finalHydratedNotificationsList, notificationPayload)
 		}
 	}
 
-	return finalNotifs, nil
+	return finalHydratedNotificationsList, nil
 }

@@ -16,6 +16,7 @@ const (
 
 	TDDDeltaInvalid = 0.15 // δ_inval — seuil d'invalidation du cache_service feed_service
 
-	TDDLSHBits = 32        // b — bits de projection aléatoire (SimHash)
-	TDDLSHSeed = int64(42) // Graine LSH
+	TDDLSHBits                = 32        // b — bits de projection aléatoire (SimHash)
+	TDDLSHSeed                = int64(42) // Graine LSH
+	TDDLSHConfidenceThreshold = 0.70
 )

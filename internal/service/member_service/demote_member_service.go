@@ -18,84 +18,87 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// DemoteMember rétrograde un administrateur au rang de membre standard (Rôle = 0)
+// ############################################################################
+// # SERVICE : DESTITUTION D'UN ADMINISTRATEUR (DEMOTE)
+// ############################################################################
+
+// DemoteMember rétrograde un administrateur au rang de membre standard (Rôle = 0).
 func DemoteMember(ctx context.Context, callerID int64, input member_models.DemoteMemberInput) (member_models.DemoteMemberOutput, error) {
-	// 1. SÉCURITÉ : Vérification des droits du Caller (L1 -> L2 -> L3)
-	callerMem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
-	if err != nil {
-		return member_models.DemoteMemberOutput{}, nubo_error.NewForbidden("ACCESS_DENIED", "Conversation introuvable ou accès refusé.", err)
-	}
-	if callerMem.Role != 2 {
-		return member_models.DemoteMemberOutput{}, nubo_error.NewForbidden("INSUFFICIENT_PERMISSIONS", "Seul le propriétaire peut destituer un administrateur.", nil)
-	}
 
-	// 2. RÉCUPÉRATION DU MEMBRE CIBLE
-	targetMem, err := security_service.LeftMember(ctx, input.ConversationID, input.TargetUserID)
-	if err != nil || targetMem.Role < 0 {
-		return member_models.DemoteMemberOutput{}, nubo_error.NewBadRequest("USER_NOT_MEMBER", "L'utilisateur ciblé n'est pas membre de ce groupe.", err)
+	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS ET HIERARCHIE ────────────────────────────
+	callerMemberPayload, errSecurity := security_service.LeftMember(ctx, input.ConversationID, callerID)
+	if errSecurity != nil {
+		return member_models.DemoteMemberOutput{}, errSecurity
+	}
+	if callerMemberPayload.Role != variables.MemberRoleOwner {
+		return member_models.DemoteMemberOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seul le propriétaire peut destituer un administrateur.", nil)
 	}
 
-	// 3. RÈGLES MÉTIER ET IDEMPOTENCE
-	if targetMem.Role == 0 {
-		return member_models.DemoteMemberOutput{}, nil // Déjà membre normal, on valide silencieusement
-	}
-	if targetMem.Role == 2 {
-		return member_models.DemoteMemberOutput{}, nubo_error.NewForbidden("CANNOT_DEMOTE_OWNER", "Impossible de destituer le propriétaire, transférez d'abord la propriété.", nil)
+	targetMemberPayload, errTargetSecurity := security_service.LeftMember(ctx, input.ConversationID, input.TargetUserID)
+	if errTargetSecurity != nil {
+		return member_models.DemoteMemberOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "L'utilisateur ciblé n'est pas un membre actif de ce groupe.", errTargetSecurity)
 	}
 
-	// 4. APPLICATION DE LA MODIFICATION
-	targetMem.Role = 0
-	targetMem.UpdatedAt = domain.NowMillis()
-
-	callerLite, _ := cache_service.GetUserLite(ctx, callerID)
-	targetLite, _ := cache_service.GetUserLite(ctx, input.TargetUserID)
-	sysContent := fmt.Sprintf("%s a destitué %s", callerLite.Username, targetLite.Username)
-	msgInput := message_models.CreateMessageInput{
-		MessageType: 8,
-		Content:     sysContent,
+	// ── ÉTAPE 2 : RÈGLES MÉTIER ET IDEMPOTENCE ──────────────────────────────
+	if targetMemberPayload.Role == variables.MemberRoleNormal {
+		return member_models.DemoteMemberOutput{}, nil // Déjà membre normal, réussite silencieuse
 	}
-	_, _ = message_service.CreateMessage(ctx, callerID, input.ConversationID, msgInput, true)
-
-	// 5. MISE À JOUR DE LA RAM (L1)
-	_ = object_cache_service.SetMemberInObjectCache(ctx, targetMem)
-
-	// === NOUVEAU : MISE À JOUR SYNCHRONE DU SPEED CACHE ===
-	_ = cache_service.UpdateMemberSpeedCache(ctx, lite_models.MemberLiteRequest{
-		ConversationID:    targetMem.ConversationID,
-		UserID:            targetMem.UserID,
-		Role:              targetMem.Role,
-		Settings:          service.ToMemberSettingsLite(targetMem.Settings),
-		UnreadCount:       targetMem.UnreadCount,
-		FrozenMessageID:   targetMem.FrozenMessageID,
-		LastReadMessageID: targetMem.LastReadMessageID,
-		JoinedAt:          targetMem.JoinedAt,
-	})
-
-	// 6. ENVOI AUX WORKERS (Write-Behind)
-	err = redis.EnqueueDB(ctx, targetMem.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMem, redis.TargetAll)
-
-	// 7. ENVOI NOTIFICATION (Asynchrone)
-	if err == nil {
-		go func() {
-			err := realtime_service.BroadcastToConversation(context.Background(), input.ConversationID, "member.demoted", targetMem)
-			if err != nil {
-				logger.Log.Error().Err(err).Msg("Failed to broadcast member demotion")
-			}
-		}()
+	if targetMemberPayload.Role == variables.MemberRoleOwner {
+		return member_models.DemoteMemberOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Impossible de destituer le propriétaire. Transférez d'abord la propriété.", nil)
 	}
 
-	output := member_models.DemoteMemberOutput{}
+	// ── ÉTAPE 3 : MESSAGE SYSTÈME DE NOTIFICATION ───────────────────────────
+	callerUserLite, _ := cache_service.GetUserLite(ctx, callerID)
+	targetUserLite, _ := cache_service.GetUserLite(ctx, input.TargetUserID)
 
-	// ========================================================================
-	// MARQUAGE DU TEMPS (DIRTY FLAG)
-	// ========================================================================
-	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
-	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
-	// et garantit que le client reçoit la date de la fin absolue de la transaction.
-	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
+	systemMessageContent := fmt.Sprintf("%s a destitué %s", callerUserLite.Username, targetUserLite.Username)
+	systemMessageInput := message_models.CreateMessageInput{
+		MessageType: variables.MessageTypeSystem,
+		Content:     systemMessageContent,
+	}
+	_, _ = message_service.CreateMessage(ctx, callerID, input.ConversationID, systemMessageInput, true)
 
-	return output, err
+	// ── ÉTAPE 4 : APPLICATION DE LA DESTITUTION ─────────────────────────────
+	targetMemberPayload.Role = variables.MemberRoleNormal
+	targetMemberPayload.UpdatedAt = domain.NowMillis()
+
+	// ── ÉTAPE 5 : MISE À JOUR SYNCHRONE RAM L1 ──────────────────────────────
+	_ = object_cache_service.SetMemberInObjectCache(ctx, targetMemberPayload)
+
+	liteMemberRequest := lite_models.MemberLiteRequest{
+		ConversationID:    targetMemberPayload.ConversationID,
+		UserID:            targetMemberPayload.UserID,
+		Role:              targetMemberPayload.Role,
+		Settings:          service.ToMemberSettingsLite(targetMemberPayload.Settings),
+		UnreadCount:       targetMemberPayload.UnreadCount,
+		FrozenMessageID:   targetMemberPayload.FrozenMessageID,
+		LastReadMessageID: targetMemberPayload.LastReadMessageID,
+		JoinedAt:          targetMemberPayload.JoinedAt,
+	}
+	_ = cache_service.UpdateMemberSpeedCache(ctx, liteMemberRequest)
+
+	// ── ÉTAPE 6 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
+	errQueue := redis.EnqueueDB(ctx, targetMemberPayload.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMemberPayload, redis.TargetAll)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("user_id", targetMemberPayload.UserID).Msg("Échec du Write-Behind pour la destitution d'un administrateur")
+		return member_models.DemoteMemberOutput{}, nubo_error.NewInternal()
+	}
+
+	// ── ÉTAPE 7 : DIFFUSION WEBSOCKET (ASYNCHRONE) ──────────────────────────
+	go func() {
+		errBroadcast := realtime_service.BroadcastToConversation(context.Background(), input.ConversationID, "member.demoted", targetMemberPayload)
+		if errBroadcast != nil {
+			logger.Log.Error().Err(errBroadcast).Msg("Échec de diffusion WebSocket pour la destitution")
+		}
+	}()
+
+	// ── ÉTAPE 8 : MARQUAGE D'ACTIVITÉ (DIRTY FLAG) ──────────────────────────
+	latestActivityTimestampMs := cache_service.TouchInboxActivity(ctx, callerID)
+
+	return member_models.DemoteMemberOutput{
+		InboxUpdateAt: domain.TimeToMillis(time.UnixMilli(latestActivityTimestampMs)),
+	}, nil
 }

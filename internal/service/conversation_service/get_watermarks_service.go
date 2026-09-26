@@ -8,29 +8,37 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// GetWatermarks récupère les curseurs de lecture (O(1) L1 Cache) de tous les participants d'une conversation.
+// ############################################################################
+// # SERVICE : RÉCUPÉRATION DES CURSEURS DE LECTURE (WATERMARKS)
+// ############################################################################
+
+// GetWatermarks récupère les curseurs de lecture (LastReadMessageID) en O(1)
+// depuis la RAM pour tous les participants d'une conversation donnée.
 func GetWatermarks(ctx context.Context, callerID int64, input conversation_models.GetWatermarksInput) (conversation_models.GetWatermarksOutput, error) {
-	// 1. SÉCURITÉ ZERO-TRUST : L'utilisateur doit être membre de la conversation
-	_, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
-	if err != nil {
-		return conversation_models.GetWatermarksOutput{}, nubo_error.NewForbidden("NOT_A_MEMBER", "Vous n'êtes pas membre de cette conversation.", err)
+
+	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS ZERO-TRUST ────────────────────────────────
+	callerMemberPayload, errSecurity := security_service.LeftMember(ctx, input.ConversationID, callerID)
+	if errSecurity != nil || callerMemberPayload.Role < variables.MemberRoleNormal {
+		return conversation_models.GetWatermarksOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous n'êtes pas membre de cette conversation.", errSecurity)
 	}
 
-	// 2. RÉCUPÉRATION O(1) DEPUIS LE CACHE L1 (Le service de cache a été défini à l'étape 1.2)
-	rawWatermarks, errCache := cache_service.GetWatermarksFromSpeedCache(ctx, input.ConversationID)
+	// ── ÉTAPE 2 : RÉCUPÉRATION O(1) DEPUIS LE SPEED CACHE L1 ─────────────────
+	rawWatermarksMap, errCache := cache_service.GetWatermarksFromSpeedCache(ctx, input.ConversationID)
 	if errCache != nil {
-		return conversation_models.GetWatermarksOutput{}, nubo_error.NewInternal(errCache)
+		// Erreur interne Redis masquée sous une AppError standardisée
+		return conversation_models.GetWatermarksOutput{}, nubo_error.NewInternal()
 	}
 
-	// 3. MAPPING DYNAMIQUE : Conversion de map[int64]int64 vers map[string]int64 pour la sortie JSON
-	watermarksStr := make(map[string]int64)
-	for uID, mID := range rawWatermarks {
-		watermarksStr[strconv.FormatInt(uID, 10)] = mID
+	// ── ÉTAPE 3 : SÉRIALISATION DES CLÉS EN CHAÎNES POUR LE JSON ─────────────
+	formattedWatermarks := make(map[string]int64, len(rawWatermarksMap))
+	for participantUserID, lastReadMessageID := range rawWatermarksMap {
+		formattedWatermarks[strconv.FormatInt(participantUserID, 10)] = lastReadMessageID
 	}
 
 	return conversation_models.GetWatermarksOutput{
-		Watermarks: watermarksStr,
+		Watermarks: formattedWatermarks,
 	}, nil
 }

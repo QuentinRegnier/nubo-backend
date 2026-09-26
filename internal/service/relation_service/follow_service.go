@@ -2,80 +2,97 @@ package relation_service
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// ToggleFollow gère l'abonnement et le désabonnement avec idempotence en RAM
-func ToggleFollow(ctx context.Context, callerID int64, targetID int64, action string) error {
+// ############################################################################
+// # SERVICE : ABONNEMENT (FOLLOW)
+// ############################################################################
+
+// ToggleFollow gère l'abonnement et le désabonnement avec idempotence en RAM.
+func ToggleFollow(ctx context.Context, callerID int64, targetID int64, requestedAction string) error {
+
+	// ── ÉTAPE 1 : RÈGLE MÉTIER (AUTO-FOLLOW INTERDIT) ───────────────────────
 	if callerID == targetID {
-		return errors.New("vous ne pouvez pas vous suivre vous-même")
+		return nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Vous ne pouvez pas vous abonner à vous-même.", nil)
 	}
 
-	// 1. Lire l'état actuel en cascade O(1) (0=Rien, 1=Follow, 2=Ami, -1=Banni)
-	currentState := cache_service.RelationValue(ctx, targetID, callerID)
+	// ── ÉTAPE 2 : LECTURE DE L'ÉTAT ACTUEL (O(1) RAM L1) ────────────────────
+	currentRelationState := cache_service.RelationValue(ctx, targetID, callerID)
 
-	// Sécurité absolue : Blocage
-	if currentState == -1 {
-		return errors.New("action impossible : utilisateur bloqué")
+	// Sécurité absolue : Bloqué
+	if currentRelationState == variables.RelationStateBlocked {
+		return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Action impossible : Utilisateur bloqué.", nil)
 	}
 
-	newState := currentState
-	dbAction := redis.ActionCreate
+	newRelationState := currentRelationState
+	redisActionType := redis.ActionCreate
 
-	// 2. Déterminer la nouvelle action et bloquer les doublons (Spam Clic)
-	if action == "follow" {
-		if currentState == 1 || currentState == 2 {
-			return nil // Déjà suivi ou ami, on coupe le circuit ici (Zéro I/O BDD)
+	// ── ÉTAPE 3 : LOGIQUE DE TRANSITION ET IDEMPOTENCE (SPAM CLIC) ──────────
+	if requestedAction == "follow" {
+		if currentRelationState == variables.RelationStateFollow || currentRelationState == variables.RelationStateFriend {
+			return nil // Déjà suivi ou ami, coupe-circuit instantané (Zéro I/O BDD).
 		}
-		newState = 1
-		dbAction = redis.ActionCreate
-	} else if action == "unfollow" {
-		if currentState == 0 {
-			return nil // Déjà rien, coupe-circuit
+		newRelationState = variables.RelationStateFollow
+		redisActionType = redis.ActionCreate
+
+	} else if requestedAction == "unfollow" {
+		if currentRelationState == variables.RelationStateNone {
+			return nil // Déjà aucun lien, coupe-circuit.
 		}
-		newState = 0
-		dbAction = redis.ActionDelete
+		newRelationState = variables.RelationStateNone
+		redisActionType = redis.ActionDelete
+
 	} else {
-		return errors.New("action non reconnue")
+		return nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Action de relation non reconnue.", nil)
 	}
 
-	// 3. Mise à jour immédiate du Cache L1 (SpeedRelations & SpeedRelationsIndex)
-	// Cela impactera instantanément le rendu UI et les futurs Fan-Outs de posts
-	now := time.Now().UTC()
-	if err := cache_service.UpdateRelationState(ctx, targetID, callerID, newState, domain.TimeToMillis(now)); err != nil {
-		return err
+	// ── ÉTAPE 4 : MISE À JOUR IMMÉDIATE DU CACHE L1 ─────────────────────────
+	// Impacte instantanément le rendu UI et les futurs Fan-Outs de posts.
+	currentTime := time.Now().UTC()
+	errCache := cache_service.UpdateRelationState(ctx, targetID, callerID, newRelationState, domain.TimeToMillis(currentTime))
+	if errCache != nil {
+		logger.Log.Error().Err(errCache).Msg("Échec de la mise à jour du Cache L1 lors d'un ToggleFollow")
+		return nubo_error.NewInternal()
 	}
 
-	// 4. Persistance asynchrone (Write-Behind vers L2 et L3)
-	payload := relation_models.RelationPayload{
+	// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
+	relationPayload := relation_models.RelationPayload{
 		ID:          pkg.GenerateID(),
 		PrimaryID:   callerID,
 		SecondaryID: targetID,
-		State:       newState,
-		CreatedAt:   domain.TimeToMillis(now),
-		UpdatedAt:   domain.TimeToMillis(now),
+		State:       newRelationState,
+		CreatedAt:   domain.TimeToMillis(currentTime),
+		UpdatedAt:   domain.TimeToMillis(currentTime),
 	}
 
-	// PartitionKey = targetID pour centraliser les requêtes sur le shard de la cible
-	err := redis.EnqueueDB(ctx, payload.ID, targetID, redis.EntityRelation, dbAction, payload, redis.TargetAll)
+	// PartitionKey = targetID pour centraliser les requêtes sur le shard de la cible.
+	errQueue := redis.EnqueueDB(ctx, relationPayload.ID, targetID, redis.EntityRelation, redisActionType, relationPayload, redis.TargetAll)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("target_id", targetID).Msg("Échec du Write-Behind pour ToggleFollow")
+		return nubo_error.NewInternal()
+	}
 
-	if err == nil && newState == 1 && currentState == 0 {
+	// ── ÉTAPE 6 : DISTRIBUTION DES NOTIFICATIONS ────────────────────────────
+	if newRelationState == variables.RelationStateFollow && currentRelationState == variables.RelationStateNone {
 		go func() {
-			err := notification_service.DispatchNotification(context.Background(), targetID, callerID, "relation_followed", callerID)
-			if err != nil {
-				logger.Log.Error().Err(err).Msg("Failed to dispatch notification for follow")
+			backgroundCtx := context.Background()
+			errNotif := notification_service.DispatchNotification(backgroundCtx, targetID, callerID, variables.EventRelationFollowed, callerID)
+			if errNotif != nil {
+				logger.Log.Error().Err(errNotif).Msg("Échec de l'expédition de la notification pour Follow")
 			}
 		}()
 	}
 
-	return err
+	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -16,86 +17,107 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// UpdateProfile modifie l'identité, vérifie l'unicité, gère l'avatar et envoie au Write-Behind.
+// ############################################################################
+// # SERVICE : MISE À JOUR DU PROFIL
+// ############################################################################
+
+// UpdateProfile modifie l'identité, vérifie l'unicité des champs sensibles,
+// gère le remplacement de l'avatar et envoie les mutations au Write-Behind.
 func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdateProfileInput) (auth_models.UpdateProfileOutput, error) {
-	// 1. Récupération de l'utilisateur existant complet (L2 -> L3) pour préserver les données critiques
-	user, err := mongo.MongoLoadUser(userID, "", "", "")
-	if err != nil || user.ID == 0 {
-		user, err = postgres.FuncLoadUser(userID, "", "", "")
-		if err != nil || user.ID == 0 {
-			return auth_models.UpdateProfileOutput{}, nubo_error.NewNotFound("USER_NOT_FOUND", "Utilisateur introuvable.", err)
+
+	// ── ÉTAPE 1 : RÉCUPÉRATION DU PROFIL ACTUEL (CASCADE L2 -> L3) ──────────
+	// Nécessaire pour préserver les champs critiques (Grade, Banni, etc.) non soumis au PUT.
+
+	userPayload, errMongo := mongo.MongoLoadUser(userID, "", "", "")
+	if errMongo != nil || userPayload.ID == 0 {
+		var errPg error
+		userPayload, errPg = postgres.FuncLoadUser(userID, "", "", "")
+		if errPg != nil {
+			return auth_models.UpdateProfileOutput{}, nubo_error.NewInternal()
+		}
+		if userPayload.ID == 0 {
+			return auth_models.UpdateProfileOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Utilisateur introuvable.", nil)
 		}
 	}
 
-	// Variables pour le Cuckoo Filter (pour retirer les anciens et ajouter les nouveaux)
-	oldUsername, oldEmail, oldPhone := "", "", ""
-	newUsername, newEmail, newPhone := "", "", ""
+	// Variables tampons pour mettre à jour le Cuckoo Filter si besoin
+	var oldUsername, oldEmail, oldPhone string
+	var newUsername, newEmail, newPhone string
 
-	// 2. Vérification d'unicité uniquement si la valeur a changé
-	if input.Username != user.Username {
+	// ── ÉTAPE 2 : VÉRIFICATIONS D'UNICITÉ (CUCKOO -> L1 -> L2 -> L3) ────────
+
+	if input.Username != userPayload.Username {
 		if service.IsUnique(ctx, redis.EntityUser, "username", input.Username) == 0 {
-			return auth_models.UpdateProfileOutput{}, nubo_error.NewConflict("USERNAME_TAKEN", "Ce nom d'utilisateur est déjà pris.", nil)
+			return auth_models.UpdateProfileOutput{}, nubo_error.NewConflict(nubo_error.CodeConflict, "Ce nom d'utilisateur est déjà pris.", nil)
 		}
-		oldUsername = user.Username
+		oldUsername = userPayload.Username
 		newUsername = input.Username
-		user.Username = input.Username
+		userPayload.Username = input.Username
 	}
 
-	if input.Email != user.Email {
+	if input.Email != userPayload.Email {
 		if service.IsUnique(ctx, redis.EntityUser, "email", input.Email) == 0 {
-			return auth_models.UpdateProfileOutput{}, nubo_error.NewConflict("EMAIL_TAKEN", "Cet email est déjà utilisé.", nil)
+			return auth_models.UpdateProfileOutput{}, nubo_error.NewConflict(nubo_error.CodeConflict, "Cet email est déjà utilisé par un autre compte.", nil)
 		}
-		oldEmail = user.Email
+		oldEmail = userPayload.Email
 		newEmail = input.Email
-		user.Email = input.Email
-		user.EmailVerified = false // Nécessite une nouvelle vérification
+		userPayload.Email = input.Email
+		userPayload.EmailVerified = false // Nécessite une nouvelle vérification par email
 	}
 
-	// === NOUVEAU BLOC : GESTION DU TÉLÉPHONE ===
-	if input.Phone != user.Phone {
+	if input.Phone != userPayload.Phone {
 		if input.Phone != "" && service.IsUnique(ctx, redis.EntityUser, "phone", input.Phone) == 0 {
-			return auth_models.UpdateProfileOutput{}, nubo_error.NewConflict("PHONE_TAKEN", "Ce numéro de téléphone est déjà utilisé.", nil)
+			return auth_models.UpdateProfileOutput{}, nubo_error.NewConflict(nubo_error.CodeConflict, "Ce numéro de téléphone est déjà associé à un autre compte.", nil)
 		}
-		oldPhone = user.Phone
+		oldPhone = userPayload.Phone
 		newPhone = input.Phone
-		user.Phone = input.Phone
-		user.PhoneVerified = false // Nécessite une nouvelle vérification SMS
+		userPayload.Phone = input.Phone
+		userPayload.PhoneVerified = false // Nécessite une nouvelle vérification par SMS
 	}
 
-	// 3. Remplacement intégral des autres champs
-	user.FirstName = pkg.CleanStr(input.FirstName)
-	user.LastName = pkg.CleanStr(input.LastName)
-	user.Bio = pkg.CleanStr(input.Bio)
-	user.Location = pkg.CleanStr(input.Location)
-	user.School = pkg.CleanStr(input.School)
-	user.Work = pkg.CleanStr(input.Work)
+	// ── ÉTAPE 3 : REMPLACEMENT INTÉGRAL DES CHAMPS LIBRES ───────────────────
 
-	// === GESTION DES MÉDIAS EN BATCH ===
-	if input.ProfilePictureID != user.ProfilePictureID {
-		// A. Tuer l'ancien fantôme (S'il en avait un)
-		if user.ProfilePictureID > 0 {
-			_ = media_service.DeactivateMediaBatch(ctx, []int64{user.ProfilePictureID}, userID)
+	userPayload.FirstName = pkg.CleanStr(input.FirstName)
+	userPayload.LastName = pkg.CleanStr(input.LastName)
+	userPayload.Bio = pkg.CleanStr(input.Bio)
+	userPayload.Location = pkg.CleanStr(input.Location)
+	userPayload.School = pkg.CleanStr(input.School)
+	userPayload.Work = pkg.CleanStr(input.Work)
+
+	// ── ÉTAPE 4 : GESTION DU MÉDIA DE PROFIL (AVATAR) ───────────────────────
+
+	if input.ProfilePictureID != userPayload.ProfilePictureID {
+
+		// A. Tuer l'ancien fantôme de MinIO/Base (S'il en avait un)
+		if userPayload.ProfilePictureID > 0 {
+			_ = media_service.DeactivateMediaBatch(ctx, []int64{userPayload.ProfilePictureID}, userID)
 		}
 
-		// B. Activer la nouvelle image
+		// B. Activer la nouvelle image (Processus Out-Of-Band)
 		if input.ProfilePictureID > 0 {
 			if errAct := media_service.ActivateMediaBatch(ctx, []int64{input.ProfilePictureID}, userID); errAct != nil {
-				return auth_models.UpdateProfileOutput{}, nubo_error.NewBadRequest("AVATAR_ACTIVATION_FAILED", "Impossible de valider la nouvelle photo de profil.", errAct)
+				// L'avatar envoyé n'est pas valide ou n'appartient pas à cet utilisateur.
+				return auth_models.UpdateProfileOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Impossible de valider la nouvelle photo de profil.", errAct)
 			}
 		}
-		user.ProfilePictureID = input.ProfilePictureID
+		userPayload.ProfilePictureID = input.ProfilePictureID
 	}
 
-	user.UpdatedAt = domain.NowMillis()
+	userPayload.UpdatedAt = domain.NowMillis()
 
-	// 5. Mise à jour immédiate du Speed Cache L1 (Auto-complétion et Profil Lite)
-	// CORRECTION : Récupération asynchrone/rapide des settings pour construire l'objet Lite
-	settings, _ := object_cache_service.GetUserSettingsCascade(ctx, userID)
-	_ = cache_service.AddUserToSpeedCache(ctx, user, settings)
+	// ── ÉTAPE 5 : RAFRAÎCHISSEMENT IMMÉDIAT DU CACHE RAM (L1) ───────────────
 
-	// 6. Mise à jour du Cuckoo Filter via Flux Redis (Asynchrone et Distribué)
+	// Récupération asynchrone/rapide des settings pour construire l'objet Lite du profil public
+	settingsPayload, _ := object_cache_service.GetUserSettingsCascade(ctx, userID)
+	if errCache := cache_service.AddUserToSpeedCache(ctx, userPayload, settingsPayload); errCache != nil {
+		logger.Log.Warn().Err(errCache).Msg("Impossible de mettre à jour l'utilisateur dans le Speed Cache L1")
+	}
+
+	// ── ÉTAPE 6 : MISE À JOUR DU CUCKOO FILTER (Asynchrone) ─────────────────
+
 	if newUsername != "" {
 		cuckoo.BroadcastCuckooUpdate(cuckoo.ActionAdd, "username", newUsername)
 		cuckoo.BroadcastCuckooUpdate(cuckoo.ActionDel, "username", oldUsername)
@@ -109,11 +131,19 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 		cuckoo.BroadcastCuckooUpdate(cuckoo.ActionDel, "phone", oldPhone)
 	}
 
-	// 7. Envoi notification
-	_ = realtime_service.DistributeToUsers(ctx, "user.profile_updated", user, []int64{userID})
+	// ── ÉTAPE 7 : ENVOI NOTIFICATION TEMPS RÉEL (WebSockets) ────────────────
 
-	// 8. Persistance Asynchrone (Write-Behind vers Mongo et Postgres avec l'objet complet)
+	_ = realtime_service.DistributeToUsers(ctx, variables.NotificationProfileUpdated, userPayload, []int64{userID})
+
+	// ── ÉTAPE 8 : PERSISTANCE ASYNCHRONE (Write-Behind) ─────────────────────
+
+	errQueue := redis.EnqueueDB(ctx, userPayload.ID, 0, redis.EntityUser, redis.ActionUpdate, userPayload, redis.TargetAll)
+	if errQueue != nil {
+		// Log en erreur car le worker n'a pas reçu l'ordre, mais on ne fait pas crasher la requête HTTP.
+		logger.Log.Error().Err(errQueue).Int64("user_id", userPayload.ID).Msg("Échec du Write-Behind lors de l'Update Profile")
+	}
+
 	return auth_models.UpdateProfileOutput{
-		ProfileUpdatedAt: user.UpdatedAt,
-	}, redis.EnqueueDB(ctx, user.ID, 0, redis.EntityUser, redis.ActionUpdate, user, redis.TargetAll)
+		ProfileUpdatedAt: userPayload.UpdatedAt,
+	}, nil
 }

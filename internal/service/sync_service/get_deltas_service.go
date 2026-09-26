@@ -5,25 +5,33 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/sync_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 )
 
-// GetDeltas interroge le Ledger de l'utilisateur pour récupérer toutes les conversations
-// ayant subi une mutation depuis le timestamp fourni.
+// ############################################################################
+// # SERVICE : DELTA SYNC DES CONVERSATIONS (LEDGER)
+// ############################################################################
+
+// GetDeltas interroge le Ledger granulaire SQLite (synchronisé via Redis)
+// pour récupérer toutes les conversations ayant subi une mutation depuis le timestamp fourni.
 func GetDeltas(ctx context.Context, callerID int64, input sync_models.GetDeltasInput) (sync_models.GetDeltasOutput, error) {
 
-	// DÉLÉGATION AU CACHE SERVICE (Qui lui-même appelle le Repository Redis abstrait)
-	convIDs, err := cache_service.GetModifiedConversationIDs(ctx, callerID, input.SinceMs)
-	if err != nil {
-		return sync_models.GetDeltasOutput{}, nubo_error.NewInternal(err)
+	// ── ÉTAPE 1 : DÉLÉGATION AU CACHE SERVICE (O(log N)) ────────────────────
+
+	modifiedConversationIDs, errCache := cache_service.GetModifiedConversationIDs(ctx, callerID, input.SinceMs)
+	if errCache != nil {
+		logger.Log.Error().Err(errCache).Int64("user_id", callerID).Msg("Échec L1 lors de la récupération des deltas de conversation")
+		return sync_models.GetDeltasOutput{}, nubo_error.NewInternal()
 	}
 
-	// Prévention du retour 'null' en JSON si aucune conversation n'a muté
-	if convIDs == nil {
-		convIDs = make([]int64, 0)
+	// ── ÉTAPE 2 : PRÉVENTION JSON (SÉCURITÉ NULL) ───────────────────────────
+
+	if modifiedConversationIDs == nil {
+		modifiedConversationIDs = make([]int64, 0)
 	}
 
 	return sync_models.GetDeltasOutput{
-		ModifiedConversationIDs: convIDs,
+		ModifiedConversationIDs: modifiedConversationIDs,
 	}, nil
 }

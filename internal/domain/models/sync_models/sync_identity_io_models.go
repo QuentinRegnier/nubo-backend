@@ -1,6 +1,7 @@
-package auth_models
+package sync_models
 
 import (
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
 )
@@ -13,7 +14,7 @@ type SyncIdentityInput struct {
 
 type SyncIdentityOutput struct {
 	ProfileUpdated  bool                                     `json:"profile_updated"`
-	Profile         UserProfileView                          `json:"profile"` // ✅ Remplacé par le DTO sécurisé
+	Profile         auth_models.UserProfileView              `json:"profile"` // ✅ Remplacé par le DTO sécurisé
 	Avatar          media_models.MediaView                   `json:"avatar"`
 	SettingsUpdated bool                                     `json:"settings_updated"`
 	Settings        user_settings_models.UserSettingsPayload `json:"settings"`

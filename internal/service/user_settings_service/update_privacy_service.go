@@ -6,54 +6,73 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// UpdatePrivacy modifie les paramètres de confidentialité et délègue la sauvegarde au Write-Behind
+// ############################################################################
+// # SERVICE : MISE À JOUR DES PARAMÈTRES DE CONFIDENTIALITÉ
+// ############################################################################
+
+// UpdatePrivacy modifie les paramètres de confidentialité, synchronise le Speed Cache
+// et délègue la sauvegarde au système de Write-Behind.
 func UpdatePrivacy(ctx context.Context, userID int64, input user_settings_models.UpdatePrivacyInput) (user_settings_models.UpdatePrivacyOutput, error) {
-	// 1. Récupération des paramètres actuels (Cascade L1 -> L2 -> L3 garantie par ce service)
-	settings, err := object_cache_service.GetUserSettingsCascade(ctx, userID)
-	if err != nil || settings.ID == 0 {
-		return user_settings_models.UpdatePrivacyOutput{}, nubo_error.NewNotFound("SETTINGS_NOT_FOUND", "Paramètres de l'utilisateur introuvables.", err)
+
+	// ── ÉTAPE 1 : RÉCUPÉRATION DES PARAMÈTRES (CASCADE L1 -> L2 -> L3) ──────
+	userSettingsPayload, errCache := object_cache_service.GetUserSettingsCascade(ctx, userID)
+	if errCache != nil || userSettingsPayload.ID == 0 {
+		return user_settings_models.UpdatePrivacyOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Paramètres de l'utilisateur introuvables.", errCache)
 	}
 
-	// 2. Remplacement intégral (Méthode PUT)
-	settings.Privacy.ProfileVisibility = input.ProfileVisibility
-	settings.Privacy.PostVisibilityDefault = input.PostVisibilityDefault
-	settings.Privacy.ConversationPermission = input.ConversationPermission
-	settings.Privacy.AddGroupPermission = input.AddGroupPermission
-	settings.Privacy.AllowTagging = input.AllowTagging
-	settings.Privacy.AllowMentions = input.AllowMentions
-	settings.Privacy.ShowOnlineStatus = input.ShowOnlineStatus
-	settings.Privacy.SendReadReceipts = input.SendReadReceipts
-	settings.Privacy.SearchByEmailPhone = input.SearchByEmailPhone
-	settings.Privacy.ShowLocation = input.ShowLocation
-	settings.Privacy.HideConnections = input.HideConnections
+	// ── ÉTAPE 2 : REMPLACEMENT INTÉGRAL (MÉTHODE PUT) ───────────────────────
+	userSettingsPayload.Privacy.ProfileVisibility = input.ProfileVisibility
+	userSettingsPayload.Privacy.PostVisibilityDefault = input.PostVisibilityDefault
+	userSettingsPayload.Privacy.ConversationPermission = input.ConversationPermission
+	userSettingsPayload.Privacy.AddGroupPermission = input.AddGroupPermission
+	userSettingsPayload.Privacy.AllowTagging = input.AllowTagging
+	userSettingsPayload.Privacy.AllowMentions = input.AllowMentions
+	userSettingsPayload.Privacy.ShowOnlineStatus = input.ShowOnlineStatus
+	userSettingsPayload.Privacy.SendReadReceipts = input.SendReadReceipts
+	userSettingsPayload.Privacy.SearchByEmailPhone = input.SearchByEmailPhone
+	userSettingsPayload.Privacy.ShowLocation = input.ShowLocation
+	userSettingsPayload.Privacy.HideConnections = input.HideConnections
 
-	settings.UpdatedAt = domain.NowMillis()
+	userSettingsPayload.UpdatedAt = domain.NowMillis()
 
-	// 3. Mise à jour immédiate du Cache L1
-	if err := object_cache_service.SetUserSettings(ctx, settings); err != nil {
-		return user_settings_models.UpdatePrivacyOutput{}, err
+	// ── ÉTAPE 3 : MISE À JOUR IMMÉDIATE DU CACHE L1 (OBJECT CACHE) ──────────
+	if errSet := object_cache_service.SetUserSettings(ctx, userSettingsPayload); errSet != nil {
+		logger.Log.Warn().Err(errSet).Int64("user_id", userID).Msg("Impossible de mettre à jour les paramètres de confidentialité dans le cache L1")
 	}
 
-	// === NOUVEAU : MISE À JOUR SYNCHRONE DU SPEED CACHE ===
+	// ── ÉTAPE 4 : MISE À JOUR SYNCHRONE DU SPEED CACHE ──────────────────────
+	// Indispensable pour que les autres utilisateurs puissent voir la mise à jour
+	// des permissions instantanément sans devoir charger l'objet entier.
 	_ = cache_service.UpdateUserSpeedCachePrivacy(
 		ctx,
-		settings.UserID,
-		settings.Privacy.ConversationPermission,
-		settings.Privacy.AddGroupPermission,
-		settings.Privacy.HideConnections,
+		userSettingsPayload.UserID,
+		userSettingsPayload.Privacy.ConversationPermission,
+		userSettingsPayload.Privacy.AddGroupPermission,
+		userSettingsPayload.Privacy.HideConnections,
 	)
 
-	// 4. Envoi notification
-	_ = realtime_service.DistributeToUsers(ctx, "user.settings_updated", settings, []int64{userID})
+	// ── ÉTAPE 5 : NOTIFICATION TEMPS RÉEL (WEBSOCKET) ───────────────────────
+	errBroadcast := realtime_service.DistributeToUsers(ctx, variables.NotificationSettingsUpdated, userSettingsPayload, []int64{userID})
+	if errBroadcast != nil {
+		logger.Log.Warn().Err(errBroadcast).Msg("Échec de la distribution WebSocket pour la mise à jour de confidentialité")
+	}
 
-	// 5. Persistance Asynchrone (Write-Behind vers Mongo et Postgres avec l'objet complet)
+	// ── ÉTAPE 6 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
+	errQueue := redis.EnqueueDB(ctx, userSettingsPayload.ID, userID, redis.EntityUserSettings, redis.ActionUpdate, userSettingsPayload, redis.TargetAll)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("user_id", userID).Msg("Échec du Write-Behind lors de la mise à jour de la confidentialité")
+		return user_settings_models.UpdatePrivacyOutput{}, nubo_error.NewInternal()
+	}
+
 	return user_settings_models.UpdatePrivacyOutput{
-		UserSettingsUpdateAt: settings.UpdatedAt,
-	}, redis.EnqueueDB(ctx, settings.ID, userID, redis.EntityUserSettings, redis.ActionUpdate, settings, redis.TargetAll)
+		UserSettingsUpdateAt: userSettingsPayload.UpdatedAt,
+	}, nil
 }

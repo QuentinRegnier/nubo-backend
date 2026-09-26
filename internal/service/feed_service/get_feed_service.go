@@ -13,89 +13,91 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// GetFeed orchestre la distribution, la rotation (A/B/C), l'élargissement et l'hydratation des posts
-func GetFeed(ctx context.Context, input feed_models.GetFeedInput) ([]post_models.GetPostOutput, int, string, error) {
-	// 1. Configuration des options du Distributeur sans écraser sournoisement l'index de lecture réel
-	isForceTriggered := input.Force
+// ############################################################################
+// # ORCHESTRATEUR PRINCIPAL DU FLUX D'ACTUALITÉS (GET FEED)
+// ############################################################################
 
-	// 2. Récupération des relations (Amis) en O(1) via le Speed Cache
-	friendIDs, _ := cache_service.GetSpeedFriends(ctx, input.UserID)
-	friendMap := make(map[int64]bool, len(friendIDs))
-	for _, id := range friendIDs {
-		friendMap[id] = true
+// GetFeed orchestre la distribution, la rotation (A/B/C), l'élargissement et l'hydratation des posts.
+func GetFeed(ctx context.Context, input feed_models.GetFeedInput) ([]post_models.GetPostOutput, int, string, error) {
+
+	isManualRefresh := input.Force
+
+	// ── ÉTAPE 1 : Rapatriement du Graphe Social (O(1) L1) ─────────────────
+	friendIDsList, _ := cache_service.GetSpeedFriends(ctx, input.UserID)
+	friendIDsMap := make(map[int64]bool, len(friendIDsList))
+	for _, friendID := range friendIDsList {
+		friendIDsMap[friendID] = true
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// 2.5 LECTURE DE L'ADN ALGORITHMIQUE (Vecteur Utilisateur depuis la Télémétrie)
-	// ─────────────────────────────────────────────────────────────────────────
+	// ── ÉTAPE 2 : Lecture de l'ADN Algorithmique (Télémétrie L1) ──────────
 	userVector, err := cache_service.GetTelemetryVector(ctx, input.UserID)
 	if err != nil || len(userVector) != variables.VectorDimTotal {
-		// FALLBACK GRACIEUX : Si l'utilisateur est nouveau, n'a pas encore de télémétrie,
-		// ou si le cache a été évincé, on le force à nil.
-		// Le moteur mathématique du Pilier 4 ignorera le calcul de similarité cosinus sans crasher.
+		// FALLBACK GRACIEUX : Nouvel utilisateur ou cache LFU évincé.
+		// Le moteur mathématique basculera automatiquement sur le Trend Global.
 		userVector = nil
 	}
 
-	// Configuration du contexte pour l'algorithme
-	opts := algorithm_service.RefreshOptions{
+	// ── ÉTAPE 3 : Paramétrage du Distributeur et du Magasinier ────────────
+	refreshOptions := algorithm_service.RefreshOptions{
 		UserID:        input.UserID,
 		LastSeenIndex: input.LastSeenIndex,
 		Quotas: algorithm_service.Quotas{
 			MaxCandidates: variables.TDDCandidates,
-			SocialRatio:   0.3,
-			TagRatio:      0.5,
-			GlobalRatio:   0.2,
+			SocialRatio:   variables.SocialRatio,
+			TagRatio:      variables.TagRatio,
+			GlobalRatio:   variables.GlobalRatio,
 		},
 		PersonalOpts: algorithm_service.PersonalizedFeedOptions{
 			UserID:         input.UserID,
-			UserVec:        userVector, // ✅ INJECTION DYNAMIQUE DU VECTEUR
-			UserConfidence: 1.0,        // (Pourra être dynamisé si le mobile envoie un score de confiance de son modèle local)
-			FriendIDs:      friendMap,
+			UserVec:        userVector,
+			UserConfidence: 1.0, // Réservé pour l'IA embarquée mobile (MLX/CoreML)
+			FriendIDs:      friendIDsMap,
 			Date:           time.Now(),
 			Limit:          variables.TDDFeedSize,
 		},
-		IsForce: isForceTriggered,
+		IsForce: isManualRefresh,
 	}
 
-	// 3. Boucle d'hydratation sécurisée (Garantit 50 posts stricts malgré les trous de visibilité)
-	var validPosts []post_models.GetPostOutput
-	needed := variables.FeedPageSize // Ex: 50
-	currentIndex := input.LastSeenIndex
+	// ── ÉTAPE 4 : Boucle d'hydratation sécurisée (Remplissage strict) ─────
+	var hydratedFeed []post_models.GetPostOutput
+	missingPostsCount := variables.FeedPageSize
+	currentScrollIndex := input.LastSeenIndex
 
-	for needed > 0 {
-		opts.LastSeenIndex = currentIndex
-		opts.FetchCount = needed // On ne demande au Distributeur QUE ce qu'il nous manque
+	// La boucle garantit que le client reçoit exactement le nombre de posts demandés,
+	// même si certains posts du cache ont été supprimés ou rendus privés entre-temps.
+	for missingPostsCount > 0 {
+		refreshOptions.LastSeenIndex = currentScrollIndex
+		refreshOptions.FetchCount = missingPostsCount
 
-		// Appel au Distributeur (Slice dynamique, et Fusion/Re-sélection si nécessaire)
-		idsToFetch, err := algorithm_service.HandlePullToRefresh(ctx, opts)
-		if err != nil || len(idsToFetch) == 0 {
-			break // Base de données épuisée, on arrête de chercher
+		// Extraction via les Tampons Tournants A/B/C
+		fetchedIDs, err := algorithm_service.HandlePullToRefresh(ctx, refreshOptions)
+		if err != nil || len(fetchedIDs) == 0 {
+			break // ZSET épuisé, on arrête l'hydratation
 		}
 
-		// 4. Extraction de la donnée riche
-		postsOutput := post_service.GetPosts(ctx, post_models.GetPostInput{
+		// Hydratation riche (Média HMAC, Commentaires, Pseudos, Visibilité)
+		richPostsData := post_service.GetPosts(ctx, post_models.GetPostInput{
 			UserID:  input.UserID,
-			PostIDs: idsToFetch,
+			PostIDs: fetchedIDs,
 		})
 
-		// Filtrage absolu des posts inaccessibles (visibilité privée, suppressions, erreurs Média)
-		for _, p := range postsOutput {
-			// CORRECTION : On vérifie l'ID de la structure au lieu de comparer à nil
-			if p.Error == "" && p.Data.ID != 0 {
-				validPosts = append(validPosts, p)
+		// Filtrage absolu des trous de visibilité (Soft Deletes)
+		for _, postView := range richPostsData {
+			if postView.Error == "" && postView.Data.ID != 0 {
+				hydratedFeed = append(hydratedFeed, postView)
 			}
 		}
 
-		// Avancement du curseur global (on a "consommé" len(idsToFetch) index dans le cache Redis)
-		currentIndex += len(idsToFetch)
-		needed = variables.FeedPageSize - len(validPosts)
+		currentScrollIndex += len(fetchedIDs)
+		missingPostsCount = variables.FeedPageSize - len(hydratedFeed)
 	}
 
-	if len(validPosts) == 0 {
-		return []post_models.GetPostOutput{}, input.LastSeenIndex, "A", nubo_error.NewNotFound("FEED_EMPTY", "Aucun post disponible ou visible.", nil)
+	// ── ÉTAPE 5 : Rendu Client ────────────────────────────────────────────
+	if len(hydratedFeed) == 0 {
+		return []post_models.GetPostOutput{}, input.LastSeenIndex, "A", nubo_error.NewNotFound(nubo_error.CodeNotFound, "Aucun post disponible ou visible.", nil)
 	}
 
-	// 5. Finalisation des métadonnées de pagination
-	state, _ := algorithm_service.GetUserFeedState(ctx, input.UserID)
-	return validPosts, currentIndex, state.ActiveFeed, nil
+	// Récupération de la lettre du tampon actif (A, B ou C) pour le debug client
+	feedState, _ := algorithm_service.GetUserFeedState(ctx, input.UserID)
+	return hydratedFeed, currentScrollIndex, feedState.ActiveFeed, nil
 }

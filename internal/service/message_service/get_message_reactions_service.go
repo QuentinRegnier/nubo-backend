@@ -6,6 +6,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -14,74 +16,85 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
 )
 
-// GetMessageReactions exécute le Slow Path pour récupérer la liste paginée et détaillée des réacteurs.
+// ############################################################################
+// # SERVICE : RÉCUPÉRATION DÉTAILLÉE DES RÉACTIONS D'UN MESSAGE
+// ############################################################################
+
+// GetMessageReactions exécute le Slow Path pour récupérer la liste paginée et détaillée
+// des utilisateurs ayant réagi à un message spécifique (UI Bottom Sheet).
 func GetMessageReactions(ctx context.Context, callerID int64, input message_models.GetMessageReactionsInput) (message_models.GetMessageReactionsOutput, error) {
-	// 1. SÉCURITÉ : L'utilisateur doit pouvoir voir ce message
-	_, err := security_service.LeftMessage(ctx, input.MessageID, callerID)
-	if err != nil {
-		return message_models.GetMessageReactionsOutput{}, err
+
+	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS AU MESSAGE (ZERO-TRUST) ──────────────────
+
+	// Le service de sécurité s'occupe de renvoyer CodeNotFound ou CodeForbidden si nécessaire
+	_, errSecurity := security_service.LeftMessage(ctx, input.MessageID, callerID)
+	if errSecurity != nil {
+		return message_models.GetMessageReactionsOutput{}, errSecurity
 	}
 
-	var reactions []message_models.MessageReactionPayload
+	var messageReactions []message_models.MessageReactionPayload
 
-	// 2. RÉCUPÉRATION L2 (MongoDB) PRIORITAIRE
-	mongoReactions, errMongo := mongo.MongoGetMessageReactionsPaginated(input.MessageID, int64(input.Limit), int64(input.Offset))
-	if errMongo == nil && len(mongoReactions) > 0 {
-		reactions = mongoReactions
+	// ── ÉTAPE 2 : RÉCUPÉRATION DES RÉACTIONS (L2 -> L3) ─────────────────────
+
+	// TENTATIVE L2 (MongoDB - Warm Storage)
+	reactionsFromMongo, errMongo := mongo.MongoGetMessageReactionsPaginated(input.MessageID, int64(input.Limit), int64(input.Offset))
+	if errMongo == nil && len(reactionsFromMongo) > 0 {
+		messageReactions = reactionsFromMongo
 	} else {
-		// 3. FALLBACK ABSOLU L3 (PostgreSQL)
-		pgReactions, errPg := postgres.FuncGetMessageReactionsPaginated(ctx, input.MessageID, input.Limit, input.Offset)
+		// FALLBACK ABSOLU L3 (PostgreSQL - Cold Storage)
+		reactionsFromPostgres, errPg := postgres.FuncGetMessageReactionsPaginated(ctx, input.MessageID, input.Limit, input.Offset)
 		if errPg != nil {
-			return message_models.GetMessageReactionsOutput{
-				MessageID: input.MessageID,
-				Reactions: []message_models.UserReactionView{},
-			}, nil
+			logger.Log.Error().Err(errPg).Int64("message_id", input.MessageID).Msg("Erreur L3 lors de la récupération des réactions de message")
+			return message_models.GetMessageReactionsOutput{}, nubo_error.NewInternal()
 		}
-		reactions = pgReactions
 
-		// ⬆️ AUTO-GUÉRISON L2 (Asynchrone)
-		for _, r := range reactions {
+		messageReactions = reactionsFromPostgres
+
+		// AUTO-GUÉRISON L3 -> L2 (Asynchrone via Queue)
+		for _, reactionPayload := range messageReactions {
 			go func(react message_models.MessageReactionPayload) {
 				bgCtx := context.Background()
 				// EntityMessageReaction va déclencher l'UPSERT côté Worker Mongo (SetUpsert: true)
 				_ = redis.EnqueueDB(bgCtx, react.ID, react.MessageID, redis.EntityMessageReaction, redis.ActionUpdate, react, redis.TargetMongo)
-			}(r)
+			}(reactionPayload)
 		}
 	}
 
-	// 4. HYDRATATION EN CASCADE (SPEED CACHE & DOMAINE MÉDIA)
-	var userViews []message_models.UserReactionView
+	// ── ÉTAPE 3 : HYDRATATION EN CASCADE (SPEED CACHE & DOMAINE MÉDIA) ──────
 
-	for _, r := range reactions {
-		// Extraction en O(1) du cache L1
-		if userLite, errLite := cache_service.GetUserLite(ctx, r.UserID); errLite == nil {
-			var avatarView media_models.MediaView
+	var userReactionViews []message_models.UserReactionView
 
-			if userLite.ProfilePictureID > 0 {
-				// Signature HMAC sécurisée de l'avatar
-				if view, errMedia := media_service.GenerateMediaViewCascade(ctx, userLite.ProfilePictureID, r.UserID, 0, callerID); errMedia == nil {
-					avatarView = view
+	for _, reactionPayload := range messageReactions {
+		// Extraction en O(1) de l'empreinte utilisateur depuis le cache L1
+		if userLiteData, errLite := cache_service.GetUserLite(ctx, reactionPayload.UserID); errLite == nil {
+
+			var userAvatarView media_models.MediaView
+
+			if userLiteData.ProfilePictureID > 0 {
+				// Signature HMAC sécurisée de l'avatar via le Domaine Média
+				if generatedView, errMedia := media_service.GenerateMediaViewCascade(ctx, userLiteData.ProfilePictureID, reactionPayload.UserID, 0, callerID); errMedia == nil {
+					userAvatarView = generatedView
 				}
 			}
 
-			userViews = append(userViews, message_models.UserReactionView{
+			userReactionViews = append(userReactionViews, message_models.UserReactionView{
 				User: auth_models.UserLiteView{
-					User:     userLite,
-					Avatar:   avatarView,
-					IsOnline: cache_service.IsUserOnline(ctx, r.UserID),
+					User:     userLiteData,
+					Avatar:   userAvatarView,
+					IsOnline: cache_service.IsUserOnline(ctx, reactionPayload.UserID),
 				},
-				Reaction: r.Reaction,
+				Reaction: reactionPayload.Reaction,
 			})
 		}
 	}
 
-	// Prévention du retour JSON 'null'
-	if userViews == nil {
-		userViews = make([]message_models.UserReactionView, 0)
+	// Prévention du retour JSON `null` sur la propriété `reactions`
+	if userReactionViews == nil {
+		userReactionViews = make([]message_models.UserReactionView, 0)
 	}
 
 	return message_models.GetMessageReactionsOutput{
 		MessageID: input.MessageID,
-		Reactions: userViews,
+		Reactions: userReactionViews,
 	}, nil
 }

@@ -1,4 +1,6 @@
-package notification_models
+package sync_models
+
+import "github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
 
 // SyncActivityInput récupère l'état actuel du cache du téléphone de l'utilisateur.
 type SyncActivityInput struct {
@@ -8,7 +10,7 @@ type SyncActivityInput struct {
 
 // SyncActivityOutput ne renvoie les notifications que si elles sont nouvelles.
 type SyncActivityOutput struct {
-	NeedUpdate    bool               `json:"need_update"`
-	ServerUpdated int64              `json:"server_updated"`
-	Notifications []NotificationView `json:"notifications,omitempty"` // ✅ Remplacé par NotificationView
+	NeedUpdate    bool                                   `json:"need_update"`
+	ServerUpdated int64                                  `json:"server_updated"`
+	Notifications []notification_models.NotificationView `json:"notifications,omitempty"` // ✅ Remplacé par NotificationView
 }

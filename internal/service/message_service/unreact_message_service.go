@@ -2,7 +2,6 @@ package message_service
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
@@ -11,69 +10,77 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/QuentinRegnier/nubo-backend/internal/worker"
 )
 
+// ############################################################################
+// # SERVICE : RETRAIT D'UNE RÉACTION (UNREACT)
+// ############################################################################
+
 // UnreactToMessage gère le retrait ciblé d'une réaction sur un message via le Hash Cache.
 func UnreactToMessage(ctx context.Context, callerID int64, input message_models.UnreactMessageInput) error {
-	// 1. SÉCURITÉ
-	msg, err := security_service.LeftMessage(ctx, input.MessageID, callerID)
-	if err != nil {
-		return err
-	}
-	mem, err := security_service.LeftMember(ctx, msg.ConversationID, callerID)
-	if err != nil || mem.Role < 0 {
-		return nubo_error.NewForbidden("ACCESS_DENIED", "Accès refusé : vous ne faites pas partie de cette conversation.", err)
+
+	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS AU MESSAGE (ZERO-TRUST) ──────────────────
+
+	messagePayload, errSecurityMsg := security_service.LeftMessage(ctx, input.MessageID, callerID)
+	if errSecurityMsg != nil {
+		return errSecurityMsg
 	}
 
-	// 2. VÉRIFICATION DE PRÉSENCE (Idempotence en RAM L1)
-	oldEmoji, _ := cache_service.GetUserReaction(ctx, msg.ID, callerID)
-	if oldEmoji == "" {
-		return nil // L'utilisateur n'avait pas réagi
+	callerMemberPayload, errSecurityMem := security_service.LeftMember(ctx, messagePayload.ConversationID, callerID)
+	if errSecurityMem != nil || callerMemberPayload.Role < variables.MemberRoleNormal {
+		return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : vous ne faites pas partie de cette conversation.", errSecurityMem)
 	}
 
-	// 3. MISE À JOUR DES COMPTEURS (RAM L1 & WORKER BATCH)
-	_ = cache_service.IncrementReactionCount(ctx, msg.ID, oldEmoji, -1)
-	worker.RegisterMessageReaction(msg.ID, oldEmoji, -1) // ✅ NOUVEAU
+	// ── ÉTAPE 2 : VÉRIFICATION DE PRÉSENCE (IDEMPOTENCE L1) ─────────────────
 
-	_ = cache_service.DeleteUserReaction(ctx, msg.ID, callerID)
+	previousEmoji, _ := cache_service.GetUserReaction(ctx, messagePayload.ID, callerID)
+	if previousEmoji == "" {
+		return nil // L'utilisateur n'avait pas réagi, ou la réaction a déjà été retirée
+	}
 
-	// 4. PERSISTANCE ASYNCHRONE (Write-Behind)
-	payload := message_models.MessageReactionPayload{
-		MessageID: msg.ID,
+	// ── ÉTAPE 3 : MISE À JOUR DES COMPTEURS (RAM L1 & WORKER BATCH) ─────────
+
+	_ = cache_service.IncrementReactionCount(ctx, messagePayload.ID, previousEmoji, -1)
+	worker.RegisterMessageReaction(messagePayload.ID, previousEmoji, -1)
+
+	_ = cache_service.DeleteUserReaction(ctx, messagePayload.ID, callerID)
+
+	// ── ÉTAPE 4 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
+
+	reactionPayload := message_models.MessageReactionPayload{
+		MessageID: messagePayload.ID,
 		UserID:    callerID,
-		// Les autres champs sont inutiles pour le DELETE
+		// Le Worker n'a besoin que de ces clés primaires pour exécuter l'action DELETE
 	}
 
-	err = redis.EnqueueDB(ctx, msg.ID, msg.ConversationID, redis.EntityMessageReaction, redis.ActionDelete, payload, redis.TargetAll)
-
-	// 5. DIFFUSION TEMPS RÉEL (WebSockets)
-	if err == nil {
-		go func() {
-			bgCtx := context.Background()
-			counts, _ := cache_service.GetMessageReactionCounts(bgCtx, msg.ID)
-
-			msgView := message_models.MessageView{
-				MessagePayload: msg,
-				ReactionCounts: counts,
-			}
-
-			errWs := realtime_service.BroadcastToConversation(bgCtx, msg.ConversationID, "message.unreacted", msgView)
-			if errWs != nil {
-				logger.Log.Error().Err(errWs).Msg("Failed to broadcast message unreaction")
-			}
-
-			// ✅ NOUVEAU : SYNC LEDGER (Trigger granulaire)
-			participantsStr, _ := redis.ConvParticipants.SMembers(bgCtx, msg.ConversationID)
-			var pIDs []int64
-			for _, p := range participantsStr {
-				if id, err := strconv.ParseInt(p, 10, 64); err == nil {
-					pIDs = append(pIDs, id)
-				}
-			}
-			_ = cache_service.RecordMessageMutation(bgCtx, msg.ConversationID, msg.ID, pIDs)
-		}()
+	errQueue := redis.EnqueueDB(ctx, messagePayload.ID, messagePayload.ConversationID, redis.EntityMessageReaction, redis.ActionDelete, reactionPayload, redis.TargetAll)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("message_id", messagePayload.ID).Msg("Échec du Write-Behind pour UnreactToMessage")
+		return nubo_error.NewInternal()
 	}
 
-	return err
+	// ── ÉTAPE 5 : DIFFUSION TEMPS RÉEL (WEBSOCKETS) ─────────────────────────
+
+	go func() {
+		backgroundCtx := context.Background()
+		reactionCountsMap, _ := cache_service.GetMessageReactionCounts(backgroundCtx, messagePayload.ID)
+
+		messageViewDto := message_models.MessageView{
+			MessagePayload: messagePayload,
+			ReactionCounts: reactionCountsMap,
+		}
+
+		errBroadcast := realtime_service.BroadcastToConversation(backgroundCtx, messagePayload.ConversationID, "message.unreacted", messageViewDto)
+		if errBroadcast != nil {
+			logger.Log.Error().Err(errBroadcast).Msg("Échec de la diffusion WebSocket pour message.unreacted")
+		}
+
+		// SYNC LEDGER : Trigger granulaire pour la base SQLite des clients
+		participantIDs := GetParticipantIDsForLedgerSync(backgroundCtx, messagePayload.ConversationID)
+		_ = cache_service.RecordMessageMutation(backgroundCtx, messagePayload.ConversationID, messagePayload.ID, participantIDs)
+	}()
+
+	return nil
 }

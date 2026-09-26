@@ -12,74 +12,75 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-// ============================================================================
-// NORMALISATION ET CANONICALISATION DES HASHTAGS — TDD §3.3
-// ============================================================================
+// ############################################################################
+// # NORMALISATION ET CANONICALISATION DES HASHTAGS
+// ############################################################################
 
-// NormalizeHashtag applique la normalisation lexicale (TDD §3.3 — Étape 1):
-//
-//	hashtag_normalized = lower(trim(transliterate(hashtag_raw)))
-//
+// NormalizeHashtag applique la normalisation lexicale stricte.
 // Opérations:
-//  1. Suppression des caractères non-alphanumériques en bordure
-//  2. Translittération accentués → ASCII (NFD + suppression diacritiques Mn + NFC)
-//  3. Conversion en minuscules
-func NormalizeHashtag(raw string) string {
-	// Étape 1a: trim des caractères non-alphanumériques en bordure
-	trimmed := strings.TrimFunc(raw, func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+// 1. Suppression des caractères non-alphanumériques en bordure
+// 2. Translittération des caractères accentués vers l'ASCII le plus proche
+// 3. Conversion en minuscules
+func NormalizeHashtag(rawHashtag string) string {
+
+	// Étape 1 : Nettoyage des bordures (Trim)
+	trimmedHashtag := strings.TrimFunc(rawHashtag, func(char rune) bool {
+		return !unicode.IsLetter(char) && !unicode.IsDigit(char)
 	})
-	if trimmed == "" {
+
+	if trimmedHashtag == "" {
 		return ""
 	}
-	// Étape 1b: translittération accentués → ASCII
-	transliterated := transliterateToASCII(trimmed)
-	// Étape 1c: conversion en minuscules
-	return strings.ToLower(transliterated)
+
+	// Étape 2 : Translittération (ex: "é" -> "e", "ç" -> "c")
+	transliteratedHashtag := transliterateToASCII(trimmedHashtag)
+
+	// Étape 3 : Minuscules
+	return strings.ToLower(transliteratedHashtag)
 }
 
-// transliterateToASCII convertit les caractères accentués vers leurs équivalents ASCII.
-//
-// TDD §3.3: "conversion des caractères accentués via golang.org/x/text/unicode/norm"
-// Exemples: "ée" → "ee", "ç" → "c", "Naturisme" → "Naturisme"
-//
-// Méthode: décomposition NFD → suppression diacritiques (catégorie Unicode Mn) → NFC.
-func transliterateToASCII(s string) string {
-	t := transform.Chain(
+// transliterateToASCII convertit les caractères accentués vers leurs équivalents ASCII purs.
+// Méthode : Décomposition NFD -> Suppression des diacritiques (Catégorie Unicode Mn) -> Recomposition NFC.
+func transliterateToASCII(inputString string) string {
+	transformerChain := transform.Chain(
 		norm.NFD,
 		runes.Remove(runes.In(unicode.Mn)),
 		norm.NFC,
 	)
-	result, _, _ := transform.String(t, s)
-	return result
+	cleanString, _, _ := transform.String(transformerChain, inputString)
+	return cleanString
 }
 
-// StemHashtag applique un stemming simplifié pour la canonicalisation des hashtags.
-//
-// TDD §3.3: "algorithme de Snowball stemming" pour vérifier la même racine morphologique.
-func StemHashtag(normalized string) string {
-	stemmed, err := snowball.Stem(normalized, "french", true)
+// StemHashtag extrait la racine morphologique du mot (Stemming).
+// Utilisé pour rapprocher des mots comme "marcheur" et "marche".
+func StemHashtag(normalizedHashtag string) string {
+	stemmedWord, err := snowball.Stem(normalizedHashtag, "french", true)
 	if err != nil {
-		return normalized
+		// En cas d'erreur du dictionnaire, on fallback gracieusement sur le mot normalisé
+		return normalizedHashtag
 	}
-	return stemmed
+	return stemmedWord
 }
 
-// GetTagFromKeyword cherche le slug officiel (canonique) d'un hashtag.
-func GetTagFromKeyword(ctx context.Context, input string) (string, bool) {
-	cleanInput := NormalizeHashtag(input)
+// ############################################################################
+// # GESTION COMMUNAUTAIRE DES TAGS
+// ############################################################################
+
+// GetTagFromKeyword cherche le slug officiel d'un hashtag, et le crée s'il est inconnu.
+func GetTagFromKeyword(ctx context.Context, userInput string) (string, bool) {
+	cleanInput := NormalizeHashtag(userInput)
 	if cleanInput == "" {
 		return "", false
 	}
 
-	// 1. Vérification dans le mapping dynamique Redis (Fautes de frappe corrigées via Collection)
-	canonSlug, err := redis.HashtagCanon.HGet(ctx, "map", cleanInput).Result()
-	if err == nil && canonSlug != "" {
-		return canonSlug, true
+	// 1. Vérification dans le dictionnaire Redis des fautes de frappe (L1)
+	canonicalSlug, err := redis.HashtagCanon.HGet(ctx, "map", cleanInput).Result()
+	if err == nil && canonicalSlug != "" {
+		return canonicalSlug, true
 	}
 
-	// 2. Si inconnu, le mot propre devient son propre tag (Nouveau Tag Communautaire)
-	// On l'ajoute silencieusement au SET des tags actifs pour que le Cron de nuit l'analyse.
+	// 2. Inconnu au bataillon : Il devient son propre tag (Nouveau Tag Communautaire)
+	// On l'ajoute silencieusement au SET des tags actifs pour que le Worker de nuit (Cron) l'analyse.
 	_ = redis.Tags.SAdd(ctx, "active", cleanInput)
 
 	return cleanInput, true

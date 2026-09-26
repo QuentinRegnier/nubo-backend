@@ -16,103 +16,125 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/disintegration/imaging"
 	"github.com/gen2brain/avif"
 	"github.com/google/uuid"
 	miniogo "github.com/minio/minio-go/v7"
 )
 
-const (
-	MaxPixels = 2000 * 2000
-	MaxWidth  = 1920
-)
+// ############################################################################
+// # SERVICE : UPLOAD ET TRAITEMENT DES MÉDIAS (AVIF & MINIO)
+// ############################################################################
 
-// UploadMedia traite l'image (resize + AVIF), l'envoie sur MinIO et crée l'objet en BDD.
+// UploadMedia traite l'image (redimensionnement + conversion AVIF), la stocke sur MinIO
+// et crée l'enregistrement en BDD.
 // Le paramètre "isVisible" permet de gérer la coexistence :
-// - false : Upload Out-of-Band (Attente de confirmation WebSocket)
-// - true  : Upload Direct (Création de Post classique)
-func UploadMedia(file io.ReadSeeker, ownerID int64, mediaID int64, isVisible bool) error {
-	// --- 1. ANALYSE & OPTIMISATION IMAGE (CPU Heavy) ---
-	config, _, err := image.DecodeConfig(file)
-	if err != nil {
-		return nubo_error.NewBadRequest("INVALID_FILE", "Fichier image invalide ou corrompu.", err)
-	}
-	if config.Width*config.Height > MaxPixels {
-		return nubo_error.NewBadRequest("IMAGE_TOO_LARGE", "L'image dépasse la résolution maximale autorisée.", nil)
+// - false : Upload Out-of-Band (Orphelin, attente de confirmation)
+// - true  : Upload Direct (Avatar de profil par ex.)
+func UploadMedia(fileStream io.ReadSeeker, ownerID int64, mediaID int64, isVisible bool) error {
+
+	// ── ÉTAPE 1 : ANALYSE ET VALIDATION DE L'IMAGE ──────────────────────────
+
+	imageConfig, _, errConfig := image.DecodeConfig(fileStream)
+	if errConfig != nil {
+		return nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Le fichier fourni n'est pas une image valide ou est corrompu.", errConfig)
 	}
 
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nubo_error.NewInternal(err)
+	if imageConfig.Width*imageConfig.Height > variables.MediaMaxPixels {
+		return nubo_error.NewBadRequest(nubo_error.CodePayloadTooLarge, "La résolution de l'image dépasse la limite maximale autorisée.", nil)
 	}
 
-	img, _, err := image.Decode(file)
-	if err != nil {
-		return nubo_error.NewBadRequest("DECODE_ERROR", "Erreur lors du décodage de l'image.", err)
+	// Remise à zéro du curseur de lecture après l'analyse
+	if _, errSeek := fileStream.Seek(0, io.SeekStart); errSeek != nil {
+		logger.Log.Error().Err(errSeek).Msg("Erreur lors du reset du curseur de lecture du fichier uploadé")
+		return nubo_error.NewInternal()
 	}
 
-	if bounds := img.Bounds(); bounds.Dx() > MaxWidth {
-		img = imaging.Resize(img, MaxWidth, 0, imaging.Lanczos)
+	// ── ÉTAPE 2 : DÉCODAGE, RESIZING ET ENCODAGE AVIF (CPU HEAVY) ───────────
+
+	decodedImage, _, errDecode := image.Decode(fileStream)
+	if errDecode != nil {
+		return nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Erreur lors du décodage structurel de l'image.", errDecode)
 	}
 
-	var buf bytes.Buffer
-	if err := avif.Encode(&buf, img, avif.Options{Quality: 65, Speed: 5}); err != nil {
-		return nubo_error.NewInternal(err)
+	// Réduction homothétique si l'image est trop large
+	if bounds := decodedImage.Bounds(); bounds.Dx() > variables.MediaMaxWidth {
+		decodedImage = imaging.Resize(decodedImage, variables.MediaMaxWidth, 0, imaging.Lanczos)
 	}
 
-	// --- 2. UPLOAD VERS LE S3 (IO Network) ---
-	objectName := fmt.Sprintf("%s.avif", uuid.New().String())
-	storagePath := fmt.Sprintf("users/%d/media/%s", ownerID, objectName) // Rangement structuré
+	var avifBuffer bytes.Buffer
+	encodingOptions := avif.Options{
+		Quality: variables.MediaAvifQuality,
+		Speed:   variables.MediaAvifSpeed,
+	}
+
+	if errEncode := avif.Encode(&avifBuffer, decodedImage, encodingOptions); errEncode != nil {
+		logger.Log.Error().Err(errEncode).Msg("Erreur interne lors de l'encodage AVIF de l'image")
+		return nubo_error.NewInternal()
+	}
+
+	// ── ÉTAPE 3 : UPLOAD SÉCURISÉ VERS OBJECT STORAGE (MINIO/S3) ────────────
+
+	uniqueFileName := fmt.Sprintf("%s.avif", uuid.New().String())
+	storagePath := fmt.Sprintf("users/%d/media/%s", ownerID, uniqueFileName)
 
 	bucketName := os.Getenv("MINIO_BUCKET_NAME")
 	if bucketName == "" {
 		bucketName = "nubo-bucket"
 	}
 
-	_, err = minio.MinioClient.PutObject(
+	_, errUpload := minio.MinioClient.PutObject(
 		context.Background(),
 		bucketName,
 		storagePath,
-		&buf,
-		int64(buf.Len()),
+		&avifBuffer,
+		int64(avifBuffer.Len()),
 		miniogo.PutObjectOptions{
 			ContentType: "image/avif",
 		},
 	)
-	if err != nil {
-		return nubo_error.NewInternal(err) // Erreur infrastructure S3
+
+	if errUpload != nil {
+		logger.Log.Error().Err(errUpload).Str("path", storagePath).Msg("Échec de l'upload du fichier vers l'Object Storage (MinIO/S3)")
+		return nubo_error.NewInternal()
 	}
 
-	// --- 3. CRÉATION DE L'OBJET ORPHELIN ---
-	now := time.Now().UTC()
-	media := media_models.MediaPayload{
+	// ── ÉTAPE 4 : CRÉATION DU MODÈLE MÉTIER ET MISE EN CACHE L1 ─────────────
+
+	currentTime := time.Now().UTC()
+	mediaPayload := media_models.MediaPayload{
 		ID:          mediaID,
 		OwnerID:     ownerID,
 		StoragePath: storagePath,
-		Visibility:  isVisible, // <-- S'adapte au contexte (Orphelin ou Direct)
-		CreatedAt:   domain.TimeToMillis(now),
-		UpdatedAt:   domain.TimeToMillis(now),
+		Visibility:  isVisible, // Modifié par la confirmation Out-Of-Band plus tard
+		CreatedAt:   domain.TimeToMillis(currentTime),
+		UpdatedAt:   domain.TimeToMillis(currentTime),
 	}
 
 	ctx := context.Background()
 
-	// --- 4. CACHE REDIS (Immédiat) ---
-	if err := object_cache_service.SetMediaInObjectCache(ctx, media); err != nil {
-		logger.Log.Error().Err(err).Int64("media_id", mediaID).Msg("Erreur Redis Media Set")
+	if errCache := object_cache_service.SetMediaInObjectCache(ctx, mediaPayload); errCache != nil {
+		logger.Log.Error().Err(errCache).Int64("media_id", mediaID).Msg("Échec de la mise en cache L1 du Média")
 	}
 
-	// --- 5. PERSISTANCE ASYNCHRONE (Mongo + Postgres) ---
-	err = redis.EnqueueDB(ctx, mediaID, ownerID, redis.EntityMedia, redis.ActionCreate, media, redis.TargetAll)
+	// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ET ROLLBACK ─────────
 
-	if err != nil {
-		logger.Log.Error().Err(err).Int64("media_id", mediaID).Msg("Impossible d'enqueue le Media")
+	errQueue := redis.EnqueueDB(ctx, mediaID, ownerID, redis.EntityMedia, redis.ActionCreate, mediaPayload, redis.TargetAll)
+
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("media_id", mediaID).Msg("Impossible d'enqueue le Média, lancement du Rollback S3...")
+		// ROLLBACK : On supprime le fichier orphelin sur le S3 si la BDD n'a pas pu être notifiée
 		_ = minio.MinioClient.RemoveObject(context.Background(), bucketName, storagePath, miniogo.RemoveObjectOptions{})
-		return nubo_error.NewInternal(err)
+
+		return nubo_error.NewInternal()
 	}
 
 	logger.Log.Info().
 		Int64("media_id", mediaID).
 		Bool("visible", isVisible).
 		Int64("owner_id", ownerID).
-		Msg("Media uploadé avec succès")
+		Msg("Nouveau média traité et uploadé avec succès")
+
 	return nil
 }

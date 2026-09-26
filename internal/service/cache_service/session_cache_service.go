@@ -7,150 +7,182 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
-// Helper local pour protéger l'API des blocages si Redis ne répond pas
-func getShortCtx(parent context.Context) (context.Context, context.CancelFunc) {
-	if parent == nil {
-		parent = context.Background()
+// ############################################################################
+// # SERVICE : GESTION DU CACHE DES SESSIONS (AUTHENTIFICATION)
+// ############################################################################
+
+// Helper local pour protéger le système d'authentification des blocages
+// si Redis subit une latence extrême.
+func getShortCtx(parentCtx context.Context) (context.Context, context.CancelFunc) {
+	if parentCtx == nil {
+		parentCtx = context.Background()
 	}
-	return context.WithTimeout(parent, 2*time.Second)
+	return context.WithTimeout(parentCtx, 2*time.Second)
 }
 
-// SetSessionInCache sauvegarde la session et son index de recherche
-func SetSessionInCache(ctx context.Context, s auth_models.SessionsPayload) error {
-	c, cancel := getShortCtx(ctx)
+// SetSessionInCache sauvegarde le payload de session et son index de recherche Firebase.
+func SetSessionInCache(ctx context.Context, sessionPayload auth_models.SessionsPayload) error {
+	timeoutCtx, cancel := getShortCtx(ctx)
 	defer cancel()
 
-	if err := redis.Sessions.SetObject(c, s.ID, s); err != nil {
-		return err
+	errRedisSet := redis.Sessions.SetObject(timeoutCtx, sessionPayload.ID, sessionPayload)
+	if errRedisSet != nil {
+		logger.Log.Error().Err(errRedisSet).Int64("session_id", sessionPayload.ID).Msg("Impossible de sauvegarder l'objet Session en RAM L1")
+		return nubo_error.NewInternal()
 	}
 
-	if s.UserID != 0 && s.FirebaseInstallationID != "" {
-		// Le préfixe "session_cache:" est maintenant automatiquement géré par la Collection
-		idxKey := fmt.Sprintf("%d:%s", s.UserID, s.FirebaseInstallationID)
-		return redis.SessionIndexes.SetPrimitive(c, idxKey, s.ID)
+	if sessionPayload.UserID != 0 && sessionPayload.FirebaseInstallationID != "" {
+		// Le préfixe "session_cache:" est géré par la Collection
+		indexCompositeKey := fmt.Sprintf("%d:%s", sessionPayload.UserID, sessionPayload.FirebaseInstallationID)
+
+		errRedisIndex := redis.SessionIndexes.SetPrimitive(timeoutCtx, indexCompositeKey, sessionPayload.ID)
+		if errRedisIndex != nil {
+			logger.Log.Warn().Err(errRedisIndex).Msg("Échec de la création de l'index de recherche de session Firebase")
+		}
 	}
 
 	return nil
 }
 
-// LoadSessionFromCache charge une session.
-func LoadSessionFromCache(ctx context.Context, userID int64, firebaseInstallationID string, masterToken string) (auth_models.SessionsPayload, error) {
-	c, cancel := getShortCtx(ctx)
+// LoadSessionFromCache charge une session depuis le cache L1 à partir de l'identité de l'appareil.
+func LoadSessionFromCache(ctx context.Context, userID int64, firebaseInstallationID string, masterTokenString string) (auth_models.SessionsPayload, error) {
+	timeoutCtx, cancel := getShortCtx(ctx)
 	defer cancel()
 
-	var targetID int64
+	var resolvedSessionID int64
 
 	if userID != -1 && firebaseInstallationID != "" {
-		idxKey := fmt.Sprintf("%d:%s", userID, firebaseInstallationID)
-		val, err := redis.SessionIndexes.GetInt64(c, idxKey)
-		if err == nil {
-			targetID = val
+		indexCompositeKey := fmt.Sprintf("%d:%s", userID, firebaseInstallationID)
+		retrievedID, errRedisIndex := redis.SessionIndexes.GetInt64(timeoutCtx, indexCompositeKey)
+
+		if errRedisIndex == nil {
+			resolvedSessionID = retrievedID
 		}
 	}
 
-	if targetID == 0 {
-		return auth_models.SessionsPayload{}, nubo_error.NewNotFound("SESSION_NOT_FOUND", "Session introuvable en RAM.", nil)
+	if resolvedSessionID == 0 {
+		return auth_models.SessionsPayload{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Session invalide, introuvable ou expirée en RAM.", nil)
 	}
 
-	var s auth_models.SessionsPayload
-	if err := redis.Sessions.GetObject(c, targetID, &s); err != nil {
-		return auth_models.SessionsPayload{}, err // C'est une erreur d'infrastructure, on la propage
+	var sessionPayload auth_models.SessionsPayload
+	errRedisGet := redis.Sessions.GetObject(timeoutCtx, resolvedSessionID, &sessionPayload)
+	if errRedisGet != nil {
+		logger.Log.Error().Err(errRedisGet).Int64("session_id", resolvedSessionID).Msg("Erreur d'infrastructure lors du chargement de l'objet Session")
+		return auth_models.SessionsPayload{}, nubo_error.NewInternal()
 	}
 
-	if masterToken != "" && s.MasterToken != masterToken {
-		return auth_models.SessionsPayload{}, nubo_error.NewForbidden("INVALID_MASTER_TOKEN", "Jeton maître invalide.", nil)
+	if masterTokenString != "" && sessionPayload.MasterToken != masterTokenString {
+		return auth_models.SessionsPayload{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Jeton maître d'authentification invalide.", nil)
 	}
 
-	return s, nil
+	return sessionPayload, nil
 }
 
-// DeleteSessionFromCache supprime la session, son index, et pose un verrou de révocation L1
+// DeleteSessionFromCache supprime la session, son index, et pose un verrou
+// de révocation (Tombstone) dans le cache L1 pour empêcher les attaques par rejeu.
 func DeleteSessionFromCache(ctx context.Context, sessionID int64, userID int64, firebaseInstallationID string) error {
-	c, cancel := getShortCtx(ctx)
+	timeoutCtx, cancel := getShortCtx(ctx)
 	defer cancel()
 
 	if userID != 0 && firebaseInstallationID != "" {
-		idxKey := fmt.Sprintf("%d:%s", userID, firebaseInstallationID)
+		indexCompositeKey := fmt.Sprintf("%d:%s", userID, firebaseInstallationID)
 
-		// 1. POSE DU TOMBSTONE VIA L'ABSTRACTION DDD
-		// On inscrit la clé composite dans la collection Blacklist (TTL automatique géré par le Manager)
-		_ = redis.SessionBlacklist.SetPrimitive(c, idxKey, "1")
+		// 1. POSE DU TOMBSTONE VIA L'ABSTRACTION DDD (Blocage immédiat)
+		_ = redis.SessionBlacklist.SetPrimitive(timeoutCtx, indexCompositeKey, "1")
 
-		// 2. Suppression de l'index de recherche normal
-		_ = redis.SessionIndexes.DeletePrimitive(c, idxKey)
+		// 2. Suppression de l'index de recherche inversé
+		_ = redis.SessionIndexes.DeletePrimitive(timeoutCtx, indexCompositeKey)
 	}
 
-	// 3. Suppression de l'objet principal
-	_ = redis.Sessions.DeleteObject(c, sessionID)
+	// 3. Destruction physique de l'objet JSON contenant les tokens
+	errRedisDel := redis.Sessions.DeleteObject(timeoutCtx, sessionID)
+	if errRedisDel != nil {
+		logger.Log.Error().Err(errRedisDel).Int64("session_id", sessionID).Msg("Impossible de supprimer physiquement l'objet Session du cache L1")
+		return nubo_error.NewInternal()
+	}
 
 	return nil
 }
 
-// GetFirebaseInstallationIDsCascade récupère tous les tokens d'appareils de l'utilisateur (L1 -> L2 -> L3)
-// L'architecture repose désormais sur l'abstraction Collection (DDD).
+// GetFirebaseInstallationIDsCascade récupère tous les tokens FCM des appareils
+// de l'utilisateur avec un mécanisme de guérison L1 -> L2 -> L3.
 func GetFirebaseInstallationIDsCascade(ctx context.Context, userID int64) ([]string, error) {
-	c, cancel := getShortCtx(ctx)
+	timeoutCtx, cancel := getShortCtx(ctx)
 	defer cancel()
 
-	// 1. TENTATIVE L1 (Redis via SMembers)
-	// On utilise l'abstraction DDD de ta Collection pour récupérer le SET des tokens.
-	// (Note: Cela implique que lors du login, tu fasses : redis.SessionIndexes.SAdd(ctx, userID, firebaseID))
-	fids, err := redis.SessionIndexes.SMembers(c, userID)
-	if err == nil && len(fids) > 0 {
-		return fids, nil
+	// ── ÉTAPE 1 : TENTATIVE L1 (REDIS VIA SMEMBERS SUR L'ABSTRACTION) ───────
+
+	firebaseTokensList, errRedis := redis.SessionIndexes.SMembers(timeoutCtx, userID)
+	if errRedis == nil && len(firebaseTokensList) > 0 {
+		return firebaseTokensList, nil
 	}
 
-	// 2. FALLBACK L2 (MongoDB)
-	fids, err = mongo.MongoGetFirebaseInstallationIDs(userID)
-	if err == nil && len(fids) > 0 {
-		// ⬆️ AUTO-GUÉRISON L1 : On répare le cache RAM
-		go healSessionIndexL1(userID, fids)
-		return fids, nil
+	// ── ÉTAPE 2 : FALLBACK L2 (MONGODB WARM STORAGE) ────────────────────────
+
+	firebaseTokensList, errMongo := mongo.MongoGetFirebaseInstallationIDs(userID)
+	if errMongo == nil && len(firebaseTokensList) > 0 {
+		// AUTO-GUÉRISON L1 : On répare le cache RAM
+		go healSessionIndexL1(userID, firebaseTokensList)
+		return firebaseTokensList, nil
 	}
 
-	// 3. FALLBACK L3 COMPLET (PostgreSQL) avec réhydratation
-	sessionsPg, errPg := postgres.FuncLoadAllUserSessions(ctx, userID)
-	if errPg == nil && len(sessionsPg) > 0 {
-		var newFids []string
+	// ── ÉTAPE 3 : FALLBACK L3 COMPLET (POSTGRESQL COLD STORAGE) ─────────────
 
-		for _, session := range sessionsPg {
-			newFids = append(newFids, session.FirebaseInstallationID)
+	sessionsListFromPg, errPg := postgres.FuncLoadAllUserSessions(ctx, userID)
+	if errPg != nil {
+		logger.Log.Error().Err(errPg).Int64("user_id", userID).Msg("Erreur L3 lors de la récupération des sessions de l'utilisateur")
+		return nil, nubo_error.NewInternal()
+	}
 
-			// PROMOTION L3 -> L2 & L1
+	if len(sessionsListFromPg) > 0 {
+		var extractedFirebaseTokens []string
+
+		for _, sessionRecord := range sessionsListFromPg {
+			extractedFirebaseTokens = append(extractedFirebaseTokens, sessionRecord.FirebaseInstallationID)
+
+			// PROMOTION L3 -> L2 & L1 (Auto-guérison massive)
 			go func(s auth_models.SessionsPayload) {
-				bgCtx := context.Background()
-				// L1 : Hydratation en RAM de l'objet complet
-				_ = SetSessionInCache(bgCtx, s)
+				backgroundCtx := context.Background()
 
-				// L2 : Asynchrone vers Mongo
-				_ = redis.EnqueueDB(bgCtx, s.ID, s.UserID, redis.EntitySession, redis.ActionUpdate, s, redis.TargetMongo)
-			}(session)
+				// L1 : Hydratation en RAM de l'objet complet
+				_ = SetSessionInCache(backgroundCtx, s)
+
+				// L2 : Asynchrone vers le Warm Storage Mongo
+				_ = redis.EnqueueDB(backgroundCtx, s.ID, s.UserID, redis.EntitySession, redis.ActionUpdate, s, redis.TargetMongo)
+			}(sessionRecord)
 		}
 
-		// ⬆️ AUTO-GUÉRISON L1 : On répare l'index de recherche (Le Set)
-		go healSessionIndexL1(userID, newFids)
+		// AUTO-GUÉRISON L1 : On répare l'index de recherche (Set des Firebase IDs)
+		go healSessionIndexL1(userID, extractedFirebaseTokens)
 
-		return newFids, nil
+		return extractedFirebaseTokens, nil
 	}
 
-	return nil, nubo_error.NewNotFound("NO_ACTIVE_DEVICE", "Aucun appareil actif trouvé pour cet utilisateur.", nil)
+	return nil, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Aucun appareil actif configuré pour cet utilisateur.", nil)
 }
 
-// healSessionIndexL1 est un helper local asynchrone pour insérer un lot de FIDs dans le Set L1
-func healSessionIndexL1(userID int64, fids []string) {
-	bgCtx := context.Background()
-	// Conversion en slice de "any" pour l'interface SAdd
-	args := make([]any, len(fids))
-	for i, fid := range fids {
-		args[i] = fid
+// healSessionIndexL1 est un helper local asynchrone pour insérer un lot
+// d'identifiants Firebase dans le Set d'indexation L1.
+func healSessionIndexL1(userID int64, firebaseTokensList []string) {
+	backgroundCtx := context.Background()
+
+	// Conversion en slice de "any" requise par l'interface d'abstraction SAdd
+	argsForRedis := make([]any, len(firebaseTokensList))
+	for index, token := range firebaseTokensList {
+		argsForRedis[index] = token
 	}
 
-	// Utilisation de ton abstraction DDD
-	_ = redis.SessionIndexes.SAdd(bgCtx, userID, args...)
-	_ = redis.SessionIndexes.RefreshTTL(bgCtx, userID)
+	// Utilisation propre de l'abstraction DDD
+	errAdd := redis.SessionIndexes.SAdd(backgroundCtx, userID, argsForRedis...)
+	if errAdd != nil {
+		logger.Log.Warn().Err(errAdd).Int64("user_id", userID).Msg("Échec de l'auto-guérison du SessionIndex en L1")
+	}
+
+	_ = redis.SessionIndexes.RefreshTTL(backgroundCtx, userID)
 }

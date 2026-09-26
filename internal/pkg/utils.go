@@ -1,7 +1,6 @@
 package pkg
 
 import (
-	"errors"
 	"fmt"
 	"html"
 	"os"
@@ -28,7 +27,7 @@ func ValidateStruct(obj any) error {
 	if v, ok := binding.Validator.Engine().(*validator.Validate); ok {
 		return v.Struct(obj)
 	}
-	return nubo_error.NewInternal(errors.New("impossible de charger le validateur"))
+	return nubo_error.NewInternal() //errors.New("impossible de charger le validateur")
 }
 
 // CleanStr : Nettoyage anti-XSS et suppression des espaces superflus.
@@ -51,7 +50,7 @@ func GenerateToken(userID int64, firebaseInstallationID string, expirationSecond
 
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		return "", nubo_error.NewInternal(errors.New("JWT_SECRET manquant dans les variables d'environnement"))
+		return "", nubo_error.NewInternal() //errors.New("JWT_SECRET manquant dans les variables d'environnement")
 	}
 	return token.SignedString([]byte(secret))
 }
@@ -66,7 +65,7 @@ func ToMap(in any) (map[string]any, error) {
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
-		return nil, nubo_error.NewInternal(errors.New("ToMap: attend une struct"))
+		return nil, nubo_error.NewInternal() //errors.New("ToMap: attend une struct")
 	}
 
 	t := v.Type()
@@ -117,7 +116,7 @@ func Exists[T comparable](slice []T, value T) bool {
 
 func SliceUniqueInt64(slice []int64) []int64 {
 	keys := make(map[int64]bool)
-	list := []int64{}
+	var list []int64
 	for _, entry := range slice {
 		if _, value := keys[entry]; !value {
 			keys[entry] = true
@@ -129,7 +128,7 @@ func SliceUniqueInt64(slice []int64) []int64 {
 
 func SliceUniqueStr(slice []string) []string {
 	keys := make(map[string]bool)
-	list := []string{}
+	var list []string
 	for _, entry := range slice {
 		if _, value := keys[entry]; !value {
 			keys[entry] = true
@@ -161,7 +160,7 @@ func GetUserIDFromContext(c *gin.Context) (int64, error) {
 	case int:
 		return int64(v), nil
 	default:
-		return 0, nubo_error.NewInternal(errors.New("type userID inconnu"))
+		return 0, nubo_error.NewInternal() // errors.New("type userID inconnu")
 	}
 }
 

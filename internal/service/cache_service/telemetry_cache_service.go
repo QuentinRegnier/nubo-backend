@@ -3,45 +3,78 @@ package cache_service
 import (
 	"context"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
-// GetTelemetryVector récupère le dernier vecteur de profil de l'utilisateur.
+// ############################################################################
+// # SERVICE : GESTION CACHE DE LA TÉLÉMÉTRIE SÉMANTIQUE
+// ############################################################################
+
+// GetTelemetryVector récupère le dernier vecteur profil de l'utilisateur (ADN algorithmique).
 func GetTelemetryVector(ctx context.Context, userID int64) ([]float32, error) {
-	var vector []float32
-	err := redis.TelemetryVectors.GetObject(ctx, userID, &vector)
-	return vector, err
+	var userVector []float32
+	errRedis := redis.TelemetryVectors.GetObject(ctx, userID, &userVector)
+
+	if errRedis != nil {
+		return nil, nubo_error.NewInternal()
+	}
+
+	return userVector, nil
 }
 
-// SetTelemetryVector sauvegarde le vecteur de profil (Edge-to-Cloud) avec son TTL automatique.
-func SetTelemetryVector(ctx context.Context, userID int64, vector []float32) error {
-	return redis.TelemetryVectors.SetObject(ctx, userID, vector)
+// SetTelemetryVector sauvegarde le vecteur de profil (Edge-to-Cloud) avec son TTL automatique L1.
+func SetTelemetryVector(ctx context.Context, userID int64, newVector []float32) error {
+	errRedis := redis.TelemetryVectors.SetObject(ctx, userID, newVector)
+	if errRedis != nil {
+		logger.Log.Error().Err(errRedis).Int64("user_id", userID).Msg("Impossible de sauvegarder le vecteur de télémétrie")
+		return nubo_error.NewInternal()
+	}
+	return nil
 }
 
-// SetTelemetryTags sauvegarde le Top 5 des tags de l'utilisateur (utilisé par le Magasinier).
-func SetTelemetryTags(ctx context.Context, userID int64, tags []string) error {
-	return redis.TelemetryTags.SetObject(ctx, userID, tags)
+// SetTelemetryTags sauvegarde le Top 5 des tags de l'utilisateur (utilisé par le Magasinier LSH).
+func SetTelemetryTags(ctx context.Context, userID int64, topTagsList []string) error {
+	errRedis := redis.TelemetryTags.SetObject(ctx, userID, topTagsList)
+	if errRedis != nil {
+		logger.Log.Error().Err(errRedis).Int64("user_id", userID).Msg("Impossible de sauvegarder le Top Tags de télémétrie")
+		return nubo_error.NewInternal()
+	}
+	return nil
 }
 
 // GetTelemetryTags récupère la liste des tags préférés.
 func GetTelemetryTags(ctx context.Context, userID int64) ([]string, error) {
-	var tags []string
-	err := redis.TelemetryTags.GetObject(ctx, userID, &tags)
-	return tags, err
-}
+	var userTags []string
+	errRedis := redis.TelemetryTags.GetObject(ctx, userID, &userTags)
 
-// SetTelemetryTimestamp sauvegarde la date de la dernière synchronisation du vecteur local.
-func SetTelemetryTimestamp(ctx context.Context, userID int64, timestamp int64) error {
-	// On stocke le timestamp de manière unifiée avec le reste (MsgPack via SetObject)
-	return redis.TelemetryTimestamps.SetObject(ctx, userID, timestamp)
-}
-
-// GetTelemetryTimestamp récupère la date de la dernière synchronisation réussie.
-func GetTelemetryTimestamp(ctx context.Context, userID int64) (int64, error) {
-	var timestamp int64
-	err := redis.TelemetryTimestamps.GetObject(ctx, userID, &timestamp)
-	if err != nil {
-		return 0, err
+	if errRedis != nil {
+		return nil, nubo_error.NewInternal()
 	}
-	return timestamp, nil
+
+	return userTags, nil
+}
+
+// SetTelemetryTimestamp sauvegarde la date de la dernière synchronisation Edge-to-Cloud réussie.
+func SetTelemetryTimestamp(ctx context.Context, userID int64, currentTimestampMs int64) error {
+	// Stockage MsgPack unifié via SetObject
+	errRedis := redis.TelemetryTimestamps.SetObject(ctx, userID, currentTimestampMs)
+	if errRedis != nil {
+		logger.Log.Warn().Err(errRedis).Msg("Impossible de sauvegarder le timestamp de télémétrie")
+		return nubo_error.NewInternal()
+	}
+	return nil
+}
+
+// GetTelemetryTimestamp récupère la date de la dernière synchronisation Edge-to-Cloud.
+func GetTelemetryTimestamp(ctx context.Context, userID int64) (int64, error) {
+	var cachedTimestamp int64
+	errRedis := redis.TelemetryTimestamps.GetObject(ctx, userID, &cachedTimestamp)
+
+	if errRedis != nil {
+		return 0, nubo_error.NewInternal() // Différent de 0 pour déclencher le rafraîchissement
+	}
+
+	return cachedTimestamp, nil
 }

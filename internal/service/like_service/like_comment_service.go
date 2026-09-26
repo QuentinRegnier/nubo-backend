@@ -4,118 +4,94 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/like_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// ToggleLike agit comme un routeur hybride : Tri synchrone en RAM + Persistance asynchrone.
+// ############################################################################
+// # SERVICE : AIMER OU DÉSAIMER UN COMMENTAIRE (TOGGLE)
+// ############################################################################
+
+// ToggleCommentLike agit comme un routeur hybride : Tri synchrone en RAM + Persistance asynchrone.
 func ToggleCommentLike(ctx context.Context, input like_models.LikeCommentInput) error {
-	// ─────────────────────────────────────────────────────────────────────────
-	// 1. IDEMPOTENCE EN RAM (O(1)) - Bloque le Spam Clic instantanément
-	// ─────────────────────────────────────────────────────────────────────────
+
+	// ── ÉTAPE 1 : IDEMPOTENCE EN RAM (O(1)) ─────────────────────────────────
+	// Bloque le Spam Clic instantanément pour protéger les Workers
+
 	if input.Action == "like" {
-		if !cache_service.TryAddLikeIdempotency(ctx, 1, input.CommentID, input.UserID) { // targetType = 1
+		if !cache_service.TryAddLikeIdempotency(ctx, variables.LikeTargetTypeComment, input.CommentID, input.UserID) {
 			return nil
 		}
 	} else {
-		if !cache_service.TryRemoveLikeIdempotency(ctx, 1, input.CommentID, input.UserID) { // targetType = 1
+		if !cache_service.TryRemoveLikeIdempotency(ctx, variables.LikeTargetTypeComment, input.CommentID, input.UserID) {
 			return nil
 		}
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// 2. RÉCUPÉRATION EN CASCADE DU COMMENTAIRE (Pour avoir le PostID)
-	// ─────────────────────────────────────────────────────────────────────────
-	comment, err := getCommentCascade(ctx, input.CommentID)
-	if err != nil || comment.Visibility == -1 {
-		// Le commentaire a été supprimé, on annule l'idempotence au cas où et on rejette
-		_ = cache_service.TryRemoveLikeIdempotency(ctx, 1, input.CommentID, input.UserID)
-		return nubo_error.NewNotFound("COMMENT_NOT_FOUND", "Commentaire introuvable ou supprimé.", err)
+	// ── ÉTAPE 2 : RÉCUPÉRATION DU COMMENTAIRE (CASCADE L1->L2->L3) ──────────
+
+	commentPayload, errCascade := getCommentCascade(ctx, input.CommentID)
+	if errCascade != nil || commentPayload.Visibility == variables.CommentVisibilitySoftDelete {
+		// Le commentaire a été supprimé, on annule l'idempotence et on rejette
+		_ = cache_service.TryRemoveLikeIdempotency(ctx, variables.LikeTargetTypeComment, input.CommentID, input.UserID)
+		return errCascade // getCommentCascade renvoie déjà un nubo_error propre
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// 3. TRI SYNCHRONE (ZSET) - Le fameux Tri à Bulle Atomique !
-	// ─────────────────────────────────────────────────────────────────────────
-	delta := 1.0
-	action := redis.ActionCreate
+	// ── ÉTAPE 3 : MISE À JOUR SYNCHRONE (ZSET + RAM L1) ─────────────────────
+
+	deltaValue := 1.0
+	redisActionType := redis.ActionCreate
+
 	if input.Action == "unlike" {
-		delta = -1.0
-		action = redis.ActionDelete
+		deltaValue = -1.0
+		redisActionType = redis.ActionDelete
 	}
 
-	// === NOUVEAU : MISE À JOUR SYNCHRONE DE L'OBJET L1 ===
-	comment.LikeCount += int(delta)
-	if comment.LikeCount < 0 {
-		comment.LikeCount = 0
+	// Incrémentation immédiate de l'objet en L1
+	commentPayload.LikeCount += int(deltaValue)
+	if commentPayload.LikeCount < 0 {
+		commentPayload.LikeCount = 0
 	}
-	comment.Score += int(delta)
-	_ = object_cache_service.SetCommentInObjectCache(ctx, comment)
+	commentPayload.Score += int(deltaValue)
+	_ = object_cache_service.SetCommentInObjectCache(ctx, commentPayload)
 
-	// On vérifie de manière opportuniste si le post est toujours Viral (en RAM)
-	if object_cache_service.IsPostInObjectCache(ctx, comment.PostID) {
-		// Magie Redis : Incrémentation atomique sans conflit possible
-		_ = object_cache_service.IncrementCommentScoreInZSET(ctx, comment.PostID, comment.ID, delta)
+	// Vérification opportuniste du Post Parent pour mettre à jour son classement (Tri à bulle)
+	if object_cache_service.IsPostInObjectCache(ctx, commentPayload.PostID) {
+		_ = object_cache_service.IncrementCommentScoreInZSET(ctx, commentPayload.PostID, commentPayload.ID, deltaValue)
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// 4. DÉLÉGATION DE LA PERSISTANCE AUX WORKERS (JSON et Disque)
-	// ─────────────────────────────────────────────────────────────────────────
-	payload := like_models.LikePayload{
+	// ── ÉTAPE 4 : DÉLÉGATION DE LA PERSISTANCE AUX WORKERS (WRITE-BEHIND) ───
+
+	likeRecordPayload := like_models.LikePayload{
 		ID:         pkg.GenerateID(),
-		TargetType: 1, // ✅ 1 = Commentaire (Le worker saura quoi faire !)
+		TargetType: variables.LikeTargetTypeComment,
 		TargetID:   input.CommentID,
 		UserID:     input.UserID,
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 
-	// Envoi à la file d'attente (Le counter_worker fera le +1 sur le JSON, Mongo/Postgres sur le disque)
-	err = redis.EnqueueDB(ctx, payload.ID, comment.PostID, redis.EntityLike, action, payload, redis.TargetAll)
+	errQueue := redis.EnqueueDB(ctx, likeRecordPayload.ID, commentPayload.PostID, redis.EntityLike, redisActionType, likeRecordPayload, redis.TargetAll)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("comment_id", input.CommentID).Msg("Échec du Write-Behind pour ToggleCommentLike")
+		return nil // On ne fait pas crasher l'UX pour une perte de like
+	}
 
-	if err == nil && input.Action == "like" {
+	// ── ÉTAPE 5 : NOTIFICATION TEMPS RÉEL ───────────────────────────────────
+
+	if input.Action == "like" && commentPayload.UserID != input.UserID {
 		go func() {
-			err := notification_service.DispatchNotification(context.Background(), comment.UserID, input.UserID, "comment_liked", comment.ID)
-			if err != nil {
-				logger.Log.Error().Err(err).Int64("comment_id", comment.ID).Msg("Échec de l'envoi de la notification pour un like de commentaire")
+			errNotif := notification_service.DispatchNotification(context.Background(), commentPayload.UserID, input.UserID, variables.EventCommentLiked, commentPayload.ID)
+			if errNotif != nil {
+				logger.Log.Error().Err(errNotif).Int64("comment_id", commentPayload.ID).Msg("Échec de l'envoi de la notification pour un like de commentaire")
 			}
 		}()
 	}
 
-	return err
-}
-
-// getCommentCascade est le fallback local ultra-rapide pour hydrater l'objet métier
-func getCommentCascade(ctx context.Context, commentID int64) (comment_models.CommentPayload, error) {
-	if c, err := object_cache_service.GetCommentFromObjectCache(ctx, commentID); err == nil {
-		return c, nil
-	}
-
-	mongoComments, errMongo := mongo.MongoLoadComments([]int64{commentID})
-	if errMongo == nil && len(mongoComments) > 0 {
-		_ = object_cache_service.SetCommentInObjectCache(ctx, mongoComments[0])
-		return mongoComments[0], nil
-	}
-
-	if pgComment, errPg := postgres.FuncGetComment(ctx, commentID); errPg == nil {
-		// ⬆️ HYDRATATION L1 (Synchrone)
-		_ = object_cache_service.SetCommentInObjectCache(ctx, pgComment)
-
-		// ⬆️ HYDRATATION L2 (Asynchrone via Worker Mongo)
-		go func(c comment_models.CommentPayload) {
-			bgCtx := context.Background()
-			_ = redis.EnqueueDB(bgCtx, c.ID, c.PostID, redis.EntityComment, redis.ActionUpdate, c, redis.TargetMongo)
-		}(pgComment)
-
-		return pgComment, nil
-	}
-
-	return comment_models.CommentPayload{}, nubo_error.NewNotFound("COMMENT_NOT_FOUND", "Commentaire introuvable.", nil)
+	return nil
 }

@@ -13,20 +13,24 @@ import (
 type RefreshOptions struct {
 	UserID        int64
 	LastSeenIndex int
-	FetchCount    int // ✅ Permet au Service de demander une quantité précise pour combler les trous
+	FetchCount    int // La quantité de posts que le client demande (ex: 50 par page)
 	Quotas        Quotas
 	PersonalOpts  PersonalizedFeedOptions
-	IsForce       bool
+	IsForce       bool // True si c'est un Pull-To-Refresh manuel
 }
 
-// HandlePullToRefresh applique les règles psychologiques et techniques du Swipe Down.
+// ############################################################################
+// # LE DISTRIBUTEUR (Gestion des Tampons Tournants et du Scroll)
+// ############################################################################
+
+// HandlePullToRefresh gère la consommation du flux, la rotation des paniers et l'amnésie algorithmique.
 func HandlePullToRefresh(ctx context.Context, opts RefreshOptions) ([]int64, error) {
-	// ─────────────────────────────────────────────────────────────────────────────
-	// CHARGEMENT OU INITIALISATION DE L'ÉTAT DU FEED
-	// ─────────────────────────────────────────────────────────────────────────────
-	state, err := GetUserFeedState(ctx, opts.UserID)
+
+	// 1. Chargement ou Initialisation de l'état en RAM
+	feedState, err := GetUserFeedState(ctx, opts.UserID)
 	if err != nil {
-		state = FeedState{
+		// Nouvel utilisateur ou Cache expiré : Création d'un état vierge
+		feedState = FeedState{
 			ActiveFeed: "A",
 			Feeds: map[string]FeedData{
 				"A": {Seed: rand.Int63()},
@@ -37,170 +41,178 @@ func HandlePullToRefresh(ctx context.Context, opts RefreshOptions) ([]int64, err
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────────
-	// CAS 1 : GESTION EXPLICITE DU PULL-TO-REFRESH (PURGE ET AMNÉSIE DE SÉCURITÉ)
+	// CAS A : GESTION EXPLICITE DU PULL-TO-REFRESH (/force)
 	// ─────────────────────────────────────────────────────────────────────────────
 	if opts.IsForce {
-		// 1. Sauvegarde systématique dans l'historique des posts réellement consommés avant le reset
-		if opts.LastSeenIndex > 0 && len(state.Feeds[state.ActiveFeed].PostIDs) > 0 {
-			endIdx := opts.LastSeenIndex
-			if endIdx > len(state.Feeds[state.ActiveFeed].PostIDs) {
-				endIdx = len(state.Feeds[state.ActiveFeed].PostIDs)
-			}
-			distributedIDs := state.Feeds[state.ActiveFeed].PostIDs[0:endIdx]
 
-			for _, postID := range distributedIDs {
+		// 1. Sauvegarde systématique dans l'historique des posts réellement consommés avant le reset
+		activeFeedData := feedState.Feeds[feedState.ActiveFeed]
+		if opts.LastSeenIndex > 0 && len(activeFeedData.PostIDs) > 0 {
+
+			endIndexForSeen := opts.LastSeenIndex
+			if endIndexForSeen > len(activeFeedData.PostIDs) {
+				endIndexForSeen = len(activeFeedData.PostIDs)
+			}
+
+			consumedPostIDs := activeFeedData.PostIDs[0:endIndexForSeen]
+			for _, postID := range consumedPostIDs {
 				service.MarkAsSeen(ctx, opts.UserID, postID)
 			}
 		}
 
-		// 2. Réinitialisation complète et immédiate du Cuckoo Filter pour vider la RAM (L1)
+		// 2. Réinitialisation complète du Cuckoo Filter (Amnésie algorithmique RAM)
 		service.ResetCuckooFilter(ctx, opts.UserID)
-
-		// 3. Remise à zéro de l'index pour la nouvelle séquence de consommation
 		opts.LastSeenIndex = 0
 
-		// ✅ UTILISATION DE LA CONSTANTE GLOBALE
-		if time.Since(state.GeneratedAt) >= variables.FeedReloadDelay {
-			// ✅ CAS 1 (/force) : Temps écoulé -> Reset et nouvelle génération
-			state.GeneratedAt = time.Now()
-			state.ActiveFeed = "A"
-			state.Feeds["A"] = FeedData{Seed: rand.Int63(), PostIDs: nil, Fused: false}
-			state.Feeds["B"] = FeedData{Seed: rand.Int63(), PostIDs: nil, Fused: false}
-			state.Feeds["C"] = FeedData{Seed: rand.Int63(), PostIDs: nil, Fused: false}
+		// 3. Application des délais anti-spam algorithmiques
+		if time.Since(feedState.GeneratedAt) >= variables.FeedReloadDelay {
 
-			seeds := [3]int64{state.Feeds["A"].Seed, state.Feeds["B"].Seed, state.Feeds["C"].Seed}
-			baskets, _ := CollectCandidates(ctx, opts.UserID, seeds, opts.Quotas)
+			// Le délai est écoulé : Reset intégral et régénération complète
+			feedState.GeneratedAt = time.Now()
+			feedState.ActiveFeed = "A"
+			feedState.Feeds["A"] = FeedData{Seed: rand.Int63(), PostIDs: nil, Fused: false}
+			feedState.Feeds["B"] = FeedData{Seed: rand.Int63(), PostIDs: nil, Fused: false}
+			feedState.Feeds["C"] = FeedData{Seed: rand.Int63(), PostIDs: nil, Fused: false}
 
-			var candidateIDs []int64
-			for _, item := range baskets.A.Items {
-				candidateIDs = append(candidateIDs, item.PostID)
+			seedsArray := [3]int64{feedState.Feeds["A"].Seed, feedState.Feeds["B"].Seed, feedState.Feeds["C"].Seed}
+			magasinierBaskets, _ := CollectCandidates(ctx, opts.UserID, seedsArray, opts.Quotas)
+
+			// Extraction du panier A
+			var initialCandidateIDs []int64
+			for _, item := range magasinierBaskets.FeedA.Items {
+				initialCandidateIDs = append(initialCandidateIDs, item.PostID)
 			}
-			opts.PersonalOpts.CandidateIDs = candidateIDs
-			opts.PersonalOpts.Seed = state.Feeds["A"].Seed
+
+			opts.PersonalOpts.CandidateIDs = initialCandidateIDs
+			opts.PersonalOpts.Seed = feedState.Feeds["A"].Seed
 			opts.PersonalOpts.StartIndex = 0
 
-			freshFeed, _ := BuildPersonalizedFeed(ctx, opts.PersonalOpts)
-			feedData := state.Feeds["A"]
-			feedData.PostIDs = freshFeed
-			state.Feeds["A"] = feedData
+			freshFeedIDs, _ := BuildPersonalizedFeed(ctx, opts.PersonalOpts)
+
+			// Injection dans l'état
+			updatedFeedData := feedState.Feeds["A"]
+			updatedFeedData.PostIDs = freshFeedIDs
+			feedState.Feeds["A"] = updatedFeedData
+
 		} else {
-			// ✅ CAS 2 (/force) : Moins de 30 min -> Rotation Circulaire
-			switch state.ActiveFeed {
+			// Protection Anti-Spam : On effectue une Rotation Circulaire des paniers existants
+			switch feedState.ActiveFeed {
 			case "A":
-				state.ActiveFeed = "B"
+				feedState.ActiveFeed = "B"
 			case "B":
-				state.ActiveFeed = "C"
+				feedState.ActiveFeed = "C"
 			case "C":
-				state.ActiveFeed = "A"
+				feedState.ActiveFeed = "A"
 			}
 		}
 
-		_ = SaveUserFeedState(ctx, opts.UserID, state)
-		opts.LastSeenIndex = 0 // On force à 0, et on laisse couler vers le bloc de Consommation
+		_ = SaveUserFeedState(ctx, opts.UserID, feedState)
+		opts.LastSeenIndex = 0 // On force à 0, et on laisse couler vers le bloc de Consommation Normal
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────────
-	// CAS 2 : CONSOMMATION NORMALE (last_seen_index >= 10)
+	// CAS B : CONSOMMATION DU SCROLL (last_seen_index > 0)
 	// ─────────────────────────────────────────────────────────────────────────────
-	activeData := state.Feeds[state.ActiveFeed]
-	totalPosts := len(activeData.PostIDs)
-	remaining := totalPosts - opts.LastSeenIndex
+	activeFeedData := feedState.Feeds[feedState.ActiveFeed]
+	totalPostsInActiveFeed := len(activeFeedData.PostIDs)
+	remainingPosts := totalPostsInActiveFeed - opts.LastSeenIndex
 
-	// ── Cas 1 (Pagination simple) : Assez de posts en stock ───────────────────
-	if remaining >= opts.FetchCount {
+	// SCENARIO 1 : Le buffer actuel contient assez de posts pour satisfaire la demande client
+	if remainingPosts >= opts.FetchCount {
 		endIndex := opts.LastSeenIndex + opts.FetchCount
-		return activeData.PostIDs[opts.LastSeenIndex:endIndex], nil
+		return activeFeedData.PostIDs[opts.LastSeenIndex:endIndex], nil
 	}
 
-	// ── Cas 2 & 3 : Besoin d'étendre la liste ─────────────────────────────────
-	var candidateIDs []int64
+	// SCENARIO 2 & 3 : Le buffer est presque vide, il faut l'étendre
+	var extendedCandidateIDs []int64
 
-	// ✅ FILTRE DE SÉCURITÉ : On mémorise les posts déjà présents dans le flux actif pour éviter tout doublon
-	seenInActiveFeed := make(map[int64]struct{}, len(activeData.PostIDs))
-	for _, id := range activeData.PostIDs {
-		seenInActiveFeed[id] = struct{}{}
+	// Mémorisation des posts actuels pour éviter les doublons lors de la greffe
+	alreadyInActiveFeedMap := make(map[int64]struct{}, totalPostsInActiveFeed)
+	for _, id := range activeFeedData.PostIDs {
+		alreadyInActiveFeedMap[id] = struct{}{}
 	}
 
-	if !activeData.Fused {
-		// Cas 2 (Fusion) : On recycle le travail du Magasinier via les paniers inactifs
-		for feedName, feedData := range state.Feeds {
-			if feedName != state.ActiveFeed {
-				for _, id := range feedData.PostIDs {
-					// On n'ajoute que si le post n'est pas déjà dans le flux Actif
-					if _, exists := seenInActiveFeed[id]; !exists {
-						candidateIDs = append(candidateIDs, id)
-						seenInActiveFeed[id] = struct{}{} // Empêche aussi les doublons entre B et C
+	if !activeFeedData.Fused {
+		// SCENARIO 2 (FUSION) : On recycle le travail en attente des paniers voisins (B et C)
+		for feedName, feedData := range feedState.Feeds {
+			if feedName != feedState.ActiveFeed {
+				for _, candidateID := range feedData.PostIDs {
+					if _, alreadyExists := alreadyInActiveFeedMap[candidateID]; !alreadyExists {
+						extendedCandidateIDs = append(extendedCandidateIDs, candidateID)
+						alreadyInActiveFeedMap[candidateID] = struct{}{}
 					}
 				}
 			}
 		}
-		activeData.Fused = true
+		activeFeedData.Fused = true
+
 	} else {
-		// Cas 3 (Re-sélection / Extension) : Les paniers sont déjà absorbés
-		singleBasket, err := CollectSingleBasket(ctx, opts.UserID, activeData.Seed, opts.Quotas)
+		// SCENARIO 3 (EXTENSION INFINIE) : Les paniers voisins sont vides, on doit ré-interroger Redis
+		extendedBasket, err := CollectSingleBasket(ctx, opts.UserID, activeFeedData.Seed, opts.Quotas)
 		if err != nil {
 			return nil, err
 		}
-		for _, item := range singleBasket.Items {
-			// Même sécurité pour le nouveau panier généré
-			if _, exists := seenInActiveFeed[item.PostID]; !exists {
-				candidateIDs = append(candidateIDs, item.PostID)
-				seenInActiveFeed[item.PostID] = struct{}{}
+
+		for _, item := range extendedBasket.Items {
+			if _, alreadyExists := alreadyInActiveFeedMap[item.PostID]; !alreadyExists {
+				extendedCandidateIDs = append(extendedCandidateIDs, item.PostID)
+				alreadyInActiveFeedMap[item.PostID] = struct{}{}
 			}
 		}
 	}
 
-	// ✅ LIAISON MAGASINIER -> CAISSIÈRE AVEC DÉCALAGE (StartIndex)
-	opts.PersonalOpts.CandidateIDs = candidateIDs
-	opts.PersonalOpts.Seed = activeData.Seed
-	opts.PersonalOpts.StartIndex = totalPosts // On garantit la continuité de la Vague de Dopamine
+	// Passage à la Caissière pour filtrer et scrorer cette nouvelle extension
+	opts.PersonalOpts.CandidateIDs = extendedCandidateIDs
+	opts.PersonalOpts.Seed = activeFeedData.Seed
+	opts.PersonalOpts.StartIndex = totalPostsInActiveFeed // Maintient la continuité de la Vague de Sérendipité
 
-	// Passage en Caisse pour trier la suite de la liste et injecter la sérendipité
-	freshFeed, err := BuildPersonalizedFeed(ctx, opts.PersonalOpts)
+	freshlyScoredFeedIDs, err := BuildPersonalizedFeed(ctx, opts.PersonalOpts)
 	if err != nil {
 		return nil, err
 	}
 
-	// On greffe la suite générée au flux actif existant
-	activeData.PostIDs = append(activeData.PostIDs, freshFeed...)
-	state.Feeds[state.ActiveFeed] = activeData
-	_ = SaveUserFeedState(ctx, opts.UserID, state)
+	// On greffe les nouveaux posts au flux actif existant
+	activeFeedData.PostIDs = append(activeFeedData.PostIDs, freshlyScoredFeedIDs...)
+	feedState.Feeds[feedState.ActiveFeed] = activeFeedData
+	_ = SaveUserFeedState(ctx, opts.UserID, feedState)
 
-	// Sécurité de slice final
-	newTotal := len(activeData.PostIDs)
+	newTotalPostsInActiveFeed := len(activeFeedData.PostIDs)
 
-	// Sécurité absolue : la base de données globale de l'application est litéralement vide (ex: jour de lancement)
-	if newTotal == 0 {
+	// Sécurité absolue (ex: base de données vide au lancement du projet)
+	if newTotalPostsInActiveFeed == 0 {
 		return []int64{}, nil
 	}
 
-	// ✅ L'ÉLÉPHANT EST LÀ : L'utilisateur a vu 100% du Most Cache.
-	// Stratégie de l'Amnésie (Instagram) : On le bascule en douceur sur un autre flux.
-	// La nouvelle Seed va re-scorer les posts et inverser les pics de Dopamine.
-	if opts.LastSeenIndex >= newTotal {
-		switch state.ActiveFeed {
+	// ─────────────────────────────────────────────────────────────────────────────
+	// SCENARIO 4 : L'AMNÉSIE (L'utilisateur a consommé 100% du contenu généré)
+	// ─────────────────────────────────────────────────────────────────────────────
+	if opts.LastSeenIndex >= newTotalPostsInActiveFeed {
+		// On le bascule en douceur sur un autre flux (A, B ou C).
+		// La nouvelle Seed va re-scorer le contenu et inverser les pics de Dopamine.
+		switch feedState.ActiveFeed {
 		case "A":
-			state.ActiveFeed = "B"
+			feedState.ActiveFeed = "B"
 		case "B":
-			state.ActiveFeed = "C"
+			feedState.ActiveFeed = "C"
 		case "C":
-			state.ActiveFeed = "A"
+			feedState.ActiveFeed = "A"
 		}
-		_ = SaveUserFeedState(ctx, opts.UserID, state)
+		_ = SaveUserFeedState(ctx, opts.UserID, feedState)
 
 		// On pioche instantanément le haut du nouveau panier
-		rotatedFeed := state.Feeds[state.ActiveFeed].PostIDs
-		end := opts.FetchCount
-		if end > len(rotatedFeed) {
-			end = len(rotatedFeed)
+		rotatedFeedIDs := feedState.Feeds[feedState.ActiveFeed].PostIDs
+		rotatedEndIndex := opts.FetchCount
+		if rotatedEndIndex > len(rotatedFeedIDs) {
+			rotatedEndIndex = len(rotatedFeedIDs)
 		}
-		return rotatedFeed[0:end], nil
+		return rotatedFeedIDs[0:rotatedEndIndex], nil
 	}
 
-	endIndex := opts.LastSeenIndex + opts.FetchCount
-	if endIndex > newTotal {
-		endIndex = newTotal // Prévention Out-Of-Bounds
+	// Renvoi classique du bloc paginé
+	finalEndIndex := opts.LastSeenIndex + opts.FetchCount
+	if finalEndIndex > newTotalPostsInActiveFeed {
+		finalEndIndex = newTotalPostsInActiveFeed // Prévention Out-Of-Bounds
 	}
 
-	return activeData.PostIDs[opts.LastSeenIndex:endIndex], nil
+	return activeFeedData.PostIDs[opts.LastSeenIndex:finalEndIndex], nil
 }

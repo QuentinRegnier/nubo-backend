@@ -8,112 +8,130 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-// GetAddableUsersFromSpeedCache résout le sous-cache ZSET (Ami > Abonné + Lexicographique) en O(log N)
-func GetAddableUsersFromSpeedCache(ctx context.Context, callerID int64, limit int64, offset int64, force bool) ([]lite_models.UserLiteRequest, error) {
-	// Utilisation propre de la collection déclarée dans le repository (manager.go)
-	zsetKey := redis.SpeedAddable.Key(callerID)
+// ############################################################################
+// # SERVICE : SPEED CACHE (UTILISATEURS AJOUTABLES)
+// ############################################################################
 
-	// 1. Mode Force : Purge manuelle via la primitive d'abstraction
-	if force {
-		_ = redis.Del(ctx, zsetKey)
+// GetAddableUsersFromSpeedCache résout le sous-cache ZSET (Ami > Abonné + Lexicographique) en O(log N).
+func GetAddableUsersFromSpeedCache(ctx context.Context, callerID int64, limit int64, offset int64, forceRefresh bool) ([]lite_models.UserLiteRequest, error) {
+
+	zsetTargetKey := redis.SpeedAddable.Key(callerID)
+
+	// ── ÉTAPE 1 : GESTION DU RAFRAÎCHISSEMENT FORCÉ ─────────────────────────
+	if forceRefresh {
+		errDel := redis.Del(ctx, zsetTargetKey)
+		if errDel != nil {
+			logger.Log.Warn().Err(errDel).Int64("user_id", callerID).Msg("Impossible de purger le ZSET AddableUsers")
+		}
 	}
 
-	// Utilisation de l'abstraction Exists (retourne directement un booléen)
-	exists, err := redis.Exists(ctx, zsetKey)
-	if err != nil {
-		return nil, err
+	isZsetPresent, errExists := redis.Exists(ctx, zsetTargetKey)
+	if errExists != nil {
+		logger.Log.Error().Err(errExists).Msg("Erreur L1 lors de la vérification du ZSET AddableUsers")
+		return nil, nubo_error.NewInternal()
 	}
 
-	// 2. CACHE MISS : Reconstruction intelligente
-	if !exists {
-		relations, errPg := postgres.FuncLoadAddableRelations(ctx, callerID)
+	// ── ÉTAPE 2 : CACHE MISS (RECONSTRUCTION INTELLIGENTE) ──────────────────
+	if !isZsetPresent {
+		addableRelationsList, errPg := postgres.FuncLoadAddableRelations(ctx, callerID)
 		if errPg != nil {
-			return nil, errPg
+			logger.Log.Error().Err(errPg).Int64("caller_id", callerID).Msg("Erreur L3 lors de la reconstruction des AddableUsers")
+			return nil, nubo_error.NewInternal()
 		}
 
-		if len(relations) > 0 {
-			var targetIDs []int64
-			stateMap := make(map[int64]int)
-			for _, r := range relations {
-				targetIDs = append(targetIDs, r.TargetID)
-				stateMap[r.TargetID] = r.State
+		if len(addableRelationsList) > 0 {
+			var extractedTargetIDs []int64
+			relationStateMap := make(map[int64]int)
+
+			for _, relation := range addableRelationsList {
+				extractedTargetIDs = append(extractedTargetIDs, relation.TargetID)
+				relationStateMap[relation.TargetID] = relation.State
 			}
 
 			// Récupération des données compressées L1 (MGET natif du manager)
-			getRes, _ := redis.UsersLite.GetMany(ctx, targetIDs)
+			multiGetResult, errMGet := redis.UsersLite.GetMany(ctx, extractedTargetIDs)
+			if errMGet != nil {
+				logger.Log.Warn().Err(errMGet).Msg("Échec MGET lors de la reconstruction SpeedAddable")
+			} else {
+				for _, targetID := range extractedTargetIDs {
+					binaryData, isFound := multiGetResult.Found[targetID]
+					if !isFound {
+						continue
+					}
 
-			for _, targetID := range targetIDs {
-				data, ok := getRes.Found[targetID]
-				if !ok {
-					continue
-				}
+					var userLitePayload lite_models.UserLiteRequest
+					if errUnmarshal := msgpack.Unmarshal(binaryData, &userLitePayload); errUnmarshal == nil {
 
-				var u lite_models.UserLiteRequest
-				if err := msgpack.Unmarshal(data, &u); err == nil {
-					// ASTUCE DE TRI :
-					// State 2 (Ami) devient 0. State 1 (Abonné) devient 1.
-					// Résultat dans le ZSET : "0_alice_123" arrivera toujours avant "1_bob_456" !
-					invertedState := 2 - stateMap[targetID]
-					member := fmt.Sprintf("%d_%s_%d", invertedState, strings.ToLower(u.Username), u.ID)
+						// ASTUCE DE TRI :
+						// State 2 (Ami) devient 0. State 1 (Abonné) devient 1.
+						// Résultat : "0_alice_123" arrivera toujours avant "1_bob_456" dans l'ordre Lexicographique !
+						invertedStateValue := variables.RelationStateFriend - relationStateMap[targetID]
+						lexicographicMemberString := fmt.Sprintf("%d_%s_%d", invertedStateValue, strings.ToLower(userLitePayload.Username), userLitePayload.ID)
 
-					// Appel pur au repository/redis (Zéro appel à go-redis / redisgo.Z)
-					_ = redis.ZAdd(ctx, zsetKey, 0, member)
+						_ = redis.ZAdd(ctx, zsetTargetKey, 0, lexicographicMemberString)
+					}
 				}
 			}
 
-			// TTL Glissant : C'est un sous-cache volatile via abstraction
-			_ = redis.Expire(ctx, zsetKey, 5*time.Minute)
+			// TTL Glissant de 5 minutes
+			_ = redis.Expire(ctx, zsetTargetKey, 5*time.Minute)
 
 		} else {
-			// Marqueur de vide pour éviter le martèlement BDD (Anti-Cache-Hole)
-			_ = redis.ZAdd(ctx, zsetKey, 0, "-1")
-			_ = redis.Expire(ctx, zsetKey, 5*time.Minute)
+			// Injection du Marqueur de vide pour éviter le Cache-Hole
+			_ = redis.ZAdd(ctx, zsetTargetKey, 0, variables.SpeedCacheEmptyMarker)
+			_ = redis.Expire(ctx, zsetTargetKey, 5*time.Minute)
 		}
 	}
 
-	// 3. LECTURE PAGINÉE (O(log(N))) via abstraction
-	members, err := redis.ZRange(ctx, zsetKey, offset, offset+limit-1)
-	if err != nil {
-		return nil, err
+	// ── ÉTAPE 3 : LECTURE PAGINÉE (O(log(N))) ───────────────────────────────
+	memberStringsList, errZRange := redis.ZRange(ctx, zsetTargetKey, offset, offset+limit-1)
+	if errZRange != nil {
+		logger.Log.Error().Err(errZRange).Msg("Erreur L1 lors de la lecture paginée du ZSET AddableUsers")
+		return nil, nubo_error.NewInternal()
 	}
 
-	var finalIDs []int64
-	for _, m := range members {
-		if m == "-1" {
-			continue // Marqueur de vide
+	var parsedFinalIDs []int64
+	for _, memberString := range memberStringsList {
+		if memberString == variables.SpeedCacheEmptyMarker {
+			continue
 		}
-		parts := strings.Split(m, "_")
-		if len(parts) == 3 {
-			if id, errParse := strconv.ParseInt(parts[2], 10, 64); errParse == nil {
-				finalIDs = append(finalIDs, id)
+
+		memberParts := strings.Split(memberString, "_")
+		if len(memberParts) == 3 {
+			if parsedID, errParse := strconv.ParseInt(memberParts[2], 10, 64); errParse == nil {
+				parsedFinalIDs = append(parsedFinalIDs, parsedID)
 			}
 		}
 	}
 
-	if len(finalIDs) == 0 {
+	if len(parsedFinalIDs) == 0 {
 		return []lite_models.UserLiteRequest{}, nil
 	}
 
-	// 4. HYDRATATION FINALE (MGET O(1) sur le Speed Cache)
-	getRes, err := redis.UsersLite.GetMany(ctx, finalIDs)
-	if err != nil {
-		return nil, err
+	// ── ÉTAPE 4 : HYDRATATION FINALE (MGET O(1)) ────────────────────────────
+	finalGetResult, errFinalMGet := redis.UsersLite.GetMany(ctx, parsedFinalIDs)
+	if errFinalMGet != nil {
+		logger.Log.Error().Err(errFinalMGet).Msg("Erreur L1 lors de l'hydratation finale des AddableUsers")
+		return nil, nubo_error.NewInternal()
 	}
 
-	var result []lite_models.UserLiteRequest
-	for _, id := range finalIDs {
-		if data, ok := getRes.Found[id]; ok {
-			var u lite_models.UserLiteRequest
-			if err := msgpack.Unmarshal(data, &u); err == nil {
-				result = append(result, u)
+	var hydratedUsersList []lite_models.UserLiteRequest
+	for _, finalID := range parsedFinalIDs {
+		if binaryData, isFound := finalGetResult.Found[finalID]; isFound {
+			var userLitePayload lite_models.UserLiteRequest
+			if errUnmarshal := msgpack.Unmarshal(binaryData, &userLitePayload); errUnmarshal == nil {
+				hydratedUsersList = append(hydratedUsersList, userLitePayload)
 			}
 		}
 	}
 
-	return result, nil
+	return hydratedUsersList, nil
 }

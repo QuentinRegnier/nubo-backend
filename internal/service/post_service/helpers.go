@@ -4,67 +4,81 @@ import (
 	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
 
-// fetchPostsCascade gère la récupération L1 -> L2 -> L3 pour un batch d'IDs.
-func fetchPostsCascade(ctx context.Context, ids []int64) map[int64]post_models.PostPayload {
-	postsMap := make(map[int64]post_models.PostPayload)
-	var missingFromL1 []int64
+// ############################################################################
+// # UTILITAIRES : HYDRATATION ET AUTO-GUÉRISON (DOMAINE POST)
+// ############################################################################
 
-	// Étape 1 : Object Cache LFU (Redis)
-	for _, id := range ids {
-		if p, err := object_cache_service.GetPostFromObjectCache(ctx, id); err == nil {
-			postsMap[id] = p
+// fetchPostsCascade gère la récupération L1 -> L2 -> L3 pour un batch d'IDs,
+// tout en assurant l'auto-guérison des couches supérieures si un cache miss survient.
+func fetchPostsCascade(ctx context.Context, requestedPostIDs []int64) map[int64]post_models.PostPayload {
+
+	resolvedPostsMap := make(map[int64]post_models.PostPayload)
+	var postIDsMissingFromL1 []int64
+
+	// ── ÉTAPE 1 : TENTATIVE L1 (RAM OBJECT CACHE) ───────────────────────────
+	for _, postID := range requestedPostIDs {
+		if postPayload, errCache := object_cache_service.GetPostFromObjectCache(ctx, postID); errCache == nil {
+			resolvedPostsMap[postID] = postPayload
 		} else {
-			missingFromL1 = append(missingFromL1, id)
+			postIDsMissingFromL1 = append(postIDsMissingFromL1, postID)
 		}
 	}
 
-	if len(missingFromL1) == 0 {
-		return postsMap // Tous les posts étaient en RAM, retour instantané
+	if len(postIDsMissingFromL1) == 0 {
+		return resolvedPostsMap // Hit L1 à 100%, retour instantané
 	}
 
-	// Étape 2 : Cold Storage (MongoDB)
-	var missingFromL2 []int64
-	mongoPosts, errMongo := mongo.MongoLoadPosts(missingFromL1)
-	if errMongo == nil {
-		for _, p := range mongoPosts {
-			postsMap[p.ID] = p
-			_ = object_cache_service.SetPostInObjectCache(ctx, p) // Réhydratation L1
+	// ── ÉTAPE 2 : TENTATIVE L2 (MONGODB WARM STORAGE) ───────────────────────
+	var postIDsMissingFromL2 []int64
+
+	postsFromMongo, errMongo := mongo.MongoLoadPosts(postIDsMissingFromL1)
+	if errMongo == nil && len(postsFromMongo) > 0 {
+		for _, postPayload := range postsFromMongo {
+			resolvedPostsMap[postPayload.ID] = postPayload
+
+			// AUTO-GUÉRISON L1 (RAM)
+			_ = object_cache_service.SetPostInObjectCache(ctx, postPayload)
 		}
 	}
 
-	// Identification de ce qu'il reste à trouver
-	for _, id := range missingFromL1 {
-		if _, exists := postsMap[id]; !exists {
-			missingFromL2 = append(missingFromL2, id)
+	// Identification du reliquat après le passage L2
+	for _, postID := range postIDsMissingFromL1 {
+		if _, isResolved := resolvedPostsMap[postID]; !isResolved {
+			postIDsMissingFromL2 = append(postIDsMissingFromL2, postID)
 		}
 	}
 
-	if len(missingFromL2) == 0 {
-		return postsMap
+	if len(postIDsMissingFromL2) == 0 {
+		return resolvedPostsMap
 	}
 
-	// Étape 3 : Source of Truth (PostgreSQL) via ta fonction paramétrée
-	pgPosts, errPg := postgres.FuncLoadPosts(missingFromL2, len(missingFromL2), 0)
-	if errPg == nil {
-		for _, p := range pgPosts {
-			postsMap[p.ID] = p
+	// ── ÉTAPE 3 : SOURCE DE VÉRITÉ L3 (POSTGRESQL COLD STORAGE) ─────────────
 
-			// A. Réhydratation du cache haute performance L1 (Redis JSON) - Synchrone
-			_ = object_cache_service.SetPostInObjectCache(ctx, p)
-
-			// B. Réhydratation du stockage à froid L2 (MongoDB) - Asynchrone
-			go func(post post_models.PostPayload) {
-				bgCtx := context.Background()
-				_ = redis.EnqueueDB(bgCtx, post.ID, post.UserID, redis.EntityPost, redis.ActionUpdate, post, redis.TargetMongo)
-			}(p)
-		}
+	postsFromPostgres, errPg := postgres.FuncLoadPosts(postIDsMissingFromL2, len(postIDsMissingFromL2), 0)
+	if errPg != nil {
+		logger.Log.Error().Err(errPg).Msg("Erreur critique lors du Fetch L3 des posts manquants")
+		return resolvedPostsMap // Retourne la map partielle pour limiter les dégâts
 	}
 
-	return postsMap
+	for _, postPayload := range postsFromPostgres {
+		resolvedPostsMap[postPayload.ID] = postPayload
+
+		// AUTO-GUÉRISON L1 (Synchrone en RAM)
+		_ = object_cache_service.SetPostInObjectCache(ctx, postPayload)
+
+		// AUTO-GUÉRISON L2 (Asynchrone vers Mongo)
+		go func(p post_models.PostPayload) {
+			bgCtx := context.Background()
+			_ = redis.EnqueueDB(bgCtx, p.ID, p.UserID, redis.EntityPost, redis.ActionUpdate, p, redis.TargetMongo)
+		}(postPayload)
+	}
+
+	return resolvedPostsMap
 }

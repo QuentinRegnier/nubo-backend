@@ -6,87 +6,107 @@ import (
 	"strings"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/search_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// AutocompleteTags orchestre la recherche ultra-rapide de hashtags et les suggestions sémantiques.
+// ############################################################################
+// # SERVICE : AUTOCOMPLÉTION DES HASHTAGS
+// ############################################################################
+
+// AutocompleteTags orchestre la recherche ultra-rapide de hashtags (O(log N))
+// et l'injection de suggestions sémantiques contextuelles.
 func AutocompleteTags(ctx context.Context, input search_models.AutocompleteTagInput) (search_models.AutocompleteTagOutput, error) {
-	limit := input.Limit
-	if limit == 0 {
-		limit = 15 // Limite intelligente par défaut
+	searchLimit := input.Limit
+	if searchLimit == 0 {
+		searchLimit = variables.DefaultAutocompleteLimit
 	}
 
-	query := strings.ToLower(strings.TrimSpace(input.Query))
-	var finalTags []string
-	seen := make(map[string]bool)
+	sanitizedQuery := strings.ToLower(strings.TrimSpace(input.Query))
+	var finalTagResults []string
+	alreadySeenTagsMap := make(map[string]bool)
 
-	// 1. RECHERCHE LEXICOGRAPHIQUE (Autocomplétion classique en O(log N))
-	lexTags, err := cache_service.SearchTagsByPrefix(ctx, query, limit)
-	if err != nil {
-		return search_models.AutocompleteTagOutput{}, err
+	// ── ÉTAPE 1 : RECHERCHE LEXICOGRAPHIQUE L1 (O(log N)) ───────────────────
+
+	lexicographicTags, errRedis := cache_service.SearchTagsByPrefix(ctx, sanitizedQuery, searchLimit)
+	if errRedis != nil {
+		logger.Log.Error().Err(errRedis).Str("query", sanitizedQuery).Msg("Erreur L1 lors de la recherche lexicographique des tags")
+		return search_models.AutocompleteTagOutput{}, nubo_error.NewInternal()
 	}
 
 	// On vérifie si la requête de l'utilisateur correspond exactement à un tag existant
-	isExactMatch := false
-	for _, t := range lexTags {
-		if t == query {
-			isExactMatch = true
+	isExactTagMatch := false
+	for _, tag := range lexicographicTags {
+		if tag == sanitizedQuery {
+			isExactTagMatch = true
 			break
 		}
 	}
 
-	// 2. MAGIE SÉMANTIQUE : Si match exact, on injecte le nuage de tags (Le Graphe de Markov)
-	if isExactMatch {
-		// On force le tag exact en première position absolue
-		finalTags = append(finalTags, query)
-		seen[query] = true
+	// ── ÉTAPE 2 : MAGIE SÉMANTIQUE (GRAPHE DE MARKOV) ───────────────────────
 
-		// Interrogation du Cache Sémantique (O(1) en RAM)
-		relatedMap := cache_service.GetRelatedTagsLazy(ctx, query)
-		if len(relatedMap) > 0 {
-			// Création d'une structure temporaire pour trier par poids (pertinence algorithmique)
-			type tagWeight struct {
+	if isExactTagMatch {
+		// On force le tag exact en première position absolue pour rassurer l'utilisateur
+		finalTagResults = append(finalTagResults, sanitizedQuery)
+		alreadySeenTagsMap[sanitizedQuery] = true
+
+		// Interrogation du Cache Sémantique en RAM (O(1))
+		semanticallyRelatedTagsMap := cache_service.GetRelatedTagsLazy(ctx, sanitizedQuery)
+		if len(semanticallyRelatedTagsMap) > 0 {
+
+			// Structure temporaire pour trier par pertinence algorithmique
+			type tagWeightDTO struct {
 				Tag    string
 				Weight float64
 			}
-			var related []tagWeight
-			for t, w := range relatedMap {
-				related = append(related, tagWeight{Tag: t, Weight: w})
+
+			var relatedTagsList []tagWeightDTO
+			for tag, weight := range semanticallyRelatedTagsMap {
+				relatedTagsList = append(relatedTagsList, tagWeightDTO{Tag: tag, Weight: weight})
 			}
 
 			// Tri décroissant sur la force du lien sémantique
-			sort.Slice(related, func(i, j int) bool {
-				return related[i].Weight > related[j].Weight
+			sort.Slice(relatedTagsList, func(i, j int) bool {
+				return relatedTagsList[i].Weight > relatedTagsList[j].Weight
 			})
 
-			// Injection des suggestions dans les résultats
-			for _, rw := range related {
-				if int64(len(finalTags)) >= limit {
+			// Injection des suggestions dans les résultats finaux
+			for _, relatedItem := range relatedTagsList {
+				if int64(len(finalTagResults)) >= searchLimit {
 					break
 				}
-				if !seen[rw.Tag] {
-					finalTags = append(finalTags, rw.Tag)
-					seen[rw.Tag] = true
+				if !alreadySeenTagsMap[relatedItem.Tag] {
+					finalTagResults = append(finalTagResults, relatedItem.Tag)
+					alreadySeenTagsMap[relatedItem.Tag] = true
 				}
 			}
 		}
 	}
 
-	// 3. REMPLISSAGE (Fallback) : On complète avec la suite alphabétique si on n'a pas atteint la limite
-	for _, t := range lexTags {
-		if int64(len(finalTags)) >= limit {
+	// ── ÉTAPE 3 : REMPLISSAGE FALLBACK (ALPHABÉTIQUE) ───────────────────────
+
+	// On complète avec la suite alphabétique issue de la recherche initiale
+	// si la limite maximale n'a pas été atteinte.
+	for _, tag := range lexicographicTags {
+		if int64(len(finalTagResults)) >= searchLimit {
 			break
 		}
-		if !seen[t] {
-			finalTags = append(finalTags, t)
-			seen[t] = true
+		if !alreadySeenTagsMap[tag] {
+			finalTagResults = append(finalTagResults, tag)
+			alreadySeenTagsMap[tag] = true
 		}
 	}
 
-	// 4. Protection JSON (Garantir un [] vide plutôt qu'un null si le tableau est vide)
-	if finalTags == nil {
-		finalTags = make([]string, 0)
+	// ── ÉTAPE 4 : ASSEMBLAGE DU JSON FINAL ──────────────────────────────────
+
+	// Protection JSON stricte : Garantir un array vide [] plutôt qu'un `null`
+	if finalTagResults == nil {
+		finalTagResults = make([]string, 0)
 	}
 
-	return search_models.AutocompleteTagOutput{Tags: finalTags}, nil
+	return search_models.AutocompleteTagOutput{
+		Tags: finalTagResults,
+	}, nil
 }

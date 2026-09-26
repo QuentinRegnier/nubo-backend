@@ -21,57 +21,61 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
+// ############################################################################
+// # SERVICE : CRÉATION D'UTILISATEUR (SIGN-UP)
+// ############################################################################
+
 // CreateUser orchestre l'inscription : règles métier, génération des modèles BDD,
 // écriture asynchrone (Write-Behind) et upload de l'avatar.
 func CreateUser(ctx context.Context, input auth_models.SignUpInput, ipAddress string) (auth_models.SignUpResponse, error) {
 
-	// 1. RÈGLES MÉTIER ET VÉRIFICATIONS D'UNICITÉ (BDD)
-	// ---------------------------------------------------------
+	// ── ÉTAPE 1 : RÈGLES MÉTIER ET VÉRIFICATIONS D'UNICITÉ ─────────────────
+
 	if service.IsUnique(ctx, redis.EntityUser, "username", input.Username) == 0 {
-		return auth_models.SignUpResponse{}, nubo_error.NewConflict("USERNAME_TAKEN", "Ce nom d'utilisateur est déjà pris.", nil)
+		return auth_models.SignUpResponse{}, nubo_error.NewConflict(nubo_error.CodeConflict, "Ce nom d'utilisateur est déjà pris.", nil)
 	}
 	if service.IsUnique(ctx, redis.EntityUser, "email", input.Email) == 0 {
-		return auth_models.SignUpResponse{}, nubo_error.NewConflict("EMAIL_TAKEN", "Cet email est déjà utilisé.", nil)
+		return auth_models.SignUpResponse{}, nubo_error.NewConflict(nubo_error.CodeConflict, "Cet email est déjà utilisé.", nil)
 	}
 	if service.IsUnique(ctx, redis.EntityUser, "phone", input.Phone) == 0 {
-		return auth_models.SignUpResponse{}, nubo_error.NewConflict("PHONE_TAKEN", "Ce numéro de téléphone est déjà utilisé.", nil)
+		return auth_models.SignUpResponse{}, nubo_error.NewConflict(nubo_error.CodeConflict, "Ce numéro de téléphone est déjà utilisé.", nil)
 	}
 
-	parsedBirthdate, err := time.Parse("02012006", input.Birthdate)
-	if err != nil {
-		return auth_models.SignUpResponse{}, nubo_error.NewBadRequest("INVALID_DATE", "Le format de la date de naissance est invalide.", err)
+	parsedBirthdate, errParse := time.Parse("02012006", input.Birthdate)
+	if errParse != nil {
+		return auth_models.SignUpResponse{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Le format de la date de naissance est invalide.", errParse)
 	}
 
-	age := time.Since(parsedBirthdate).Hours() / 24 / 365
-	if age < 13 {
-		return auth_models.SignUpResponse{}, nubo_error.NewBadRequest("AGE_UNDER_13", "Vous devez avoir au moins 13 ans.", nil)
+	userAgeInYears := time.Since(parsedBirthdate).Hours() / 24 / 365
+	if userAgeInYears < 13 {
+		return auth_models.SignUpResponse{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Vous devez avoir au moins 13 ans pour vous inscrire.", nil)
 	}
-	if age > 120 {
-		return auth_models.SignUpResponse{}, nubo_error.NewBadRequest("AGE_OVER_120", "Date de naissance invalide.", nil)
+	if userAgeInYears > 120 {
+		return auth_models.SignUpResponse{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "La date de naissance fournie est incohérente.", nil)
 	}
 
 	if input.Gender < 0 || input.Gender > 2 {
-		return auth_models.SignUpResponse{}, nubo_error.NewBadRequest("INVALID_GENDER", "Genre invalide.", nil)
+		return auth_models.SignUpResponse{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Le genre sélectionné n'est pas reconnu.", nil)
 	}
 
-	// 2. GÉNÉRATION DES DONNÉES (La "Vérité" absolue)
-	// ---------------------------------------------------------
-	now := time.Now().UTC()
-	userID := pkg.GenerateID()
-	sessionID := pkg.GenerateID()
+	// ── ÉTAPE 2 : GÉNÉRATION DES MODÈLES DE DONNÉES (La source de vérité) ──
 
-	logger.Log.Info().Int64("user_id", userID).Msg("Création d'un nouvel utilisateur")
+	currentTime := time.Now().UTC()
+	newUserID := pkg.GenerateID()
+	newSessionID := pkg.GenerateID()
 
-	// === ACTIVATION DU MÉDIA (Out-of-Band) ===
+	logger.Log.Info().Int64("user_id", newUserID).Msg("Initialisation d'un nouvel utilisateur...")
+
+	// ACTIVATION DU MÉDIA (Processus Out-of-Band)
 	if input.ProfilePictureID > 0 {
-		if errAct := media_service.ActivateMediaBatch(ctx, []int64{input.ProfilePictureID}, userID); errAct != nil {
-			return auth_models.SignUpResponse{}, nubo_error.NewBadRequest("AVATAR_ACTIVATION_FAILED", "Impossible de valider la photo de profil.", errAct)
+		if errMedia := media_service.ActivateMediaBatch(ctx, []int64{input.ProfilePictureID}, newUserID); errMedia != nil {
+			return auth_models.SignUpResponse{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Impossible de valider la photo de profil.", errMedia)
 		}
 	}
 
-	// A. Hydratation du Payload Utilisateur
-	req := auth_models.UserPayload{
-		ID:               userID,
+	// A. Hydratation du Payload Utilisateur Principal
+	userPayload := auth_models.UserPayload{
+		ID:               newUserID,
 		Username:         input.Username,
 		Email:            input.Email,
 		EmailVerified:    false,
@@ -91,117 +95,113 @@ func CreateUser(ctx context.Context, input auth_models.SignUpInput, ipAddress st
 		Badges:           []string{},
 		Desactivated:     false,
 		Banned:           false,
-		CreatedAt:        domain.TimeToMillis(now),
-		UpdatedAt:        domain.TimeToMillis(now),
+		CreatedAt:        domain.TimeToMillis(currentTime),
+		UpdatedAt:        domain.TimeToMillis(currentTime),
 	}
 
-	// B. Hydratation du Payload Session
-	sessions := auth_models.SessionsPayload{
-		ID:                     sessionID,
-		UserID:                 userID,
+	// B. Hydratation du Payload de la Session Appareil
+	sessionPayload := auth_models.SessionsPayload{
+		ID:                     newSessionID,
+		UserID:                 newUserID,
 		FirebaseInstallationID: input.FirebaseInstallationID,
 		DeviceInfo:             input.DeviceInfo,
 		IPHistory:              []string{ipAddress},
-		CreatedAt:              domain.TimeToMillis(now),
-		ExpiresAt:              domain.TimeToMillis(now.Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)),
-		ToleranceTime:          domain.TimeToMillis(now.Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second)),
+		CreatedAt:              domain.TimeToMillis(currentTime),
+		ExpiresAt:              domain.TimeToMillis(currentTime.Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second)),
+		ToleranceTime:          domain.TimeToMillis(currentTime.Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second)),
 	}
 
-	// Génération des Tokens
-	sessions.MasterToken, err = pkg.GenerateToken(req.ID, sessions.FirebaseInstallationID, variables.MasterTokenExpirationSeconds)
-	if err != nil {
-		return auth_models.SignUpResponse{}, nubo_error.NewInternal(err)
-	}
-	sessions.CurrentSecret = security.DeriveNextSecret(sessions.FirebaseInstallationID, sessions.MasterToken, sessions.MasterToken, sessions.FirebaseInstallationID)
-	sessions.LastSecret = sessions.FirebaseInstallationID
-
-	newJWT, err := pkg.GenerateToken(req.ID, sessions.FirebaseInstallationID, variables.JWTExpirationSeconds)
-	if err != nil {
-		return auth_models.SignUpResponse{}, nubo_error.NewInternal(err)
+	// Génération des Tokens Sécurisés
+	var errToken error
+	sessionPayload.MasterToken, errToken = pkg.GenerateToken(userPayload.ID, sessionPayload.FirebaseInstallationID, variables.MasterTokenExpirationSeconds)
+	if errToken != nil {
+		return auth_models.SignUpResponse{}, nubo_error.NewInternal()
 	}
 
-	// C. Hydratation du Payload UserSettings
-	// L'application envoie toujours l'objet Privacy et Notifications en entier (identités complètes)
+	sessionPayload.CurrentSecret = security.DeriveNextSecret(sessionPayload.FirebaseInstallationID, sessionPayload.MasterToken, sessionPayload.MasterToken, sessionPayload.FirebaseInstallationID)
+	sessionPayload.LastSecret = sessionPayload.FirebaseInstallationID
+
+	newJWT, errJwt := pkg.GenerateToken(userPayload.ID, sessionPayload.FirebaseInstallationID, variables.JWTExpirationSeconds)
+	if errJwt != nil {
+		return auth_models.SignUpResponse{}, nubo_error.NewInternal()
+	}
+
+	// C. Hydratation des Paramètres Utilisateurs (Settings)
 	settingsID := pkg.GenerateID()
-	settings := user_settings_models.UserSettingsPayload{
+	userSettingsPayload := user_settings_models.UserSettingsPayload{
 		ID:                 settingsID,
-		UserID:             userID,
+		UserID:             newUserID,
 		Privacy:            input.Privacy,
 		Notifications:      input.Notifications,
 		DisplayAndContent:  input.DisplayAndContent,
-		TelemetryVector:    nil, // Profil vierge
-		TelemetryTags:      nil, // Profil vierge
+		TelemetryVector:    nil, // Profil vierge à l'inscription
+		TelemetryTags:      nil,
 		TelemetryTimestamp: 0,
-		CreatedAt:          domain.TimeToMillis(now),
-		UpdatedAt:          domain.TimeToMillis(now),
+		CreatedAt:          domain.TimeToMillis(currentTime),
+		UpdatedAt:          domain.TimeToMillis(currentTime),
 	}
 
-	// 3. MISE EN CACHE IMMÉDIATE (Lecture instantanée L1 - USER & SPEED Caches)
-	// --------------------------------------------------------
+	// ── ÉTAPE 3 : MISE EN CACHE IMMÉDIATE (L1 RAM - Évite les latences) ────
 
-	// [USER CACHE]
-	if err := cache_service.MarkUserTimelineEmpty(ctx, req.ID); err != nil {
-		logger.Log.Warn().Err(err).Int64("user_id", req.ID).Msg("Echec initialisation Timeline ZSET")
+	if errCache := cache_service.MarkUserTimelineEmpty(ctx, userPayload.ID); errCache != nil {
+		logger.Log.Warn().Err(errCache).Int64("user_id", userPayload.ID).Msg("Échec initialisation Timeline ZSET")
 	}
 
-	// [SESSION CACHE]
-	if err := cache_service.SetSessionInCache(ctx, sessions); err != nil {
-		logger.Log.Warn().Err(err).Int64("session_id", sessions.ID).Msg("Echec USER Cache Redis Session")
+	if errCache := cache_service.SetSessionInCache(ctx, sessionPayload); errCache != nil {
+		logger.Log.Warn().Err(errCache).Int64("session_id", sessionPayload.ID).Msg("Échec mise en cache L1 de la Session")
 	}
 
-	// [SPEED CACHE]
-	if err := cache_service.AddUserToSpeedCache(ctx, req, settings); err != nil {
-		logger.Log.Warn().Err(err).Int64("user_id", req.ID).Msg("Echec SPEED Cache Redis User")
+	if errCache := cache_service.AddUserToSpeedCache(ctx, userPayload, userSettingsPayload); errCache != nil {
+		logger.Log.Warn().Err(errCache).Int64("user_id", userPayload.ID).Msg("Échec mise en Speed Cache L1 de l'Utilisateur")
 	}
 
-	// [USER SETTINGS CACHE]
-	if err := object_cache_service.SetUserSettings(ctx, settings); err != nil {
-		logger.Log.Warn().Err(err).Int64("user_id", req.ID).Msg("Echec USER Cache Redis UserSettings")
+	if errCache := object_cache_service.SetUserSettings(ctx, userSettingsPayload); errCache != nil {
+		logger.Log.Warn().Err(errCache).Int64("user_id", userPayload.ID).Msg("Échec mise en cache L1 des UserSettings")
 	}
 
-	// 4. PERSISTANCE ASYNCHRONE (Le "Write-Behind" vers L2/L3)
-	// ---------------------------------------------
+	// ── ÉTAPE 4 : PERSISTANCE ASYNCHRONE (Write-Behind vers L2/L3) ─────────
 
-	if err := redis.EnqueueDB(ctx, userID, 0, redis.EntityUser, redis.ActionCreate, req, redis.TargetAll); err != nil {
-		logger.Log.Error().Err(err).Int64("user_id", userID).Msg("CRITICAL: Impossible d'enqueue le User")
+	if errQueue := redis.EnqueueDB(ctx, newUserID, 0, redis.EntityUser, redis.ActionCreate, userPayload, redis.TargetAll); errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("user_id", newUserID).Msg("CRITICAL: Impossible d'enqueue le User vers la BDD")
 	}
 
-	if err := redis.EnqueueDB(ctx, sessionID, userID, redis.EntitySession, redis.ActionCreate, sessions, redis.TargetAll); err != nil {
-		logger.Log.Error().Err(err).Int64("session_id", sessionID).Msg("CRITICAL: Impossible d'enqueue la Session")
+	if errQueue := redis.EnqueueDB(ctx, newSessionID, newUserID, redis.EntitySession, redis.ActionCreate, sessionPayload, redis.TargetAll); errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("session_id", newSessionID).Msg("CRITICAL: Impossible d'enqueue la Session vers la BDD")
 	}
 
-	if err := redis.EnqueueDB(ctx, settingsID, userID, redis.EntityUserSettings, redis.ActionCreate, settings, redis.TargetAll); err != nil {
-		logger.Log.Error().Err(err).Int64("settings_id", settingsID).Msg("CRITICAL: Impossible d'enqueue les UserSettings")
+	if errQueue := redis.EnqueueDB(ctx, settingsID, newUserID, redis.EntityUserSettings, redis.ActionCreate, userSettingsPayload, redis.TargetAll); errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("settings_id", settingsID).Msg("CRITICAL: Impossible d'enqueue les UserSettings vers la BDD")
 	}
 
-	// 5. CUCKOO FILTERS (Prévention O(1) Mémoire)
-	// --------------------------------------
+	// ── ÉTAPE 5 : CUCKOO FILTERS (Prévention O(1) de l'unicité en RAM) ─────
+
 	if cuckoo.GlobalCuckoo != nil {
-		cuckoo.GlobalCuckoo.Insert([]byte("username:" + req.Username))
-		cuckoo.GlobalCuckoo.Insert([]byte("email:" + req.Email))
-		cuckoo.GlobalCuckoo.Insert([]byte("phone:" + req.Phone))
+		cuckoo.GlobalCuckoo.Insert([]byte("username:" + userPayload.Username))
+		cuckoo.GlobalCuckoo.Insert([]byte("email:" + userPayload.Email))
+		cuckoo.GlobalCuckoo.Insert([]byte("phone:" + userPayload.Phone))
 	}
+
 	go func() {
-		cuckoo.BroadcastCuckooUpdate(cuckoo.ActionAdd, "username", req.Username)
-		cuckoo.BroadcastCuckooUpdate(cuckoo.ActionAdd, "email", req.Email)
-		cuckoo.BroadcastCuckooUpdate(cuckoo.ActionAdd, "phone", req.Phone)
+		cuckoo.BroadcastCuckooUpdate(cuckoo.ActionAdd, "username", userPayload.Username)
+		cuckoo.BroadcastCuckooUpdate(cuckoo.ActionAdd, "email", userPayload.Email)
+		cuckoo.BroadcastCuckooUpdate(cuckoo.ActionAdd, "phone", userPayload.Phone)
 	}()
 
-	// 6. RÉPONSE DÉFINITIVE PRÊTE À ÊTRE SÉRIALISÉE
-	// --------------------------------------
+	// ── ÉTAPE 6 : RÉPONSE DÉFINITIVE PRÊTE À ÊTRE SÉRIALISÉE ───────────────
+
 	var avatarView media_models.MediaView
-	if req.ProfilePictureID > 0 {
-		if view, errMedia := media_service.GenerateMediaViewCascade(ctx, req.ProfilePictureID, userID, 0, userID); errMedia == nil {
+	if userPayload.ProfilePictureID > 0 {
+		if view, errMedia := media_service.GenerateMediaViewCascade(ctx, userPayload.ProfilePictureID, newUserID, 0, newUserID); errMedia == nil {
 			avatarView = view
 		}
 	}
 
 	return auth_models.SignUpResponse{
-		UserID:      userID,
-		MasterToken: sessions.MasterToken,
+		UserID:      newUserID,
+		MasterToken: sessionPayload.MasterToken,
 		JWT:         newJWT,
-		ExpiresAt:   sessions.ExpiresAt,
-		Message:     "User created successfully",
-		Avatar:      avatarView, // Injection saine par valeur
+		ExpiresAt:   sessionPayload.ExpiresAt,
+		Message:     "Inscription validée avec succès.",
+		Avatar:      avatarView,
 	}, nil
 }

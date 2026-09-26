@@ -22,230 +22,230 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
+// ############################################################################
+// # SERVICE : REJOINDRE UN GROUPE / UNE COMMUNAUTÉ
+// ############################################################################
+
+// JoinGroup gère l'intégration d'un utilisateur à une conversation existante.
+// Elle supporte 3 accès : Interne (Communauté), Externe (Lien URL), ou Invitation (MP).
 func JoinGroup(ctx context.Context, callerID int64, input conversation_models.JoinGroupInput) (conversation_models.JoinGroupOutput, error) {
-	// 1. AUTO-GUÉRISON (Cascade L1 -> L2 -> L3) POUR VÉRIFIER LA CONVERSATION
-	conv, err := object_cache_service.GetConversationFromObjectCache(ctx, input.ConversationID)
-	if err != nil || conv.ID == 0 {
-		conv, err = mongo.MongoGetConversation(input.ConversationID)
-		if err != nil || conv.ID == 0 {
-			conv, err = postgres.FuncGetConversation(ctx, input.ConversationID)
-			if err != nil || conv.ID == 0 {
-				return conversation_models.JoinGroupOutput{}, nubo_error.NewNotFound("CONV_NOT_FOUND", "La conversation n'existe pas ou a été supprimée.", err)
+
+	// ── ÉTAPE 1 : AUTO-GUÉRISON ET CHARGEMENT DU GROUPE (L1 -> L2 -> L3) ────
+	conversationPayload, errCache := object_cache_service.GetConversationFromObjectCache(ctx, input.ConversationID)
+
+	if errCache != nil || conversationPayload.ID == 0 {
+		var errMongo error
+		conversationPayload, errMongo = mongo.MongoGetConversation(input.ConversationID)
+
+		if errMongo != nil || conversationPayload.ID == 0 {
+			var errPostgres error
+			conversationPayload, errPostgres = postgres.FuncGetConversation(ctx, input.ConversationID)
+			if errPostgres != nil || conversationPayload.ID == 0 {
+				return conversation_models.JoinGroupOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "La conversation n'existe pas ou a été supprimée.", nil)
 			}
 
-			// ⬆️ PROMOTION L3 -> L2 (Mongo)
+			// PROMOTION L3 -> L2 (Mongo Asynchrone)
 			go func(c conversation_models.ConversationPayload) {
 				_ = redis.EnqueueDB(context.Background(), c.ID, c.ID, redis.EntityConversation, redis.ActionUpdate, c, redis.TargetMongo)
-			}(conv)
+			}(conversationPayload)
 		}
 
-		// ⬆️ PROMOTION L3/L2 -> L1 (Redis Object Cache)
-		_ = object_cache_service.SetConversationInObjectCache(ctx, conv)
+		// PROMOTION L3/L2 -> L1 (Redis Object Cache Immédiat)
+		_ = object_cache_service.SetConversationInObjectCache(ctx, conversationPayload)
 	}
 
-	// 2. RÈGLE MÉTIER : On ne rejoint pas un MP.
-	if conv.Type == 0 {
-		return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("INVALID_CONV_TYPE", "Impossible de rejoindre un message privé.", nil)
+	// ── ÉTAPE 2 : VÉRIFICATIONS MÉTIER DE BASE ───────────────────────────────
+	if conversationPayload.Type == variables.ConversationTypeDirect {
+		return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Impossible de rejoindre un message privé existant.", nil)
 	}
 
-	// ========================================================================
-	// 3. LA BARRIÈRE DE SÉCURITÉ (ROUTAGE INTERNAL / EXTERNAL / CLASSIQUE)
-	// ========================================================================
+	// ── ÉTAPE 3 : BARRIÈRE DE SÉCURITÉ (ROUTAGE D'ACCÈS) ─────────────────────
 	if input.Internal {
-		// Accès interne (sans invitation)
-		if conv.Type != 3 {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("INVALID_CONV_TYPE", "Seules les communautés peuvent être rejointes de manière interne.", nil)
+		// Accès interne libre (Communauté)
+		if conversationPayload.Type != variables.ConversationTypeCommunityPub && conversationPayload.Type != variables.ConversationTypeCommunityPriv {
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seules les communautés peuvent être rejointes de manière interne.", nil)
 		}
-		if conv.Settings.JoinApprovalRequired {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("APPROVAL_REQUIRED", "Cette communauté nécessite une approbation, vous ne pouvez pas la rejoindre directement.", nil)
+		if conversationPayload.Settings.JoinApprovalRequired {
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Cette communauté nécessite une approbation, vous ne pouvez pas la rejoindre directement.", nil)
 		}
 	} else if input.External {
-		// Accès depuis un lien externe
-		if conv.Type != 3 {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("INVALID_CONV_TYPE", "L'accès via lien externe est réservé aux communautés.", nil)
+		// Accès par lien d'invitation externe (URL Web)
+		if conversationPayload.Type != variables.ConversationTypeCommunityPub && conversationPayload.Type != variables.ConversationTypeCommunityPriv {
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "L'accès via lien externe est réservé aux communautés.", nil)
 		}
-
-		if conv.Settings.JoinWithLinkDuration != 0 && domain.NowMillis() >= conv.Settings.JoinWithLinkDuration {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("LINK_EXPIRED", "Le lien d'invitation externe a expiré.", nil)
+		if conversationPayload.Settings.JoinWithLinkDuration != 0 && domain.NowMillis() >= conversationPayload.Settings.JoinWithLinkDuration {
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Le lien d'invitation a expiré.", nil)
 		}
 	} else {
-		// Flux classique par message d'invitation intra-plateforme (InviteMsgID)
+		// Accès intra-plateforme par message d'invitation privé
 		if input.InviteMsgID == 0 {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("INVITE_REQUIRED", "Une invitation est requise pour rejoindre ce groupe privé.", nil)
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Une invitation est requise pour rejoindre ce groupe privé.", nil)
 		}
 
-		inviteMsg, errSec := security_service.LeftMessage(ctx, input.InviteMsgID, callerID)
-		if errSec != nil {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewNotFound("INVITE_NOT_FOUND", "Invitation introuvable ou vous n'en êtes pas le destinataire.", errSec)
+		inviteMessagePayload, errSecurity := security_service.LeftMessage(ctx, input.InviteMsgID, callerID)
+		if errSecurity != nil {
+			// LeftMessage renvoie déjà une AppError formatée
+			return conversation_models.JoinGroupOutput{}, errSecurity
 		}
 
-		if inviteMsg.MessageType != 6 {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewBadRequest("INVALID_INVITE", "Le message fourni n'est pas une invitation valide.", nil)
+		if inviteMessagePayload.MessageType != variables.MessageTypeInvite {
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Le message fourni n'est pas une invitation valide.", nil)
 		}
 
-		if inviteMsg.Attachments == nil {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewBadRequest("CORRUPT_INVITE", "Invitation corrompue (aucune cible).", nil)
+		if inviteMessagePayload.Attachments == nil {
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "L'invitation est corrompue (aucune cible).", nil)
 		}
 
-		targetConvRaw, exists := inviteMsg.Attachments["conversation_id"]
+		targetConvRaw, exists := inviteMessagePayload.Attachments["conversation_id"]
 		if !exists {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewBadRequest("MISSING_INVITE_TARGET", "Invitation invalide (cible manquante).", nil)
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "L'invitation est invalide (cible manquante).", nil)
 		}
 
-		var targetConvID int64
+		var targetConversationID int64
 		switch v := targetConvRaw.(type) {
 		case float64:
-			targetConvID = int64(v)
+			targetConversationID = int64(v)
 		case int64:
-			targetConvID = v
+			targetConversationID = v
 		}
 
-		if targetConvID != input.ConversationID {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("INVITE_MISMATCH", "Cette invitation ne correspond pas à ce groupe.", nil)
-		}
-	}
-
-	// ========================================================================
-	// 4. VÉRIFICATION DU STATUT DU MEMBRE
-	// ========================================================================
-	var mem member_models.MemberPayload
-	var isUpdate bool
-
-	mem, err = object_cache_service.GetMemberFromObjectCache(ctx, input.ConversationID, callerID)
-	if err != nil || mem.ID == 0 {
-		memPg, errPg := postgres.FuncGetMember(ctx, input.ConversationID, callerID)
-		if errPg == nil && memPg.ID != 0 {
-			mem = memPg
+		if targetConversationID != input.ConversationID {
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "L'invitation ne correspond pas à ce groupe.", nil)
 		}
 	}
 
-	if mem.ID != 0 {
-		if mem.Role == -2 {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden("USER_BANNED", "Vous êtes banni de ce groupe.", nil)
+	// ── ÉTAPE 4 : VÉRIFICATION DU STATUT DU MEMBRE (L1 -> L3) ───────────────
+	var memberPayload member_models.MemberPayload
+	var isAnUpdateOfExistingMember bool
+
+	memberPayload, errCacheMem := object_cache_service.GetMemberFromObjectCache(ctx, input.ConversationID, callerID)
+	if errCacheMem != nil || memberPayload.ID == 0 {
+		memberPg, errPgMem := postgres.FuncGetMember(ctx, input.ConversationID, callerID)
+		if errPgMem == nil && memberPg.ID != 0 {
+			memberPayload = memberPg
 		}
-		if mem.Role == -3 {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewConflict("ALREADY_PENDING", "Votre demande pour rejoindre cette communauté est déjà en attente d'approbation.", nil)
-		}
-		if mem.Role >= 0 {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewBadRequest("ALREADY_MEMBER", "Vous faites déjà partie de ce groupe.", nil)
-		}
-		// Role = -1 (A quitté) ou Role = -4 (Rejeté) : On autorise le retour / la nouvelle demande
-		isUpdate = true
 	}
 
-	// ========================================================================
-	// 5. VÉRIFICATION DES LOIS (Approbation requise)
-	// ========================================================================
-	assignedRole := 0
-	if conv.Settings.JoinApprovalRequired {
-		assignedRole = -3
+	if memberPayload.ID != 0 {
+		if memberPayload.Role == variables.MemberRoleBanned {
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous avez été banni de ce groupe.", nil)
+		}
+		if memberPayload.Role == -3 { // État interne temporaire (En attente d'approbation)
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewConflict(nubo_error.CodeConflict, "Votre demande d'intégration est déjà en attente d'approbation.", nil)
+		}
+		if memberPayload.Role >= variables.MemberRoleNormal {
+			return conversation_models.JoinGroupOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Vous faites déjà partie de ce groupe.", nil)
+		}
+
+		// Si l'utilisateur avait quitté (-1) ou a été refusé auparavant (-4),
+		// il peut faire une nouvelle demande. C'est une simple mise à jour (UPDATE) et non une création.
+		isAnUpdateOfExistingMember = true
 	}
 
-	// ========================================================================
-	// 6. CONSTRUCTION DE L'ENTITÉ
-	// ========================================================================
-	now := time.Now().UTC()
-	if !isUpdate {
-		mem = member_models.MemberPayload{
+	// ── ÉTAPE 5 : VÉRIFICATION DES RÈGLES DE MODÉRATION ─────────────────────
+	assignedRole := variables.MemberRoleNormal
+	if conversationPayload.Settings.JoinApprovalRequired {
+		assignedRole = variables.MemberRolePending // Statut temporaire : En attente
+	}
+
+	// ── ÉTAPE 6 : HYDRATATION DU MODÈLE DE DONNÉES ──────────────────────────
+	currentTime := time.Now().UTC()
+
+	if !isAnUpdateOfExistingMember {
+		memberPayload = member_models.MemberPayload{
 			ID:                pkg.GenerateID(),
 			ConversationID:    input.ConversationID,
 			UserID:            callerID,
-			Role:              assignedRole, // Rôle dynamique (0 ou -3)
-			Settings:          member_models.DefaultMemberSettings(conv.Type),
-			JoinedAt:          domain.TimeToMillis(now),
+			Role:              assignedRole,
+			Settings:          member_models.DefaultMemberSettings(conversationPayload.Type),
+			JoinedAt:          domain.TimeToMillis(currentTime),
 			UnreadCount:       0,
 			FrozenMessageID:   0,
 			LastReadMessageID: 0,
-			CreatedAt:         domain.TimeToMillis(now),
-			UpdatedAt:         domain.TimeToMillis(now),
+			CreatedAt:         domain.TimeToMillis(currentTime),
+			UpdatedAt:         domain.TimeToMillis(currentTime),
 		}
 	} else {
-		mem.Role = assignedRole // Rôle dynamique (0 ou -3)
-		mem.JoinedAt = domain.TimeToMillis(now)
-		mem.UpdatedAt = domain.TimeToMillis(now)
-		mem.FrozenMessageID = 0
+		memberPayload.Role = assignedRole
+		memberPayload.JoinedAt = domain.TimeToMillis(currentTime)
+		memberPayload.UpdatedAt = domain.TimeToMillis(currentTime)
+		memberPayload.FrozenMessageID = 0
 	}
 
-	// 7. CACHE L1 IMMÉDIAT
-	_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
-	_ = cache_service.AddConversationToUserInbox(ctx, callerID, conv.ID, conv.LastMessageID)
+	// ── ÉTAPE 7 : CACHE L1 INSTANTANÉ (UI SPEED CACHE) ──────────────────────
+	_ = object_cache_service.SetMemberInObjectCache(ctx, memberPayload)
+	_ = cache_service.AddConversationToUserInbox(ctx, callerID, conversationPayload.ID, conversationPayload.LastMessageID)
 
-	// === MISE À JOUR SYNCHRONE DU SPEED CACHE ===
-	memLite := lite_models.MemberLiteRequest{
-		ConversationID:    mem.ConversationID,
-		UserID:            mem.UserID,
-		Role:              mem.Role,
-		Settings:          service.ToMemberSettingsLite(mem.Settings),
-		UnreadCount:       mem.UnreadCount,
-		FrozenMessageID:   mem.FrozenMessageID,
-		LastReadMessageID: mem.LastReadMessageID,
-		JoinedAt:          mem.JoinedAt,
+	memberLiteRequest := lite_models.MemberLiteRequest{
+		ConversationID:    memberPayload.ConversationID,
+		UserID:            memberPayload.UserID,
+		Role:              memberPayload.Role,
+		Settings:          service.ToMemberSettingsLite(memberPayload.Settings),
+		UnreadCount:       memberPayload.UnreadCount,
+		FrozenMessageID:   memberPayload.FrozenMessageID,
+		LastReadMessageID: memberPayload.LastReadMessageID,
+		JoinedAt:          memberPayload.JoinedAt,
 	}
 
-	if isUpdate {
-		_ = cache_service.UpdateMemberSpeedCache(ctx, memLite)
+	if isAnUpdateOfExistingMember {
+		_ = cache_service.UpdateMemberSpeedCache(ctx, memberLiteRequest)
 	} else {
-		_ = cache_service.AddMemberToSpeedCache(ctx, memLite)
+		_ = cache_service.AddMemberToSpeedCache(ctx, memberLiteRequest)
 	}
 
-	// 8. WRITE-BEHIND
-	action := redis.ActionCreate
-	if isUpdate {
-		action = redis.ActionUpdate
+	// ── ÉTAPE 8 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
+	dbAction := redis.ActionCreate
+	if isAnUpdateOfExistingMember {
+		dbAction = redis.ActionUpdate
 	}
-	err = redis.EnqueueDB(ctx, mem.ID, input.ConversationID, redis.EntityMembers, action, mem, redis.TargetAll)
+	errQueue := redis.EnqueueDB(ctx, memberPayload.ID, input.ConversationID, redis.EntityMembers, dbAction, memberPayload, redis.TargetAll)
+	if errQueue != nil {
+		return conversation_models.JoinGroupOutput{}, nubo_error.NewInternal()
+	}
 
-	if err == nil {
-		// 9. MESSAGE SYSTÈME ET NOTIFICATION (Uniquement si l'entrée est directe)
-		if assignedRole == 0 {
-			go func() {
-				bgCtx := context.Background()
-				if callerLite, errLite := cache_service.GetUserLite(bgCtx, callerID); errLite == nil {
+	// ── ÉTAPE 9 : ÉVÉNEMENTS SYSTÈMES ET WEBSOCKETS (ENTRÉE DIRECTE ONLY) ──
+	if assignedRole == variables.MemberRoleNormal {
+		go func() {
+			backgroundContext := context.Background()
 
-					sysContent := fmt.Sprintf("%s a rejoint le groupe", callerLite.Username)
-					msgInput := message_models.CreateMessageInput{
-						MessageType: 8,
-						Content:     sysContent,
-					}
-					_, _ = message_service.CreateMessage(bgCtx, callerID, input.ConversationID, msgInput, true)
+			if callerUserLite, errLite := cache_service.GetUserLite(backgroundContext, callerID); errLite == nil {
 
-					// HYDRATATION CONDITIONNELLE DU DTO WEBSOCKET
-					memView := member_models.MemberView{
-						MemberPayload: mem,
-						Username:      callerLite.Username,
-						IsOnline:      cache_service.IsUserOnline(bgCtx, callerID), // NOUVEAU
-					}
-
-					if conv.Type == 2 || conv.Type == 3 {
-						memView.AvatarCommunityID = callerLite.ProfilePictureID // Mode Twitch
-					} else {
-						if callerLite.ProfilePictureID > 0 {
-							// Mode Classique : URL HMAC signée
-							if avatarView, errMedia := media_service.GenerateMediaViewCascade(bgCtx, callerLite.ProfilePictureID, callerID, 0, callerID); errMedia == nil {
-								memView.Avatar = avatarView
-							}
-						}
-					}
-
-					// Diffusion du MemberView au lieu du MemberPayload brut
-					_ = realtime_service.BroadcastToConversation(bgCtx, input.ConversationID, "member.joined", memView)
+				// A. Publication du message système d'intégration
+				systemContent := fmt.Sprintf("%s a rejoint le groupe", callerUserLite.Username)
+				systemMessageInput := message_models.CreateMessageInput{
+					MessageType: variables.MessageTypeSystem,
+					Content:     systemContent,
 				}
-			}()
-		}
+				_, _ = message_service.CreateMessage(backgroundContext, callerID, input.ConversationID, systemMessageInput, true)
+
+				// B. Hydratation DTO pour le WebSocket
+				memberView := member_models.MemberView{
+					MemberPayload: memberPayload,
+					Username:      callerUserLite.Username,
+					IsOnline:      cache_service.IsUserOnline(backgroundContext, callerID),
+				}
+
+				if conversationPayload.Type == variables.ConversationTypeCommunityPriv || conversationPayload.Type == variables.ConversationTypeCommunityPub {
+					memberView.AvatarCommunityID = callerUserLite.ProfilePictureID // Mode Twitch pour les commus
+				} else if callerUserLite.ProfilePictureID > 0 {
+					if mediaView, errMedia := media_service.GenerateMediaViewCascade(backgroundContext, callerUserLite.ProfilePictureID, callerID, 0, callerID); errMedia == nil {
+						memberView.Avatar = mediaView
+					}
+				}
+
+				// C. Diffusion WebSocket temps réel
+				_ = realtime_service.BroadcastToConversation(backgroundContext, input.ConversationID, "member.joined", memberView)
+			}
+		}()
 	}
 
-	output := conversation_models.JoinGroupOutput{}
+	// ── ÉTAPE 10 : MARQUAGE D'ACTIVITÉ (DIRTY FLAG) ─────────────────────────
+	latestActivityTimestampMs := cache_service.TouchInboxActivity(ctx, callerID)
 
-	// ========================================================================
-	// MARQUAGE DU TEMPS (DIRTY FLAG)
-	// ========================================================================
-	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
-	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
-	// et garantit que le client reçoit la date de la fin absolue de la transaction.
-	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
-
-	return output, err
+	return conversation_models.JoinGroupOutput{
+		InboxUpdateAt: domain.TimeToMillis(time.UnixMilli(latestActivityTimestampMs)),
+	}, nil
 }

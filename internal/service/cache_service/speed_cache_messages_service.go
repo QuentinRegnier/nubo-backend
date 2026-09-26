@@ -5,76 +5,98 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
-// GetMessageIDsFromSpeedCache résout l'index en L1, en appliquant le Plafond Temporel (frozenID)
-func GetMessageIDsFromSpeedCache(ctx context.Context, convID int64, offsetID int64, limit int64, direction string, frozenID int64) ([]int64, error) {
-	var idsStr []string
-	var err error
+// ############################################################################
+// # SERVICE : SPEED CACHE (MESSAGES ET TIMELINE)
+// ############################################################################
 
-	// 1. TENTATIVE L1 (ZSET)
-	if direction == "top" { // Chargement de l'historique (plus anciens)
-		maxScore := "+inf"
+// GetMessageIDsFromSpeedCache résout l'index en L1 (ZSET), en appliquant
+// le Plafond Temporel (frozenID) pour gérer la pagination bidirectionnelle.
+func GetMessageIDsFromSpeedCache(ctx context.Context, conversationID int64, offsetMessageID int64, paginationLimit int64, scrollDirection string, frozenMessageID int64) ([]int64, error) {
+	var idStringsList []string
+	var errRedis error
+
+	// ── ÉTAPE 1 : TENTATIVE L1 (ZSET) ───────────────────────────────────────
+
+	if scrollDirection == "top" {
+		// Chargement de l'historique (les plus anciens)
+		maxScoreThreshold := "+inf"
 
 		// RÈGLE DE GEL : Si un plafond existe, c'est notre maximum absolu
-		if frozenID > 0 {
-			maxScore = strconv.FormatInt(frozenID, 10)
+		if frozenMessageID > 0 {
+			maxScoreThreshold = strconv.FormatInt(frozenMessageID, 10)
 		}
 
-		// GESTION DU SCROLL : Si on a un offset, il remplace le plafond SEULEMENT s'il est plus petit
-		if offsetID > 0 {
-			if frozenID > 0 && offsetID > frozenID {
-				// L'utilisateur essaie de tricher en scrollant depuis un ID du futur, on le cap au gel !
-				maxScore = strconv.FormatInt(frozenID, 10)
+		// GESTION DU SCROLL : L'offset remplace le plafond SEULEMENT s'il est plus petit
+		if offsetMessageID > 0 {
+			if frozenMessageID > 0 && offsetMessageID > frozenMessageID {
+				// Anti-triche : L'utilisateur scrolle depuis un ID du futur, on le cap au gel !
+				maxScoreThreshold = strconv.FormatInt(frozenMessageID, 10)
 			} else {
-				maxScore = fmt.Sprintf("(%d", offsetID) // Exclusif
+				// Parenthèse ouverte = borne exclusive dans la syntaxe Redis
+				maxScoreThreshold = fmt.Sprintf("(%d", offsetMessageID)
 			}
 		}
 
-		idsStr, err = redis.MessagesIndex.ZRevRangeByScore(ctx, convID, maxScore, "-inf", limit)
-	} else { // Nouveaux messages (plus récents)
-		minScore := "-inf"
-		if offsetID > 0 {
-			minScore = fmt.Sprintf("(%d", offsetID) // Exclusif
+		idStringsList, errRedis = redis.MessagesIndex.ZRevRangeByScore(ctx, conversationID, maxScoreThreshold, "-inf", paginationLimit)
+
+	} else {
+		// Nouveaux messages (les plus récents)
+		minScoreThreshold := "-inf"
+		if offsetMessageID > 0 {
+			minScoreThreshold = fmt.Sprintf("(%d", offsetMessageID) // Exclusif
 		}
 
-		maxScore := "+inf"
-		if frozenID > 0 {
-			maxScore = strconv.FormatInt(frozenID, 10) // Ne doit pas dépasser le gel !
+		maxScoreThreshold := "+inf"
+		if frozenMessageID > 0 {
+			maxScoreThreshold = strconv.FormatInt(frozenMessageID, 10) // Ne doit jamais dépasser le gel
 		}
 
-		idsStr, err = redis.MessagesIndex.ZRangeByScore(ctx, convID, minScore, maxScore, limit)
+		idStringsList, errRedis = redis.MessagesIndex.ZRangeByScore(ctx, conversationID, minScoreThreshold, maxScoreThreshold, paginationLimit)
 	}
 
-	// 2. VÉRIFICATION DU CACHE HOLE
-	if err != nil || len(idsStr) < int(limit) {
-		// L3 FALLBACK ABSOLU
-		pgIDs, errPg := postgres.FuncLoadMessageIDsPaginated(ctx, convID, offsetID, limit, direction, frozenID)
+	// ── ÉTAPE 2 : VÉRIFICATION DU CACHE HOLE ET FALLBACK L3 ─────────────────
+
+	if errRedis != nil || len(idStringsList) < int(paginationLimit) {
+
+		if errRedis != nil {
+			logger.Log.Warn().Err(errRedis).Msg("Erreur L1 lors de la lecture de l'index des messages")
+		}
+
+		// FALLBACK ABSOLU L3 (Cold Storage)
+		postgresIDsList, errPg := postgres.FuncLoadMessageIDsPaginated(ctx, conversationID, offsetMessageID, paginationLimit, scrollDirection, frozenMessageID)
 		if errPg != nil {
-			return nil, errPg
+			logger.Log.Error().Err(errPg).Int64("conv_id", conversationID).Msg("Erreur L3 lors de la récupération paginée des messages")
+			return nil, nubo_error.NewInternal()
 		}
 
-		// RÉHYDRATATION DE L'INDEX L1 (Auto-guérison)
-		if len(pgIDs) > 0 {
-			go func(ids []int64) {
-				bgCtx := context.Background()
-				for _, id := range ids {
-					_ = redis.MessagesIndex.ZAdd(bgCtx, convID, float64(id), strconv.FormatInt(id, 10))
+		// RÉHYDRATATION DE L'INDEX L1 (Auto-guérison massive et asynchrone)
+		if len(postgresIDsList) > 0 {
+			go func(repairedIDs []int64) {
+				backgroundCtx := context.Background()
+				for _, repairedID := range repairedIDs {
+					_ = redis.MessagesIndex.ZAdd(backgroundCtx, conversationID, float64(repairedID), strconv.FormatInt(repairedID, 10))
 				}
-				_ = redis.MessagesIndex.RefreshTTL(bgCtx, convID)
-			}(pgIDs)
+				_ = redis.MessagesIndex.RefreshTTL(backgroundCtx, conversationID)
+			}(postgresIDsList)
 		}
-		return pgIDs, nil
+
+		return postgresIDsList, nil
 	}
 
-	// Parsing des IDs L1
-	var finalIDs []int64
-	for _, s := range idsStr {
-		if id, e := strconv.ParseInt(s, 10, 64); e == nil {
-			finalIDs = append(finalIDs, id)
+	// ── ÉTAPE 3 : PARSING DES IDs TROUVÉS EN L1 ─────────────────────────────
+
+	var finalParsedIDs []int64
+	for _, idString := range idStringsList {
+		if parsedID, errParse := strconv.ParseInt(idString, 10, 64); errParse == nil {
+			finalParsedIDs = append(finalParsedIDs, parsedID)
 		}
 	}
-	return finalIDs, nil
+
+	return finalParsedIDs, nil
 }

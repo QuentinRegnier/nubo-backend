@@ -2,7 +2,6 @@ package message_service
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
@@ -13,82 +12,91 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/QuentinRegnier/nubo-backend/internal/worker"
 )
 
-// ReactToMessage gère l'ajout ou la modification d'une réaction sur un message via le Hash Cache.
+// ############################################################################
+// # SERVICE : AJOUTER OU MODIFIER UNE RÉACTION (EMOJI)
+// ############################################################################
+
+// ReactToMessage gère l'ajout ou la modification d'une réaction sur un message via le Hash Cache L1.
 func ReactToMessage(ctx context.Context, callerID int64, input message_models.ReactMessageInput) error {
-	// 1. SÉCURITÉ : Récupération du message et vérification d'appartenance
-	msg, err := security_service.LeftMessage(ctx, input.MessageID, callerID)
-	if err != nil {
-		return err
-	}
-	mem, err := security_service.LeftMember(ctx, msg.ConversationID, callerID)
-	if err != nil || mem.Role < 0 {
-		return nubo_error.NewForbidden("ACCESS_DENIED", "Accès refusé : vous ne faites pas partie de cette conversation.", err)
+
+	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS AU MESSAGE (ZERO-TRUST) ──────────────────
+
+	messagePayload, errSecurityMsg := security_service.LeftMessage(ctx, input.MessageID, callerID)
+	if errSecurityMsg != nil {
+		return errSecurityMsg
 	}
 
-	input.Reaction = pkg.CleanStr(input.Reaction)
-
-	// 2. VÉRIFICATION IDEMPOTENCE (RAM L1)
-	oldEmoji, _ := cache_service.GetUserReaction(ctx, msg.ID, callerID)
-
-	if oldEmoji == input.Reaction {
-		return nil // Idempotence parfaite : l'utilisateur a cliqué sur le même emoji
+	callerMemberPayload, errSecurityMem := security_service.LeftMember(ctx, messagePayload.ConversationID, callerID)
+	if errSecurityMem != nil || callerMemberPayload.Role < variables.MemberRoleNormal {
+		return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : vous ne faites pas partie de cette conversation.", errSecurityMem)
 	}
 
-	// 3. APPLICATION DU DELTA (RAM L1 & WORKER BATCH)
-	if oldEmoji != "" {
-		_ = cache_service.IncrementReactionCount(ctx, msg.ID, oldEmoji, -1)
-		worker.RegisterMessageReaction(msg.ID, oldEmoji, -1) // ✅ NOUVEAU
+	sanitizedEmoji := pkg.CleanStr(input.Reaction)
+
+	// ── ÉTAPE 2 : VÉRIFICATION IDEMPOTENCE (RAM L1) ─────────────────────────
+
+	previousEmoji, _ := cache_service.GetUserReaction(ctx, messagePayload.ID, callerID)
+	if previousEmoji == sanitizedEmoji {
+		return nil // Idempotence : L'utilisateur a cliqué sur le même emoji, succès silencieux.
 	}
 
-	_ = cache_service.IncrementReactionCount(ctx, msg.ID, input.Reaction, 1)
-	worker.RegisterMessageReaction(msg.ID, input.Reaction, 1) // ✅ NOUVEAU
+	// ── ÉTAPE 3 : APPLICATION DU DELTA (RAM L1 & WORKER BATCH) ──────────────
 
-	_ = cache_service.SetUserReaction(ctx, msg.ID, callerID, input.Reaction)
+	// Si l'utilisateur avait une ancienne réaction, on la décrémente d'abord.
+	if previousEmoji != "" {
+		_ = cache_service.IncrementReactionCount(ctx, messagePayload.ID, previousEmoji, -1)
+		worker.RegisterMessageReaction(messagePayload.ID, previousEmoji, -1)
+	}
 
-	// 4. PERSISTANCE ASYNCHRONE (Write-Behind vers MongoDB/Postgres)
-	payload := message_models.MessageReactionPayload{
+	// Incrémentation de la nouvelle réaction
+	_ = cache_service.IncrementReactionCount(ctx, messagePayload.ID, sanitizedEmoji, 1)
+	worker.RegisterMessageReaction(messagePayload.ID, sanitizedEmoji, 1)
+
+	// Sauvegarde de l'état personnel de l'utilisateur
+	_ = cache_service.SetUserReaction(ctx, messagePayload.ID, callerID, sanitizedEmoji)
+
+	// ── ÉTAPE 4 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
+
+	reactionPayload := message_models.MessageReactionPayload{
 		ID:        pkg.GenerateID(),
-		MessageID: msg.ID,
+		MessageID: messagePayload.ID,
 		UserID:    callerID,
-		Reaction:  input.Reaction,
+		Reaction:  sanitizedEmoji,
 		CreatedAt: domain.NowMillis(),
 	}
 
-	// L'ActionCreate déclenchera l'UPSERT côté Worker grâce à la contrainte UNIQUE SQL
-	err = redis.EnqueueDB(ctx, payload.ID, msg.ConversationID, redis.EntityMessageReaction, redis.ActionCreate, payload, redis.TargetAll)
-
-	// 5. DIFFUSION TEMPS RÉEL (WebSockets)
-	if err == nil {
-		go func() {
-			bgCtx := context.Background()
-			counts, _ := cache_service.GetMessageReactionCounts(bgCtx, msg.ID)
-
-			msgView := message_models.MessageView{
-				MessagePayload: msg,
-				ReactionCounts: counts,
-				// UserReaction n'est pas envoyé en broadcast car spécifique à chaque receveur
-			}
-
-			// UserReaction n'est pas envoy  en broadcast car sp cifique   chaque receveur
-			errWs := realtime_service.BroadcastToConversation(bgCtx, msg.ConversationID, "message.reacted", msgView)
-			if errWs != nil {
-				logger.Log.Error().Err(errWs).Msg("Failed to broadcast message reaction")
-			}
-
-			// ✅ NOUVEAU : SYNC LEDGER (Trigger granulaire)
-			participantsStr, _ := redis.ConvParticipants.SMembers(bgCtx, msg.ConversationID)
-			var pIDs []int64
-			for _, p := range participantsStr {
-				if id, err := strconv.ParseInt(p, 10, 64); err == nil {
-					pIDs = append(pIDs, id)
-				}
-			}
-			_ = cache_service.RecordMessageMutation(bgCtx, msg.ConversationID, msg.ID, pIDs)
-		}()
+	// L'ActionCreate déclenchera un UPSERT côté Worker grâce à la contrainte UNIQUE SQL (message_id, user_id)
+	errQueue := redis.EnqueueDB(ctx, reactionPayload.ID, messagePayload.ConversationID, redis.EntityMessageReaction, redis.ActionCreate, reactionPayload, redis.TargetAll)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("message_id", messagePayload.ID).Msg("Échec du Write-Behind pour ReactToMessage")
+		return nubo_error.NewInternal()
 	}
 
-	return err
+	// ── ÉTAPE 5 : DIFFUSION TEMPS RÉEL (WEBSOCKETS) ─────────────────────────
+
+	go func() {
+		backgroundCtx := context.Background()
+		reactionCountsMap, _ := cache_service.GetMessageReactionCounts(backgroundCtx, messagePayload.ID)
+
+		messageViewDto := message_models.MessageView{
+			MessagePayload: messagePayload,
+			ReactionCounts: reactionCountsMap,
+			// UserReaction n'est pas envoyé en broadcast (spécifique à chaque client)
+		}
+
+		errBroadcast := realtime_service.BroadcastToConversation(backgroundCtx, messagePayload.ConversationID, "message.reacted", messageViewDto)
+		if errBroadcast != nil {
+			logger.Log.Error().Err(errBroadcast).Msg("Échec de la diffusion WebSocket pour message.reacted")
+		}
+
+		// SYNC LEDGER : Trigger granulaire pour mettre à jour la base SQLite des clients
+		participantIDs := GetParticipantIDsForLedgerSync(backgroundCtx, messagePayload.ConversationID)
+		_ = cache_service.RecordMessageMutation(backgroundCtx, messagePayload.ConversationID, messagePayload.ID, participantIDs)
+	}()
+
+	return nil
 }

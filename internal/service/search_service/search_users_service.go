@@ -6,41 +6,60 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/search_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 )
 
-// SearchUsers orchestre la recherche ultrarapide via le Speed Cache et hydrate les avatars.
+// ############################################################################
+// # SERVICE : RECHERCHE D'UTILISATEURS (COMPTES)
+// ############################################################################
+
+// SearchUsers orchestre la recherche ultrarapide via le Speed Cache Redis (ZSET Lex)
+// et déclenche l'hydratation des avatars à la volée.
 func SearchUsers(ctx context.Context, callerID int64, input search_models.UserSearchInput) (search_models.UserSearchOutput, error) {
-	// 1. Appel du Cache Service (Pur DDD : O(log(N)) en RAM, aucun fallback BDD pour garantir < 5ms)
-	liteUsers, err := cache_service.SearchUserByPrefix(ctx, input.Prefix, input.Limit)
-	if err != nil {
-		return search_models.UserSearchOutput{}, err
+
+	// ── ÉTAPE 1 : RECHERCHE L1 EN RAM (O(log N)) ────────────────────────────
+
+	// Aucun fallback BDD n'est prévu ici pour garantir un temps de réponse < 5ms
+	// indispensable pour l'autocomplétion pendant la frappe utilisateur.
+	liteUsersResults, errRedis := cache_service.SearchUserByPrefix(ctx, input.Prefix, input.Limit)
+	if errRedis != nil {
+		logger.Log.Error().Err(errRedis).Str("prefix", input.Prefix).Msg("Erreur L1 lors de la recherche des utilisateurs par préfixe")
+		return search_models.UserSearchOutput{}, nubo_error.NewInternal()
 	}
 
-	if len(liteUsers) == 0 {
-		return search_models.UserSearchOutput{Users: make([]auth_models.UserLiteView, 0)}, nil // Tableau vide propre
+	// Coupe-circuit sécurisé (Protection contre le retour null)
+	if len(liteUsersResults) == 0 {
+		return search_models.UserSearchOutput{
+			Users: make([]auth_models.UserLiteView, 0),
+		}, nil
 	}
 
-	// 2. Hydratation via le Domaine Média
-	views := make([]auth_models.UserLiteView, 0, len(liteUsers))
-	for _, u := range liteUsers {
-		var avatar media_models.MediaView // Zéro-valeur {MediaID: 0, URL: ""}
+	// ── ÉTAPE 2 : HYDRATATION VIA LE DOMAINE MÉDIA ──────────────────────────
 
-		if u.ProfilePictureID > 0 {
-			// authorID = u.ID (c'est l'auteur de sa propre photo), targetID = 0 (pas de post)
-			if view, errMedia := media_service.GenerateMediaViewCascade(ctx, u.ProfilePictureID, u.ID, 0, callerID); errMedia == nil {
-				avatar = view
+	hydratedUserViews := make([]auth_models.UserLiteView, 0, len(liteUsersResults))
+
+	for _, userLite := range liteUsersResults {
+
+		var resolvedAvatar media_models.MediaView
+
+		if userLite.ProfilePictureID > 0 {
+			// contextID = 0 car l'avatar n'est pas lié contextuellement à un Post/Conversation
+			if mediaView, errMedia := media_service.GenerateMediaViewCascade(ctx, userLite.ProfilePictureID, userLite.ID, 0, callerID); errMedia == nil {
+				resolvedAvatar = mediaView
 			}
 		}
 
-		// Composition par valeur stricte
-		views = append(views, auth_models.UserLiteView{
-			User:     u,
-			Avatar:   avatar,
-			IsOnline: cache_service.IsUserOnline(ctx, u.ID),
+		hydratedUserViews = append(hydratedUserViews, auth_models.UserLiteView{
+			User:     userLite,
+			Avatar:   resolvedAvatar,
+			IsOnline: cache_service.IsUserOnline(ctx, userLite.ID),
 		})
 	}
 
-	return search_models.UserSearchOutput{Users: views}, nil
+	return search_models.UserSearchOutput{
+		Users: hydratedUserViews,
+	}, nil
 }

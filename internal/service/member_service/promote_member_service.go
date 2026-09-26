@@ -18,82 +18,94 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// PromoteMember promeut un membre au rang d'administrateur (Rôle = 1)
+// ############################################################################
+// # SERVICE : PROMOTION D'UN MEMBRE (ADMINISTRATION)
+// ############################################################################
+
+// PromoteMember promeut un membre standard au rang d'administrateur (Rôle = 1).
 func PromoteMember(ctx context.Context, callerID int64, input member_models.PromoteMemberInput) (member_models.PromoteMemberOutput, error) {
-	// 1. SÉCURITÉ : Vérification des droits du Caller (L1 -> L2 -> L3)
-	callerMem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
-	if err != nil {
-		return member_models.PromoteMemberOutput{}, nubo_error.NewForbidden("ACCESS_DENIED", "Conversation introuvable ou accès refusé.", err)
-	}
-	if callerMem.Role != 2 {
-		return member_models.PromoteMemberOutput{}, nubo_error.NewForbidden("INSUFFICIENT_PERMISSIONS", "Seul le propriétaire peut promouvoir un membre.", nil)
+
+	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS DU DÉCIDEUR (PROPRIÉTAIRE) ───────────────
+
+	callerMemberPayload, errSecurity := security_service.LeftMember(ctx, input.ConversationID, callerID)
+	if errSecurity != nil {
+		return member_models.PromoteMemberOutput{}, errSecurity
 	}
 
-	// 2. RÉCUPÉRATION DU MEMBRE CIBLE
-	targetMem, err := security_service.LeftMember(ctx, input.ConversationID, input.TargetUserID)
-	if err != nil || targetMem.Role < 0 {
-		return member_models.PromoteMemberOutput{}, nubo_error.NewBadRequest("USER_NOT_MEMBER", "L'utilisateur ciblé n'est pas membre de ce groupe.", err)
+	if callerMemberPayload.Role != variables.MemberRoleOwner {
+		return member_models.PromoteMemberOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seul le propriétaire actuel peut promouvoir un membre.", nil)
 	}
 
-	// 3. IDEMPOTENCE : Si la cible est déjà Admin (1) ou Propriétaire (2), on s'arrête là silencieusement
-	if targetMem.Role >= 1 {
+	// ── ÉTAPE 2 : VÉRIFICATION DE LA CIBLE ET IDEMPOTENCE ───────────────────
+
+	targetMemberPayload, errTargetSecurity := security_service.LeftMember(ctx, input.ConversationID, input.TargetUserID)
+	if errTargetSecurity != nil {
+		return member_models.PromoteMemberOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "L'utilisateur ciblé n'est pas un membre actif de ce groupe.", errTargetSecurity)
+	}
+
+	// Idempotence absolue : Si le membre est déjà Admin (1) ou Propriétaire (2), on ignore silencieusement.
+	if targetMemberPayload.Role >= variables.MemberRoleAdmin {
 		return member_models.PromoteMemberOutput{}, nil
 	}
 
-	// 4. APPLICATION DE LA MODIFICATION
-	targetMem.Role = 1
-	targetMem.UpdatedAt = domain.NowMillis()
+	// ── ÉTAPE 3 : NOTIFICATION SYSTÈME DANS LE FLUX DE DISCUSSION ───────────
 
-	callerLite, _ := cache_service.GetUserLite(ctx, callerID)
-	targetLite, _ := cache_service.GetUserLite(ctx, input.TargetUserID)
-	sysContent := fmt.Sprintf("%s a promu %s", callerLite.Username, targetLite.Username)
-	msgInput := message_models.CreateMessageInput{
-		MessageType: 8,
-		Content:     sysContent,
+	callerUserLite, _ := cache_service.GetUserLite(ctx, callerID)
+	targetUserLite, _ := cache_service.GetUserLite(ctx, input.TargetUserID)
+
+	systemMessageContent := fmt.Sprintf("%s a promu %s", callerUserLite.Username, targetUserLite.Username)
+	systemMessageInput := message_models.CreateMessageInput{
+		MessageType: variables.MessageTypeSystem,
+		Content:     systemMessageContent,
 	}
-	_, _ = message_service.CreateMessage(ctx, callerID, input.ConversationID, msgInput, true)
+	_, _ = message_service.CreateMessage(ctx, callerID, input.ConversationID, systemMessageInput, true)
 
-	// 5. MISE À JOUR DE L'Object Cache (Payload Complet LFU)
-	_ = object_cache_service.SetMemberInObjectCache(ctx, targetMem)
+	// ── ÉTAPE 4 : APPLICATION DE LA PROMOTION ───────────────────────────────
 
-	// === NOUVEAU : MISE À JOUR SYNCHRONE DU SPEED CACHE ===
-	_ = cache_service.UpdateMemberSpeedCache(ctx, lite_models.MemberLiteRequest{
-		ConversationID:    targetMem.ConversationID,
-		UserID:            targetMem.UserID,
-		Role:              targetMem.Role,
-		Settings:          service.ToMemberSettingsLite(targetMem.Settings),
-		UnreadCount:       targetMem.UnreadCount,
-		FrozenMessageID:   targetMem.FrozenMessageID,
-		LastReadMessageID: targetMem.LastReadMessageID,
-		JoinedAt:          targetMem.JoinedAt,
-	})
+	targetMemberPayload.Role = variables.MemberRoleAdmin
+	targetMemberPayload.UpdatedAt = domain.NowMillis()
 
-	// 7. ENVOI AUX WORKERS (Write-Behind Asynchrone)
-	// PartitionKey = ConversationID pour exécuter les requêtes séquentiellement pour ce groupe
-	err = redis.EnqueueDB(ctx, targetMem.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMem, redis.TargetAll)
+	// ── ÉTAPE 5 : MISE À JOUR SYNCHRONE (OBJECT ET SPEED CACHE L1) ──────────
 
-	// 6. ENVOI NOTIFICATION (Asynchrone)
-	if err == nil {
-		go func() {
-			err := realtime_service.BroadcastToConversation(context.Background(), input.ConversationID, "member.promoted", targetMem)
-			if err != nil {
-				logger.Log.Error().Err(err).Msg("Erreur lors de l'envoi de la notification de promotion")
-			}
-		}()
+	_ = object_cache_service.SetMemberInObjectCache(ctx, targetMemberPayload)
+
+	liteMemberRequest := lite_models.MemberLiteRequest{
+		ConversationID:    targetMemberPayload.ConversationID,
+		UserID:            targetMemberPayload.UserID,
+		Role:              targetMemberPayload.Role,
+		Settings:          service.ToMemberSettingsLite(targetMemberPayload.Settings),
+		UnreadCount:       targetMemberPayload.UnreadCount,
+		FrozenMessageID:   targetMemberPayload.FrozenMessageID,
+		LastReadMessageID: targetMemberPayload.LastReadMessageID,
+		JoinedAt:          targetMemberPayload.JoinedAt,
+	}
+	_ = cache_service.UpdateMemberSpeedCache(ctx, liteMemberRequest)
+
+	// ── ÉTAPE 6 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
+
+	errQueue := redis.EnqueueDB(ctx, targetMemberPayload.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMemberPayload, redis.TargetAll)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("user_id", targetMemberPayload.UserID).Msg("Échec du Write-Behind pour la promotion d'un membre")
+		return member_models.PromoteMemberOutput{}, nubo_error.NewInternal()
 	}
 
-	output := member_models.PromoteMemberOutput{}
+	// ── ÉTAPE 7 : DIFFUSION WEBSOCKET (ASYNCHRONE) ──────────────────────────
 
-	// ========================================================================
-	// MARQUAGE DU TEMPS (DIRTY FLAG)
-	// ========================================================================
-	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
-	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
-	// et garantit que le client reçoit la date de la fin absolue de la transaction.
-	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
+	go func() {
+		errBroadcast := realtime_service.BroadcastToConversation(context.Background(), input.ConversationID, "member.promoted", targetMemberPayload)
+		if errBroadcast != nil {
+			logger.Log.Error().Err(errBroadcast).Msg("Échec de la diffusion WebSocket pour member.promoted")
+		}
+	}()
 
-	return output, err
+	// ── ÉTAPE 8 : MARQUAGE D'ACTIVITÉ (DIRTY FLAG) ──────────────────────────
+
+	latestActivityTimestampMs := cache_service.TouchInboxActivity(ctx, callerID)
+
+	return member_models.PromoteMemberOutput{
+		InboxUpdateAt: domain.TimeToMillis(time.UnixMilli(latestActivityTimestampMs)),
+	}, nil
 }

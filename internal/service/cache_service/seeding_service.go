@@ -15,220 +15,231 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// ============================================================================
-// 4. AMORÇAGE (SEEDING)
-// ============================================================================
+// ############################################################################
+// # SERVICE : AMORÇAGE GLOBAL DU SYSTÈME (SEEDING)
+// ############################################################################
 
 // SeedMostCache lit l'intégralité de Postgres pour populer le L1 (RAM), L2 (Mongo) et le MOST Cache.
 func SeedMostCache() error {
-	ctx := context.Background()
+	backgroundCtx := context.Background()
 
-	// ---------------------------------------------------------
-	// PHASE 1 : RESTAURATION DU SYSTÈME DE TAGS
-	// ---------------------------------------------------------
-	logger.Log.Info().Msg("Restauration des tags communautaires depuis SQL...")
+	// ── PHASE 1 : RESTAURATION DU SYSTÈME DE TAGS ───────────────────────────
 
-	tagsToSync, err := postgres.FuncLoadAllTags()
-	if err != nil {
-		logger.Log.Error().Err(err).Msg("Erreur lors du chargement des tags")
-	} else if len(tagsToSync) > 0 {
-		args := make([]interface{}, len(tagsToSync))
-		for i, v := range tagsToSync {
-			args[i] = v
+	logger.Log.Info().Msg("Restauration des tags communautaires depuis le Cold Storage SQL...")
+
+	tagsListFromPg, errPgTags := postgres.FuncLoadAllTags()
+	if errPgTags != nil {
+		logger.Log.Error().Err(errPgTags).Msg("Échec L3 lors du chargement initial des tags")
+	} else if len(tagsListFromPg) > 0 {
+		argsForRedis := make([]interface{}, len(tagsListFromPg))
+		for index, tagValue := range tagsListFromPg {
+			argsForRedis[index] = tagValue
 		}
-		_ = redis.Tags.SAdd(ctx, "active", args...)
+		_ = redis.Tags.SAdd(backgroundCtx, "active", argsForRedis...)
 	}
 
-	// ---------------------------------------------------------
-	// PHASE 2 : HYDRATATION DES POSTS ET CLASSEMENTS (PAR BLOCS)
-	// ---------------------------------------------------------
-	logger.Log.Info().Msg("Hydratation du MOST Cache depuis SQL (Mode Paginated)...")
+	// ── PHASE 2 : HYDRATATION DES POSTS ET CLASSEMENTS (PAR BLOCS) ──────────
 
-	limit := 10000
-	offset := 0
-	totalProcessed := 0
+	logger.Log.Info().Msg("Hydratation du MOST Cache depuis SQL (Mode Paginé)...")
+
+	paginationLimit := 10000
+	paginationOffset := 0
+	totalPostsProcessed := 0
 
 	for {
-		posts, err := postgres.FuncLoadPostsPaginated(limit, offset)
-		if err != nil {
-			return nubo_error.NewInternal(err)
+		postsBatchFromPg, errPgPosts := postgres.FuncLoadPostsPaginated(paginationLimit, paginationOffset)
+		if errPgPosts != nil {
+			logger.Log.Error().Err(errPgPosts).Msg("Échec L3 lors du seeding paginé des posts")
+			return nubo_error.NewInternal()
 		}
-		if len(posts) == 0 {
+
+		if len(postsBatchFromPg) == 0 {
 			break
 		}
 
-		for _, p := range posts {
-			UpdatePostRecommendationScore(ctx, p)
-			_ = redis.ZAddWithCap(ctx, variables.RedisKeyStrictLikes, float64(p.LikeCount), p.ID, variables.MaxStrictElements)
-			_ = redis.ZAddWithCap(ctx, variables.RedisKeyStrictViews, float64(p.ViewCount), p.ID, variables.MaxStrictElements)
+		for _, postPayload := range postsBatchFromPg {
+			UpdatePostRecommendationScore(backgroundCtx, postPayload)
+
+			_ = redis.ZAddWithCap(backgroundCtx, variables.RedisKeyStrictLikes, float64(postPayload.LikeCount), postPayload.ID, variables.MaxStrictElements)
+			_ = redis.ZAddWithCap(backgroundCtx, variables.RedisKeyStrictViews, float64(postPayload.ViewCount), postPayload.ID, variables.MaxStrictElements)
 		}
 
-		totalProcessed += len(posts)
-		logger.Log.Info().Int("posts_processed", totalProcessed).Msg("Seeding en cours...")
-		offset += limit
+		totalPostsProcessed += len(postsBatchFromPg)
+		logger.Log.Info().Int("posts_processed", totalPostsProcessed).Msg("Seeding en cours...")
+		paginationOffset += paginationLimit
 	}
 
-	// ---------------------------------------------------------
-	// PHASE 3 : HYDRATATION INVERSÉE (PRE-WARMING FINAL)
-	// ---------------------------------------------------------
-	logger.Log.Info().Msg("Lancement de l'hydratation inversée (Pre-warming L1/L2)...")
+	// ── PHASE 3 : HYDRATATION INVERSÉE (PRE-WARMING FINAL) ──────────────────
 
-	winnerIDsMap := make(map[int64]bool)
-	keys, _ := redis.Keys(ctx, "most_cache:trend:*")
+	logger.Log.Info().Msg("Lancement de l'hydratation inversée (Pre-warming L1/L2 pour l'élite)...")
 
-	for _, key := range keys {
-		ids, _ := redis.ZRange(ctx, key, 0, -1)
-		for _, idStr := range ids {
-			if id, err := strconv.ParseInt(idStr, 10, 64); err == nil {
-				winnerIDsMap[id] = true
+	winningPostIDsMap := make(map[int64]bool)
+	trendKeysList, _ := redis.Keys(backgroundCtx, "most_cache:trend:*")
+
+	for _, trendKey := range trendKeysList {
+		idStringsInTrend, _ := redis.ZRange(backgroundCtx, trendKey, 0, -1)
+		for _, idString := range idStringsInTrend {
+			if parsedID, errParse := strconv.ParseInt(idString, 10, 64); errParse == nil {
+				winningPostIDsMap[parsedID] = true
 			}
 		}
 	}
 
-	if len(winnerIDsMap) > 0 {
-		var ids []int64
-		for id := range winnerIDsMap {
-			ids = append(ids, id)
+	if len(winningPostIDsMap) > 0 {
+		var winningIDsList []int64
+		for id := range winningPostIDsMap {
+			winningIDsList = append(winningIDsList, id)
 		}
 
-		winners, err := postgres.FuncLoadPosts(ids, len(ids), 0)
-		if err == nil {
-			for _, p := range winners {
+		elitePostsList, errPgElite := postgres.FuncLoadPosts(winningIDsList, len(winningIDsList), 0)
+		if errPgElite == nil {
+			for _, elitePost := range elitePostsList {
 				// L1 : Sanctuarisation immédiate en RAM
-				_ = object_cache_service.SetPostInObjectCache(ctx, p)
+				_ = object_cache_service.SetPostInObjectCache(backgroundCtx, elitePost)
 
-				// L2 : Délégation pour l'insertion par les workers (BulkWrite)
-				_ = redis.EnqueueDB(ctx, p.ID, p.UserID, redis.EntityPost, redis.ActionUpdate, p, redis.TargetMongo)
+				// L2 : Délégation pour l'insertion par les workers (BulkWrite Mongo)
+				_ = redis.EnqueueDB(backgroundCtx, elitePost.ID, elitePost.UserID, redis.EntityPost, redis.ActionUpdate, elitePost, redis.TargetMongo)
 			}
-			logger.Log.Info().Int("count", len(winners)).Msg("Posts d'élite sanctuarisés dans l'Object Cache L1 et en cours d'insertion L2.")
+			logger.Log.Info().Int("count", len(elitePostsList)).Msg("Posts d'élite sanctuarisés dans l'Object Cache L1 et en cours d'insertion L2.")
 		}
 	}
 
 	logger.Log.Info().Msg("Synchronisation MongoDB pour les posts des 30 derniers jours...")
-	recentPosts, err := postgres.FuncLoadRecentPosts(30)
-	if err == nil {
-		for _, p := range recentPosts {
-			doc, _ := pkg.ToMap(p)
-			if doc != nil {
-				_ = mongo.Posts.Set(doc)
+	recentPostsFromPg, errPgRecent := postgres.FuncLoadRecentPosts(30)
+
+	if errPgRecent == nil {
+		for _, recentPost := range recentPostsFromPg {
+			documentMap, _ := pkg.ToMap(recentPost)
+			if documentMap != nil {
+				_ = mongo.Posts.Set(documentMap)
 			}
 		}
-		logger.Log.Info().Int("count", len(recentPosts)).Msg("Posts récents synchronisés dans MongoDB.")
+		logger.Log.Info().Int("count", len(recentPostsFromPg)).Msg("Posts récents synchronisés dans le Warm Storage MongoDB.")
 	}
 
-	_ = redis.SystemStatus.SetPrimitive(ctx, "maintenance", "off")
+	// Déverrouillage de l'API
+	_ = redis.SystemStatus.SetPrimitive(backgroundCtx, "maintenance", "off")
 	logger.Log.Info().Msg("Mode maintenance désactivé. L'API est opérationnelle.")
 
 	return nil
 }
 
-// ============================================================================
-// 5. AMORÇAGE DU SPEED CACHE (Utilisateurs & Relations & Communautés)
-// ============================================================================
+// ############################################################################
+// # AMORÇAGE DU SPEED CACHE (Recherche & Relations & Inbox)
+// ############################################################################
 
-// SeedCommunitySpeedCache charge les communautés publiques (Type 3) dans la barre de recherche
+// SeedCommunitySpeedCache charge les communautés publiques dans la barre de recherche.
 func SeedCommunitySpeedCache(ctx context.Context) error {
-	logger.Log.Info().Msg("Amorçage SPEED Cache: Chargement des Communautés (Type 3)...")
+	logger.Log.Info().Msg("Amorçage SPEED Cache: Chargement des Communautés Publiques...")
 
-	communities, err := postgres.FuncLoadActiveCommunities(ctx)
-	if err != nil {
-		return err
+	activeCommunitiesFromPg, errPg := postgres.FuncLoadActiveCommunities(ctx)
+	if errPg != nil {
+		return nubo_error.NewInternal()
 	}
 
-	count := 0
-	for _, c := range communities {
-		_ = StoreCommunityLiteInSpeedCache(ctx, c)
-		count++
+	totalLoaded := 0
+	for _, communityPayload := range activeCommunitiesFromPg {
+		_ = StoreCommunityLiteInSpeedCache(ctx, communityPayload)
+		totalLoaded++
 	}
 
-	logger.Log.Info().Int("count", count).Msg("SPEED Cache Communautés chargé.")
+	logger.Log.Info().Int("count", totalLoaded).Msg("SPEED Cache Communautés chargé.")
 	return nil
 }
 
-// SeedSpeedCache charge les profils allégés et le graphe social relationnel en RAM
+// SeedSpeedCache charge les profils allégés et le graphe social relationnel en RAM L1.
 func SeedSpeedCache() error {
-	ctx := context.Background()
-	limit := 10000
+	backgroundCtx := context.Background()
+	paginationLimit := 10000
 
-	// --- 1. Utilisateurs ---
-	logger.Log.Info().Msg("Amorçage SPEED Cache: Chargement des utilisateurs...")
+	// ── 1. UTILISATEURS (COMPTES LITE) ──────────────────────────────────────
+
+	logger.Log.Info().Msg("Amorçage SPEED Cache: Chargement des Utilisateurs...")
 	offsetUsers := 0
 	for {
-		users, err := postgres.FuncLoadUsersPaginated(limit, offsetUsers)
-		if err != nil {
-			logger.Log.Warn().Err(err).Msg("Erreur DB lors du chargement des users")
+		usersBatchFromPg, errPg := postgres.FuncLoadUsersPaginated(paginationLimit, offsetUsers)
+		if errPg != nil {
+			logger.Log.Warn().Err(errPg).Msg("Erreur L3 lors du chargement paginé des utilisateurs")
 			break
 		}
-		for _, u := range users {
-			_ = StoreUserLiteInSpeedCache(ctx, u)
+
+		for _, userPayload := range usersBatchFromPg {
+			_ = StoreUserLiteInSpeedCache(backgroundCtx, userPayload)
 		}
-		offsetUsers += len(users)
-		if len(users) < limit {
+
+		offsetUsers += len(usersBatchFromPg)
+		if len(usersBatchFromPg) < paginationLimit {
 			break
 		}
 	}
-	logger.Log.Info().Int("count", offsetUsers).Msg("SPEED Cache Users chargés.")
+	logger.Log.Info().Int("count", offsetUsers).Msg("SPEED Cache Users chargé.")
 
-	// --- 2. Relations ---
-	logger.Log.Info().Msg("Amorçage SPEED Cache: Chargement des relations...")
-	offsetRels := 0
+	// ── 2. GRAPHE SOCIAL (RELATIONS) ────────────────────────────────────────
+
+	logger.Log.Info().Msg("Amorçage SPEED Cache: Chargement des Relations...")
+	offsetRelations := 0
 	for {
-		relations, err := postgres.FuncLoadRelationsPaginated(limit, offsetRels)
-		if err != nil {
-			logger.Log.Warn().Err(err).Msg("Erreur DB lors du chargement des relations")
+		relationsBatchFromPg, errPg := postgres.FuncLoadRelationsPaginated(paginationLimit, offsetRelations)
+		if errPg != nil {
+			logger.Log.Warn().Err(errPg).Msg("Erreur L3 lors du chargement paginé des relations")
 			break
 		}
-		for _, rel := range relations {
-			// ✅ NOUVEAU : On passe le Timestamp en millisecondes pour le ZSET
-			_ = UpdateRelationState(ctx, rel.TargetID, rel.CallerID, rel.State, domain.TimeToMillis(rel.CreatedAt))
+
+		for _, relationRecord := range relationsBatchFromPg {
+			_ = UpdateRelationState(backgroundCtx, relationRecord.TargetID, relationRecord.CallerID, relationRecord.State, domain.TimeToMillis(relationRecord.CreatedAt))
 		}
-		offsetRels += len(relations)
-		if len(relations) < limit {
+
+		offsetRelations += len(relationsBatchFromPg)
+		if len(relationsBatchFromPg) < paginationLimit {
 			break
 		}
 	}
-	logger.Log.Info().Int("count", offsetRels).Msg("SPEED Cache Relations chargées.")
+	logger.Log.Info().Int("count", offsetRelations).Msg("SPEED Cache Relations chargé.")
 
-	// --- 3. Communautés (Nouveau) ---
-	if err := SeedCommunitySpeedCache(ctx); err != nil {
-		logger.Log.Warn().Err(err).Msg("Avertissement lors du seeding des communautés")
+	// ── 3. COMMUNAUTÉS ──────────────────────────────────────────────────────
+
+	if errComm := SeedCommunitySpeedCache(backgroundCtx); errComm != nil {
+		logger.Log.Warn().Err(errComm).Msg("Avertissement lors du seeding des communautés")
 	}
 
-	// --- 4. Messagerie (Inbox & Conversations) ---
-	if err := SeedMessagingSpeedCache(ctx); err != nil {
-		logger.Log.Warn().Err(err).Msg("Avertissement lors du seeding de la messagerie")
+	// ── 4. MESSAGERIE (INBOX & CHATS) ───────────────────────────────────────
+
+	if errMsg := SeedMessagingSpeedCache(backgroundCtx); errMsg != nil {
+		logger.Log.Warn().Err(errMsg).Msg("Avertissement lors du seeding de la messagerie")
 	}
 
 	return nil
 }
 
-// ============================================================================
-// 6. AMORÇAGE DU USER CACHE (Timelines)
-// ============================================================================
+// ############################################################################
+// # AMORÇAGE DU USER CACHE (TIMELINES)
+// ############################################################################
 
-// SeedUserCache reconstruit les chronologies des profils utilisateurs (ZSETs L1)
+// SeedUserCache reconstruit les chronologies des profils utilisateurs (ZSETs L1).
 func SeedUserCache() error {
-	ctx := context.Background()
-	limit := 10000
-	offset := 0
+	backgroundCtx := context.Background()
+	paginationLimit := 10000
+	paginationOffset := 0
 
-	logger.Log.Info().Msg("Amorçage USER Cache: Construction des timelines (ZSETs)...")
+	logger.Log.Info().Msg("Amorçage USER Cache: Construction des Timelines L1 (ZSETs)...")
 
 	for {
-		seeds, err := postgres.FuncLoadTimelineSeedPaginated(limit, offset)
-		if err != nil {
-			logger.Log.Warn().Err(err).Msg("Erreur DB lors du chargement des timelines")
+		timelineSeedsFromPg, errPg := postgres.FuncLoadTimelineSeedPaginated(paginationLimit, paginationOffset)
+		if errPg != nil {
+			logger.Log.Warn().Err(errPg).Msg("Erreur L3 lors du chargement des graines de timelines")
 			break
 		}
-		for _, s := range seeds {
-			_ = AddPostToUserProfile(ctx, s.UserID, s.PostID, float64(s.CreatedAt.UnixMilli()))
+
+		for _, timelineRecord := range timelineSeedsFromPg {
+			_ = AddPostToUserProfile(backgroundCtx, timelineRecord.UserID, timelineRecord.PostID, float64(timelineRecord.CreatedAt.UnixMilli()))
 		}
-		offset += len(seeds)
-		if len(seeds) < limit {
+
+		paginationOffset += len(timelineSeedsFromPg)
+		if len(timelineSeedsFromPg) < paginationLimit {
 			break
 		}
 	}
 
-	logger.Log.Info().Int("count", offset).Msg("USER Cache: Timelines reconstruites.")
+	logger.Log.Info().Int("count", paginationOffset).Msg("USER Cache: Timelines reconstruites avec succès.")
 	return nil
 }

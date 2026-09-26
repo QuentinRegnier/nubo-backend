@@ -9,34 +9,24 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// ============================================================================
-// PILIER 3 — ALGORITHME DE RECOMMANDATION PERSONNALISÉE
-// TDD §4.2, §4.3, §4.4, §4.5
-// ============================================================================
-
-// PostCandidate représente un post_service candidat dans le pipeline de feed_service personnalisé.
+// PostCandidate représente un post candidat dans le pipeline de feed personnalisé.
 type PostCandidate struct {
 	PostID        int64
 	AuthorID      int64
-	TrendScore    float64   // S(p,t) — issu du ZSET Redis
-	ContentVec    []float32 // ĉ_p ∈ R^224 (normalisé L2)
-	PriorityLevel int       // ✅ Niveau de priorité (0=Normal, 1=Certifié, etc.)
-	PersonalScore float64   // R(u,p) — calculé à l'étape D
-	MatrixIdx     int       // Index dans la matrice de similarité G
-	IsSerendipity bool      // true si injecté par le mécanisme de sérendipité
+	TrendScore    float64   // S(p,t) — Le score de tendance global issu du ZSET Redis
+	ContentVec    []float32 // ĉ_p ∈ R^224 — Le vecteur de contenu normalisé
+	PriorityLevel int       // Niveau de priorité (0=Normal, 1=Certifié, 2=Admin, etc.)
+	PersonalScore float64   // R(u,p) — Le score d'affinité final calculé pour CET utilisateur
+	MatrixIdx     int       // Position (index) du post dans la matrice de similarité G
+	IsSerendipity bool      // Détermine si le post a été injecté par le mécanisme de sérendipité
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CACHE DE LA MATRICE DE SIMILARITÉ — TDD §4.3
-// "calculée une fois par fenêtre temporelle (toutes les 5 minutes) et mise en
-// cache_service en mémoire dans le process Go"
-// ─────────────────────────────────────────────────────────────────────────────
-
+// simMatrixState représente l'état en mémoire de la matrice de similarité croisée.
 type simMatrixState struct {
-	G         []float32 // Matrice G[n×n] aplatie row-major: G[i*n+j] = <ĉ_{p_i}, ĉ_{p_j}>
-	n         int
-	postIDs   []int64 // Liste ordonnée des post_service IDs utilisés pour construire G
-	expiresAt time.Time
+	FlattenedMatrix []float32 // Matrice aplatie [n×n] où Index = i*n + j
+	DimensionSize   int       // La taille 'n' de la matrice
+	PostIDs         []int64   // Liste ordonnée des IDs de posts correspondant à la matrice
+	ExpiresAt       time.Time // Timestamp d'expiration du cache (habituellement 5 minutes)
 }
 
 var (
@@ -44,386 +34,349 @@ var (
 	simCache   *simMatrixState
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// FONCTIONS DE CALCUL VECTORIEL — SIMD-FRIENDLY
-// ─────────────────────────────────────────────────────────────────────────────
+// ############################################################################
+// # ÉTAPE 1 : OPÉRATIONS VECTORIELLES FONDAMENTALES (SIMD FRIENDLY)
+// ############################################################################
 
-// dotProductN calcule le produit scalaire de deux vecteurs de même longueur.
-//
-// TDD §4.2:
-//
-//	<û, ĉ_p> = Σ_{k=1}^{N} u_k · c_{p,k}
-//
-// Implémentation SIMD-friendly: le compilateur Go émet des instructions AVX2
-// sur x86-64 pour cette forme de boucle (TDD §4.2 recommandation explicite).
-func dotProductN(a, b []float32) float32 {
-	if len(a) != len(b) {
-		return 0.0 // Garantit l'accélération matérielle (BCE)
+// dotProductN calcule le produit scalaire (Dot Product) de deux vecteurs.
+// En Go, cette structure de boucle simple permet au compilateur d'utiliser
+// les instructions matérielles SIMD (AVX2) pour accélérer le calcul massivement.
+func dotProductN(vectorA, vectorB []float32) float32 {
+	if len(vectorA) != len(vectorB) {
+		return 0.0 // Sécurité : on évite un panic (Out of Bounds) si les vecteurs diffèrent
 	}
-	var dot float32
-	for i, v := range a {
-		dot += v * b[i]
+
+	var dotProduct float32 = 0.0
+	for i, valueA := range vectorA {
+		dotProduct += valueA * vectorB[i]
 	}
-	return dot
+
+	return dotProduct
 }
 
+// ############################################################################
+// # ÉTAPE 2 : CALCUL DES SCORES D'AFFINITÉ ET DE CORRÉLATION
+// ############################################################################
+
 // ComputeSocialAffinity calcule le score d'affinité sociale A(u,p).
-//
-// TDD §4.2:
-//
-//	A(u,p) = (<û^(soc), ĉ_p^(soc)> + 1) / 2
-//
-// La translation (+1)/2 normalise le produit scalaire de [-1, 1] vers [0, 1].
-// Les sous-blocs sociaux sont des sous-slices des vecteurs normalisés complets.
+// Il extrait uniquement le "bloc social" des vecteurs (les 64 dernières dimensions)
+// et normalise le résultat du cosinus entre 0 et 1.
 func ComputeSocialAffinity(userVec, contentVec []float32) float64 {
 	if len(userVec) < variables.VectorDimTotal || len(contentVec) < variables.VectorDimTotal {
-		return 0.5 // Valeur neutre si vecteurs incomplets
+		return 0.5 // Valeur neutre si les vecteurs sont incomplets ou corrompus
 	}
 
-	// Extraction des sous-blocs sociaux û^(soc) ∈ R^64 et ĉ_p^(soc) ∈ R^64
-	uSoc := userVec[variables.VectorOffSoc : variables.VectorOffSoc+variables.VectorDimSoc]
-	cSoc := contentVec[variables.VectorOffSoc : variables.VectorOffSoc+variables.VectorDimSoc]
+	// 1. Extraction des sous-blocs sociaux grâce aux variables globales
+	startIndex := variables.VectorOffSoc
+	endIndex := variables.VectorOffSoc + variables.VectorDimSoc
 
-	// <û^(soc), ĉ_p^(soc)> — produit scalaire sur le sous-espace social
-	dot := dotProductN(uSoc, cSoc)
+	userSocialBlock := userVec[startIndex:endIndex]
+	contentSocialBlock := contentVec[startIndex:endIndex]
 
-	// A(u,p) = (<û^(soc), ĉ_p^(soc)> + 1) / 2 ∈ [0, 1]
-	return (float64(dot) + 1.0) / 2.0
+	// 2. Produit scalaire sur le sous-espace social (Donne une valeur entre -1 et 1)
+	dot := dotProductN(userSocialBlock, contentSocialBlock)
+
+	// 3. Normalisation Mathématique : On translate de [-1, 1] vers [0, 1]
+	normalizedAffinity := (float64(dot) + 1.0) / 2.0
+	return normalizedAffinity
 }
 
 // ComputePearsonEngagement calcule la corrélation de Pearson sur le bloc d'engagement.
-//
-// TDD §4.2:
-//
-//	r_Pearson(u,p) = Σ_k(u^(eng)_k - ū^(eng))(c^(eng)_{p,k} - c̄^(eng)_p) /
-//	                 sqrt(Σ_k(u^(eng)_k - ū^(eng))² · Σ_k(c^(eng)_{p,k} - c̄^(eng)_p)²)
-//
-// Mesure la cohérence comportementale entre profil utilisateur et contenu.
-// Retourne 0.0 si l'un des vecteurs est constant (variance nulle).
-func ComputePearsonEngagement(userEng, contentEng []float32) float64 {
-	const n = variables.VectorDimEng // = 8
+// Mesure la cohérence comportementale entre ce que l'utilisateur fait, et ce que le post génère.
+func ComputePearsonEngagement(userEngBlock, contentEngBlock []float32) float64 {
+	const dimension = variables.VectorDimEng // Par défaut = 8
 
-	// Calcul des moyennes ū^(eng) et c̄^(eng)
-	var meanU, meanC float64
-	for i := 0; i < n; i++ {
-		meanU += float64(userEng[i])
-		meanC += float64(contentEng[i])
+	// 1. Calcul des moyennes des deux blocs
+	var meanUser, meanContent float64
+	for i := 0; i < dimension; i++ {
+		meanUser += float64(userEngBlock[i])
+		meanContent += float64(contentEngBlock[i])
 	}
-	meanU /= float64(n)
-	meanC /= float64(n)
+	meanUser /= float64(dimension)
+	meanContent /= float64(dimension)
 
-	// Calcul du numérateur et des sommes de carrés au dénominateur
-	var num, sumSqU, sumSqC float64
-	for i := 0; i < n; i++ {
-		du := float64(userEng[i]) - meanU
-		dc := float64(contentEng[i]) - meanC
-		num += du * dc
-		sumSqU += du * du
-		sumSqC += dc * dc
+	// 2. Calcul des écarts (Covariance) et des variances au carré
+	var sumCovariance, sumUserVarianceSq, sumContentVarianceSq float64
+	for i := 0; i < dimension; i++ {
+		deltaUser := float64(userEngBlock[i]) - meanUser
+		deltaContent := float64(contentEngBlock[i]) - meanContent
+
+		sumCovariance += deltaUser * deltaContent
+		sumUserVarianceSq += deltaUser * deltaUser
+		sumContentVarianceSq += deltaContent * deltaContent
 	}
 
-	// Dénominateur: sqrt(Σ(u-ū)² · Σ(c-c̄)²)
-	denom := math.Sqrt(sumSqU * sumSqC)
-	if denom < 1e-10 {
-		return 0.0 // Variance nulle (vecteur constant): corrélation indéfinie → neutre
+	// 3. Dénominateur : Racine de la multiplication des variances
+	denominator := math.Sqrt(sumUserVarianceSq * sumContentVarianceSq)
+
+	// Sécurité anti-division par zéro (Si l'un des vecteurs est plat/constant)
+	if denominator < 1e-10 {
+		return 0.0 // Corrélation indéfinie = neutre
 	}
 
-	return num / denom
+	return sumCovariance / denominator
 }
 
-// ComputePersonalizedScore calcule R(u, p) — le score de pertinence personnalisée.
-//
-// TDD §4.2:
-//
-//	R(u,p) = S(p,t) · [ρ · <û, ĉ_p> + (1-ρ) · A(u,p) + η · B(u,p) + η_P · r_Pearson(u,p)]
-//
-// Paramètres:
-//   - trendScore: S(p,t) issu du ZSET Redis
-//   - userVec: û ∈ R^224 (normalisé L2)
-//   - contentVec: ĉ_p ∈ R^224 (normalisé L2)
-//   - authorID: pour le calcul de B(u,p) (ami direct)
-//   - friendIDs: set des amis directs (nil = pas d'amis directs connus)
+// ComputePersonalizedScore assemble toutes les métriques pour fournir le score R(u,p).
+// C'est le score final qui décidera si le post mérite d'apparaître pour cet utilisateur.
 func ComputePersonalizedScore(
 	trendScore float64,
 	userVec, contentVec []float32,
 	authorID int64,
 	friendIDs map[int64]bool,
-	priorityLevel int, // ✅ Ajout du paramètre
+	priorityLevel int,
 ) float64 {
+
+	// Si les vecteurs sont invalides, on fallback sur le score global influencé par la priorité
 	if len(userVec) != variables.VectorDimTotal || len(contentVec) != variables.VectorDimTotal {
-		return trendScore * (1.0 + float64(priorityLevel)*0.5) // Fallback avec priorité
+		return trendScore * (1.0 + float64(priorityLevel)*0.5)
 	}
 
-	// ── <û, ĉ_p> — Similarité cosinus (produit scalaire de vecteurs normalisés)
-	//
-	// TDD §4.2:
-	//   <û, ĉ_p> = Σ_{k=1}^{224} u_k · c_{p,k}  ∈ [-1, 1]
-	//   (équivalent à cos(u, c_p) car vecteurs normalisés — TDD §2.2)
-	cosineSim := float64(dotProductN(userVec, contentVec))
+	// ÉTAPE A : Similarité Cosinus Globale (Produit scalaire complet)
+	cosineSimilarity := float64(dotProductN(userVec, contentVec))
 
-	// ── A(u,p) — Score d'affinité sociale
-	//
-	// TDD §4.2:
-	//   A(u,p) = (<û^(soc), ĉ_p^(soc)> + 1) / 2  ∈ [0, 1]
+	// ÉTAPE B : Affinité Sociale pure (A(u,p))
 	socialAffinity := ComputeSocialAffinity(userVec, contentVec)
 
-	// ── B(u,p) — Indicateur de post_service d'un ami direct
-	//
-	// TDD §4.2: B(u,p) ∈ {0, 1}
-	var friendBoost float64
+	// ÉTAPE C : Indicateur d'amitié directe (B(u,p))
+	var friendBoost = 0.0
 	if friendIDs != nil && friendIDs[authorID] {
 		friendBoost = 1.0
 	}
 
-	// ── r_Pearson(u,p) — Corrélation de Pearson sur le bloc engagement
-	//
-	// TDD §4.2: Mesure la cohérence comportementale
-	uEng := userVec[variables.VectorOffEng : variables.VectorOffEng+variables.VectorDimEng]
-	cEng := contentVec[variables.VectorOffEng : variables.VectorOffEng+variables.VectorDimEng]
-	pearson := ComputePearsonEngagement(uEng, cEng)
+	// ÉTAPE D : Cohérence comportementale (Pearson sur le bloc engagement)
+	startIndex := variables.VectorOffEng
+	endIndex := variables.VectorOffEng + variables.VectorDimEng
+	pearsonCorrelation := ComputePearsonEngagement(userVec[startIndex:endIndex], contentVec[startIndex:endIndex])
 
-	// ── Formule composite R(u,p)
-	//
-	// TDD §4.2:
-	//   R(u,p) = S(p,t) · [ρ · <û,ĉ_p> + (1-ρ) · A(u,p) + η · B(u,p) + η_P · r_Pearson]
-	//   ρ = 0.65,  η = 0.20,  η_P = 0.10
-	inner := variables.TDDRho*cosineSim +
-		(1.0-variables.TDDRho)*socialAffinity +
-		variables.TDDEta*friendBoost +
-		variables.TDDEtaP*pearson
+	// ÉTAPE E : Formule Composite (La recette secrète Nubo)
+	// Base : (ρ * Cosinus) + ((1 - ρ) * Affinité Sociale) + (η * Ami) + (η_P * Pearson)
+	innerFormula := (variables.TDDRho * cosineSimilarity) +
+		((1.0 - variables.TDDRho) * socialAffinity) +
+		(variables.TDDEta * friendBoost) +
+		(variables.TDDEtaP * pearsonCorrelation)
 
-	baseScore := trendScore * inner
+	baseScore := trendScore * innerFormula
 
-	// ✅ APPLICATION DU MULTIPLICATEUR DE PRIORITÉ
-	// Score final = Score * (1 + (PriorityLevel * 0.5))
+	// ÉTAPE F : Multiplicateur de Priorité (Admin, Certifié, etc.)
 	priorityMultiplier := 1.0 + (float64(priorityLevel) * 0.5)
 
 	return baseScore * priorityMultiplier
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MATRICE DE SIMILARITÉ — TDD §4.3
-// ─────────────────────────────────────────────────────────────────────────────
+// ############################################################################
+// # ÉTAPE 3 : MATRICE DE SIMILARITÉ ET CACHE EN MÉMOIRE
+// ############################################################################
 
-// buildSimilarityMatrix construit la matrice G ∈ R^{n×n} aplatie en row-major.
-//
-// TDD §4.3:
-//
-//	G_{ij} = <ĉ_{p_i}, ĉ_{p_j}>,  i,j ∈ {1,...,n}
-//
-// Optimisation: seul le triangle supérieur est calculé (G est symétrique,
-// G_{ii} = 1 pour vecteurs normalisés).
-//
-// Complexité: O(n²·N/2) = O(1000²·224/2) = O(112M) ≈ 11 ms sur AVX2.
+// buildSimilarityMatrix construit la matrice de similarité croisée G.
+// G_{i,j} = Similarité entre le post_service I et le post_service J.
+// Elle est stockée sous forme de tableau plat (row-major) pour la performance CPU.
 func buildSimilarityMatrix(candidates []PostCandidate) ([]float32, int) {
-	n := len(candidates)
-	if n == 0 {
+	dimensionSize := len(candidates)
+	if dimensionSize == 0 {
 		return nil, 0
 	}
 
-	// Allocation de la matrice aplatie G[n×n] (row-major)
-	// TDD §4.3: G ∈ R^{|C|×|C|},  |C| = 1000
-	G := make([]float32, n*n)
+	// Allocation de la matrice aplatie
+	flattenedMatrix := make([]float32, dimensionSize*dimensionSize)
 
-	for i := 0; i < n; i++ {
-		// G[i][i] = <ĉ_{p_i}, ĉ_{p_i}> = 1 (vecteurs normalisés L2)
-		G[i*n+i] = 1.0
+	for i := 0; i < dimensionSize; i++ {
+		// La similarité d'un post avec lui-même est toujours 1.0 (Vecteurs normalisés L2)
+		flattenedMatrix[i*dimensionSize+i] = 1.0
 
-		vi := candidates[i].ContentVec
-		if len(vi) != variables.VectorDimTotal {
+		vectorI := candidates[i].ContentVec
+		if len(vectorI) != variables.VectorDimTotal {
 			continue
 		}
 
-		for j := i + 1; j < n; j++ {
-			vj := candidates[j].ContentVec
-			if len(vj) != variables.VectorDimTotal {
+		// Optimisation mathématique : la matrice est symétrique (G[i,j] == G[j,i]).
+		// On ne calcule que le triangle supérieur.
+		for j := i + 1; j < dimensionSize; j++ {
+			vectorJ := candidates[j].ContentVec
+			if len(vectorJ) != variables.VectorDimTotal {
 				continue
 			}
 
-			// G[i][j] = G[j][i] = <ĉ_{p_i}, ĉ_{p_j}> (symétrie)
-			dot := dotProductN(vi, vj)
-			G[i*n+j] = dot
-			G[j*n+i] = dot
+			dot := dotProductN(vectorI, vectorJ)
+			flattenedMatrix[i*dimensionSize+j] = dot
+			flattenedMatrix[j*dimensionSize+i] = dot
 		}
 	}
-	return G, n
+
+	return flattenedMatrix, dimensionSize
 }
 
-// getOrBuildSimMatrix retourne la matrice de similarité depuis le cache_service ou la reconstruit.
-//
-// TDD §4.3:
-//
-//	"calculée une fois par fenêtre temporelle (toutes les 5 minutes) et mise en
-//	 cache_service en mémoire dans le process Go"
-//
-// Invalidation: TTL de 5 minutes OU changement de l'ensemble de candidats.
+// getOrBuildSimMatrix retourne la matrice depuis la RAM, ou la calcule si le cache a expiré.
 func getOrBuildSimMatrix(candidates []PostCandidate) ([]float32, int) {
 	now := time.Now()
 
+	// 1. Lecture Rapide (RLock)
 	simCacheMu.RLock()
-	if simCache != nil && now.Before(simCache.expiresAt) && candidatesMatch(simCache.postIDs, candidates) {
-		G, n := simCache.G, simCache.n
+	isCacheValid := simCache != nil && now.Before(simCache.ExpiresAt)
+
+	if isCacheValid && candidatesMatch(simCache.PostIDs, candidates) {
+		matrix, size := simCache.FlattenedMatrix, simCache.DimensionSize
 		simCacheMu.RUnlock()
-		return G, n
+		return matrix, size
 	}
 	simCacheMu.RUnlock()
 
-	// Reconstruction nécessaire (expiration ou ensemble de candidats modifié)
-	G, n := buildSimilarityMatrix(candidates)
+	// 2. Reconstruction car le cache est invalide ou les candidats ont changé
+	newMatrix, newSize := buildSimilarityMatrix(candidates)
 
-	postIDs := make([]int64, len(candidates))
-	for i, c := range candidates {
-		postIDs[i] = c.PostID
+	extractedPostIDs := make([]int64, len(candidates))
+	for i, candidate := range candidates {
+		extractedPostIDs[i] = candidate.PostID
 	}
 
+	// 3. Écriture Sécurisée (Lock exclusif avec Double-Check Pattern)
 	simCacheMu.Lock()
-	// Double-check après acquisition du write lock (pattern DCLP)
-	if simCache != nil && now.Before(simCache.expiresAt) && candidatesMatch(simCache.postIDs, candidates) {
-		g, tn := simCache.G, simCache.n
-		simCacheMu.Unlock()
-		return g, tn
-	}
-	simCache = &simMatrixState{
-		G:         G,
-		n:         n,
-		postIDs:   postIDs,
-		expiresAt: now.Add(5 * time.Minute), // TDD §4.3: fenêtre de 5 minutes
-	}
-	simCacheMu.Unlock()
+	defer simCacheMu.Unlock()
 
-	return G, n
+	isCacheValidAfterLock := simCache != nil && now.Before(simCache.ExpiresAt)
+	if isCacheValidAfterLock && candidatesMatch(simCache.PostIDs, candidates) {
+		return simCache.FlattenedMatrix, simCache.DimensionSize
+	}
+
+	simCache = &simMatrixState{
+		FlattenedMatrix: newMatrix,
+		DimensionSize:   newSize,
+		PostIDs:         extractedPostIDs,
+		ExpiresAt:       now.Add(5 * time.Minute), // Renouvellement de la fenêtre de 5 min
+	}
+
+	return newMatrix, newSize
 }
 
-// candidatesMatch vérifie si la liste de post_service IDs correspond aux candidats actuels.
-// Comparaison O(n) sur les int64, négligeable par rapport à la construction O(n²·N).
+// candidatesMatch vérifie en O(n) si la liste stockée en cache correspond aux candidats actuels.
 func candidatesMatch(cachedIDs []int64, candidates []PostCandidate) bool {
 	if len(cachedIDs) != len(candidates) {
 		return false
 	}
-	for i, c := range candidates {
-		if cachedIDs[i] != c.PostID {
+	for i, candidate := range candidates {
+		if cachedIDs[i] != candidate.PostID {
 			return false
 		}
 	}
 	return true
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MMR — MAXIMAL MARGINAL RELEVANCE — TDD §4.3
-// ─────────────────────────────────────────────────────────────────────────────
+// ############################################################################
+// # ÉTAPE 4 : MOTEUR DE DIVERSITÉ MMR (Maximal Marginal Relevance)
+// ############################################################################
 
-// RunMMR sélectionne itérativement les posts maximisant pertinence et diversité.
-//
-// TDD §4.3 — Formule itérative:
-//
-//	p*_i = argmax_{p ∈ C\S_i} [λ_d · R(u,p) - (1-λ_d) · max_{p'∈S_i} G[p][p']]
-//
-// Paramètres:
-//   - candidates: posts candidats avec PersonalScore pré-calculé et MatrixIdx défini
-//   - G: matrice de similarité aplatie [totalN×totalN] (G[i*totalN+j] = <ĉ_i,ĉ_j>)
-//   - totalN: dimension de G (= len(candidates) pour matrice on-the-fly, ou |C| pour cache_service)
-//   - lambdaD: paramètre de diversité (TDD: 0.72)
-//   - k: nombre de posts à sélectionner (TDD: 50)
-//
-// Complexité: O(K · |C|) lookups dans G, soit O(50·1000) = O(50K) ≈ 2–5 ms (TDD §4.3).
-func RunMMR(candidates []PostCandidate, G []float32, totalN int, lambdaD float64, k int) []PostCandidate {
-	n := len(candidates)
-	if n == 0 || k <= 0 {
+// RunMMR sélectionne les posts en équilibrant deux forces :
+// 1. Pertinence (Le post est-il parfait pour l'utilisateur ?)
+// 2. Redondance (L'utilisateur vient-il de voir 5 posts identiques juste avant ?)
+func RunMMR(candidates []PostCandidate, similarityMatrix []float32, matrixDimension int, lambdaDiversity float64, requestedLimit int) []PostCandidate {
+	totalCandidates := len(candidates)
+	if totalCandidates == 0 || requestedLimit <= 0 {
 		return nil
 	}
-	if k > n {
-		k = n
+
+	if requestedLimit > totalCandidates {
+		requestedLimit = totalCandidates
 	}
 
-	selected := make([]PostCandidate, 0, k)
-	selectedIdxs := make([]int, 0, k) // Indices dans candidates[] des posts sélectionnés
-	available := make([]bool, n)
-	for i := range available {
-		available[i] = true
+	selectedCandidates := make([]PostCandidate, 0, requestedLimit)
+	selectedMatrixIndexes := make([]int, 0, requestedLimit)
+
+	isAvailable := make([]bool, totalCandidates)
+	for i := range isAvailable {
+		isAvailable[i] = true
 	}
 
-	for len(selected) < k {
-		bestMMR := math.Inf(-1)
-		bestI := -1
+	// Boucle principale : on tire les posts 1 par 1 jusqu'à atteindre la limite demandée
+	for len(selectedCandidates) < requestedLimit {
+		var bestMarginalScore = math.Inf(-1)
+		bestCandidateIndex := -1
 
+		// Évaluation marginale de tous les candidats restants
 		for i := range candidates {
-			if !available[i] {
+			if !isAvailable[i] {
 				continue
 			}
 
-			// ── Terme de pertinence: λ_d · R(u,p) ──────────────────────
-			//
-			// TDD §4.3: premier terme — favorise la pertinence personnalisée
-			mmrScore := lambdaD * candidates[i].PersonalScore
+			// Force A : La pertinence (pondérée par Lambda)
+			relevanceScore := lambdaDiversity * candidates[i].PersonalScore
+			marginalScore := relevanceScore
 
-			// ── Terme de redondance: (1-λ_d) · max_{p'∈S_i} G[p][p'] ──
-			//
-			// TDD §4.3: second terme — pénalise la similarité aux posts déjà sélectionnés
-			if len(selectedIdxs) > 0 {
-				var maxSim float64
-				ci := candidates[i].MatrixIdx
+			// Force B : La pénalité de redondance
+			// Si on a déjà sélectionné des posts, on vérifie à quel point ce candidat
+			// ressemble au pire de ce qu'on a déjà pris.
+			if len(selectedMatrixIndexes) > 0 {
+				var maxSimilarityWithSelected = 0.0
+				candidateMatrixIdx := candidates[i].MatrixIdx
 
-				for _, selI := range selectedIdxs {
-					cj := candidates[selI].MatrixIdx
-					// G[ci][cj] = <ĉ_{p_i}, ĉ_{p_j}>
-					if ci >= 0 && cj >= 0 && ci*totalN+cj < len(G) {
-						sim := float64(G[ci*totalN+cj])
-						if sim > maxSim {
-							maxSim = sim
+				for _, selectedIdx := range selectedMatrixIndexes {
+					targetMatrixIdx := candidates[selectedIdx].MatrixIdx
+
+					// Extraction dans la matrice plate : G[ligne * taille + colonne]
+					if candidateMatrixIdx >= 0 && targetMatrixIdx >= 0 && (candidateMatrixIdx*matrixDimension+targetMatrixIdx) < len(similarityMatrix) {
+						similarity := float64(similarityMatrix[candidateMatrixIdx*matrixDimension+targetMatrixIdx])
+						if similarity > maxSimilarityWithSelected {
+							maxSimilarityWithSelected = similarity
 						}
 					}
 				}
-				mmrScore -= (1.0 - lambdaD) * maxSim
+
+				redundancyPenalty := (1.0 - lambdaDiversity) * maxSimilarityWithSelected
+				marginalScore -= redundancyPenalty
 			}
 
-			if mmrScore > bestMMR {
-				bestMMR = mmrScore
-				bestI = i
+			// Retenir le candidat ayant le meilleur score net (Pertinence - Redondance)
+			if marginalScore > bestMarginalScore {
+				bestMarginalScore = marginalScore
+				bestCandidateIndex = i
 			}
 		}
 
-		if bestI < 0 {
-			break // Plus de candidats disponibles
+		// Rupture si on n'a plus rien à évaluer
+		if bestCandidateIndex < 0 {
+			break
 		}
 
-		// Ajout du candidat optimal à l'ensemble sélectionné
-		selected = append(selected, candidates[bestI])
-		selectedIdxs = append(selectedIdxs, bestI)
-		available[bestI] = false
+		// Validation et verrouillage du candidat élu
+		selectedCandidates = append(selectedCandidates, candidates[bestCandidateIndex])
+		selectedMatrixIndexes = append(selectedMatrixIndexes, bestCandidateIndex)
+		isAvailable[bestCandidateIndex] = false
 	}
 
-	return selected
+	return selectedCandidates
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SÉRENDIPITÉ — TDD §4.3
-// ─────────────────────────────────────────────────────────────────────────────
+// ############################################################################
+// # ÉTAPE 5 : INJECTION DE SÉRENDIPITÉ (ONDE DE DOPAMINE)
+// ############################################################################
 
-// InjectSerendipity remplace de manière ondulatoire des slots du feed par des posts de découverte.
-func InjectSerendipity(feed []PostCandidate, pool []int64, rng *rand.Rand, startIndex int) []PostCandidate {
-	if len(pool) == 0 || rng == nil {
+// InjectSerendipity remplace de manière aléatoire (mais contrôlée) certains posts
+// du feed généré par MMR par des posts de découverte pour casser les chambres d'écho.
+func InjectSerendipity(feed []PostCandidate, discoveryPool []int64, rng *rand.Rand, startIndex int) []PostCandidate {
+	if len(discoveryPool) == 0 || rng == nil {
 		return feed
 	}
+
 	for i := range feed {
-		// 1. Calcul de la Qualité Requise (Affinité) via la Vague de Dopamine
-		// ✅ L'index global (startIndex + i) garantit la continuité parfaite de l'onde
+		// 1. L'Onde de Dopamine (DopamineWave) dicte combien de contenu "sûr"
+		// l'utilisateur a besoin à cet instant précis (index).
 		affinityRequired := DopamineWave(float64(startIndex + i))
 
-		// 2. La probabilité d'injecter de la sérendipité (Exploration)
-		// correspond au vide laissé par l'affinité.
-		// Exemple : Si la vague exige 1.0 (Index 0), la probabilité est 0%.
-		// Si la vague creuse un plateau à 0.35, la probabilité monte à 65%.
-		probSerendipity := 1.0 - affinityRequired
+		// 2. La probabilité de surprise (Sérendipité) est l'inverse exact de ce besoin.
+		// Ex: Si le besoin de certitude est de 0.8 (80%), la probabilité de surprise est 20%.
+		probabilityOfSurprise := 1.0 - affinityRequired
 
-		// 3. Tirage aléatoire déterministe via la Seed du panier
-		if rng.Float64() < probSerendipity {
-			poolIdx := rng.Intn(len(pool))
+		// 3. Jet de dé contre la probabilité calculée
+		if rng.Float64() < probabilityOfSurprise {
+			randomPoolIndex := rng.Intn(len(discoveryPool))
+
+			// On écrase le post du MMR par un post de découverte brut
 			feed[i] = PostCandidate{
-				PostID:        pool[poolIdx],
+				PostID:        discoveryPool[randomPoolIndex],
 				IsSerendipity: true,
-				MatrixIdx:     -1, // Post hors matrice de similarité
+				MatrixIdx:     -1, // Sécurité : ce post n'est pas dans la matrice calculée
 			}
 		}
 	}
+
 	return feed
 }

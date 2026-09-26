@@ -11,191 +11,191 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// CreateConversation valide les règles, construit les entités et appelle l'ajout des membres en interne.
+// ############################################################################
+// # SERVICE : CRÉATION DE CONVERSATION (MP OU GROUPE)
+// ############################################################################
+
+// CreateConversation valide les règles d'intégrité, instancie la conversation
+// et initialise ses participants en base et en cache.
 func CreateConversation(ctx context.Context, callerID int64, input conversation_models.CreateConversationInput) (conversation_models.CreateConversationOutput, error) {
-	// 1. VALIDATION MÉTIER
-	if input.Type == 2 || input.Type == 3 {
-		return conversation_models.CreateConversationOutput{}, nubo_error.NewForbidden("COMMUNITY_CREATION_DENIED", "La création manuelle de communautés est réservée au système ou aux administrateurs.", nil)
-	}
-	if input.Type == 0 && len(input.ParticipantIDs) != 1 {
-		return conversation_models.CreateConversationOutput{}, nubo_error.NewBadRequest("INVALID_PARTICIPANT_COUNT", "Un message privé doit comporter exactement un participant cible.", nil)
-	}
-	if input.Type == 1 && input.Title == "" {
-		return conversation_models.CreateConversationOutput{}, nubo_error.NewBadRequest("MISSING_TITLE", "Les groupes nécessitent un titre.", nil)
+
+	// ── ÉTAPE 1 : VALIDATIONS MÉTIER PRÉLIMINAIRES ─────────────────────────
+	if input.Type == variables.ConversationTypeCommunityPriv || input.Type == variables.ConversationTypeCommunityPub {
+		return conversation_models.CreateConversationOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "La création de communautés requiert le point d'entrée dédié.", nil)
 	}
 
-	// 2. VÉRIFICATION DE LA CONFIDENTIALITÉ POUR LES MP (Type 0)
-	if input.Type == 0 {
-		targetID := input.ParticipantIDs[0]
-		if targetID == callerID {
-			return conversation_models.CreateConversationOutput{}, nubo_error.NewBadRequest("CANNOT_MESSAGE_SELF", "Vous ne pouvez pas créer de conversation avec vous-même.", nil)
+	if input.Type == variables.ConversationTypeDirect && len(input.ParticipantIDs) != 1 {
+		return conversation_models.CreateConversationOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Un message privé doit comporter exactement un participant cible.", nil)
+	}
+
+	if input.Type == variables.ConversationTypeGroup && pkg.CleanStr(input.Title) == "" {
+		return conversation_models.CreateConversationOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Un groupe requiert obligatoirement un titre valide.", nil)
+	}
+
+	// ── ÉTAPE 2 : CONTRÔLE DE CONFIDENTIALITÉ DES MESSAGES PRIVÉS ──────────
+	if input.Type == variables.ConversationTypeDirect {
+		targetUserID := input.ParticipantIDs[0]
+		if targetUserID == callerID {
+			return conversation_models.CreateConversationOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Création de conversation avec soi-même interdite.", nil)
 		}
 
-		targetLite, err := cache_service.GetUserLite(ctx, targetID)
-		if err != nil || targetLite.ID == 0 {
-			return conversation_models.CreateConversationOutput{}, nubo_error.NewNotFound("USER_NOT_FOUND", "Utilisateur cible introuvable.", err)
+		targetUserLite, errLite := cache_service.GetUserLite(ctx, targetUserID)
+		if errLite != nil || targetUserLite.ID == 0 {
+			return conversation_models.CreateConversationOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Utilisateur cible introuvable.", errLite)
 		}
 
-		relationState := cache_service.RelationValue(ctx, callerID, targetID)
+		relationState := cache_service.RelationValue(ctx, callerID, targetUserID)
 		if relationState == -1 {
-			return conversation_models.CreateConversationOutput{}, nubo_error.NewForbidden("USER_BLOCKED", "Action impossible : utilisateur bloqué.", nil)
+			return conversation_models.CreateConversationOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Action impossible : utilisateur bloqué.", nil)
 		}
 
-		canCommunicate := false
-		switch targetLite.ConversationPermission {
+		canInitiateDirectMessage := false
+		switch targetUserLite.ConversationPermission {
 		case 0:
-			canCommunicate = true
+			canInitiateDirectMessage = true
 		case 1:
-			canCommunicate = relationState >= 1
+			canInitiateDirectMessage = relationState >= variables.RelationStateFollow
 		case 2:
-			canCommunicate = relationState == 2
+			canInitiateDirectMessage = relationState == variables.RelationStateFriend
 		}
 
-		if !canCommunicate {
-			return conversation_models.CreateConversationOutput{}, nubo_error.NewForbidden("DM_NOT_ACCEPTED", "Cet utilisateur n'accepte pas les messages directs.", nil)
+		if !canInitiateDirectMessage {
+			return conversation_models.CreateConversationOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Cet utilisateur refuse la réception de messages privés.", nil)
 		}
 	}
 
-	// 3. PRÉPARATION DES DONNÉES DE LA CONVERSATION
-	now := time.Now().UTC()
-	convID := pkg.GenerateID()
+	// ── ÉTAPE 3 : INITIALISATION DE L'ENTITÉ CONVERSATION ───────────────────
+	currentTime := time.Now().UTC()
+	conversationID := pkg.GenerateID()
 
-	title := ""
-	if input.Type > 0 {
-		title = pkg.CleanStr(input.Title)
+	cleanedTitle := ""
+	if input.Type == variables.ConversationTypeGroup {
+		cleanedTitle = pkg.CleanStr(input.Title)
 	}
 
-	settings := input.Settings
-	// Si le Front n'a rien envoyé (struct vide), on applique les valeurs par défaut selon le type
-	if settings == (conversation_models.ConversationSettings{}) {
-		settings = conversation_models.DefaultConversationSettings(input.Type)
+	conversationSettings := input.Settings
+	if conversationSettings == (conversation_models.ConversationSettings{}) {
+		conversationSettings = conversation_models.DefaultConversationSettings(input.Type)
 	}
 
-	convPayload := conversation_models.ConversationPayload{
-		ID:           convID,
+	conversationPayload := conversation_models.ConversationPayload{
+		ID:           conversationID,
 		Type:         input.Type,
-		Title:        title,
+		Title:        cleanedTitle,
 		Description:  "",
 		AvatarID:     0,
 		State:        0,
-		Settings:     settings, // NOUVEAU
+		Settings:     conversationSettings,
 		ExternalLink: models.ExternalLinks{},
-		CreatedAt:    domain.TimeToMillis(now),
-		UpdatedAt:    domain.TimeToMillis(now),
+		CreatedAt:    domain.TimeToMillis(currentTime),
+		UpdatedAt:    domain.TimeToMillis(currentTime),
 	}
 
-	_ = object_cache_service.SetConversationInObjectCache(ctx, convPayload)
+	_ = object_cache_service.SetConversationInObjectCache(ctx, conversationPayload)
 
-	err := redis.EnqueueDB(ctx, convID, convID, redis.EntityConversation, redis.ActionCreate, convPayload, redis.TargetAll)
-	if err != nil {
-		return conversation_models.CreateConversationOutput{}, err
+	errEnqueueConv := redis.EnqueueDB(ctx, conversationID, conversationID, redis.EntityConversation, redis.ActionCreate, conversationPayload, redis.TargetAll)
+	if errEnqueueConv != nil {
+		logger.Log.Error().Err(errEnqueueConv).Int64("conv_id", conversationID).Msg("Échec d'enregistrement asynchrone de la conversation")
+		return conversation_models.CreateConversationOutput{}, nubo_error.NewInternal()
 	}
 
 	output := conversation_models.CreateConversationOutput{
-		ConversationID: convID,
+		ConversationID: conversationID,
 	}
 
-	// 4. CRÉATION DES MEMBRES INITIAUX ET DÉLÉGATION
-	if input.Type == 0 {
-		// --- CRÉATION MP (Type 0) ---
-		membersToAdd := []int64{callerID, input.ParticipantIDs[0]}
-		for _, userID := range membersToAdd {
-			mem := member_models.MemberPayload{
+	// ── ÉTAPE 4 : PEUPLEMENT ET EXPÉDITION DES PARTICIPANTS ─────────────────
+	if input.Type == variables.ConversationTypeDirect {
+		directMembers := []int64{callerID, input.ParticipantIDs[0]}
+		for _, memberID := range directMembers {
+			memberPayload := member_models.MemberPayload{
 				ID:                pkg.GenerateID(),
-				ConversationID:    convID,
-				UserID:            userID,
-				Role:              0,
-				Settings:          member_models.DefaultMemberSettings(convPayload.Type),
-				JoinedAt:          domain.TimeToMillis(now),
+				ConversationID:    conversationID,
+				UserID:            memberID,
+				Role:              variables.MemberRoleNormal,
+				Settings:          member_models.DefaultMemberSettings(conversationPayload.Type),
+				JoinedAt:          domain.TimeToMillis(currentTime),
 				FrozenMessageID:   0,
 				LastReadMessageID: 0,
 				UnreadCount:       0,
-				CreatedAt:         domain.TimeToMillis(now),
-				UpdatedAt:         domain.TimeToMillis(now),
+				CreatedAt:         domain.TimeToMillis(currentTime),
+				UpdatedAt:         domain.TimeToMillis(currentTime),
 			}
-			_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
 
-			// === NOUVEAU : MISE À JOUR SYNCHRONE DU SPEED CACHE ===
+			_ = object_cache_service.SetMemberInObjectCache(ctx, memberPayload)
 			_ = cache_service.AddMemberToSpeedCache(ctx, lite_models.MemberLiteRequest{
-				ConversationID:    mem.ConversationID,
-				UserID:            mem.UserID,
-				Role:              mem.Role,
-				Settings:          service.ToMemberSettingsLite(mem.Settings),
-				FrozenMessageID:   mem.FrozenMessageID,
-				LastReadMessageID: mem.LastReadMessageID,
-				UnreadCount:       mem.UnreadCount,
+				ConversationID:    memberPayload.ConversationID,
+				UserID:            memberPayload.UserID,
+				Role:              memberPayload.Role,
+				Settings:          service.ToMemberSettingsLite(memberPayload.Settings),
+				FrozenMessageID:   memberPayload.FrozenMessageID,
+				LastReadMessageID: memberPayload.LastReadMessageID,
+				UnreadCount:       memberPayload.UnreadCount,
+				JoinedAt:          memberPayload.JoinedAt,
 			})
 
-			// ENVOI NOTIFICATION
-			_ = redis.EnqueueDB(ctx, mem.ID, convID, redis.EntityMembers, redis.ActionCreate, mem, redis.TargetAll)
+			_ = redis.EnqueueDB(ctx, memberPayload.ID, conversationID, redis.EntityMembers, redis.ActionCreate, memberPayload, redis.TargetAll)
 		}
 
-		_ = realtime_service.DistributeToUsers(ctx, "conversation.created", convPayload, membersToAdd)
-	} else if input.Type == 1 {
-		// --- CRÉATION GROUPE (Type 1) ---
-		mem := member_models.MemberPayload{
+		_ = realtime_service.DistributeToUsers(ctx, variables.NotificationConversationCreated, conversationPayload, directMembers)
+
+	} else if input.Type == variables.ConversationTypeGroup {
+		ownerPayload := member_models.MemberPayload{
 			ID:                pkg.GenerateID(),
-			ConversationID:    convID,
+			ConversationID:    conversationID,
 			UserID:            callerID,
-			Role:              2, // Propriétaire
-			Settings:          member_models.DefaultMemberSettings(convPayload.Type),
-			JoinedAt:          domain.TimeToMillis(now),
+			Role:              variables.MemberRoleOwner,
+			Settings:          member_models.DefaultMemberSettings(conversationPayload.Type),
+			JoinedAt:          domain.TimeToMillis(currentTime),
 			FrozenMessageID:   0,
 			LastReadMessageID: 0,
 			UnreadCount:       0,
-			CreatedAt:         domain.TimeToMillis(now),
-			UpdatedAt:         domain.TimeToMillis(now),
+			CreatedAt:         domain.TimeToMillis(currentTime),
+			UpdatedAt:         domain.TimeToMillis(currentTime),
 		}
-		_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
 
-		// === NOUVEAU : MISE À JOUR SYNCHRONE DU SPEED CACHE ===
+		_ = object_cache_service.SetMemberInObjectCache(ctx, ownerPayload)
 		_ = cache_service.AddMemberToSpeedCache(ctx, lite_models.MemberLiteRequest{
-			ConversationID:    mem.ConversationID,
-			UserID:            mem.UserID,
-			Role:              mem.Role,
-			Settings:          service.ToMemberSettingsLite(mem.Settings),
-			FrozenMessageID:   mem.FrozenMessageID,
-			LastReadMessageID: mem.LastReadMessageID,
-			UnreadCount:       mem.UnreadCount,
-			JoinedAt:          mem.JoinedAt,
+			ConversationID:    ownerPayload.ConversationID,
+			UserID:            ownerPayload.UserID,
+			Role:              ownerPayload.Role,
+			Settings:          service.ToMemberSettingsLite(ownerPayload.Settings),
+			FrozenMessageID:   ownerPayload.FrozenMessageID,
+			LastReadMessageID: ownerPayload.LastReadMessageID,
+			UnreadCount:       ownerPayload.UnreadCount,
+			JoinedAt:          ownerPayload.JoinedAt,
 		})
 
-		_ = redis.EnqueueDB(ctx, mem.ID, convID, redis.EntityMembers, redis.ActionCreate, mem, redis.TargetAll)
+		_ = redis.EnqueueDB(ctx, ownerPayload.ID, conversationID, redis.EntityMembers, redis.ActionCreate, ownerPayload, redis.TargetAll)
 
-		// Appel direct de la fonction qui est désormais dans le même package !
 		if len(input.ParticipantIDs) > 0 {
-			addInput := conversation_models.AddMemberInput{
-				ConversationID: convID,
+			addMembersInput := conversation_models.AddMemberInput{
+				ConversationID: conversationID,
 				ParticipantIDs: input.ParticipantIDs,
 			}
-			addOutput, _ := AddMembersToConversation(ctx, callerID, addInput)
+			addMembersOutput, _ := AddMembersToConversation(ctx, callerID, addMembersInput)
 
-			output.AddedUserIDs = addOutput.AddedUserIDs
-			output.InvitedUserIDs = addOutput.InvitedUserIDs
-			output.RejectedUserIDs = addOutput.RejectedUserIDs
-			output.MessageIDs = addOutput.MessageIDs           // Propagation des IDs générés
-			output.ConversationIDs = addOutput.ConversationIDs // Propagation des canaux utilisés
+			output.AddedUserIDs = addMembersOutput.AddedUserIDs
+			output.InvitedUserIDs = addMembersOutput.InvitedUserIDs
+			output.RejectedUserIDs = addMembersOutput.RejectedUserIDs
+			output.MessageIDs = addMembersOutput.MessageIDs
+			output.ConversationIDs = addMembersOutput.ConversationIDs
 		}
 
-		// ENVOI NOTIFICATION
-		_ = realtime_service.DistributeToUsers(ctx, "conversation.created", convPayload, []int64{callerID})
+		_ = realtime_service.DistributeToUsers(ctx, variables.NotificationConversationCreated, conversationPayload, []int64{callerID})
 	}
 
-	// ========================================================================
-	// 5. MARQUAGE DU TEMPS (DIRTY FLAG)
-	// ========================================================================
-	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
-	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
-	// et garantit que le client reçoit la date de la fin absolue de la transaction.
-	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
+	// ── ÉTAPE 5 : TOUCH ACTIVITÉ FINALE ─────────────────────────────────────
+	latestActivityTimestampMs := cache_service.TouchInboxActivity(ctx, callerID)
+	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(latestActivityTimestampMs))
 
 	return output, nil
 }

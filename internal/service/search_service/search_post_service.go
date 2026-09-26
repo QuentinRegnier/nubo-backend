@@ -6,122 +6,151 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/search_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/post_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// Helper pour mapper la string du front-end en entier pour le SQL
-func mapFilterToOrderMode(filter string) int {
-	switch filter {
-	case "views":
-		return 0
-	case "likes":
-		return 1
-	case "comments":
-		return 2
-	case "recent":
-		return 3
-	case "oldest":
-		return 4
+// ############################################################################
+// # SERVICE : RECHERCHE TEXTUELLE & GLOBALE DE PUBLICATIONS
+// ############################################################################
+
+// mapFilterToOrderMode traduit la string du front-end en entier compréhensible par SQL.
+func mapFilterToOrderMode(frontendFilter string) int {
+	switch frontendFilter {
+	case variables.SearchFilterViews:
+		return variables.OrderModeViews
+	case variables.SearchFilterLikes:
+		return variables.OrderModeLikes
+	case variables.SearchFilterComments:
+		return variables.OrderModeComments
+	case variables.SearchFilterRecent:
+		return variables.OrderModeRecent
+	case variables.SearchFilterOldest:
+		return variables.OrderModeOldest
 	default:
-		return 3 // recent par défaut
+		return variables.OrderModeRecent // Recent par défaut pour éviter le chaos
 	}
 }
 
+// SearchPosts est le moteur de routage principal des recherches complexes.
 func SearchPosts(ctx context.Context, callerID int64, input search_models.SearchPostInput) (search_models.SearchPostOutput, error) {
-	var postIDs []int64
-	intercepted := false
-	orderMode := mapFilterToOrderMode(input.Filter)
 
-	// 1. DÉCOUVERTE GLOBALE (Filtre seul, sans recherche textuelle) -> MOST CACHE L1
-	if input.Query == "" && input.Filter != "" && input.Filter != "trend" {
-		rankType := ""
+	var resolvedPostIDs []int64
+	hasQueryBeenIntercepted := false
+	targetOrderMode := mapFilterToOrderMode(input.Filter)
+
+	// ── ÉTAPE 1 : DÉCOUVERTE GLOBALE (MOST CACHE L1) ────────────────────────
+
+	// Si l'utilisateur clique sur un filtre sans faire de recherche textuelle.
+	if input.Query == "" && input.Filter != "" && input.Filter != variables.SearchFilterTrend {
+		targetRankType := ""
+
 		switch input.Filter {
-		case "likes":
-			rankType = "strict:likes"
-		case "views":
-			rankType = "strict:views"
-		case "recent":
-			rankType = "strict:recent"
+		case variables.SearchFilterLikes:
+			targetRankType = "strict:likes"
+		case variables.SearchFilterViews:
+			targetRankType = "strict:views"
+		case variables.SearchFilterRecent:
+			targetRankType = "strict:recent"
 		}
 
-		if rankType != "" {
-			payloads, err := cache_service.GetRankedPosts(ctx, rankType, input.Offset, input.Limit)
-			if err != nil {
-				return search_models.SearchPostOutput{}, err
+		if targetRankType != "" {
+			rankedPayloadsFromCache, errRedis := cache_service.GetRankedPosts(ctx, targetRankType, input.Offset, input.Limit)
+			if errRedis != nil {
+				logger.Log.Error().Err(errRedis).Str("rank_type", targetRankType).Msg("Erreur L1 lors de la récupération des tops posts")
+				return search_models.SearchPostOutput{}, nubo_error.NewInternal()
 			}
-			for _, p := range payloads {
-				postIDs = append(postIDs, p.ID)
+
+			for _, payload := range rankedPayloadsFromCache {
+				resolvedPostIDs = append(resolvedPostIDs, payload.ID)
 			}
-			intercepted = true
+			hasQueryBeenIntercepted = true
 		}
 	}
 
-	// 2. RECHERCHE PAR HASHTAG EXACT (#)
-	if !intercepted && strings.HasPrefix(input.Query, "#") {
-		cleanSlug := service.NormalizeHashtag(input.Query)
-		if cleanSlug != "" {
+	// ── ÉTAPE 2 : RECHERCHE PAR HASHTAG EXACT (#) ───────────────────────────
+
+	if !hasQueryBeenIntercepted && strings.HasPrefix(input.Query, "#") {
+		cleanHashtagSlug := service.NormalizeHashtag(input.Query)
+
+		if cleanHashtagSlug != "" {
 			// Si on demande les plus récents, on tape le ZSET ultra-rapide L1
-			if orderMode == 3 {
-				payloads, err := cache_service.GetTagPosts(ctx, cleanSlug, input.Offset, input.Limit)
-				if err == nil {
-					for _, p := range payloads {
-						postIDs = append(postIDs, p.ID)
+			if targetOrderMode == variables.OrderModeRecent {
+				tagPayloadsFromCache, errCache := cache_service.GetTagPosts(ctx, cleanHashtagSlug, input.Offset, input.Limit)
+				if errCache == nil {
+					for _, payload := range tagPayloadsFromCache {
+						resolvedPostIDs = append(resolvedPostIDs, payload.ID)
 					}
-					intercepted = true
+					hasQueryBeenIntercepted = true
 				}
 			} else {
-				// Si on veut trier (par ex: "Le tag #nature le plus liké"), on DOIT déléguer au L3
-				pgIDs, errPg := postgres.FuncSearchPostIDsByTag(ctx, cleanSlug, orderMode, input.Offset, input.Limit)
+				// Si on veut trier ("Le tag #nature le plus liké"), on DOIT déléguer au L3
+				pgIDs, errPg := postgres.FuncSearchPostIDsByTag(ctx, cleanHashtagSlug, targetOrderMode, input.Offset, input.Limit)
 				if errPg == nil {
-					postIDs = append(postIDs, pgIDs...)
-					intercepted = true
+					resolvedPostIDs = append(resolvedPostIDs, pgIDs...)
+					hasQueryBeenIntercepted = true
+				} else {
+					logger.Log.Warn().Err(errPg).Msg("Échec L3 de la recherche de Post par Tag trié")
 				}
 			}
 		}
 	}
 
-	// 3. RECHERCHE PAR AUTEUR EXACT (@)
-	if !intercepted && strings.HasPrefix(input.Query, "@") {
-		username := strings.ToLower(strings.TrimPrefix(input.Query, "@"))
-		// Recherche instantanée L1 Lex pour trouver l'ID
-		users, err := cache_service.SearchUserByPrefix(ctx, username, 1)
-		if err == nil && len(users) > 0 && strings.ToLower(users[0].Username) == username {
-			pgIDs, errPg := postgres.FuncSearchPostIDsByUsers(ctx, []int64{users[0].ID}, orderMode, input.Offset, input.Limit)
+	// ── ÉTAPE 3 : RECHERCHE PAR AUTEUR EXACT (@) ────────────────────────────
+
+	if !hasQueryBeenIntercepted && strings.HasPrefix(input.Query, "@") {
+		targetUsername := strings.ToLower(strings.TrimPrefix(input.Query, "@"))
+
+		// Recherche instantanée L1 Lex pour trouver l'ID de l'auteur ciblé
+		usersList, errCache := cache_service.SearchUserByPrefix(ctx, targetUsername, 1)
+
+		if errCache == nil && len(usersList) > 0 && strings.ToLower(usersList[0].Username) == targetUsername {
+			pgIDs, errPg := postgres.FuncSearchPostIDsByUsers(ctx, []int64{usersList[0].ID}, targetOrderMode, input.Offset, input.Limit)
 			if errPg == nil {
-				postIDs = append(postIDs, pgIDs...)
-				intercepted = true
+				resolvedPostIDs = append(resolvedPostIDs, pgIDs...)
+				hasQueryBeenIntercepted = true
+			} else {
+				logger.Log.Warn().Err(errPg).Msg("Échec L3 de la recherche de Post par Auteur Exact")
 			}
 		}
 	}
 
-	// 4. FALLBACK : RECHERCHE TEXTUELLE COMPLÈTE (L3 Postgres)
-	if !intercepted && input.Query != "" {
-		pgIDs, errPg := postgres.FuncSearchPostIDsByText(ctx, input.Query, orderMode, input.Offset, input.Limit)
+	// ── ÉTAPE 4 : FALLBACK FULL-TEXT SEARCH (POSTGRESQL L3) ─────────────────
+
+	if !hasQueryBeenIntercepted && input.Query != "" {
+		pgIDs, errPg := postgres.FuncSearchPostIDsByText(ctx, input.Query, targetOrderMode, input.Offset, input.Limit)
 		if errPg != nil {
-			return search_models.SearchPostOutput{}, errPg
+			logger.Log.Error().Err(errPg).Str("query", input.Query).Msg("Erreur critique L3 lors de la Full-Text Search des posts")
+			return search_models.SearchPostOutput{}, nubo_error.NewInternal()
 		}
-		postIDs = append(postIDs, pgIDs...)
+		resolvedPostIDs = append(resolvedPostIDs, pgIDs...)
 	}
 
-	// 5. HYDRATATION FINALE UNIFIÉE (L1 -> L2 -> L3)
-	// Si on n'a trouvé aucun ID à cette étape, on renvoie une liste vide propre
-	if len(postIDs) == 0 {
+	// ── ÉTAPE 5 : COUPE-CIRCUIT (AUCUN RÉSULTAT) ────────────────────────────
+
+	if len(resolvedPostIDs) == 0 {
 		return search_models.SearchPostOutput{
-			Posts:                   []post_models.GetPostOutput{},
+			Posts:                   make([]post_models.GetPostOutput, 0),
 			HasTrendFilterAvailable: true,
 		}, nil
 	}
 
-	hydratedPosts := post_service.GetPosts(ctx, post_models.GetPostInput{
+	// ── ÉTAPE 6 : HYDRATATION FINALE UNIFIÉE VIA LE DOMAINE POST ────────────
+
+	hydrationRequestInput := post_models.GetPostInput{
 		UserID:  callerID,
-		PostIDs: postIDs,
-	})
+		PostIDs: resolvedPostIDs,
+	}
+
+	fullyHydratedPostsResults := post_service.GetPosts(ctx, hydrationRequestInput)
 
 	return search_models.SearchPostOutput{
-		Posts:                   hydratedPosts,
+		Posts:                   fullyHydratedPostsResults,
 		HasTrendFilterAvailable: true,
 	}, nil
 }

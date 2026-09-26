@@ -8,40 +8,60 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/saved_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// ToggleSaved gère l'ajout et le retrait d'un post aux favoris de l'utilisateur
-func ToggleSaved(ctx context.Context, userID int64, postID int64, action string) error {
-	// 1. Vérification que le post existe bien (L1) - Évite de sauvegarder un fantôme
+// ############################################################################
+// # SERVICE : AJOUT / RETRAIT DES FAVORIS (TOGGLE)
+// ############################################################################
+
+// ToggleSaved gère l'ajout et le retrait d'un post aux favoris de l'utilisateur.
+// Utilise le cache L1 pour bloquer instantanément les fantômes.
+func ToggleSaved(ctx context.Context, userID int64, postID int64, requestedAction string) error {
+
+	// ── ÉTAPE 1 : VÉRIFICATION D'INTÉGRITÉ DU POST ──────────────────────────
+
+	// On vérifie que le post existe bien en L1 pour éviter de sauvegarder un post fantôme
 	if !object_cache_service.IsPostInObjectCache(ctx, postID) {
-		return nubo_error.NewNotFound("POST_NOT_FOUND", "Post introuvable ou indisponible.", nil)
+		return nubo_error.NewNotFound(nubo_error.CodeNotFound, "La publication est introuvable ou indisponible.", nil)
 	}
 
-	now := time.Now().UTC()
-	var dbAction redis.ActionType
+	currentTime := time.Now().UTC()
+	var redisActionType redis.ActionType
 
-	// 2. Traitement L1 (RAM)
-	if action == "save" {
-		dbAction = redis.ActionCreate
-		score := float64(now.UnixMilli())
-		_ = object_cache_service.AddSavedToZSET(ctx, userID, postID, score)
-	} else if action == "unsave" {
-		dbAction = redis.ActionDelete
+	// ── ÉTAPE 2 : TRAITEMENT L1 (RAM ZSET) ──────────────────────────────────
+
+	if requestedAction == variables.SavedActionSave {
+		redisActionType = redis.ActionCreate
+		zsetScore := float64(currentTime.UnixMilli())
+		_ = object_cache_service.AddSavedToZSET(ctx, userID, postID, zsetScore)
+
+	} else if requestedAction == variables.SavedActionUnsave {
+		redisActionType = redis.ActionDelete
 		_ = object_cache_service.RemoveSavedFromZSET(ctx, userID, postID)
+
 	} else {
-		return nubo_error.NewBadRequest("INVALID_ACTION", "Action non reconnue.", nil)
+		return nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Action de sauvegarde non reconnue.", nil)
 	}
 
-	// 3. Traitement L2/L3 Asynchrone (Write-Behind)
-	payload := saved_models.SavedPayload{
+	// ── ÉTAPE 3 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
+
+	savedRecordPayload := saved_models.SavedPayload{
 		ID:        pkg.GenerateID(),
 		UserID:    userID,
 		PostID:    postID,
-		CreatedAt: domain.TimeToMillis(now),
+		CreatedAt: domain.TimeToMillis(currentTime),
 	}
 
-	// partitionKey = userID (le shard gérant l'utilisateur centralisera ses favoris)
-	return redis.EnqueueDB(ctx, payload.ID, userID, redis.EntitySaved, dbAction, payload, redis.TargetAll)
+	// PartitionKey = userID pour que le shard gérant cet utilisateur centralise ses favoris
+	errQueue := redis.EnqueueDB(ctx, savedRecordPayload.ID, userID, redis.EntitySaved, redisActionType, savedRecordPayload, redis.TargetAll)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("post_id", postID).Msg("Échec du Write-Behind pour ToggleSaved")
+		return nubo_error.NewInternal()
+	}
+
+	return nil
 }

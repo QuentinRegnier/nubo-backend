@@ -9,7 +9,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
-	variables "github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/go-redis/redis/v8"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -272,7 +272,7 @@ func (c *Collection) Exists(ctx context.Context, id any) (bool, error) {
 func (c *Collection) SetObject(ctx context.Context, id any, data any) error {
 	msgpackBytes, err := msgpack.Marshal(data)
 	if err != nil {
-		return nubo_error.NewInternal(err)
+		return nubo_error.NewInternal()
 	}
 	return c.Client.Set(ctx, c.Key(id), msgpackBytes, c.DefaultTTL).Err()
 }

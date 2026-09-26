@@ -5,57 +5,78 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
+// ############################################################################
+// # SERVICE DE SÉCURITÉ : DROITS DE PROPRIÉTÉ D'UN COMMENTAIRE
+// ############################################################################
+
+// LeftComment récupère un commentaire complet (L1 -> L2 -> L3) et vérifie
+// que l'utilisateur appelant en est bien l'auteur légitime.
 func LeftComment(ctx context.Context, commentID int64, userID int64) (comment_models.CommentPayload, error) {
-	var comment comment_models.CommentPayload
-	var found bool
+	var commentPayload comment_models.CommentPayload
+	var isCommentFound bool
 
-	// 1. CASCADE DE LECTURE (L1 -> L2 -> L3) AVEC AUTO-GUÉRISON
-	if c, err := object_cache_service.GetCommentFromObjectCache(ctx, commentID); err == nil {
-		comment = c
-		found = true
+	// ── ÉTAPE 1 : TENTATIVE L1 (OBJECT CACHE - LFU) ─────────────────────────
+
+	if cachedComment, errCache := object_cache_service.GetCommentFromObjectCache(ctx, commentID); errCache == nil && cachedComment.ID != 0 {
+		commentPayload = cachedComment
+		isCommentFound = true
 	} else {
-		// TENTATIVE L2 (MongoDB)
-		mongoComments, errMongo := mongo.MongoLoadComments([]int64{commentID})
-		if errMongo == nil && len(mongoComments) > 0 {
-			comment = mongoComments[0]
-			found = true
 
-			// ⬆️ PROMOTION L2 -> L1 (Immédiat en RAM)
-			_ = object_cache_service.SetCommentInObjectCache(ctx, comment)
+		// ── ÉTAPE 2 : TENTATIVE L2 (MONGODB WARM STORAGE) ───────────────────
+
+		mongoCommentsList, errMongo := mongo.MongoLoadComments([]int64{commentID})
+		if errMongo == nil && len(mongoCommentsList) > 0 {
+			commentPayload = mongoCommentsList[0]
+			isCommentFound = true
+
+			// AUTO-GUÉRISON L1 (Immédiat en RAM)
+			_ = object_cache_service.SetCommentInObjectCache(ctx, commentPayload)
+
 		} else {
-			// TENTATIVE L3 (PostgreSQL)
+
+			// ── ÉTAPE 3 : FALLBACK ABSOLU L3 (POSTGRESQL COLD STORAGE) ──────
+
 			pgComment, errPg := postgres.FuncGetComment(ctx, commentID)
-			if errPg == nil {
-				comment = pgComment
-				found = true
+			if errPg != nil {
+				logger.Log.Error().Err(errPg).Int64("comment_id", commentID).Msg("Erreur L3 lors de la vérification de sécurité d'un commentaire")
+				return comment_models.CommentPayload{}, nubo_error.NewInternal()
+			}
 
-				// ⬆️ PROMOTION L3 -> L1 (Immédiat en RAM)
-				_ = object_cache_service.SetCommentInObjectCache(ctx, comment)
+			if pgComment.ID != 0 {
+				commentPayload = pgComment
+				isCommentFound = true
 
-				// ⬆️ PROMOTION L3 -> L2 (Asynchrone via Worker Mongo)
+				// AUTO-GUÉRISON L1 (Immédiat en RAM)
+				_ = object_cache_service.SetCommentInObjectCache(ctx, commentPayload)
+
+				// AUTO-GUÉRISON L2 (Asynchrone via Worker Mongo)
 				go func(c comment_models.CommentPayload) {
-					bgCtx := context.Background()
-					// PartitionKey = PostID pour les commentaires
-					_ = redis.EnqueueDB(bgCtx, c.ID, c.PostID, redis.EntityComment, redis.ActionUpdate, c, redis.TargetMongo)
-				}(comment)
+					backgroundCtx := context.Background()
+					// PartitionKey = PostID pour grouper contextuellement les commentaires
+					_ = redis.EnqueueDB(backgroundCtx, c.ID, c.PostID, redis.EntityComment, redis.ActionUpdate, c, redis.TargetMongo)
+				}(commentPayload)
 			}
 		}
 	}
 
-	if !found || comment.Visibility == -1 {
-		return comment_models.CommentPayload{}, nubo_error.NewNotFound("COMMENT_NOT_FOUND", "Commentaire introuvable ou supprimé.", nil)
+	// ── ÉTAPE 4 : VÉRIFICATION DES RÈGLES DE SÉCURITÉ ───────────────────────
+
+	if !isCommentFound || commentPayload.Visibility == variables.CommentVisibilitySoftDelete {
+		// Furtivité absolue (Soft Delete)
+		return comment_models.CommentPayload{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Commentaire introuvable ou supprimé.", nil)
 	}
 
-	// 2. VÉRIFICATION DE LA SÉCURITÉ (Droits d'auteur)
-	if comment.UserID != userID {
-		return comment_models.CommentPayload{}, nubo_error.NewForbidden("ACCESS_DENIED", "Vous n'êtes pas autorisé à réaliser cette action sur ce commentaire.", nil)
+	if commentPayload.UserID != userID {
+		return comment_models.CommentPayload{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous n'êtes pas autorisé à réaliser cette action sur ce commentaire.", nil)
 	}
 
-	return comment, nil
+	return commentPayload, nil
 }

@@ -4,33 +4,42 @@ import (
 	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 )
 
-// GetUserSessions récupère les sessions actives et les expurge de toute donnée critique.
+// ############################################################################
+// # SERVICE : LISTE DES SESSIONS ACTIVES
+// ############################################################################
+
+// GetUserSessions récupère les sessions actives de l'utilisateur.
+// Elle les expurge de toute donnée critique (Tokens, Secrets) avant envoi au front-end.
 func GetUserSessions(ctx context.Context, userID int64) ([]auth_models.SessionView, error) {
-	// 1. Lecture depuis la Source of Truth (PostgreSQL)
-	sessions, err := postgres.FuncLoadUserSessionsView(ctx, userID)
-	if err != nil {
-		return nil, err
+
+	// ── ÉTAPE 1 : LECTURE DEPUIS LA SOURCE DE VÉRITÉ (PostgreSQL L3) ────────
+	// On interroge directement la vue L3 car on a besoin d'une vue d'ensemble complète et fiable.
+	activeSessions, errPg := postgres.FuncLoadUserSessionsView(ctx, userID)
+	if errPg != nil {
+		return nil, nubo_error.NewInternal() // Protège l'erreur SQL
 	}
 
-	// 2. Conversion et nettoyage sécurisé
-	var views []auth_models.SessionView
-	for _, s := range sessions {
-		views = append(views, auth_models.SessionView{
-			ID:         s.ID,
-			DeviceInfo: s.DeviceInfo,
-			IPHistory:  s.IPHistory,
-			CreatedAt:  s.CreatedAt,
-			ExpiresAt:  s.ExpiresAt,
+	// ── ÉTAPE 2 : CONVERSION ET NETTOYAGE SÉCURISÉ (MAPPING DTO) ────────────
+	var publicSessionViews []auth_models.SessionView
+
+	for _, session := range activeSessions {
+		publicSessionViews = append(publicSessionViews, auth_models.SessionView{
+			ID:         session.ID,
+			DeviceInfo: session.DeviceInfo,
+			IPHistory:  session.IPHistory,
+			CreatedAt:  session.CreatedAt,
+			ExpiresAt:  session.ExpiresAt,
 		})
 	}
 
-	// Prévention du retour 'null' en JSON si aucune session
-	if views == nil {
-		views = make([]auth_models.SessionView, 0)
+	// Prévention stricte du retour 'null' en JSON (Tableau vide favorisé)
+	if publicSessionViews == nil {
+		publicSessionViews = make([]auth_models.SessionView, 0)
 	}
 
-	return views, nil
+	return publicSessionViews, nil
 }

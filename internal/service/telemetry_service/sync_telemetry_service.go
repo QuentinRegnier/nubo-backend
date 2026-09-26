@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/telemetry_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
@@ -13,27 +14,36 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// ProcessSyncTelemetry orchestre la synchronisation bidirectionnelle et l'envoi de la télémétrie aux workers.
+// ############################################################################
+// # SERVICE : SYNCHRONISATION DE LA TÉLÉMÉTRIE (EDGE TO CLOUD)
+// ############################################################################
+
+// ProcessSyncTelemetry orchestre la synchronisation bidirectionnelle du vecteur
+// comportemental et l'envoi asynchrone des Analytics aux Workers.
 func ProcessSyncTelemetry(ctx context.Context, input telemetry_models.SyncTelemetryInput) (telemetry_models.SyncTelemetryOutput, error) {
-	output := telemetry_models.SyncTelemetryOutput{
+
+	syncOutput := telemetry_models.SyncTelemetryOutput{
 		NeedUpdate: false,
 		Status:     "accepted",
 	}
 
-	// 1. EXTRACTION DES TIMESTAMPS
-	clientTimestamp := input.Payload.Meta.ClientUpdatedAt
-	serverTimestamp, _ := cache_service.GetTelemetryTimestamp(ctx, input.UserID)
+	// ── ÉTAPE 1 : EXTRACTION DES TIMESTAMPS DE VERSIONNING ──────────────────
 
-	// 2. RÉSOLUTION DES CONFLITS (Vecteur et Tags)
-	if clientTimestamp >= serverTimestamp {
-		// -> LE CLIENT A RAISON (On sauvegarde en RAM)
+	clientTelemetryTimestamp := input.Payload.Meta.ClientUpdatedAt
+	serverTelemetryTimestamp, _ := cache_service.GetTelemetryTimestamp(ctx, input.UserID)
 
-		_ = cache_service.SetTelemetryTimestamp(ctx, input.UserID, clientTimestamp)
+	// ── ÉTAPE 2 : RÉSOLUTION DES CONFLITS (VECTEUR ET TAGS LSH) ─────────────
+
+	if clientTelemetryTimestamp >= serverTelemetryTimestamp {
+		// -> LE CLIENT EST L'AUTORITÉ (On sauvegarde en RAM L1)
+
+		_ = cache_service.SetTelemetryTimestamp(ctx, input.UserID, clientTelemetryTimestamp)
 
 		if len(input.Payload.Vector.Values) == variables.VectorDimTotal {
-			oldValues, err := cache_service.GetTelemetryVector(ctx, input.UserID)
-			if err == nil {
-				algorithm_service.InvalidatePersonalizedFeedCache(ctx, input.UserID, oldValues, input.Payload.Vector.Values)
+			oldVectorValues, errRedis := cache_service.GetTelemetryVector(ctx, input.UserID)
+			if errRedis == nil {
+				// Invalidation ciblée si les clusters sémantiques changent radicalement
+				algorithm_service.InvalidatePersonalizedFeedCache(ctx, input.UserID, oldVectorValues, input.Payload.Vector.Values)
 			}
 			_ = cache_service.SetTelemetryVector(ctx, input.UserID, input.Payload.Vector.Values)
 		}
@@ -42,71 +52,76 @@ func ProcessSyncTelemetry(ctx context.Context, input telemetry_models.SyncTeleme
 			_ = cache_service.SetTelemetryTags(ctx, input.UserID, input.Payload.TopTags)
 		}
 
-		// -------------------------------------------------------------------------
-		// NOUVEAU : PERSISTANCE ASYNCHRONE DU VECTEUR (Edge-to-Cloud Backup)
-		// -------------------------------------------------------------------------
-		// On charge l'objet complet pour ne pas écraser les autres paramètres (thème, privacy)
-		// /!\ Utilise la fonction exacte de ton architecture pour charger les UserSettings depuis le cache L1
-		settings, err := object_cache_service.GetUserSettingsCascade(ctx, input.UserID)
-		if err == nil && settings.ID != 0 {
-			// Mise à jour de l'ADN algorithmique sur l'objet
-			settings.TelemetryVector = input.Payload.Vector.Values
-			settings.TelemetryTags = input.Payload.TopTags
-			settings.TelemetryTimestamp = clientTimestamp
-			settings.UpdatedAt = domain.NowMillis()
+		// SAUVEGARDE ASYNCHRONE DE L'ADN (EDGE-TO-CLOUD BACKUP)
+		// On charge l'objet complet `UserSettings` pour ne pas écraser la confidentialité (L1)
+		userSettingsPayload, errSettings := object_cache_service.GetUserSettingsCascade(ctx, input.UserID)
 
-			// 1. On remet l'objet complet à jour dans l'Object Cache (L1)
-			_ = object_cache_service.SetUserSettings(ctx, settings)
+		if errSettings == nil && userSettingsPayload.ID != 0 {
+			// Injection de l'ADN algorithmique sur l'objet
+			userSettingsPayload.TelemetryVector = input.Payload.Vector.Values
+			userSettingsPayload.TelemetryTags = input.Payload.TopTags
+			userSettingsPayload.TelemetryTimestamp = clientTelemetryTimestamp
+			userSettingsPayload.UpdatedAt = domain.NowMillis()
 
-			// 2. On délègue la sauvegarde BDD aux workers
-			// partitionKey = input.UserID pour atterrir dans le bon shard et garantir l'ordre
-			err = redis.EnqueueDB(ctx, settings.ID, input.UserID, redis.EntityUserSettings, redis.ActionUpdate, settings, redis.TargetAll)
-			if err != nil {
-				logger.Log.Error().Err(err).
-					Int64("user_id", input.UserID).
-					Msg("Échec EnqueueDB pour la sauvegarde du vecteur utilisateur")
+			// 1. Écrasement synchronisé de l'Object Cache LFU (L1)
+			_ = object_cache_service.SetUserSettings(ctx, userSettingsPayload)
+
+			// 2. Délégation Write-Behind via Workers (PartitionKey = UserID pour le sharding)
+			errQueue := redis.EnqueueDB(ctx, userSettingsPayload.ID, input.UserID, redis.EntityUserSettings, redis.ActionUpdate, userSettingsPayload, redis.TargetAll)
+			if errQueue != nil {
+				logger.Log.Error().Err(errQueue).Int64("user_id", input.UserID).Msg("Échec du Write-Behind pour la sauvegarde du vecteur IA")
+				// Non bloquant : la donnée est saine en RAM, le Worker tentera de survivre.
 			}
 		} else {
-			logger.Log.Warn().Err(err).
-				Int64("user_id", input.UserID).
-				Msg("Impossible de charger les UserSettings pour sauvegarder le vecteur")
+			logger.Log.Warn().Err(errSettings).Int64("user_id", input.UserID).Msg("Impossible de charger les UserSettings pour sauvegarder le vecteur")
 		}
 
 	} else {
-		// -> LE SERVEUR A RAISON (Le client doit se mettre à jour)
-		output.NeedUpdate = true
-		output.Status = "server_newer"
-		output.ServerUpdated = serverTimestamp
+		// -> LE SERVEUR EST L'AUTORITÉ (Le client a du retard, il doit se mettre à jour)
 
-		if serverVector, err := cache_service.GetTelemetryVector(ctx, input.UserID); err == nil {
-			output.ServerVector = serverVector
+		syncOutput.NeedUpdate = true
+		syncOutput.Status = "server_newer"
+		syncOutput.ServerUpdated = serverTelemetryTimestamp
+
+		if serverVectorData, errRedis := cache_service.GetTelemetryVector(ctx, input.UserID); errRedis == nil {
+			syncOutput.ServerVector = serverVectorData
 		}
-		if serverTags, err := cache_service.GetTelemetryTags(ctx, input.UserID); err == nil {
-			output.ServerTags = serverTags
+		if serverTagsData, errRedis := cache_service.GetTelemetryTags(ctx, input.UserID); errRedis == nil {
+			syncOutput.ServerTags = serverTagsData
 		}
 	}
 
-	// 3. THUNDERING HERD PROTECTOR : ENVOI ASYNCHRONE DE LA TÉLÉMÉTRIE
-	for _, event := range input.Payload.Telemetry {
-		// Filtre strict anti-bruit (scroll fantôme)
-		if event.DwellTimeMs < 500 && !event.IsClicked && !event.ProfileVisit && !event.DeepScroll {
+	// ── ÉTAPE 3 : THUNDERING HERD PROTECTOR (RÉCEPTION ASYNCHRONE) ──────────
+
+	// Traitement du batch des logs de lecture (Dwell time, Clicks, etc.)
+	for _, telemetryEvent := range input.Payload.Telemetry {
+
+		// A. Filtre Anti-Bruit (Ghost Scroll) : Si < 500ms sans interaction, on ignore
+		if telemetryEvent.DwellTimeMs < variables.MaxGhostScrollTime && !telemetryEvent.IsClicked && !telemetryEvent.ProfileVisit && !telemetryEvent.DeepScroll {
 			continue
 		}
 
-		// --- DÉTECTION QUALITATIVE DE LA VUE ---
-		// Si le temps de lecture dépasse 1.5s, ou qu'il y a une action explicite, c'est une VRAIE vue.
-		if event.DwellTimeMs >= 1500 || event.IsClicked || event.DeepScroll || event.ProfileVisit {
-			// 1. MISE À JOUR SYNCHRONE DU L1 (TEMPS RÉEL)
-			if p, err := object_cache_service.GetPostFromObjectCache(ctx, event.PostID); err == nil {
-				p.ViewCount += 1
-				_ = object_cache_service.SetPostInObjectCache(ctx, p)
-				cache_service.EvaluatePostAfterView(ctx, p)
+		// B. Détection Qualitative de la Vue (Action ou > 1.5s de lecture cognitive)
+		if telemetryEvent.DwellTimeMs >= variables.MinCognitiveReadTime || telemetryEvent.IsClicked || telemetryEvent.DeepScroll || telemetryEvent.ProfileVisit {
+
+			// MISE À JOUR SYNCHRONE DU CACHE L1 (Temps Réel)
+			if targetPostPayload, errCache := object_cache_service.GetPostFromObjectCache(ctx, telemetryEvent.PostID); errCache == nil {
+				targetPostPayload.ViewCount += 1
+				_ = object_cache_service.SetPostInObjectCache(ctx, targetPostPayload)
+
+				// L'algorithme réévalue l'attractivité du post pour les autres utilisateurs
+				cache_service.EvaluatePostAfterView(ctx, targetPostPayload)
 			}
 		}
 
-		// Envoi à la file d'attente détaillée (Les workers mettront à jour telemetry_dwell_sum, view_count, etc.)
-		_ = redis.EnqueueDB(ctx, event.PostID, input.UserID, redis.EntityTelemetry, redis.ActionCreate, event, redis.TargetAll)
+		// C. Envoi à la file d'attente (Write-Behind SQL)
+		// Les Workers mettront à jour `telemetry_dwell_sum`, `view_count`, etc.
+		errTelemetryQueue := redis.EnqueueDB(ctx, telemetryEvent.PostID, input.UserID, redis.EntityTelemetry, redis.ActionCreate, telemetryEvent, redis.TargetAll)
+		if errTelemetryQueue != nil {
+			logger.Log.Error().Err(errTelemetryQueue).Int64("post_id", telemetryEvent.PostID).Msg("Échec du Write-Behind pour un événement de télémétrie")
+			return syncOutput, nubo_error.NewInternal()
+		}
 	}
 
-	return output, nil
+	return syncOutput, nil
 }

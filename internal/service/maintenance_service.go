@@ -10,46 +10,57 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 )
 
+// ############################################################################
+// # MAINTENANCE ET NETTOYAGE DES CACHES (GARBAGE COLLECTION)
+// ############################################################################
+
+// CleanMongo effectue une purge temporelle glissante (Sliding TTL) sur le Warm Storage.
+// Tous les documents non accédés ("last_use") depuis 30 jours sont évincés.
 func CleanMongo() {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	dbRecent := mongo.MongoClient.Database("nubo_recent")
+	recentDatabase := mongo.MongoClient.Database("nubo_recent")
 
-	// Récupère toutes les collections de la DB
-	collections, err := dbRecent.ListCollectionNames(ctx, bson.D{})
+	// 1. Découverte dynamique de toutes les collections
+	collectionNames, err := recentDatabase.ListCollectionNames(ctx, bson.D{})
 	if err != nil {
-		logger.Log.Error().Err(err).Msg("Erreur récupération collections Mongo")
+		logger.Log.Error().Err(err).Msg("Échec de la découverte des collections Mongo pour la purge")
 		return
 	}
 
-	// Date limite : 30 jours
-	threshold := time.Now().AddDate(0, 0, -30)
+	// 2. Le seuil de péremption : 30 jours dans le passé
+	expirationThreshold := time.Now().AddDate(0, 0, -30)
+	deletionFilter := bson.M{
+		"last_use": bson.M{
+			"$lt": expirationThreshold,
+		},
+	}
 
-	for _, collName := range collections {
-		coll := dbRecent.Collection(collName)
+	// 3. Purge itérative
+	for _, collectionName := range collectionNames {
+		targetCollection := recentDatabase.Collection(collectionName)
 
-		// Supprime les documents dont last_use < threshold
-		filter := bson.M{
-			"last_use": bson.M{
-				"$lt": threshold,
-			},
-		}
-
-		res, err := coll.DeleteMany(ctx, filter)
-		if err != nil {
-			logger.Log.Error().Err(err).Str("collection", collName).Msg("Erreur de suppression du cache glissant Mongo")
+		deletionResult, errDelete := targetCollection.DeleteMany(ctx, deletionFilter)
+		if errDelete != nil {
+			logger.Log.Error().Err(errDelete).Str("collection", collectionName).Msg("Échec de la purge du cache glissant Mongo")
 			continue
 		}
 
-		logger.Log.Info().Str("collection", collName).Int64("deleted_count", res.DeletedCount).Msg("Nettoyage Mongo réussi")
+		if deletionResult.DeletedCount > 0 {
+			logger.Log.Info().
+				Str("collection", collectionName).
+				Int64("deleted_count", deletionResult.DeletedCount).
+				Msg("Purge glissante L2 Mongo réussie")
+		}
 	}
 }
 
+// CleanRedis vide l'intégralité du cache L1. Utilisé uniquement en environnement de Dev ou lors d'un Hard Reset.
 func CleanRedis() {
 	// Sécurité anti-crash unifiée via la couche d'accès
 	if !redis.IsReady() {
-		logger.Log.Warn().Msg("Redis n'est pas initialisé (Rdb est nil), nettoyage ignoré.")
+		logger.Log.Warn().Msg("Nettoyage ignoré : Connexion Redis non initialisée (Rdb est nil).")
 		return
 	}
 
@@ -58,15 +69,17 @@ func CleanRedis() {
 
 	err := redis.FlushDB(ctx)
 	if err != nil {
-		logger.Log.Error().Err(err).Msg("Erreur flush Redis")
+		logger.Log.Error().Err(err).Msg("Échec critique du Flush Redis")
 		return
 	}
-	logger.Log.Info().Msg("Redis vidé avec succès")
+
+	logger.Log.Info().Msg("Cache volatil Redis (L1) vidé avec succès.")
 }
 
+// InitData orchestre le grand nettoyage au démarrage du serveur si le flag CLEAN_DB_ON_STARTUP est actif.
 func InitData() {
-	logger.Log.Info().Msg("Début de l'initialisation : Nettoyage Mongo + Redis")
+	logger.Log.Info().Msg("Début de la séquence de Hard Reset : Nettoyage L1 (Redis) et L2 (Mongo)...")
 	CleanMongo()
 	CleanRedis()
-	logger.Log.Info().Msg("Initialisation terminée avec succès")
+	logger.Log.Info().Msg("Séquence de Hard Reset terminée avec succès.")
 }

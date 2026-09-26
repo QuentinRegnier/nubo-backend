@@ -1,5 +1,9 @@
 package variables
 
+// ############################################################################
+// # PARAMÈTRES ET CONSTANTES DU GRAPHE DE MARKOV (SÉMANTIQUE)
+// ############################################################################
+
 const (
 	GraphDecayLambda   = 0.05  // λ : Taux de perte de pertinence (Ex: 5% d'oubli par jour)
 	GraphLearningAlpha = 0.20  // α : Force d'apprentissage d'une nouvelle co-occurrence (20%)

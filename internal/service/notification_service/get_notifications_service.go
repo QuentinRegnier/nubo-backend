@@ -4,61 +4,78 @@ import (
 	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
 
-// GetNotifications orchestre la cascade de lecture L1 -> L2 avec auto-guérison de la Boîte aux lettres
+// ############################################################################
+// # SERVICE : RÉCUPÉRATION PAGINÉE DES NOTIFICATIONS (CASCADE)
+// ############################################################################
+
+// GetNotifications orchestre la cascade de lecture L1 -> L2 avec auto-guérison de
+// la Boîte aux lettres de l'utilisateur. Note: Les notifications n'ont pas de stockage froid L3.
 func GetNotifications(ctx context.Context, callerID int64, input notification_models.GetNotificationsInput) ([]notification_models.NotificationView, error) {
-	// 0. MODE FORCE (Purge manuelle via PWA Pull-to-refresh)
+
+	// ── ÉTAPE 0 : MODE FORCE (PURGE RAM) ────────────────────────────────────
+
 	if input.Force {
 		_ = cache_service.PurgeNotificationsZSET(ctx, callerID)
 	}
 
-	var notificationIDs []int64
-	var err error
+	var orderedNotificationIDs []int64
+	var errCacheIndex error
 
-	// 1. TENTATIVE L1 (Index ZSET Redis)
+	// ── ÉTAPE 1 : TENTATIVE L1 (INDEX ZSET REDIS) ───────────────────────────
+
 	if input.Offset < 100 && !input.Force {
-		notificationIDs, err = cache_service.GetNotificationIDsFromZSET(ctx, callerID, input.Offset, input.Limit)
+		orderedNotificationIDs, errCacheIndex = cache_service.GetNotificationIDsFromZSET(ctx, callerID, input.Offset, input.Limit)
 	}
 
-	// 2. CACHE MISS ou DÉPASSEMENT -> FALLBACK L2 (Mongo)
-	if err != nil || len(notificationIDs) == 0 {
-		mongoNotifs, errMongo := mongo.MongoLoadNotificationsPaginated(callerID, input.Limit, input.Offset)
+	// ── ÉTAPE 2 : DÉPASSEMENT OU CACHE MISS -> FALLBACK L2 (MONGODB) ────────
+
+	if errCacheIndex != nil || len(orderedNotificationIDs) == 0 {
+		notificationsFromMongo, errMongo := mongo.MongoLoadNotificationsPaginated(callerID, input.Limit, input.Offset)
 		if errMongo != nil {
-			return nil, errMongo
+			logger.Log.Error().Err(errMongo).Int64("user_id", callerID).Msg("Erreur L2 lors de la récupération des notifications")
+			return nil, nubo_error.NewInternal()
 		}
 
-		go func(notifs []notification_models.NotificationPayload, currentOffset int64) {
-			bgCtx := context.Background()
-			for _, n := range notifs {
-				_ = object_cache_service.SetNotificationInObjectCache(bgCtx, n)
+		// AUTO-GUÉRISON L2 -> L1 (Mise en cache ZSET et Object JSON en parallèle)
+		go func(notifsBatch []notification_models.NotificationPayload, currentOffset int64) {
+			backgroundCtx := context.Background()
+			for _, notificationPayload := range notifsBatch {
+				_ = object_cache_service.SetNotificationInObjectCache(backgroundCtx, notificationPayload)
 				if currentOffset < 100 {
-					_ = cache_service.AddNotificationToZSET(bgCtx, n.UserID, n.ID, n.CreatedAt)
+					_ = cache_service.AddNotificationToZSET(backgroundCtx, notificationPayload.UserID, notificationPayload.ID, notificationPayload.CreatedAt)
 				}
 			}
-		}(mongoNotifs, input.Offset)
+		}(notificationsFromMongo, input.Offset)
 
-		var views []notification_models.NotificationView
-		for _, notif := range mongoNotifs {
-			views = append(views, hydrateNotificationView(ctx, callerID, notif))
+		// Hydratation immédiate depuis les payloads BDD sans repasser par le cache L1
+		var mongoGeneratedViews []notification_models.NotificationView
+		for _, notificationPayload := range notificationsFromMongo {
+			mongoGeneratedViews = append(mongoGeneratedViews, hydrateNotificationView(ctx, callerID, notificationPayload))
 		}
-		return views, nil
+		return mongoGeneratedViews, nil
 	}
 
-	// 3. CACHE HIT -> MGET sur l'Object Cache L1 (Récupère les Payloads bruts)
-	payloads, err := object_cache_service.GetNotificationsView(ctx, notificationIDs)
-	if err != nil {
-		return nil, err
+	// ── ÉTAPE 3 : CACHE HIT -> HYDRATATION MASSIVE DEPUIS L1 (MGET) ─────────
+
+	notificationsPayloadsFromCache, errObjectCache := object_cache_service.GetNotificationsView(ctx, orderedNotificationIDs)
+	if errObjectCache != nil {
+		logger.Log.Error().Err(errObjectCache).Msg("Erreur L1 lors de la récupération MGET des objets de notifications")
+		return nil, nubo_error.NewInternal()
 	}
 
-	// 4. HYDRATATION EN RAM (La fameuse boucle rapide en O(N))
-	views := make([]notification_models.NotificationView, 0, len(payloads))
-	for _, notif := range payloads {
-		views = append(views, hydrateNotificationView(ctx, callerID, notif))
+	// ── ÉTAPE 4 : ASSEMBLAGE FINAL DES DTO (BOUCLE O(N)) ────────────────────
+
+	finalHydratedViews := make([]notification_models.NotificationView, 0, len(notificationsPayloadsFromCache))
+	for _, notificationPayload := range notificationsPayloadsFromCache {
+		finalHydratedViews = append(finalHydratedViews, hydrateNotificationView(ctx, callerID, notificationPayload))
 	}
 
-	return views, nil
+	return finalHydratedViews, nil
 }

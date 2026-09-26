@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -13,132 +14,154 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-// TagEdge représente la valeur binaire stockée dans le HASH Redis
+// ############################################################################
+// # DTOs ET MODÈLES DU CACHE
+// ############################################################################
+
+// TagEdge représente la valeur binaire (MessagePack) stockée dans le HASH Redis.
 type TagEdge struct {
-	Weight    float64 `msgpack:"w"` // Poids W de l'arête
-	Timestamp int64   `msgpack:"t"` // Timestamp de la dernière occurrence (ms)
+	Weight    float64 `msgpack:"w"` // Poids W de l'arête sémantique
+	Timestamp int64   `msgpack:"t"` // Timestamp de la dernière occurrence en millisecondes
 }
 
-// UpdateTagCooccurrences calcule et met à jour les poids markoviens pour toutes les paires de tags d'un post
-func UpdateTagCooccurrences(ctx context.Context, tags []string, nowMs int64) {
-	if len(tags) < 2 {
-		return // Pas de co-occurrence possible avec moins de 2 tags
+// ############################################################################
+// # SERVICE : GRAPHE SÉMANTIQUE ET CO-OCCURRENCES (MARKOV)
+// ############################################################################
+
+// UpdateTagCooccurrences calcule et met à jour les poids markoviens pour toutes les paires de tags.
+func UpdateTagCooccurrences(ctx context.Context, tagsList []string, currentTimestampMs int64) {
+	if len(tagsList) < 2 {
+		return // Pas de co-occurrence possible avec moins de 2 tags.
 	}
 
-	// Nettoyage et uniformisation des tags
-	var cleanTags []string
-	for _, t := range tags {
-		clean := strings.ToLower(strings.TrimSpace(t))
-		if clean != "" {
-			cleanTags = append(cleanTags, clean)
+	// Nettoyage et uniformisation des tags pour éviter la duplication.
+	var cleanedTagsList []string
+	for _, tag := range tagsList {
+		cleanedTag := strings.ToLower(strings.TrimSpace(tag))
+		if cleanedTag != "" {
+			cleanedTagsList = append(cleanedTagsList, cleanedTag)
 		}
 	}
 
-	// On génère toutes les paires uniques (Graphe non orienté)
-	for i := 0; i < len(cleanTags); i++ {
-		for j := i + 1; j < len(cleanTags); j++ {
-			tagA := cleanTags[i]
-			tagB := cleanTags[j]
+	// Génération de toutes les paires uniques (Graphe non orienté)
+	for i := 0; i < len(cleanedTagsList); i++ {
+		for j := i + 1; j < len(cleanedTagsList); j++ {
+			sourceTag := cleanedTagsList[i]
+			targetTag := cleanedTagsList[j]
 
-			// Mise à jour A -> B
-			updateEdge(ctx, tagA, tagB, nowMs)
-			// Mise à jour B -> A (Symétrie pour lecture O(1) depuis n'importe quel sommet)
-			updateEdge(ctx, tagB, tagA, nowMs)
+			// Mise à jour de l'arête A -> B
+			updateEdge(ctx, sourceTag, targetTag, currentTimestampMs)
+			// Mise à jour de l'arête B -> A (Symétrie pour lecture O(1) depuis n'importe quel sommet)
+			updateEdge(ctx, targetTag, sourceTag, currentTimestampMs)
 		}
 	}
 }
 
-// updateEdge exécute l'équation d'état : W_nouveau = (W_ancien * e^(-λ * Δt)) * (1 - α) + α
-func updateEdge(ctx context.Context, sourceTag, target string, nowMs int64) {
-	var edge TagEdge
+// updateEdge exécute l'équation d'état markovienne :
+// W_nouveau = (W_ancien * e^(-λ * Δt)) * (1 - α) + α
+func updateEdge(ctx context.Context, sourceTag, targetTag string, currentTimestampMs int64) {
+	var currentEdge TagEdge
 
-	// 1. Lecture de l'état actuel via la Collection (encapsulation L1)
-	val, err := redis.GraphEdges.HGet(ctx, sourceTag, target).Bytes()
-	if err == nil {
-		_ = msgpack.Unmarshal(val, &edge)
+	// 1. Lecture de l'état actuel via la Collection abstraite Redis
+	binaryData, errRedis := redis.GraphEdges.HGet(ctx, sourceTag, targetTag).Bytes()
+	if errRedis == nil {
+		_ = msgpack.Unmarshal(binaryData, &currentEdge)
 	}
 
 	// 2. Calcul du Δt en jours
 	var deltaDays float64 = 0
-	if edge.Timestamp > 0 {
-		deltaDays = float64(nowMs-edge.Timestamp) / (1000 * 60 * 60 * 24)
+	if currentEdge.Timestamp > 0 {
+		deltaDays = float64(currentTimestampMs-currentEdge.Timestamp) / (1000 * 60 * 60 * 24)
 		if deltaDays < 0 {
 			deltaDays = 0 // Sécurité anti-voyage dans le temps
 		}
 	}
 
-	// 3. Moteur Mathématique
-	decayedWeight := edge.Weight * math.Exp(-variables.GraphDecayLambda*deltaDays)
-	newWeight := decayedWeight*(1.0-variables.GraphLearningAlpha) + variables.GraphLearningAlpha
+	// 3. Moteur Mathématique d'Apprentissage et d'Oubli
+	decayedWeight := currentEdge.Weight * math.Exp(-variables.GraphDecayLambda*deltaDays)
+	newComputedWeight := decayedWeight*(1.0-variables.GraphLearningAlpha) + variables.GraphLearningAlpha
 
-	// 4. Sauvegarde
-	edge.Weight = newWeight
-	edge.Timestamp = nowMs
-	binData, _ := msgpack.Marshal(&edge)
+	// 4. Sérialisation et Sauvegarde
+	currentEdge.Weight = newComputedWeight
+	currentEdge.Timestamp = currentTimestampMs
 
-	_ = redis.GraphEdges.HSet(ctx, sourceTag, target, binData)
+	newBinaryData, errMarshal := msgpack.Marshal(&currentEdge)
+	if errMarshal != nil {
+		logger.Log.Error().Err(errMarshal).Msg("Échec de la sérialisation MessagePack pour une arête de graphe")
+		return
+	}
+
+	errSet := redis.GraphEdges.HSet(ctx, sourceTag, targetTag, newBinaryData)
+	if errSet != nil {
+		logger.Log.Error().Err(errSet).Msg("Échec de l'écriture Redis pour le graphe de Markov")
+	}
 }
 
-// GetRelatedTagsLazy retourne les tags cousins et déclenche l'élagage paresseux (Lazy Pruning)
+// GetRelatedTagsLazy retourne les tags cousins et déclenche l'élagage paresseux (Lazy Pruning).
 func GetRelatedTagsLazy(ctx context.Context, sourceTag string) map[string]float64 {
-	sourceTag = strings.ToLower(strings.TrimSpace(sourceTag))
+	sanitizedSourceTag := strings.ToLower(strings.TrimSpace(sourceTag))
 
-	edgesJSON, err := redis.GraphEdges.HGetAll(ctx, sourceTag).Result()
-	if err != nil || len(edgesJSON) == 0 {
+	edgesMapJSON, errRedis := redis.GraphEdges.HGetAll(ctx, sanitizedSourceTag).Result()
+	if errRedis != nil || len(edgesMapJSON) == 0 {
 		return nil
 	}
 
-	validEdges := make(map[string]float64)
-	var edgesToDelete []string
-	nowMs := time.Now().UnixMilli()
+	survivingEdgesMap := make(map[string]float64)
+	var edgesToDeleteList []string
+	currentTimestampMs := time.Now().UnixMilli()
 
-	// Évaluation à la volée
-	for targetTag, binData := range edgesJSON {
-		var edge TagEdge
-		if err := msgpack.Unmarshal([]byte(binData), &edge); err != nil {
+	// Évaluation à la volée de la vitalité des arêtes sémantiques
+	for targetTag, binaryData := range edgesMapJSON {
+		var currentEdge TagEdge
+		if errUnmarshal := msgpack.Unmarshal([]byte(binaryData), &currentEdge); errUnmarshal != nil {
 			continue
 		}
 
-		deltaDays := float64(nowMs-edge.Timestamp) / (1000 * 60 * 60 * 24)
-		currentWeight := edge.Weight * math.Exp(-variables.GraphDecayLambda*deltaDays)
+		deltaDays := float64(currentTimestampMs-currentEdge.Timestamp) / (1000 * 60 * 60 * 24)
+		currentWeight := currentEdge.Weight * math.Exp(-variables.GraphDecayLambda*deltaDays)
 
 		if currentWeight < variables.GraphSurvivalEps {
-			// Le lien est mort (En dessous de ε)
-			edgesToDelete = append(edgesToDelete, targetTag)
+			// L'arête est morte (Poids sous le seuil ε)
+			edgesToDeleteList = append(edgesToDeleteList, targetTag)
 		} else {
-			// Le lien survit
-			validEdges[targetTag] = currentWeight
+			// L'arête survit et est retournée au système
+			survivingEdgesMap[targetTag] = currentWeight
 		}
 	}
 
-	// 🧹 HDEL Asynchrone : Auto-nettoyage sans bloquer la requête utilisateur
-	if len(edgesToDelete) > 0 {
-		go func(targets []string) {
-			_ = redis.GraphEdges.HDel(context.Background(), sourceTag, targets...)
-		}(edgesToDelete)
+	// Élagage Asynchrone (HDel) : Auto-nettoyage de la RAM sans ralentir la requête utilisateur
+	if len(edgesToDeleteList) > 0 {
+		go func(targetsToPrune []string) {
+			backgroundCtx := context.Background()
+			errPrune := redis.GraphEdges.HDel(backgroundCtx, sanitizedSourceTag, targetsToPrune...)
+			if errPrune != nil {
+				logger.Log.Warn().Err(errPrune).Msg("Échec de l'élagage paresseux (Lazy Pruning) dans le Graph Cache")
+			}
+		}(edgesToDeleteList)
 	}
 
-	return validEdges
+	return survivingEdgesMap
 }
 
 // SeedGraphCache réalise le Cold Start (Time-Travel Ingestion) de l'écosystème sémantique
+// lors d'un déploiement ou d'une remise à zéro du cache.
 func SeedGraphCache(ctx context.Context) error {
 	logger.Log.Info().Msg("Début de l'initialisation du graphe sémantique (Graph Cache)...")
 
-	// 1. Récupération de l'historique complet, filtré (> 1 tag) et trié (ASC)
-	posts, err := postgres.FuncLoadPostsForGraphSeeding(ctx)
-	if err != nil {
-		return err
+	// 1. Récupération de l'historique complet (Filtré : > 1 tag, trié par date croissante)
+	historicalPosts, errPg := postgres.FuncLoadPostsForGraphSeeding(ctx)
+	if errPg != nil {
+		logger.Log.Error().Err(errPg).Msg("Échec critique L3 lors du SeedGraphCache")
+		return nubo_error.NewInternal()
 	}
 
-	logger.Log.Info().Int("count", len(posts)).Msg("Publications trouvées pour le rejeu temporel sémantique.")
+	logger.Log.Info().Int("count", len(historicalPosts)).Msg("Publications trouvées pour le rejeu temporel sémantique.")
 
-	// 2. Rejeu Temporel
-	for _, p := range posts {
-		UpdateTagCooccurrences(ctx, p.Hashtags, p.CreatedAt.UnixMilli())
+	// 2. Rejeu Temporel pour reconstruire fidèlement l'état d'apprentissage
+	for _, postRecord := range historicalPosts {
+		UpdateTagCooccurrences(ctx, postRecord.Hashtags, postRecord.CreatedAt.UnixMilli())
 	}
 
 	logger.Log.Info().Msg("Graphe sémantique initialisé avec succès !")
-
 	return nil
 }

@@ -14,99 +14,108 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// LeaveConversation gère la suppression côté client (MP) et le départ (Groupe/Communauté)
-func LeaveConversation(ctx context.Context, callerID int64, convID int64, input conversation_models.LeaveConversationInput) (conversation_models.LeaveConversationOutput, error) {
-	// 1. SÉCURITÉ ET RÉCUPÉRATION (Objet Complet)
-	mem, err := security_service.LeftMember(ctx, convID, callerID)
-	if err != nil {
-		return conversation_models.LeaveConversationOutput{}, err // L'erreur est déjà une AppError formatée par security_service
-	}
-	conv, err := object_cache_service.GetConversationFromObjectCache(ctx, convID)
-	if err != nil {
-		return conversation_models.LeaveConversationOutput{}, nubo_error.NewNotFound("CONV_NOT_FOUND", "Impossible de charger les détails de la conversation.", err)
+// ############################################################################
+// # SERVICE : QUITTER UNE CONVERSATION (OU SUPPRIMER UN MP)
+// ############################################################################
+
+// LeaveConversation gère la suppression locale (MP) et le départ (Groupe/Communauté),
+// incluant le transfert de propriété obligatoire pour l'Owner.
+func LeaveConversation(ctx context.Context, callerID int64, conversationID int64, input conversation_models.LeaveConversationInput) (conversation_models.LeaveConversationOutput, error) {
+
+	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS ET RÉCUPÉRATION L1 ───────────────────────
+	// LeftMember renvoie déjà une AppError formatée si nécessaire
+	memberPayload, errSecurity := security_service.LeftMember(ctx, conversationID, callerID)
+	if errSecurity != nil {
+		return conversation_models.LeaveConversationOutput{}, errSecurity
 	}
 
-	// 2. GESTION DU PROPRIÉTAIRE (Type > 0)
-	// On vérifie en O(1) combien de personnes actives sont dans la conversation via Redis
-	participantCount, _ := redis.ConvParticipants.SCard(ctx, convID)
+	conversationPayload, errCache := object_cache_service.GetConversationFromObjectCache(ctx, conversationID)
+	if errCache != nil || conversationPayload.ID == 0 {
+		return conversation_models.LeaveConversationOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Impossible de charger les détails de la conversation.", errCache)
+	}
 
-	if conv.Type > 0 && mem.Role == 2 && participantCount > 1 {
+	// ── ÉTAPE 2 : GESTION DU PROPRIÉTAIRE (GROUPES & COMMUNAUTÉS) ───────────
+	// Lecture O(1) du nombre de participants actifs dans la RAM
+	activeParticipantCount, _ := redis.ConvParticipants.SCard(ctx, conversationID)
+
+	if conversationPayload.Type > variables.ConversationTypeDirect && memberPayload.Role == variables.MemberRoleOwner && activeParticipantCount > 1 {
 		if input.NewOwnerID == 0 {
-			return conversation_models.LeaveConversationOutput{}, nubo_error.NewForbidden("MUST_TRANSFER_OWNERSHIP", "Vous devez transférer la propriété à un administrateur avant de quitter.", nil)
+			return conversation_models.LeaveConversationOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous devez impérativement transférer la propriété à un administrateur avant de quitter le groupe.", nil)
 		}
 
-		newOwnerMem, err := security_service.LeftMember(ctx, convID, input.NewOwnerID)
-		if err != nil || newOwnerMem.Role != 1 {
-			return conversation_models.LeaveConversationOutput{}, nubo_error.NewBadRequest("INVALID_NEW_OWNER", "Le nouveau propriétaire doit être un administrateur existant du groupe.", err)
+		newOwnerPayload, errOwnerSecurity := security_service.LeftMember(ctx, conversationID, input.NewOwnerID)
+		if errOwnerSecurity != nil || newOwnerPayload.Role != variables.MemberRoleAdmin {
+			return conversation_models.LeaveConversationOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Le nouveau propriétaire désigné doit être un administrateur actif du groupe.", errOwnerSecurity)
 		}
 
-		// Promotion du nouveau propriétaire
-		newOwnerMem.Role = 2
-		newOwnerMem.UpdatedAt = domain.NowMillis()
-		_ = object_cache_service.SetMemberInObjectCache(ctx, newOwnerMem)
-		_ = redis.EnqueueDB(ctx, newOwnerMem.ID, convID, redis.EntityMembers, redis.ActionUpdate, newOwnerMem, redis.TargetAll)
+		// Promotion du successeur
+		newOwnerPayload.Role = variables.MemberRoleOwner
+		newOwnerPayload.UpdatedAt = domain.NowMillis()
+
+		_ = object_cache_service.SetMemberInObjectCache(ctx, newOwnerPayload)
+		errQueueOwner := redis.EnqueueDB(ctx, newOwnerPayload.ID, conversationID, redis.EntityMembers, redis.ActionUpdate, newOwnerPayload, redis.TargetAll)
+		if errQueueOwner != nil {
+			logger.Log.Error().Err(errQueueOwner).Int64("user_id", newOwnerPayload.UserID).Msg("Échec d'enqueue de la promotion du propriétaire")
+		}
 	}
 
-	// 3. APPLICATION DU DÉPART (Rôle = -1)
-	mem.Role = -1
-	mem.UpdatedAt = domain.NowMillis()
-	_ = object_cache_service.SetMemberInObjectCache(ctx, mem)
+	// ── ÉTAPE 3 : APPLICATION DU DÉPART (SOFT DELETE) ───────────────────────
+	memberPayload.Role = variables.MemberRoleLeft
+	memberPayload.UpdatedAt = domain.NowMillis()
 
-	// === NOUVEAU : PURGE SYNCHRONE DU SPEED CACHE ===
-	_ = cache_service.RemoveMemberFromSpeedCache(ctx, mem.ConversationID, mem.UserID)
+	_ = object_cache_service.SetMemberInObjectCache(ctx, memberPayload)
+	_ = cache_service.RemoveMemberFromSpeedCache(ctx, memberPayload.ConversationID, memberPayload.UserID)
 
-	// Write-behind...
-	err = redis.EnqueueDB(ctx, mem.ID, convID, redis.EntityMembers, redis.ActionUpdate, mem, redis.TargetAll)
-
-	// Envoie notification (Asynchrone)
-	if err == nil {
-		go func() {
-			err := realtime_service.BroadcastToConversation(context.Background(), convID, "member.left", mem)
-			if err != nil {
-				logger.Log.Error().Err(err).Msg("Failed to broadcast member left")
-			}
-
-			// ✅ NOUVEAU : SYNC LEDGER (Trigger global)
-			participantsStr, _ := redis.ConvParticipants.SMembers(context.Background(), convID)
-			var pIDs []int64
-			for _, p := range participantsStr {
-				if id, err := strconv.ParseInt(p, 10, 64); err == nil {
-					pIDs = append(pIDs, id)
-				}
-			}
-			// On ajoute le partant pour que son client efface localement au prochain /sync
-			pIDs = append(pIDs, mem.UserID)
-			_ = cache_service.RecordConversationMutation(context.Background(), convID, pIDs)
-		}()
+	errQueueLeave := redis.EnqueueDB(ctx, memberPayload.ID, conversationID, redis.EntityMembers, redis.ActionUpdate, memberPayload, redis.TargetAll)
+	if errQueueLeave != nil {
+		logger.Log.Error().Err(errQueueLeave).Int64("user_id", memberPayload.UserID).Msg("Échec d'enqueue du départ de l'utilisateur")
+		return conversation_models.LeaveConversationOutput{}, nubo_error.NewInternal()
 	}
 
-	// 4. VÉRIFICATION DE L'EXTINCTION DE LA CONVERSATION
-	// Si on était le dernier participant (participantCount redescend à 0 après notre départ)
-	if participantCount <= 1 {
-		// On attribue le bon statut selon le type
-		if conv.Type == 0 {
-			conv.State = -1 // MP Supprimé
+	// ── ÉTAPE 4 : NOTIFICATION ET SYNCHRONISATION TEMPS RÉEL ────────────────
+	go func() {
+		backgroundContext := context.Background()
+
+		errBroadcast := realtime_service.BroadcastToConversation(backgroundContext, conversationID, "member.left", memberPayload)
+		if errBroadcast != nil {
+			logger.Log.Error().Err(errBroadcast).Msg("Échec de la diffusion WebSocket pour member.left")
+		}
+
+		// SYNC LEDGER : On avertit tous les autres participants qu'une mutation globale a eu lieu
+		participantsStringList, _ := redis.ConvParticipants.SMembers(backgroundContext, conversationID)
+		var syncTargetIDs []int64
+		for _, participantStr := range participantsStringList {
+			if parsedID, errParse := strconv.ParseInt(participantStr, 10, 64); errParse == nil {
+				syncTargetIDs = append(syncTargetIDs, parsedID)
+			}
+		}
+		// On ajoute l'utilisateur qui vient de partir pour forcer son client à effacer la conv localement au prochain /sync
+		syncTargetIDs = append(syncTargetIDs, memberPayload.UserID)
+
+		_ = cache_service.RecordConversationMutation(backgroundContext, conversationID, syncTargetIDs)
+	}()
+
+	// ── ÉTAPE 5 : EXTINCTION ALGORITHMIQUE DE LA CONVERSATION ───────────────
+	// Si le partant était l'unique participant restant
+	if activeParticipantCount <= 1 {
+		if conversationPayload.Type == variables.ConversationTypeDirect {
+			conversationPayload.State = variables.ConversationStatePrivateDelete
 		} else {
-			conv.State = -2 // Groupe/Communauté Supprimé
+			conversationPayload.State = variables.ConversationStateGroupDelete
 		}
-		conv.UpdatedAt = domain.NowMillis()
+		conversationPayload.UpdatedAt = domain.NowMillis()
 
-		// Mise à jour L1 et File Asynchrone
-		_ = object_cache_service.SetConversationInObjectCache(ctx, conv)
-		_ = redis.EnqueueDB(ctx, conv.ID, conv.ID, redis.EntityConversation, redis.ActionUpdate, conv, redis.TargetAll)
+		_ = object_cache_service.SetConversationInObjectCache(ctx, conversationPayload)
+		_ = redis.EnqueueDB(ctx, conversationPayload.ID, conversationPayload.ID, redis.EntityConversation, redis.ActionUpdate, conversationPayload, redis.TargetAll)
 	}
 
-	output := conversation_models.LeaveConversationOutput{}
-	// ========================================================================
-	// 5. MARQUAGE DU TEMPS (DIRTY FLAG)
-	// ========================================================================
-	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
-	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
-	// et garantit que le client reçoit la date de la fin absolue de la transaction.
-	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
+	// ── ÉTAPE 6 : MARQUAGE D'ACTIVITÉ (DIRTY FLAG) ──────────────────────────
+	latestActivityTimestampMs := cache_service.TouchInboxActivity(ctx, callerID)
 
-	return output, nil
+	return conversation_models.LeaveConversationOutput{
+		InboxUpdateAt: domain.TimeToMillis(time.UnixMilli(latestActivityTimestampMs)),
+	}, nil
 }

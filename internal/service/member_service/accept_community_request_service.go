@@ -10,6 +10,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -20,116 +21,123 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// AcceptCommunityRequest valide l'adhésion d'un membre en attente (Role = -3).
+// ############################################################################
+// # SERVICE : ACCEPTATION D'UNE CANDIDATURE EN COMMUNAUTÉ
+// ############################################################################
+
+// AcceptCommunityRequest valide l'adhésion d'un membre en attente et l'intègre officiellement.
 func AcceptCommunityRequest(ctx context.Context, callerID int64, input member_models.AcceptCommunityRequestInput) (member_models.AcceptCommunityRequestOutput, error) {
-	// 1. SÉCURITÉ : L'appelant doit être Admin (1) ou Owner (2)
-	callerMem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
-	if err != nil {
-		return member_models.AcceptCommunityRequestOutput{}, nubo_error.NewForbidden("ACCESS_DENIED", "Conversation introuvable ou accès refusé.", err)
+
+	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS DU DÉCIDEUR (ADMIN OU OWNER) ─────────────
+	callerMemberPayload, errSecurity := security_service.LeftMember(ctx, input.ConversationID, callerID)
+	if errSecurity != nil {
+		return member_models.AcceptCommunityRequestOutput{}, errSecurity
 	}
-	if callerMem.Role < 1 {
-		return member_models.AcceptCommunityRequestOutput{}, nubo_error.NewForbidden("INSUFFICIENT_PERMISSIONS", "Vous devez être administrateur pour accepter une candidature.", nil)
+	if callerMemberPayload.Role < variables.MemberRoleAdmin {
+		return member_models.AcceptCommunityRequestOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous devez être administrateur pour accepter une candidature.", nil)
 	}
 
-	// 2. RÉCUPÉRATION DU MEMBRE CIBLE (Cascade L1 -> L2 -> L3 manuelle car LeftMember bloque les rôles < 0)
-	var targetMem member_models.MemberPayload
-	targetMem, err = object_cache_service.GetMemberFromObjectCache(ctx, input.ConversationID, input.TargetUserID)
-	if err != nil || targetMem.ID == 0 {
-		targetMem, err = mongo.MongoGetMember(input.ConversationID, input.TargetUserID)
-		if err != nil || targetMem.ID == 0 {
-			targetMem, err = postgres.FuncGetMember(ctx, input.ConversationID, input.TargetUserID)
-			if err != nil || targetMem.ID == 0 {
-				return member_models.AcceptCommunityRequestOutput{}, nubo_error.NewNotFound("USER_NOT_FOUND", "Candidature introuvable.", err)
+	// ── ÉTAPE 2 : RÉCUPÉRATION DE LA CANDIDATURE (CASCADE L1 -> L2 -> L3) ───
+	// Récupération manuelle car security_service.LeftMember bloque par défaut les rôles < 0
+	var targetMemberPayload member_models.MemberPayload
+
+	targetMemberPayload, errCache := object_cache_service.GetMemberFromObjectCache(ctx, input.ConversationID, input.TargetUserID)
+	if errCache != nil || targetMemberPayload.ID == 0 {
+		var errMongo error
+		targetMemberPayload, errMongo = mongo.MongoGetMember(input.ConversationID, input.TargetUserID)
+
+		if errMongo != nil || targetMemberPayload.ID == 0 {
+			var errPg error
+			targetMemberPayload, errPg = postgres.FuncGetMember(ctx, input.ConversationID, input.TargetUserID)
+			if errPg != nil {
+				logger.Log.Error().Err(errPg).Int64("user_id", input.TargetUserID).Msg("Échec L3 lors de la récupération du membre en attente")
+				return member_models.AcceptCommunityRequestOutput{}, nubo_error.NewInternal()
+			}
+			if targetMemberPayload.ID == 0 {
+				return member_models.AcceptCommunityRequestOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Candidature introuvable.", nil)
 			}
 		}
 	}
 
-	// 3. RÈGLE MÉTIER : Vérifier l'état d'attente
-	if targetMem.Role != -3 {
-		return member_models.AcceptCommunityRequestOutput{}, nubo_error.NewBadRequest("INVALID_STATE", "Cet utilisateur n'est pas en attente d'approbation.", nil)
+	// Règle métier : Vérifier que l'utilisateur est bien en attente d'approbation
+	if targetMemberPayload.Role != variables.MemberRolePending {
+		return member_models.AcceptCommunityRequestOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Cet utilisateur n'est pas en attente d'approbation.", nil)
 	}
 
-	// 4. APPLICATION DE L'ACCEPTATION
-	now := time.Now().UTC()
-	targetMem.Role = 0 // Devient membre officiel
-	targetMem.Settings = member_models.DefaultMemberSettings(3)
-	targetMem.JoinedAt = domain.TimeToMillis(now)
-	targetMem.UpdatedAt = domain.TimeToMillis(now)
+	// ── ÉTAPE 3 : APPLICATION DE L'INTÉGRATION ──────────────────────────────
+	currentTimeMs := domain.NowMillis()
 
-	// 5. MISE À JOUR SYNCHRONE DES CACHES (L1)
-	_ = object_cache_service.SetMemberInObjectCache(ctx, targetMem)
+	targetMemberPayload.Role = variables.MemberRoleNormal
+	targetMemberPayload.Settings = member_models.DefaultMemberSettings(variables.ConversationTypeCommunityPub)
+	targetMemberPayload.JoinedAt = currentTimeMs
+	targetMemberPayload.UpdatedAt = currentTimeMs
 
-	// Mise à jour de l'index Speed Cache
-	_ = cache_service.UpdateMemberSpeedCache(ctx, lite_models.MemberLiteRequest{
-		ConversationID:    targetMem.ConversationID,
-		UserID:            targetMem.UserID,
-		Role:              targetMem.Role,
-		Settings:          service.ToMemberSettingsLite(targetMem.Settings),
-		UnreadCount:       targetMem.UnreadCount,
-		FrozenMessageID:   targetMem.FrozenMessageID,
-		LastReadMessageID: targetMem.LastReadMessageID,
-		JoinedAt:          targetMem.JoinedAt,
-	})
+	// ── ÉTAPE 4 : MISE À JOUR SYNCHRONE DES CACHES RAM L1 ───────────────────
+	_ = object_cache_service.SetMemberInObjectCache(ctx, targetMemberPayload)
 
-	// 6. ENVOI AUX WORKERS (Write-Behind)
-	err = redis.EnqueueDB(ctx, targetMem.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMem, redis.TargetAll)
-	if err != nil {
-		return member_models.AcceptCommunityRequestOutput{}, err
+	liteMemberRequest := lite_models.MemberLiteRequest{
+		ConversationID:    targetMemberPayload.ConversationID,
+		UserID:            targetMemberPayload.UserID,
+		Role:              targetMemberPayload.Role,
+		Settings:          service.ToMemberSettingsLite(targetMemberPayload.Settings),
+		UnreadCount:       targetMemberPayload.UnreadCount,
+		FrozenMessageID:   targetMemberPayload.FrozenMessageID,
+		LastReadMessageID: targetMemberPayload.LastReadMessageID,
+		JoinedAt:          targetMemberPayload.JoinedAt,
+	}
+	_ = cache_service.UpdateMemberSpeedCache(ctx, liteMemberRequest)
+
+	// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
+	errQueue := redis.EnqueueDB(ctx, targetMemberPayload.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMemberPayload, redis.TargetAll)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("member_id", targetMemberPayload.ID).Msg("Échec du Write-Behind pour l'acceptation de candidature")
+		return member_models.AcceptCommunityRequestOutput{}, nubo_error.NewInternal()
 	}
 
-	// 7. MESSAGE SYSTÈME ET NOTIFICATION (Asynchrone)
+	// ── ÉTAPE 6 : MESSAGE SYSTÈME ET DIFFUSION WEBSOCKET ────────────────────
 	go func() {
-		bgCtx := context.Background()
+		backgroundContext := context.Background()
 
-		// A. On récupère le pseudo pour le message système
-		if targetLite, errLite := cache_service.GetUserLite(bgCtx, targetMem.UserID); errLite == nil {
-			sysContent := fmt.Sprintf("%s a rejoint le groupe", targetLite.Username)
-			msgInput := message_models.CreateMessageInput{
-				MessageType: 8,
-				Content:     sysContent,
+		if targetUserLite, errLite := cache_service.GetUserLite(backgroundContext, targetMemberPayload.UserID); errLite == nil {
+
+			// A. Publication du message système d'intégration
+			systemMessageContent := fmt.Sprintf("%s a rejoint le groupe", targetUserLite.Username)
+			systemMessageInput := message_models.CreateMessageInput{
+				MessageType: variables.MessageTypeSystem,
+				Content:     systemMessageContent,
+			}
+			_, _ = message_service.CreateMessage(backgroundContext, callerID, input.ConversationID, systemMessageInput, true)
+
+			// B. Préparation du DTO pour le WebSocket
+			conversationPayload, _ := object_cache_service.GetConversationFromObjectCache(backgroundContext, input.ConversationID)
+
+			memberViewDto := member_models.MemberView{
+				MemberPayload: targetMemberPayload,
+				Username:      targetUserLite.Username,
+				IsOnline:      cache_service.IsUserOnline(backgroundContext, targetMemberPayload.UserID),
 			}
 
-			// Le créateur du message système est souvent l'Admin qui accepte, ou le système lui-même.
-			// Ici on utilise le callerID comme instigateur technique.
-			_, _ = message_service.CreateMessage(bgCtx, callerID, input.ConversationID, msgInput, true)
-
-			// B. Hydratation du DTO WebSocket pour la diffusion temps réel
-			conv, _ := object_cache_service.GetConversationFromObjectCache(bgCtx, input.ConversationID)
-
-			memView := member_models.MemberView{
-				MemberPayload: targetMem,
-				Username:      targetLite.Username,
-				IsOnline:      cache_service.IsUserOnline(bgCtx, targetMem.UserID), // NOUVEAU
-			}
-
-			if conv.Type == 2 || conv.Type == 3 {
-				memView.AvatarCommunityID = targetLite.ProfilePictureID // Mode Twitch
-			} else {
-				if targetLite.ProfilePictureID > 0 {
-					// Signature HMAC
-					if avatarView, errMedia := media_service.GenerateMediaViewCascade(bgCtx, targetLite.ProfilePictureID, targetMem.UserID, 0, callerID); errMedia == nil {
-						memView.Avatar = avatarView
-					}
+			// Gestion des avatars selon le type de conversation
+			if conversationPayload.Type == variables.ConversationTypeCommunityPriv || conversationPayload.Type == variables.ConversationTypeCommunityPub {
+				memberViewDto.AvatarCommunityID = targetUserLite.ProfilePictureID // Mode Twitch
+			} else if targetUserLite.ProfilePictureID > 0 {
+				if mediaView, errMedia := media_service.GenerateMediaViewCascade(backgroundContext, targetUserLite.ProfilePictureID, targetMemberPayload.UserID, 0, callerID); errMedia == nil {
+					memberViewDto.Avatar = mediaView
 				}
 			}
 
-			// Diffusion de l'événement global
-			_ = realtime_service.BroadcastToConversation(bgCtx, input.ConversationID, "member.joined", memView)
+			// C. Diffusion WebSocket temps réel
+			_ = realtime_service.BroadcastToConversation(backgroundContext, input.ConversationID, "member.joined", memberViewDto)
 		}
 	}()
 
-	output := member_models.AcceptCommunityRequestOutput{}
+	// ── ÉTAPE 7 : MARQUAGE D'ACTIVITÉ (DIRTY FLAG) ──────────────────────────
+	latestActivityTimestampMs := cache_service.TouchInboxActivity(ctx, callerID)
 
-	// ========================================================================
-	// MARQUAGE DU TEMPS (DIRTY FLAG)
-	// ========================================================================
-	// Placé TOUT À LA FIN de la fonction. Cela écrase tout timestamp qui aurait
-	// pu être généré précédemment (par ex. à l'intérieur de AddMembersToConversation)
-	// et garantit que le client reçoit la date de la fin absolue de la transaction.
-	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
-
-	return output, nil
+	return member_models.AcceptCommunityRequestOutput{
+		InboxUpdateAt: domain.TimeToMillis(time.UnixMilli(latestActivityTimestampMs)),
+	}, nil
 }

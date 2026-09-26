@@ -11,69 +11,81 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// ToggleLike agit comme un simple routeur asynchrone ultra-rapide (Fire and Forget).
+// ############################################################################
+// # SERVICE : AIMER OU DÉSAIMER UN POST (TOGGLE)
+// ############################################################################
+
+// TogglePostLike agit comme un routeur asynchrone ultra-rapide (Fire and Forget).
 func TogglePostLike(ctx context.Context, input like_models.LikePostInput) error {
-	// ─────────────────────────────────────────────────────────────────────────
-	// 1. IDEMPOTENCE EN RAM (O(1)) - Bloque le Spam Clic
-	// ─────────────────────────────────────────────────────────────────────────
+
+	// ── ÉTAPE 1 : IDEMPOTENCE EN RAM (O(1)) ─────────────────────────────────
+
 	if input.Action == "like" {
-		if !cache_service.TryAddLikeIdempotency(ctx, 0, input.PostID, input.UserID) { // targetType = 0
+		if !cache_service.TryAddLikeIdempotency(ctx, variables.LikeTargetTypePost, input.PostID, input.UserID) {
 			return nil
 		}
 	} else {
-		if !cache_service.TryRemoveLikeIdempotency(ctx, 0, input.PostID, input.UserID) { // targetType = 0
+		if !cache_service.TryRemoveLikeIdempotency(ctx, variables.LikeTargetTypePost, input.PostID, input.UserID) {
 			return nil
 		}
 	}
 
-	// === NOUVEAU : MISE À JOUR SYNCHRONE DU L1 (TEMPS RÉEL) ===
-	delta := 1
-	action := redis.ActionCreate
+	// ── ÉTAPE 2 : MISE À JOUR SYNCHRONE DU L1 (TEMPS RÉEL) ──────────────────
+
+	deltaValue := 1
+	redisActionType := redis.ActionCreate
+
 	if input.Action == "unlike" {
-		delta = -1
-		action = redis.ActionDelete
+		deltaValue = -1
+		redisActionType = redis.ActionDelete
 	}
 
 	// Lecture opportuniste en L1
 	var postAuthorID int64
-	if p, err := object_cache_service.GetPostFromObjectCache(ctx, input.PostID); err == nil {
-		postAuthorID = p.UserID
-		p.LikeCount += delta
-		if p.LikeCount < 0 {
-			p.LikeCount = 0
+	if postPayload, errCache := object_cache_service.GetPostFromObjectCache(ctx, input.PostID); errCache == nil {
+		postAuthorID = postPayload.UserID
+		postPayload.LikeCount += deltaValue
+
+		if postPayload.LikeCount < 0 {
+			postPayload.LikeCount = 0
 		}
-		_ = object_cache_service.SetPostInObjectCache(ctx, p)
+		_ = object_cache_service.SetPostInObjectCache(ctx, postPayload)
 
 		// Routage intelligent vers l'IA de Classement (Most Cache)
 		if input.Action == "like" {
-			cache_service.EvaluatePostAfterLike(ctx, p)
+			cache_service.EvaluatePostAfterLike(ctx, postPayload)
 		}
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// 2. ENVOI AU WORKER ASYNCHRONE
-	// ─────────────────────────────────────────────────────────────────────────
+	// ── ÉTAPE 3 : DÉLÉGATION DE LA PERSISTANCE AUX WORKERS ──────────────────
 
-	payload := like_models.LikePayload{
+	likeRecordPayload := like_models.LikePayload{
 		ID:         pkg.GenerateID(),
-		TargetType: 0, // ✅ 0 = Post (Polymorphisme défini)
+		TargetType: variables.LikeTargetTypePost,
 		TargetID:   input.PostID,
 		UserID:     input.UserID,
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 
-	err := redis.EnqueueDB(ctx, payload.ID, 0, redis.EntityLike, action, payload, redis.TargetAll)
+	errQueue := redis.EnqueueDB(ctx, likeRecordPayload.ID, 0, redis.EntityLike, redisActionType, likeRecordPayload, redis.TargetAll)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("post_id", input.PostID).Msg("Échec du Write-Behind pour TogglePostLike")
+		return nil // Non bloquant pour l'UX
+	}
 
-	if err == nil && input.Action == "like" && postAuthorID != 0 {
+	// ── ÉTAPE 4 : NOTIFICATION TEMPS RÉEL ───────────────────────────────────
+
+	if input.Action == "like" && postAuthorID != 0 && postAuthorID != input.UserID {
 		go func(authorID int64) {
-			err := notification_service.DispatchNotification(context.Background(), authorID, input.UserID, "post_liked", input.PostID)
-			if err != nil {
-				logger.Log.Error().Err(err).Int64("post_id", input.PostID).Msg("Échec de l'envoi de la notification pour un like de post")
+			errNotif := notification_service.DispatchNotification(context.Background(), authorID, input.UserID, variables.EventPostLiked, input.PostID)
+			if errNotif != nil {
+				logger.Log.Error().Err(errNotif).Int64("post_id", input.PostID).Msg("Échec de l'envoi de la notification pour un like de post")
 			}
 		}(postAuthorID)
 	}
 
-	return err
+	return nil
 }

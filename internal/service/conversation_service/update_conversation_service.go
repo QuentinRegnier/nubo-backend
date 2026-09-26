@@ -2,7 +2,6 @@ package conversation_service
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -10,201 +9,145 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// UpdateConversation gère la modification (Titre, Règles, Description, Avatar) d'un groupe ou d'une communauté
-func UpdateConversation(ctx context.Context, callerID int64, convID int64, input conversation_models.UpdateConversationInput) (conversation_models.UpdateConversationOutput, error) {
-	// 1. VÉRIFICATION SÉCURITÉ ET RÉCUPÉRATION (Objet Complet)
-	conv, err := security_service.LeftConversation(ctx, convID, callerID)
-	if err != nil {
-		return conversation_models.UpdateConversationOutput{}, err
+// ############################################################################
+// # SERVICE : MISE À JOUR DES MÉTADONNÉES D'UNE CONVERSATION
+// ############################################################################
+
+// UpdateConversation gère la modification (Titre, Règles, Description, Avatar, Liens)
+// d'un groupe ou d'une communauté. Rejette automatiquement les MP.
+func UpdateConversation(ctx context.Context, callerID int64, conversationID int64, input conversation_models.UpdateConversationInput) (conversation_models.UpdateConversationOutput, error) {
+
+	// ── ÉTAPE 1 : CONTRÔLE DE SÉCURITÉ ET RÉCUPÉRATION COMPLÈTE ─────────────
+
+	conversationPayload, errSecurity := security_service.LeftConversation(ctx, conversationID, callerID)
+	if errSecurity != nil {
+		return conversation_models.UpdateConversationOutput{}, errSecurity
 	}
 
-	// 2. RÈGLES MÉTIER & BARRIÈRE DE SÉCURITÉ STRICTE
-	if conv.Type == 0 {
-		return conversation_models.UpdateConversationOutput{}, nubo_error.NewForbidden("INVALID_CONV_TYPE", "Impossible de modifier les métadonnées ou les paramètres d'un message privé.", nil)
+	if conversationPayload.Type == variables.ConversationTypeDirect {
+		return conversation_models.UpdateConversationOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Impossible de modifier les métadonnées ou les paramètres d'un message privé.", nil)
 	}
 
-	// 3. APPLICATION DES MODIFICATIONS
-	isTitleUpdated := false
-	if input.Title != conv.Title {
-		conv.Title = input.Title
-		isTitleUpdated = true
+	// ── ÉTAPE 2 : ÉVALUATION ET APPLICATION DES MODIFICATIONS ───────────────
+
+	hasTitleChanged := false
+	if input.Title != conversationPayload.Title {
+		conversationPayload.Title = input.Title
+		hasTitleChanged = true
 	}
 
-	isDescUpdated := false
-	isAvatarUpdated := false
-	isSettingsUpdated := false
-	isLinkUpdated := false
+	hasDescriptionChanged := false
+	hasAvatarChanged := false
+	hasSettingsChanged := false
+	hasLinkChanged := false
 
-	wasApprovalRequired := conv.Settings.JoinApprovalRequired
-	if input.Settings != conv.Settings {
-		conv.Settings = input.Settings
-		isSettingsUpdated = true
+	// Évaluation spécifique de la règle d'approbation (Pour déclenchement de routine de fond)
+	wasApprovalRequired := conversationPayload.Settings.JoinApprovalRequired
+
+	if input.Settings != conversationPayload.Settings {
+		conversationPayload.Settings = input.Settings
+		hasSettingsChanged = true
 	}
 
-	isApprovalDropped := conv.Type == 3 && wasApprovalRequired && !conv.Settings.JoinApprovalRequired
+	isApprovalRestrictionDropped := conversationPayload.Type == variables.ConversationTypeCommunityPub && wasApprovalRequired && !conversationPayload.Settings.JoinApprovalRequired
 
-	if conv.Type == 3 {
-		if input.Description != conv.Description {
-			conv.Description = input.Description
-			isDescUpdated = true
+	// Restrictions selon le type (Seules les communautés publiques ont le droit à tous les champs)
+	if conversationPayload.Type == variables.ConversationTypeCommunityPub {
+		if input.Description != conversationPayload.Description {
+			conversationPayload.Description = input.Description
+			hasDescriptionChanged = true
 		}
-		if input.AvatarID != conv.AvatarID {
-			conv.AvatarID = input.AvatarID
-			isAvatarUpdated = true
+		if input.AvatarID != conversationPayload.AvatarID {
+			conversationPayload.AvatarID = input.AvatarID
+			hasAvatarChanged = true
 		}
-		if input.ExternalLink != conv.ExternalLink {
-			conv.ExternalLink = input.ExternalLink
-			isLinkUpdated = true
+		if input.ExternalLink != conversationPayload.ExternalLink {
+			conversationPayload.ExternalLink = input.ExternalLink
+			hasLinkChanged = true
 		}
 	} else {
-		if (input.Description != "" && input.Description != conv.Description) || (input.AvatarID != 0 && input.AvatarID != conv.AvatarID) || (input.ExternalLink.URL != "" || input.ExternalLink.Title != "") {
-			return conversation_models.UpdateConversationOutput{}, nubo_error.NewForbidden("FEATURE_NOT_SUPPORTED", "Seules les communautés publiques peuvent posséder une description, un avatar ou un lien externe.", nil)
+		// Tolérance zéro si un groupe standard essaie de modifier des données de communauté
+		if (input.Description != "" && input.Description != conversationPayload.Description) ||
+			(input.AvatarID != 0 && input.AvatarID != conversationPayload.AvatarID) ||
+			(input.ExternalLink.URL != "" || input.ExternalLink.Title != "") {
+			return conversation_models.UpdateConversationOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seules les communautés publiques peuvent posséder une description, un avatar ou un lien externe.", nil)
 		}
 	}
 
-	conv.UpdatedAt = domain.NowMillis()
+	conversationPayload.UpdatedAt = domain.NowMillis()
 
-	_ = object_cache_service.SetConversationInObjectCache(ctx, conv)
+	// ── ÉTAPE 3 : MISE À JOUR IMMÉDIATE L1 (RAM OBJECT & SPEED CACHE) ───────
 
-	// 4. DÉLÉGATION À LA FILE ASYNCHRONE (Write-Behind)
-	err = redis.EnqueueDB(ctx, conv.ID, conv.ID, redis.EntityConversation, redis.ActionUpdate, conv, redis.TargetAll)
-	if err != nil {
-		return conversation_models.UpdateConversationOutput{}, err
-	}
+	_ = object_cache_service.SetConversationInObjectCache(ctx, conversationPayload)
 
-	// 5. MISE À JOUR IMMÉDIATE DU L1
-	if isTitleUpdated || isDescUpdated || isAvatarUpdated || isSettingsUpdated || isLinkUpdated {
-		convLite := lite_models.ConvLiteRequest{
-			ID:            conv.ID,
-			Type:          conv.Type,
-			Title:         conv.Title,
-			Description:   conv.Description,
-			AvatarID:      conv.AvatarID,
-			LastMessageID: conv.LastMessageID,
-			Settings:      service.ToConversationSettingsLite(conv.Settings),
+	if hasTitleChanged || hasDescriptionChanged || hasAvatarChanged || hasSettingsChanged || hasLinkChanged {
+		liteConversationRequest := lite_models.ConvLiteRequest{
+			ID:            conversationPayload.ID,
+			Type:          conversationPayload.Type,
+			Title:         conversationPayload.Title,
+			Description:   conversationPayload.Description,
+			AvatarID:      conversationPayload.AvatarID,
+			LastMessageID: conversationPayload.LastMessageID,
+			Settings:      service.ToConversationSettingsLite(conversationPayload.Settings),
 			ExternalLink: models.ExternalLinks{
-				Title: conv.ExternalLink.Title,
-				URL:   conv.ExternalLink.URL,
+				Title: conversationPayload.ExternalLink.Title,
+				URL:   conversationPayload.ExternalLink.URL,
 			},
 		}
-		_ = redis.ConvMeta.SetObject(ctx, conv.ID, convLite)
+		_ = redis.ConvMeta.SetObject(ctx, conversationPayload.ID, liteConversationRequest)
 	}
 
-	// 6. ENVOI NOTIFICATION ET GESTION DES MEMBRES EN ATTENTE (Asynchrone)
-	go func() {
-		bgCtx := context.Background()
+	// ── ÉTAPE 4 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
 
-		errWS := realtime_service.BroadcastToConversation(bgCtx, conv.ID, "conversation.updated", conv)
-		if errWS != nil {
-			logger.Log.Error().Err(errWS).Msg("Erreur lors de l'envoi de la notification de mise à jour de conversation")
-		}
-
-		// ✅ NOUVEAU : SYNC LEDGER (Trigger global)
-		participantsStr, _ := redis.ConvParticipants.SMembers(bgCtx, conv.ID)
-		var pIDs []int64
-		for _, p := range participantsStr {
-			if id, err := strconv.ParseInt(p, 10, 64); err == nil {
-				pIDs = append(pIDs, id)
-			}
-		}
-		_ = cache_service.RecordConversationMutation(bgCtx, conv.ID, pIDs)
-
-		if isApprovalDropped {
-			acceptAllPendingMembers(bgCtx, conv.ID, callerID)
-		}
-	}()
-
-	output := conversation_models.UpdateConversationOutput{}
-	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	output.InboxUpdateAt = domain.TimeToMillis(time.UnixMilli(timestampMs))
-
-	return output, nil
-}
-
-// acceptAllPendingMembers est une routine de fond qui pagine et accepte les membres en attente (Rôle = -3).
-func acceptAllPendingMembers(ctx context.Context, convID int64, callerID int64) {
-	limit := 50
-
-	for {
-		var members []member_models.MemberPayload
-
-		// A. On tente d'abord le L2
-		mongoMembers, errMongo := mongo.MongoLoadMembersByRolePaginated(convID, -3, int64(limit), 0)
-		if errMongo == nil && len(mongoMembers) > 0 {
-			members = mongoMembers
-		} else {
-			// B. Fallback L3
-			pgMembers, errPg := postgres.FuncLoadMembersByRolePaginated(ctx, convID, -3, int64(limit), 0)
-			if errPg == nil && len(pgMembers) > 0 {
-				members = pgMembers
-			}
-		}
-
-		// Condition d'arrêt de la boucle infinie : plus aucun membre à traiter
-		if len(members) == 0 {
-			break
-		}
-
-		// Note sur l'offset :
-		// Puisqu'on modifie le rôle (de -3 à 0), les membres disparaissent du résultat de la requête.
-		// On laisse donc toujours l'offset à 0 (on "consomme" le haut de la pile à chaque itération).
-
-		for _, targetMem := range members {
-			now := domain.NowMillis()
-			targetMem.Role = 0 // Devient membre officiel
-			targetMem.Settings = member_models.DefaultMemberSettings(3)
-			targetMem.JoinedAt = now
-			targetMem.UpdatedAt = now
-
-			// 1. MISE À JOUR SYNCHRONE DES CACHES (L1)
-			_ = object_cache_service.SetMemberInObjectCache(ctx, targetMem)
-			_ = cache_service.UpdateMemberSpeedCache(ctx, lite_models.MemberLiteRequest{
-				ConversationID:    targetMem.ConversationID,
-				UserID:            targetMem.UserID,
-				Role:              targetMem.Role,
-				Settings:          service.ToMemberSettingsLite(targetMem.Settings),
-				UnreadCount:       targetMem.UnreadCount,
-				FrozenMessageID:   targetMem.FrozenMessageID,
-				LastReadMessageID: targetMem.LastReadMessageID,
-				JoinedAt:          targetMem.JoinedAt,
-			})
-
-			// 2. ENVOI AUX WORKERS (Write-Behind)
-			_ = redis.EnqueueDB(ctx, targetMem.ID, convID, redis.EntityMembers, redis.ActionUpdate, targetMem, redis.TargetAll)
-
-			// 3. MESSAGE SYSTÈME ET NOTIFICATION (Mode Twitch - Zéro crypto)
-			if targetLite, errLite := cache_service.GetUserLite(ctx, targetMem.UserID); errLite == nil {
-				sysContent := fmt.Sprintf("%s a rejoint le groupe", targetLite.Username)
-				msgInput := message_models.CreateMessageInput{
-					MessageType: 8,
-					Content:     sysContent,
-				}
-				_, _ = message_service.CreateMessage(ctx, callerID, convID, msgInput, true)
-
-				memView := member_models.MemberView{
-					MemberPayload:     targetMem,
-					Username:          targetLite.Username,
-					IsOnline:          cache_service.IsUserOnline(ctx, targetMem.UserID),
-					AvatarCommunityID: targetLite.ProfilePictureID, // Mode Twitch pour les communautés
-				}
-
-				_ = realtime_service.BroadcastToConversation(ctx, convID, "member.joined", memView)
-			}
-		}
+	errQueue := redis.EnqueueDB(ctx, conversationPayload.ID, conversationPayload.ID, redis.EntityConversation, redis.ActionUpdate, conversationPayload, redis.TargetAll)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("conv_id", conversationPayload.ID).Msg("Échec du Write-Behind lors de la modification de la conversation")
+		return conversation_models.UpdateConversationOutput{}, nubo_error.NewInternal()
 	}
+
+	// ── ÉTAPE 5 : DÉLÉGATION WEBSOCKETS ET ROUTINES DE FOND ─────────────────
+
+	go func(payload conversation_models.ConversationPayload, convID int64, adminID int64, dropApproval bool) {
+		backgroundContext := context.Background()
+
+		// A. Émission Temps Réel (WebSockets)
+		errBroadcast := realtime_service.BroadcastToConversation(backgroundContext, convID, "conversation.updated", payload)
+		if errBroadcast != nil {
+			logger.Log.Error().Err(errBroadcast).Msg("Erreur d'émission WebSocket pour conversation.updated")
+		}
+
+		// B. SYNC LEDGER (Trigger d'Invalition Mutuelle Global)
+		participantsStringList, _ := redis.ConvParticipants.SMembers(backgroundContext, convID)
+		var syncTargetIDs []int64
+		for _, participantStr := range participantsStringList {
+			if parsedID, errParse := strconv.ParseInt(participantStr, 10, 64); errParse == nil {
+				syncTargetIDs = append(syncTargetIDs, parsedID)
+			}
+		}
+		_ = cache_service.RecordConversationMutation(backgroundContext, convID, syncTargetIDs)
+
+		// C. Traitement massif des membres si la communauté vient d'être passée en "Entrée Libre"
+		if dropApproval {
+			acceptAllPendingMembers(backgroundContext, convID, adminID)
+		}
+	}(conversationPayload, conversationPayload.ID, callerID, isApprovalRestrictionDropped)
+
+	// ── ÉTAPE 6 : MARQUAGE D'ACTIVITÉ (DIRTY FLAG) ──────────────────────────
+
+	latestActivityTimestampMs := cache_service.TouchInboxActivity(ctx, callerID)
+
+	return conversation_models.UpdateConversationOutput{
+		InboxUpdateAt: domain.TimeToMillis(time.UnixMilli(latestActivityTimestampMs)),
+	}, nil
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/profile_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -14,173 +15,184 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/post_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// GetProfile est le Hub qui orchestre la récupération de toutes les strates d'un profil.
+// ############################################################################
+// # SERVICE : RÉCUPÉRATION GLOBALE DU PROFIL
+// ############################################################################
+
+// GetProfile est le Hub central qui orchestre la récupération de toutes
+// les strates d'un profil (Identité, Posts, Interactions, Paramètres de confidentialité).
 func GetProfile(ctx context.Context, callerID int64, input profile_models.GetProfileInput) (profile_models.GetProfileOutput, error) {
 	targetID := input.TargetID
 	if targetID == 0 {
 		targetID = callerID // Si pas de cible, on charge notre propre profil
 	}
 
-	output := profile_models.GetProfileOutput{
+	profileOutput := profile_models.GetProfileOutput{
 		LikedPostIDs: make([]int64, 0),
 		SavedPostIDs: make([]int64, 0),
 		Posts:        make([]post_models.GetPostOutput, 0),
 	}
 
-	isSelf := callerID == targetID
+	isSelfProfile := callerID == targetID
 
-	// ========================================================================
-	// 1. MATRICE DE RELATIONS (O(1) en RAM)
-	// ========================================================================
-	if !isSelf {
-		output.RelationViewerToTarget = cache_service.RelationValue(ctx, targetID, callerID)
-		output.RelationTargetToViewer = cache_service.RelationValue(ctx, callerID, targetID)
+	// ── ÉTAPE 1 : MATRICE DE RELATIONS (O(1) EN RAM) ────────────────────────
 
-		// Bouclier de sécurité : si la cible nous a bloqués, on simule une 404 (Shadow ban)
-		if output.RelationTargetToViewer == -1 {
-			return profile_models.GetProfileOutput{}, nubo_error.NewNotFound("USER_NOT_FOUND", "Utilisateur introuvable.", nil)
+	if !isSelfProfile {
+		profileOutput.RelationViewerToTarget = cache_service.RelationValue(ctx, targetID, callerID)
+		profileOutput.RelationTargetToViewer = cache_service.RelationValue(ctx, callerID, targetID)
+
+		// Bouclier de sécurité : si la cible nous a bloqués (-1), on simule une 404 (Shadow ban)
+		if profileOutput.RelationTargetToViewer == variables.RelationStateBlocked {
+			return profile_models.GetProfileOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Utilisateur introuvable.", nil)
 		}
-		// Si NOUS l'avons bloqué (ViewerToTarget == -1), on laisse passer pour pouvoir le débloquer/signaler via l'UI.
+		// Si NOUS l'avons bloqué (RelationViewerToTarget == -1), on laisse passer la requête
+		// pour permettre le déblocage via l'UI de l'application.
 	}
 
-	// ========================================================================
-	// 2. RÉCUPÉRATION DES PARAMÈTRES & VÉRIFICATION DE VISIBILITÉ DU PROFIL
-	// ========================================================================
-	// Lecture L1 -> L2 -> L3 pour récupérer les réglages de confidentialité de la cible
-	settings, errSet := object_cache_service.GetUserSettingsCascade(ctx, targetID)
+	// ── ÉTAPE 2 : VÉRIFICATION DE LA VISIBILITÉ DU PROFIL ───────────────────
 
-	if errSet == nil && !isSelf {
-		// ✅ APPLICATION : Profile Visibility (0: Public, 1: Abonnés, 2: Amis)
+	// Lecture L1 -> L2 -> L3 pour récupérer les réglages de confidentialité de la cible
+	targetSettingsPayload, errSettings := object_cache_service.GetUserSettingsCascade(ctx, targetID)
+
+	if errSettings == nil && !isSelfProfile {
 		canViewProfile := false
-		switch settings.Privacy.ProfileVisibility {
-		case 0:
+
+		switch targetSettingsPayload.Privacy.ProfileVisibility {
+		case variables.ProfileVisibilityPublic:
 			canViewProfile = true
-		case 1:
-			canViewProfile = (output.RelationViewerToTarget >= 1)
-		case 2:
-			canViewProfile = (output.RelationViewerToTarget == 2)
+		case variables.ProfileVisibilityFollowers:
+			canViewProfile = profileOutput.RelationViewerToTarget >= variables.RelationStateFollow
+		case variables.ProfileVisibilityFriends:
+			canViewProfile = profileOutput.RelationViewerToTarget == variables.RelationStateFriend
 		default:
 			canViewProfile = true
 		}
 
 		if !canViewProfile {
-			// Si on rejette, on s'arrête ici : on économise la BDD (pas de chargement des posts, etc.)
-			return profile_models.GetProfileOutput{}, nubo_error.NewForbidden("PROFILE_PRIVATE", "Ce profil est privé.", nil)
+			// Si on rejette, on s'arrête ici : on économise toute la BDD (pas de chargement de posts)
+			return profile_models.GetProfileOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Ce profil est privé.", nil)
 		}
 	}
 
-	// ========================================================================
-	// 3. IDENTITÉ DE L'UTILISATEUR (Cascade L2 -> L3)
-	// ========================================================================
-	user, err := mongo.MongoLoadUser(targetID, "", "", "")
-	if err != nil || user.ID == 0 {
-		user, err = postgres.FuncLoadUser(targetID, "", "", "")
-		if err != nil || user.ID == 0 {
-			return profile_models.GetProfileOutput{}, nubo_error.NewNotFound("USER_NOT_FOUND", "Utilisateur introuvable.", err)
+	// ── ÉTAPE 3 : IDENTITÉ DE L'UTILISATEUR (CASCADE L2 -> L3) ──────────────
+
+	userPayload, errMongo := mongo.MongoLoadUser(targetID, "", "", "")
+
+	if errMongo != nil || userPayload.ID == 0 {
+		var errPg error
+		userPayload, errPg = postgres.FuncLoadUser(targetID, "", "", "")
+		if errPg != nil {
+			logger.Log.Error().Err(errPg).Int64("user_id", targetID).Msg("Échec de la récupération L3 du profil utilisateur")
+			return profile_models.GetProfileOutput{}, nubo_error.NewInternal()
 		}
+
+		if userPayload.ID == 0 {
+			return profile_models.GetProfileOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Utilisateur introuvable.", nil)
+		}
+
 		// Promotion L3 -> L2 asynchrone (Auto-Guérison)
 		go func(u auth_models.UserPayload) {
 			_ = redis.EnqueueDB(context.Background(), u.ID, 0, redis.EntityUser, redis.ActionUpdate, u, redis.TargetMongo)
-		}(user)
+		}(userPayload)
 	}
 
-	// ✅ APPLICATION : Show Location (Masquage de la localisation si refusé)
-	location := user.Location
-	if errSet == nil && !settings.Privacy.ShowLocation && !isSelf {
-		location = "" // On censure la donnée
+	// Application : Masquage de la localisation si refusé par l'utilisateur
+	censoredLocation := userPayload.Location
+	if errSettings == nil && !targetSettingsPayload.Privacy.ShowLocation && !isSelfProfile {
+		censoredLocation = ""
 	}
 
-	// ✅ APPLICATION : Show Online Status (Masquage du statut en ligne si refusé)
-	isOnline := cache_service.IsUserOnline(ctx, user.ID)
-	if errSet == nil && !settings.Privacy.ShowOnlineStatus && !isSelf {
-		isOnline = false // On censure l'état de connexion
+	// Application : Masquage du statut en ligne si refusé
+	isUserOnline := cache_service.IsUserOnline(ctx, userPayload.ID)
+	if errSettings == nil && !targetSettingsPayload.Privacy.ShowOnlineStatus && !isSelfProfile {
+		isUserOnline = false
 	}
 
-	// Mapping sécurisé des champs utiles
-	output.User = auth_models.UserProfileView{
-		ID:        user.ID,
-		Username:  user.Username,
-		FirstName: user.FirstName,
-		LastName:  user.LastName,
-		Birthdate: user.Birthdate,
-		Sex:       user.Sex,
-		Bio:       user.Bio,
-		Grade:     user.Grade,
-		Location:  location, // Cible censurée ou non
-		School:    user.School,
-		Work:      user.Work,
-		Badges:    user.Badges,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
-		IsOnline:  isOnline, // Statut censuré ou non
+	profileOutput.User = auth_models.UserProfileView{
+		ID:        userPayload.ID,
+		Username:  userPayload.Username,
+		FirstName: userPayload.FirstName,
+		LastName:  userPayload.LastName,
+		Birthdate: userPayload.Birthdate,
+		Sex:       userPayload.Sex,
+		Bio:       userPayload.Bio,
+		Grade:     userPayload.Grade,
+		Location:  censoredLocation,
+		School:    userPayload.School,
+		Work:      userPayload.Work,
+		Badges:    userPayload.Badges,
+		CreatedAt: userPayload.CreatedAt,
+		UpdatedAt: userPayload.UpdatedAt,
+		IsOnline:  isUserOnline,
 	}
 
-	// ========================================================================
-	// 4. AVATAR (Génération du lien HMAC signé)
-	// ========================================================================
-	if user.ProfilePictureID > 0 {
-		if view, errMedia := media_service.GenerateMediaViewCascade(ctx, user.ProfilePictureID, targetID, 0, callerID); errMedia == nil {
-			output.Avatar = view
+	// ── ÉTAPE 4 : AVATAR (GÉNÉRATION DU LIEN HMAC SIGNÉ) ────────────────────
+
+	if userPayload.ProfilePictureID > 0 {
+		if avatarView, errMedia := media_service.GenerateMediaViewCascade(ctx, userPayload.ProfilePictureID, targetID, 0, callerID); errMedia == nil {
+			profileOutput.Avatar = avatarView
 		}
 	}
 
-	// ========================================================================
-	// 5. CONVERSATION DIRECTE (O(log N) RAM L1 + Fallback L2/L3)
-	// ========================================================================
-	if !isSelf {
-		convID, errCache := cache_service.GetDirectConversationCache(ctx, callerID, targetID)
-		if errCache == nil && convID > 0 {
-			output.DirectConversationID = convID
+	// ── ÉTAPE 5 : CONVERSATION DIRECTE (MP) EXISTANTE ───────────────────────
+
+	if !isSelfProfile {
+		conversationID, errCache := cache_service.GetDirectConversationCache(ctx, callerID, targetID)
+		if errCache == nil && conversationID > 0 {
+			profileOutput.DirectConversationID = conversationID
 		} else {
-			c, errPg := postgres.FuncGetDirectConversation(ctx, callerID, targetID)
-			if errPg == nil && c.ID > 0 {
-				output.DirectConversationID = c.ID
+			directConversation, errPg := postgres.FuncGetDirectConversation(ctx, callerID, targetID)
+			if errPg == nil && directConversation.ID > 0 {
+				profileOutput.DirectConversationID = directConversation.ID
 			}
 		}
 	}
 
-	// ========================================================================
-	// 6. CHARGEMENT DU BATCH DE POSTS
-	// ========================================================================
-	postInput := post_models.GetUserPostsInput{
+	// ── ÉTAPE 6 : CHARGEMENT DU BATCH DE POSTS ──────────────────────────────
+
+	timelineRequestInput := post_models.GetUserPostsInput{
 		TargetUserID: targetID,
 		Limit:        input.Limit,
 		Offset:       input.Offset,
 		Force:        false,
 	}
-	postsOutput := post_service.GetUserPosts(ctx, postInput)
-	if len(postsOutput) > 0 {
-		output.Posts = postsOutput
 
-		// ====================================================================
-		// 7. INTERACTIONS (Likes & Saved) APPARTENANT AU CALLER
-		// ====================================================================
-		batchPostIDs := make([]int64, 0, len(postsOutput))
-		for _, p := range postsOutput {
-			batchPostIDs = append(batchPostIDs, p.PostID)
+	timelinePostsOutput := post_service.GetUserPosts(ctx, timelineRequestInput)
+
+	if len(timelinePostsOutput) > 0 {
+		profileOutput.Posts = timelinePostsOutput
+
+		// ── ÉTAPE 7 : HYDRATATION DES INTERACTIONS DU VIEWER ────────────────
+
+		batchPostIDs := make([]int64, 0, len(timelinePostsOutput))
+		for _, post := range timelinePostsOutput {
+			batchPostIDs = append(batchPostIDs, post.PostID)
 		}
 
-		for _, pID := range batchPostIDs {
-			likes, _ := postgres.FuncLoadLikes(ctx, 0, pID, callerID, 1, 0)
-			if len(likes) > 0 {
-				output.LikedPostIDs = append(output.LikedPostIDs, pID)
+		// Hydratation des Likes du caller
+		for _, postID := range batchPostIDs {
+			likesRecord, _ := postgres.FuncLoadLikes(ctx, 0, postID, callerID, 1, 0)
+			if len(likesRecord) > 0 {
+				profileOutput.LikedPostIDs = append(profileOutput.LikedPostIDs, postID)
 			}
 		}
 
-		recentSaved, _ := postgres.FuncLoadSavedPosts(ctx, callerID, 500, 0)
-		savedMap := make(map[int64]bool)
-		for _, s := range recentSaved {
-			savedMap[s.PostID] = true
+		// Hydratation des sauvegardes (Saved Posts) du caller
+		recentSavedPosts, _ := postgres.FuncLoadSavedPosts(ctx, callerID, 500, 0)
+		savedPostsMap := make(map[int64]bool)
+		for _, savedRecord := range recentSavedPosts {
+			savedPostsMap[savedRecord.PostID] = true
 		}
 
-		for _, pID := range batchPostIDs {
-			if savedMap[pID] {
-				output.SavedPostIDs = append(output.SavedPostIDs, pID)
+		for _, postID := range batchPostIDs {
+			if savedPostsMap[postID] {
+				profileOutput.SavedPostIDs = append(profileOutput.SavedPostIDs, postID)
 			}
 		}
 	}
 
-	return output, nil
+	return profileOutput, nil
 }

@@ -7,80 +7,90 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// GetCommunityRequests récupère les candidatures en attente d'approbation (Role = -3).
+// ############################################################################
+// # SERVICE : LISTE DES DEMANDES D'ADHÉSION EN ATTENTE
+// ############################################################################
+
+// GetCommunityRequests récupère les candidatures en attente d'approbation.
 func GetCommunityRequests(ctx context.Context, callerID int64, input member_models.GetCommunityRequestsInput) (member_models.GetCommunityRequestsOutput, error) {
-	// 1. SÉCURITÉ : Vérification des droits d'administration
-	callerMem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
-	if err != nil {
-		return member_models.GetCommunityRequestsOutput{}, nubo_error.NewForbidden("ACCESS_DENIED", "Conversation introuvable ou accès refusé.", err)
+
+	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS ZERO-TRUST ────────────────────────────────
+
+	callerMemberPayload, errSecurity := security_service.LeftMember(ctx, input.ConversationID, callerID)
+	if errSecurity != nil {
+		return member_models.GetCommunityRequestsOutput{}, errSecurity
 	}
 
-	if callerMem.Role < 1 { // Doit être au moins Admin (1) ou Owner (2)
-		return member_models.GetCommunityRequestsOutput{}, nubo_error.NewForbidden("INSUFFICIENT_PERMISSIONS", "Vous devez être administrateur pour voir les demandes d'adhésion.", nil)
+	if callerMemberPayload.Role < variables.MemberRoleAdmin {
+		return member_models.GetCommunityRequestsOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous devez être administrateur pour consulter les demandes d'adhésion.", nil)
 	}
 
-	// 2. RÉCUPÉRATION DES MEMBRES (-3) VIA L2 -> L3
-	var members []member_models.MemberPayload
+	// ── ÉTAPE 2 : RÉCUPÉRATION DES MEMBRES EN ATTENTE (CASCADE L2 -> L3) ────
 
-	// Tentative L2 (MongoDB)
-	mongoMembers, errMongo := mongo.MongoLoadMembersByRolePaginated(input.ConversationID, -3, input.Limit, input.Offset)
-	if errMongo == nil && len(mongoMembers) > 0 {
-		members = mongoMembers
+	var pendingMembersPayloads []member_models.MemberPayload
+
+	// TENTATIVE L2 (Warm Storage MongoDB)
+	membersFromMongo, errMongo := mongo.MongoLoadMembersByRolePaginated(input.ConversationID, variables.MemberRolePending, input.Limit, input.Offset)
+	if errMongo == nil && len(membersFromMongo) > 0 {
+		pendingMembersPayloads = membersFromMongo
 	} else {
-		// Fallback L3 (PostgreSQL)
-		pgMembers, errPg := postgres.FuncLoadMembersByRolePaginated(ctx, input.ConversationID, -3, input.Limit, input.Offset)
+		// FALLBACK L3 (Cold Storage PostgreSQL)
+		membersFromPostgres, errPg := postgres.FuncLoadMembersByRolePaginated(ctx, input.ConversationID, variables.MemberRolePending, input.Limit, input.Offset)
 		if errPg != nil {
-			return member_models.GetCommunityRequestsOutput{}, nubo_error.NewInternal(errPg)
+			logger.Log.Error().Err(errPg).Int64("conv_id", input.ConversationID).Msg("Échec L3 lors de la récupération des candidatures en attente")
+			return member_models.GetCommunityRequestsOutput{}, nubo_error.NewInternal()
 		}
-		members = pgMembers
 
-		// Auto-Guérison L2
-		for _, m := range members {
-			go func(member member_models.MemberPayload) {
+		pendingMembersPayloads = membersFromPostgres
+
+		// AUTO-GUÉRISON L3 -> L2 (Asynchrone via Queue)
+		for _, pendingMember := range pendingMembersPayloads {
+			go func(m member_models.MemberPayload) {
 				bgCtx := context.Background()
-				// On l'envoie en tant qu'Update à Mongo pour qu'il le sauvegarde
-				_ = redis.EnqueueDB(bgCtx, member.ID, member.ConversationID, redis.EntityMembers, redis.ActionUpdate, member, redis.TargetMongo)
-			}(m)
+				_ = redis.EnqueueDB(bgCtx, m.ID, m.ConversationID, redis.EntityMembers, redis.ActionUpdate, m, redis.TargetMongo)
+			}(pendingMember)
 		}
 	}
 
-	// 3. HYDRATATION MASSIVE VIA SPEED CACHE (L1) ET GÉNÉRATION DES MÉDIAS
-	var requests []auth_models.UserLiteView
+	// ── ÉTAPE 3 : HYDRATATION MASSIVE VIA SPEED CACHE (L1) ET GÉNÉRATION DES MÉDIAS
 
-	for _, m := range members {
-		// Fetch O(1) depuis le cache L1 (avec auto-fallback intégré dans GetUserLite si cache miss)
-		userLite, errLite := cache_service.GetUserLite(ctx, m.UserID)
-		if errLite != nil {
-			continue // On ignore silencieusement les utilisateurs introuvables/supprimés
-		}
+	var userRequestsViews []auth_models.UserLiteView
 
-		var avatarView media_models.MediaView
-		if userLite.ProfilePictureID > 0 {
-			// Signature HMAC via le Domaine Média
-			if view, errMedia := media_service.GenerateMediaViewCascade(ctx, userLite.ProfilePictureID, userLite.ID, 0, callerID); errMedia == nil {
-				avatarView = view
+	for _, pendingMember := range pendingMembersPayloads {
+		// Extraction en O(1) depuis la RAM (avec fallback local au service)
+		if userLiteData, errLite := cache_service.GetUserLite(ctx, pendingMember.UserID); errLite == nil {
+
+			var userAvatarView media_models.MediaView
+			if userLiteData.ProfilePictureID > 0 {
+				if mediaView, errMedia := media_service.GenerateMediaViewCascade(ctx, userLiteData.ProfilePictureID, userLiteData.ID, 0, callerID); errMedia == nil {
+					userAvatarView = mediaView
+				}
 			}
+
+			userRequestsViews = append(userRequestsViews, auth_models.UserLiteView{
+				User:     userLiteData,
+				Avatar:   userAvatarView,
+				IsOnline: cache_service.IsUserOnline(ctx, userLiteData.ID),
+			})
 		}
-
-		requests = append(requests, auth_models.UserLiteView{
-			User:     userLite,
-			Avatar:   avatarView,
-			IsOnline: cache_service.IsUserOnline(ctx, userLite.ID),
-		})
 	}
 
-	// Prévention du `null` en JSON
-	if requests == nil {
-		requests = make([]auth_models.UserLiteView, 0)
+	// Prévention stricte du `null` en JSON
+	if userRequestsViews == nil {
+		userRequestsViews = make([]auth_models.UserLiteView, 0)
 	}
 
-	return member_models.GetCommunityRequestsOutput{Requests: requests}, nil
+	return member_models.GetCommunityRequestsOutput{
+		Requests: userRequestsViews,
+	}, nil
 }

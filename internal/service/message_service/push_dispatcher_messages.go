@@ -7,9 +7,11 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
 // Structure locale privée pour casser la dépendance cyclique vers le package worker
@@ -19,98 +21,106 @@ type pushJob struct {
 	Payload   any    `json:"payload"`
 }
 
-// ShouldSendPush évalue si un utilisateur doit recevoir une notification Push
-// en O(1) selon la matrice de présence et de confidentialité (DDD).
-// Ajout de messageType dans la signature
-func ShouldSendPush(ctx context.Context, convID int64, userID int64, isMentioned bool, messageType int) bool {
-	// 1. Filtre de Présence (O(1))
-	if cache_service.IsUserOnline(ctx, userID) {
-		return false
+// ############################################################################
+// # SERVICE INTERNE : ENTONNOIR DÉCISIONNEL POUR LES NOTIFICATIONS PUSH
+// ############################################################################
+
+// ShouldSendPush évalue si un utilisateur spécifique doit recevoir une notification Push
+// selon une matrice de présence et de confidentialité résolue en O(1) en RAM.
+func ShouldSendPush(ctx context.Context, conversationID int64, targetUserID int64, isUserMentioned bool, messageType int) bool {
+
+	// ── FILTRE 1 : PRÉSENCE EN LIGNE (O(1)) ─────────────────────────────────
+	if cache_service.IsUserOnline(ctx, targetUserID) {
+		return false // L'utilisateur a l'application ouverte, les WebSockets prendront le relais.
 	}
 
-	// 2. Filtre Global L1 (O(1))
-	settings, err := object_cache_service.GetUserSettingsCascade(ctx, userID)
-	if err != nil || !settings.Notifications.MasterPushEnabled {
-		return false
+	// ── FILTRE 2 : PARAMÈTRES GLOBAUX UTILISATEUR L1 (O(1)) ─────────────────
+	userSettingsPayload, errSettings := object_cache_service.GetUserSettingsCascade(ctx, targetUserID)
+	if errSettings != nil || !userSettingsPayload.Notifications.MasterPushEnabled {
+		return false // L'utilisateur a désactivé toutes les notifications.
 	}
 
-	// 3. Filtre Local L1 (O(1))
-	member, err := object_cache_service.GetMemberFromObjectCache(ctx, convID, userID)
-	if err != nil {
-		return false
+	// ── FILTRE 3 : PARAMÈTRES LOCAUX DE LA CONVERSATION L1 (O(1)) ───────────
+	memberPayload, errMember := object_cache_service.GetMemberFromObjectCache(ctx, conversationID, targetUserID)
+	if errMember != nil {
+		return false // Impossible de charger le membre, on bloque par sécurité.
 	}
 
-	isMuted := member.Settings.IsMuted
+	isMutedStatus := memberPayload.Settings.IsMuted
 
-	// Gestion du Mute Temporaire
-	expireAt := member.Settings.MuteExpireAt
-	if expireAt > 0 {
-		now := time.Now().Unix()
-		if expireAt > 9999999999 {
-			now = time.Now().UnixMilli()
+	// Gestion du "Mute Temporaire"
+	expirationTimestamp := memberPayload.Settings.MuteExpireAt
+	if expirationTimestamp > 0 {
+		currentTimestamp := time.Now().Unix()
+		// Auto-détection du format millisecondes vs secondes
+		if expirationTimestamp > variables.MaxTimestamp {
+			currentTimestamp = time.Now().UnixMilli()
 		}
-		if expireAt > now {
-			isMuted = 2
+		if expirationTimestamp > currentTimestamp {
+			isMutedStatus = variables.SettingsMutedAll // Toujours silencieux
 		}
 	}
 
-	notifyMentions := settings.Notifications.NotifyMentions
+	// Aiguillage métier selon le type de message
+	isNotificationEnabledForMentions := userSettingsPayload.Notifications.NotifyMentions
+	isNotificationEnabledForBaseAction := userSettingsPayload.Notifications.NotifyMessages
 
-	// AIGUILLAGE MÉTIER : On utilise le réglage d'invitation si c'est un Type 6
-	baseNotify := settings.Notifications.NotifyMessages
-	if messageType == 6 {
-		baseNotify = settings.Notifications.NotifyGroupInvites
+	if messageType == variables.MessageTypeInvite {
+		isNotificationEnabledForBaseAction = userSettingsPayload.Notifications.NotifyGroupInvites
 	}
 
-	// Matrice d'Entonnoir Décisionnelle
-	switch isMuted {
-	case 2:
+	// ── ENTONNOIR FINAL DE DÉCISION ─────────────────────────────────────────
+	switch isMutedStatus {
+	case variables.SettingsMutedAll: // Sourdine totale (Rien ne passe)
 		return false
-	case 1:
-		return isMentioned && notifyMentions
-	case 0:
-		// baseNotify vaut "NotifyMessages" (par défaut) ou "NotifyGroupInvites" (si Type 6)
-		return (isMentioned && notifyMentions) || (!isMentioned && baseNotify)
+	case variables.SettingsMutedExceptMention: // Sourdine partielle (Seules les mentions passent)
+		return isUserMentioned && isNotificationEnabledForMentions
+	case variables.SettingsNoMuted: // Normal (Tout passe si autorisé)
+		return (isUserMentioned && isNotificationEnabledForMentions) || (!isUserMentioned && isNotificationEnabledForBaseAction)
 	default:
 		return false
 	}
 }
 
-// dispatchPushNotifications itère sur les destinataires et route les jobs FCM
-func dispatchPushNotifications(msgView message_models.MessageView, destinataires []int64, mentionedUserIDs []int64) {
-	// Garde-fou : On ne notifie JAMAIS les messages systèmes (invitations, alertes) via le Push Messagerie
-	if msgView.MessageType == 8 {
+// dispatchPushNotifications itère sur la liste des destinataires et route les tâches vers Firebase Cloud Messaging.
+func dispatchPushNotifications(messageView message_models.MessageView, recipientUserIDs []int64, mentionedUserIDs []int64) {
+
+	// Garde-fou : On ne notifie JAMAIS les messages systèmes (Type 8) via le Push OS Messagerie.
+	if messageView.MessageType == variables.MessageTypeSystem {
 		return
 	}
 
-	// Exécution asynchrone pour garantir une latence HTTP < 5ms lors du CreateMessage
+	// L'exécution se fait dans une goroutine pour garantir que la latence HTTP
+	// lors de l'appel au `CreateMessage` par l'utilisateur reste sous les 5ms.
 	go func() {
-		bgCtx := context.Background()
+		backgroundContext := context.Background()
 
-		for _, destID := range destinataires {
-			// On exclut catégoriquement l'expéditeur de la matrice
-			if destID == msgView.SenderID {
+		for _, recipientID := range recipientUserIDs {
+			// On exclut catégoriquement l'expéditeur de la matrice de notifications
+			if recipientID == messageView.SenderID {
 				continue
 			}
 
-			isMentioned := pkg.Exists(mentionedUserIDs, destID)
+			isUserExplicitlyMentioned := pkg.Exists(mentionedUserIDs, recipientID)
 
-			if ShouldSendPush(bgCtx, msgView.ConversationID, destID, isMentioned, msgView.MessageType) {
+			if ShouldSendPush(backgroundContext, messageView.ConversationID, recipientID, isUserExplicitlyMentioned, messageView.MessageType) {
+
 				eventType := "message.new"
-				if isMentioned {
-					eventType = "message.mention" // Catégorisation pour l'UI Flutter
+				if isUserExplicitlyMentioned {
+					eventType = "message.mention" // Utile pour personnaliser le son et l'UI dans Flutter/Swift
 				}
 
-				// On utilise la structure locale pour éviter l'import cyclique
-				job := pushJob{
-					UserID:    destID,
+				pushTask := pushJob{
+					UserID:    recipientID,
 					EventType: eventType,
-					Payload:   msgView,
+					Payload:   messageView,
 				}
 
 				// Envoi dans la file FIFO du Worker Firebase via l'abstraction DDD
-				if jobBytes, err := json.Marshal(job); err == nil {
-					_ = redis.WorkerQueue.LPush(bgCtx, "firebase", jobBytes)
+				if jobBytes, errMarshal := json.Marshal(pushTask); errMarshal == nil {
+					_ = redis.WorkerQueue.LPush(backgroundContext, "firebase", jobBytes)
+				} else {
+					logger.Log.Warn().Err(errMarshal).Int64("user_id", recipientID).Msg("Impossible de sérialiser le Job FCM")
 				}
 			}
 		}

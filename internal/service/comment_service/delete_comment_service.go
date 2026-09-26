@@ -4,45 +4,57 @@ import (
 	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
 )
 
-// DeleteComment gère la rétractation d'un commentaire (Purge L1, Soft Delete asynchrone et décrémentation).
+// ############################################################################
+// # SERVICE : SUPPRESSION DE COMMENTAIRE (SOFT DELETE)
+// ############################################################################
+
+// DeleteComment gère la rétractation d'un commentaire (Purge L1, Soft Delete asynchrone et décrémentation du parent).
 func DeleteComment(ctx context.Context, input comment_models.DeleteCommentInput) error {
-	// ─────────────────────────────────────────────────────────────────────────
-	// 1. VERIFICATION DROIT D'ACCÈS ET RÉCUPÉRATION DE L'OBJET COMPLET (Nécessaire pour les étapes suivantes)
-	// ─────────────────────────────────────────────────────────────────────────
 
-	comment, err := security_service.LeftComment(ctx, input.CommentID, input.UserID)
-	if err != nil {
-		return err
+	// ── ÉTAPE 1 : VÉRIFICATION DES DROITS (SÉCURITÉ) ────────────────────────
+
+	// LeftComment gère déjà ses propres nubo_error (NotFound ou Forbidden), on retourne directement
+	commentPayload, errSecurity := security_service.LeftComment(ctx, input.CommentID, input.UserID)
+	if errSecurity != nil {
+		return errSecurity
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// 2. PURGE DU CACHE L1 ET PRÉPARATION DU SOFT DELETE
-	// ─────────────────────────────────────────────────────────────────────────
-	_ = object_cache_service.DeleteCommentFromObjectCache(ctx, comment.ID)
-	_ = object_cache_service.RemoveCommentFromZSET(ctx, comment.PostID, comment.ID)
+	// ── ÉTAPE 2 : PURGE DU CACHE L1 ET PRÉPARATION DU SOFT DELETE ───────────
 
-	// === NOUVEAU : DÉCRÉMENTATION DU POST PARENT (TEMPS RÉEL) ===
-	if p, err := object_cache_service.GetPostFromObjectCache(ctx, comment.PostID); err == nil {
-		p.CommentCount -= 1
-		if p.CommentCount < 0 {
-			p.CommentCount = 0
+	_ = object_cache_service.DeleteCommentFromObjectCache(ctx, commentPayload.ID)
+	_ = object_cache_service.RemoveCommentFromZSET(ctx, commentPayload.PostID, commentPayload.ID)
+
+	// Décrémentation en Temps Réel du Post Parent
+	if postPayload, errPost := object_cache_service.GetPostFromObjectCache(ctx, commentPayload.PostID); errPost == nil {
+		postPayload.CommentCount -= 1
+		if postPayload.CommentCount < 0 {
+			postPayload.CommentCount = 0
 		}
-		_ = object_cache_service.SetPostInObjectCache(ctx, p)
-		cache_service.UpdatePostRecommendationScore(ctx, p)
+
+		_ = object_cache_service.SetPostInObjectCache(ctx, postPayload)
+		cache_service.UpdatePostRecommendationScore(ctx, postPayload)
 	}
 
-	comment.Visibility = -1
+	// Application du statut de suppression logicielle
+	commentPayload.Visibility = -1
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// 3. ENVOI AUX WORKERS POUR DÉCRÉMENTATION ET MISE À JOUR BDD
-	// ─────────────────────────────────────────────────────────────────────────
-	// L'ActionDelete va ordonner à most_cache_worker, mongo_batch et postgres_batch
-	// de faire un "-1" sur le CommentCount du post parent.
-	return redis.EnqueueDB(ctx, comment.ID, comment.PostID, redis.EntityComment, redis.ActionDelete, comment, redis.TargetAll)
+	// ── ÉTAPE 3 : DÉLÉGATION AUX WORKERS BATCH (WRITE-BEHIND) ───────────────
+
+	// L'ActionDelete va ordonner aux workers (most_cache, mongo, postgres)
+	// de répercuter le -1 sur le CommentCount du post parent en BDD.
+	errQueue := redis.EnqueueDB(ctx, commentPayload.ID, commentPayload.PostID, redis.EntityComment, redis.ActionDelete, commentPayload, redis.TargetAll)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("comment_id", commentPayload.ID).Msg("Échec critique : Impossible d'enqueue la suppression du commentaire")
+		return nubo_error.NewInternal()
+	}
+
+	return nil
 }

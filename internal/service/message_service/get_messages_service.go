@@ -7,6 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -14,116 +15,136 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
+// ############################################################################
+// # SERVICE : RÉCUPÉRATION DES MESSAGES (HISTORIQUE)
+// ############################################################################
+
+// GetMessages récupère l'historique d'une conversation avec une hydratation riche (Avatars, pseudos, réactions).
 func GetMessages(ctx context.Context, callerID int64, input message_models.GetMessagesInput) ([]message_models.MessageView, error) {
-	// 1. SÉCURITÉ : Vérification d'appartenance
-	mem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
-	if err != nil {
-		return nil, nubo_error.NewForbidden("NOT_A_MEMBER", "Vous ne faites pas partie de cette conversation.", err)
+
+	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS (SÉCURITÉ ZERO-TRUST) ────────────────────
+
+	callerMemberPayload, errSecurity := security_service.LeftMember(ctx, input.ConversationID, callerID)
+	if errSecurity != nil || callerMemberPayload.Role < variables.MemberRoleNormal {
+		return nil, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous ne faites pas partie de cette conversation.", errSecurity)
 	}
 
-	// === NOUVEAU : CHARGEMENT DES SETTINGS DE LA CONVERSATION (Cascade L1 -> L2 -> L3) ===
-	conv, errConv := object_cache_service.GetConversationFromObjectCache(ctx, input.ConversationID)
-	if errConv != nil || conv.ID == 0 {
-		conv, errConv = mongo.MongoGetConversation(input.ConversationID)
-		if errConv != nil || conv.ID == 0 {
-			// FALLBACK ABSOLU L3
-			conv, errConv = postgres.FuncGetConversation(ctx, input.ConversationID)
-			if errConv != nil || conv.ID == 0 {
-				return nil, nubo_error.NewNotFound("CONV_NOT_FOUND", "Conversation introuvable.", errConv)
+	// ── ÉTAPE 2 : RÉCUPÉRATION DE LA CONVERSATION (CASCADE L1 -> L2 -> L3) ──
+
+	conversationPayload, errCache := object_cache_service.GetConversationFromObjectCache(ctx, input.ConversationID)
+
+	if errCache != nil || conversationPayload.ID == 0 {
+		var errMongo error
+		conversationPayload, errMongo = mongo.MongoGetConversation(input.ConversationID)
+
+		if errMongo != nil || conversationPayload.ID == 0 {
+			var errPg error
+			conversationPayload, errPg = postgres.FuncGetConversation(ctx, input.ConversationID)
+			if errPg != nil {
+				logger.Log.Error().Err(errPg).Int64("conv_id", input.ConversationID).Msg("Erreur L3 lors de la récupération de la conversation")
+				return nil, nubo_error.NewInternal()
+			}
+			if conversationPayload.ID == 0 {
+				return nil, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Conversation introuvable.", nil)
 			}
 
-			// ⬆️ PROMOTION L3 -> L2 (Asynchrone via la queue pour protéger Mongo)
+			// AUTO-GUÉRISON L3 -> L2 (Asynchrone via Queue)
 			go func(c conversation_models.ConversationPayload) {
 				bgCtx := context.Background()
 				_ = redis.EnqueueDB(bgCtx, c.ID, c.ID, redis.EntityConversation, redis.ActionUpdate, c, redis.TargetMongo)
-			}(conv)
+			}(conversationPayload)
 		}
 
-		// ⬆️ PROMOTION L3/L2 -> L1 (Immédiat en RAM)
-		_ = object_cache_service.SetConversationInObjectCache(ctx, conv)
+		// AUTO-GUÉRISON L3/L2 -> L1 (Immédiate en RAM)
+		_ = object_cache_service.SetConversationInObjectCache(ctx, conversationPayload)
 	}
 
-	hideSystemMessages := conv.Settings.HideSystemMessages
+	mustHideSystemMessages := conversationPayload.Settings.HideSystemMessages
 
-	// 2. RÉSOLUTION D'INDEX
-	messageIDs, err := cache_service.GetMessageIDsFromSpeedCache(ctx, input.ConversationID, input.OffsetID, input.Limit, input.Direction, mem.FrozenMessageID)
-	if err != nil || len(messageIDs) == 0 {
+	// ── ÉTAPE 3 : RÉSOLUTION D'INDEX (QUELS MESSAGES CHARGER ?) ─────────────
+
+	messageIDsList, errIndex := cache_service.GetMessageIDsFromSpeedCache(ctx, input.ConversationID, input.OffsetID, input.Limit, input.Direction, callerMemberPayload.FrozenMessageID)
+	if errIndex != nil {
+		logger.Log.Error().Err(errIndex).Msg("Erreur lors de la résolution de l'index des messages")
+		return nil, nubo_error.NewInternal()
+	}
+	if len(messageIDsList) == 0 {
 		return []message_models.MessageView{}, nil
 	}
 
-	// 3. HYDRATATION MASSIVE (L1 -> L2 -> L3)
-	messages, err := object_cache_service.GetMessagesView(ctx, messageIDs)
-	if err != nil {
-		return nil, err
+	// ── ÉTAPE 4 : HYDRATATION MASSIVE DES PAYLOADS (L1 -> L2 -> L3) ─────────
+
+	messagesPayloadList, errHydration := object_cache_service.GetMessagesView(ctx, messageIDsList)
+	if errHydration != nil {
+		logger.Log.Error().Err(errHydration).Msg("Erreur lors de l'hydratation massive des messages")
+		return nil, nubo_error.NewInternal()
 	}
 
-	// 4. === SIGNATURE DES MÉDIAS, HYDRATATION DE L'EXPÉDITEUR & RÉACTIONS ===
-	var views []message_models.MessageView
+	// ── ÉTAPE 5 : ASSEMBLAGE DES VUES (MÉDIAS, PSEUDOS & RÉACTIONS) ─────────
 
-	for i := range messages {
-		// === NOUVEAU : LE VRAI FILTRE EST ICI ===
-		// Si la conversation cache les messages systèmes (Type 8), on les ignore à l'affichage
-		if hideSystemMessages && messages[i].MessageType == 8 {
+	hydratedMessageViews := make([]message_models.MessageView, 0, len(messagesPayloadList))
+
+	for i := range messagesPayloadList {
+
+		// FILTRE MÉTIER : Ignorer les messages systèmes si la conversation l'exige
+		if mustHideSystemMessages && messagesPayloadList[i].MessageType == variables.MessageTypeSystem {
 			continue
 		}
 
-		// A. Hydratation de l'image rattachée
-		if messages[i].Attachments != nil {
-			if rawMediaID, exists := messages[i].Attachments["media_id"]; exists {
-				var mediaID int64
-				switch v := rawMediaID.(type) {
+		// A. Hydratation de l'image rattachée (Sceau Cryptographique HMAC)
+		if messagesPayloadList[i].Attachments != nil {
+			if rawMediaID, exists := messagesPayloadList[i].Attachments["media_id"]; exists {
+				var targetMediaID int64
+				switch parsedValue := rawMediaID.(type) {
 				case float64:
-					mediaID = int64(v)
+					targetMediaID = int64(parsedValue)
 				case int64:
-					mediaID = v
+					targetMediaID = parsedValue
 				}
-				if mediaID > 0 {
-					if view, err := media_service.GenerateMediaViewCascade(ctx, mediaID, messages[i].SenderID, messages[i].ID, callerID); err == nil {
-						messages[i].Attachments["media_view"] = view
+
+				if targetMediaID > 0 {
+					if mediaView, errMedia := media_service.GenerateMediaViewCascade(ctx, targetMediaID, messagesPayloadList[i].SenderID, messagesPayloadList[i].ID, callerID); errMedia == nil {
+						messagesPayloadList[i].Attachments["media_view"] = mediaView
 					}
 				}
 			}
 		}
 
-		// B. Hydratation du Pseudo et Avatar de l'expéditeur
-		var senderUsername string
-		var senderAvatar media_models.MediaView
-		var senderAvatarCommunityID int64
+		// B. Hydratation de l'expéditeur (Pseudo et Avatar)
+		var resolvedSenderUsername string
+		var resolvedSenderAvatar media_models.MediaView
+		var resolvedSenderAvatarCommunityID int64
 
-		// Ajustement local
-		if userLite, errLite := cache_service.GetUserLite(ctx, messages[i].SenderID); errLite == nil {
-			senderUsername = userLite.Username
-			if conv.Type == 2 || conv.Type == 3 {
-				senderAvatarCommunityID = userLite.ProfilePictureID // Mode Twitch
-			} else {
-				if userLite.ProfilePictureID > 0 {
-					if avatarView, errAvatar := media_service.GenerateMediaViewCascade(ctx, userLite.ProfilePictureID, messages[i].SenderID, 0, callerID); errAvatar == nil {
-						senderAvatar = avatarView
-					}
+		if senderUserLite, errLite := cache_service.GetUserLite(ctx, messagesPayloadList[i].SenderID); errLite == nil {
+			resolvedSenderUsername = senderUserLite.Username
+
+			if conversationPayload.Type == variables.ConversationTypeCommunityPriv || conversationPayload.Type == variables.ConversationTypeCommunityPub {
+				resolvedSenderAvatarCommunityID = senderUserLite.ProfilePictureID // Mode Twitch (Idéal pour grandes communautés)
+			} else if senderUserLite.ProfilePictureID > 0 {
+				// Mode Classique : URL HMAC
+				if avatarView, errAvatar := media_service.GenerateMediaViewCascade(ctx, senderUserLite.ProfilePictureID, messagesPayloadList[i].SenderID, 0, callerID); errAvatar == nil {
+					resolvedSenderAvatar = avatarView
 				}
 			}
 		}
 
-		// C. HYDRATATION DES RÉACTIONS (FAST PATH)
-		counts, _ := cache_service.GetMessageReactionCounts(ctx, messages[i].ID)
-		userReaction, _ := cache_service.GetUserReaction(ctx, messages[i].ID, callerID)
+		// C. Hydratation des Réactions (Fast Path O(1) depuis RAM)
+		reactionCountsMap, _ := cache_service.GetMessageReactionCounts(ctx, messagesPayloadList[i].ID)
+		userSpecificReaction, _ := cache_service.GetUserReaction(ctx, messagesPayloadList[i].ID, callerID)
 
 		// D. Assemblage de la vue finale
-		views = append(views, message_models.MessageView{
-			MessagePayload:          messages[i],
-			SenderUsername:          senderUsername,
-			SenderAvatar:            senderAvatar,
-			SenderAvatarCommunityID: senderAvatarCommunityID,
-			ReactionCounts:          counts,
-			UserReaction:            userReaction,
+		hydratedMessageViews = append(hydratedMessageViews, message_models.MessageView{
+			MessagePayload:          messagesPayloadList[i],
+			SenderUsername:          resolvedSenderUsername,
+			SenderAvatar:            resolvedSenderAvatar,
+			SenderAvatarCommunityID: resolvedSenderAvatarCommunityID,
+			ReactionCounts:          reactionCountsMap,
+			UserReaction:            userSpecificReaction,
 		})
 	}
 
-	if views == nil {
-		views = make([]message_models.MessageView, 0)
-	}
-
-	return views, nil
+	return hydratedMessageViews, nil
 }

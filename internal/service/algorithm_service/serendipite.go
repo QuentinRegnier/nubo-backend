@@ -2,57 +2,63 @@ package algorithm_service
 
 import "math"
 
-// DopamineWave modélise mathématiquement le gradient de dopamine (La Vague).
+// ############################################################################
+// # LA VAGUE DE DOPAMINE (Gradient Modulé Mathématiquement)
+// ############################################################################
+
+// DopamineWave modélise le gradient de dopamine.
 // Retourne l'affinité/qualité requise à l'index x (comprise entre 0.01 et 1.0).
-// Plus le retour est proche de 1, plus le post doit être un "Banger".
-// Plus le retour est faible, plus le système favorise l'exploration et la sérendipité.
-func DopamineWave(x float64) float64 {
-	if x < 0 {
+// - Proche de 1 : Le système exige un "Banger" très pertinent.
+// - Proche de 0 : Le système favorise l'exploration, l'aléatoire et la sérendipité.
+func DopamineWave(indexScroll float64) float64 {
+	if indexScroll < 0 {
 		return 0.0
 	}
 
+	// TABLE DE MIXAGE DES FRÉQUENCES
 	const (
-		S_plat    = 0.35 // Seuil de stabilisation de la pertinence
-		lambda    = 0.05 // Vitesse de descente de l'enveloppe
-		A_debut   = 0.45 // Amplitude maximale initiale du chaos
-		A_plat    = 0.20 // Amplitude résiduelle du chaos
-		nu        = 0.05 // Vitesse d'atténuation de la nervosité
-		P_jackpot = 0.50 // Puissance brute du renforcement intermittent
-		K         = 28.0 // Fréquence de base moyenne d'apparition des jackpots
-		gamma     = 2.5  // Intensité de la distorsion temporelle
-		delta     = 12.0 // Vitesse de variation de la distorsion de phase
-		p         = 40.0 // Finesse de l'aiguille du pic de dopamine (pair)
-		epsilon   = 0.01 // Plancher de sécurité infrastructurel
+		BasePlateau          = 0.35 // S_plat : Seuil de stabilisation de la pertinence (Ne descend jamais en dessous)
+		DecaySpeed           = 0.05 // lambda : Vitesse de descente de l'enveloppe initiale
+		InitialAmplitude     = 0.45 // A_debut : Amplitude maximale du chaos au début du scroll
+		ResidualAmplitude    = 0.20 // A_plat : Amplitude résiduelle du chaos au fond du scroll
+		NervousnessDecay     = 0.05 // nu : Vitesse d'atténuation de la "nervosité" de la courbe
+		JackpotPower         = 0.50 // P_jackpot : Puissance brute du renforcement intermittent (Les Pics de Qualité)
+		JackpotFrequency     = 28.0 // K : Fréquence de base moyenne d'apparition des jackpots
+		TimeDistortionGamma  = 2.5  // gamma : Intensité de la distorsion temporelle (Le scroll est imprévisible)
+		PhaseDistortionDelta = 12.0 // delta : Vitesse de variation de la distorsion de phase
+		SpikeSharpness       = 40.0 // p : Finesse de l'aiguille du pic de dopamine (Doit être un nombre pair)
+		FloorSafety          = 0.01 // epsilon : Plancher de sécurité infrastructurel
 	)
 
-	// 1. Enveloppe de base E(x)
-	E_x := S_plat + (1.0-S_plat)*math.Exp(-lambda*x)
+	// 1. Enveloppe de Base E(x) (L'attraction vers le plateau de 35% de pertinence)
+	baseEnvelope := BasePlateau + (1.0-BasePlateau)*math.Exp(-DecaySpeed*indexScroll)
 
-	// 2. Onde complexe Psi(x)
-	Psi_x := (math.Sin(math.Sqrt2*x) + math.Sin(math.Pi*x) + math.Sin(math.E*x)) / 3.0
+	// 2. Onde Complexe Psi(x) (Combinaison de sinus sur des nombres irrationnels pour éviter les patterns)
+	complexWave := (math.Sin(math.Sqrt2*indexScroll) + math.Sin(math.Pi*indexScroll) + math.Sin(math.E*indexScroll)) / 3.0
 
-	// 3. Chaos modulé Omega(x)
-	Omega_x := (A_plat + (A_debut-A_plat)*math.Exp(-nu*x)) * Psi_x
+	// 3. Chaos Modulé Omega(x) (L'amplitude du chaos diminue doucement avec le scroll)
+	modulatedChaos := (ResidualAmplitude + (InitialAmplitude-ResidualAmplitude)*math.Exp(-NervousnessDecay*indexScroll)) * complexWave
 
-	// 4. Distorsion de phase Phi(x)
-	Phi_x := gamma * math.Sin((x*math.Sqrt2)/delta)
+	// 4. Distorsion de Phase Phi(x) (La distance entre les jackpots n'est jamais la même)
+	phaseDistortion := TimeDistortionGamma * math.Sin((indexScroll*math.Sqrt2)/PhaseDistortionDelta)
 
-	// 5. Pics de Jackpot J(x)
-	cosVal := math.Cos((x*math.Pi)/K + Phi_x)
-	var J_x float64
-	if cosVal > 0 {
-		J_x = P_jackpot * math.Pow(cosVal, p)
+	// 5. Pics de Jackpot J(x) (L'injection massive et brutale d'un contenu excellent)
+	cosValue := math.Cos((indexScroll*math.Pi)/JackpotFrequency + phaseDistortion)
+	var jackpotSpike = 0.0
+	if cosValue > 0 {
+		jackpotSpike = JackpotPower * math.Pow(cosValue, SpikeSharpness)
 	}
 
-	// 6. Assemblage final
-	f_x := E_x + Omega_x + J_x
+	// 6. Assemblage Final
+	finalWaveValue := baseEnvelope + modulatedChaos + jackpotSpike
 
-	// Clamping final
-	if f_x < epsilon {
-		return epsilon
+	// Clamping final (Sécurité Mathématique)
+	if finalWaveValue < FloorSafety {
+		return FloorSafety
 	}
-	if f_x > 1.0 {
+	if finalWaveValue > 1.0 {
 		return 1.0
 	}
-	return f_x
+
+	return finalWaveValue
 }

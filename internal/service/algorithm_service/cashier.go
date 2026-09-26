@@ -9,128 +9,195 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-// PersonalizedFeedOptions regroupe les paramètres d'entrée du pipeline §4.4.
+// PersonalizedFeedOptions regroupe les paramètres d'entrée du pipeline algorithmique.
 type PersonalizedFeedOptions struct {
-	UserID         int64          // Pour le cache_service Redis et les logs
-	UserVec        []float32      // û ∈ R^224 (normalisé L2) — nil si profil absent
-	UserConfidence float64        // [0.0, 1.0] — seuil LSH: activation si > 0.70
-	FriendIDs      map[int64]bool // IDs des amis directs de l'utilisateur (pour B(u,p))
-	Date           time.Time      // Date de référence pour les clés ZSET
-	Limit          int            // Taille du feed_service (0 = TDDFeedSize = 50)
-	CandidateIDs   []int64        // ✅ Les IDs apportés par le Magasinier
-	Seed           int64          // ✅ La Graine du panier pour déterminer le rythme de la Vague
-	StartIndex     int            // ✅ Index de départ absolu pour la Vague de Dopamine (évite le reset de la courbe au scroll)
+	UserID         int64          // Identifiant de l'utilisateur cible
+	UserVec        []float32      // û ∈ R^224 (normalisé L2) — nil si profil vierge
+	UserConfidence float64        // [0.0, 1.0] — seuil de confiance. Active le LSH si > 0.70
+	FriendIDs      map[int64]bool // Set des amis directs de l'utilisateur (Pour le boost B(u,p))
+	Date           time.Time      // Date de référence pour les clés ZSET quotidiennes
+	Limit          int            // Taille du feed à générer (Par défaut: 50)
+	CandidateIDs   []int64        // Les IDs de posts apportés par le Magasinier (Le panier brut)
+	Seed           int64          // La Graine du panier pour le déterminisme
+	StartIndex     int            // Index absolu de la Vague de Dopamine (Maintient la courbe au fil du scroll)
 }
 
-// BuildPersonalizedFeed construit le feed_service personnalisé de K posts pour un utilisateur à partir des candidats.
-func BuildPersonalizedFeed(ctx context.Context, opts PersonalizedFeedOptions) ([]int64, error) {
-	feedSize := opts.Limit
+// BuildPersonalizedFeed filtre, score et ordonne le panier brut pour créer le feed final.
+func BuildPersonalizedFeed(ctx context.Context, options PersonalizedFeedOptions) ([]int64, error) {
+	feedSize := options.Limit
 	if feedSize <= 0 {
 		feedSize = variables.TDDFeedSize // K_feed = 50
 	}
 
-	// ── Vérification du cache_service (court-circuit si feed_service récent) ─────────────
-	var cachedIDs []int64
-	if err := redis.FeedsPersonalized.GetObject(ctx, opts.UserID, &cachedIDs); err == nil && len(cachedIDs) > 0 {
-		return cachedIDs, nil
+	// ############################################################################
+	// # ÉTAPE A : VÉRIFICATION DU CACHE PRÉ-CALCULÉ
+	// ############################################################################
+
+	var cachedFeedIDs []int64
+	if err := redis.FeedsPersonalized.GetObject(ctx, options.UserID, &cachedFeedIDs); err == nil && len(cachedFeedIDs) > 0 {
+		return cachedFeedIDs, nil
 	}
 
-	// ── ÉTAPE A: Récupération des scores de tendance du Panier ────────────
-	postIDs := opts.CandidateIDs
+	postIDs := options.CandidateIDs
 	if len(postIDs) == 0 {
 		return []int64{}, nil
 	}
 
-	dateKey := opts.Date.UTC().Format("20060102")
-	zsetKey := fmt.Sprintf(variables.RedisKeyTrendGlobalDaily, dateKey)
+	// ############################################################################
+	// # ÉTAPE B : RÉCUPÉRATION DES SCORES DE TENDANCE MONDIAUX
+	// ############################################################################
 
-	members := make([]string, len(postIDs))
+	dateKey := options.Date.UTC().Format("20060102")
+	dailyTrendRedisKey := fmt.Sprintf(variables.RedisKeyTrendGlobalDaily, dateKey)
+
+	memberStrings := make([]string, len(postIDs))
 	for i, id := range postIDs {
-		members[i] = strconv.FormatInt(id, 10)
+		memberStrings[i] = strconv.FormatInt(id, 10)
 	}
 
-	// Appel abstrait du Pipeline pour récupérer les scores existants
-	scores, _ := redis.ZScores(ctx, zsetKey, members)
+	// Récupération en masse des scores ZSET
+	rawScores, _ := redis.ZScores(ctx, dailyTrendRedisKey, memberStrings)
 
-	trendScores := make(map[int64]float64, len(postIDs))
+	trendScoresMap := make(map[int64]float64, len(postIDs))
 	for i, id := range postIDs {
-		score := scores[i]
+		score := rawScores[i]
 		if score == 0 {
-			// Fallback : Si le post (ex: boîte aux lettres) n'est pas dans le top, on sécurise son score
+			// Si le post n'est pas dans le trend (ex: post d'un ami issu de la boîte aux lettres),
+			// on lui garantit un score de base neutre pour ne pas le détruire dans la multiplication.
 			score = 1.0
 		}
-		trendScores[id] = score
+		trendScoresMap[id] = score
 	}
 
-	// ── ÉTAPE B: Récupération des vecteurs de contenu via Pipeline MGET Typé ─────────────────────
-	vecResult, err := redis.ContentVectors.GetMany(ctx, postIDs)
+	// ############################################################################
+	// # ÉTAPE C : HYDRATATION DES VECTEURS (CASCADE L1 -> L2 -> L3)
+	// ############################################################################
+
+	vectorBatchResult, err := redis.ContentVectors.GetMany(ctx, postIDs)
 	if err != nil {
-		return nil, nubo_error.NewInternal(err)
+		return nil, nubo_error.NewInternal()
 	}
 
 	allCandidates := make([]PostCandidate, 0, len(postIDs))
+
+	// 1. Traitement des hits du Cache L1 (RAM)
 	for _, id := range postIDs {
-		rawData, found := vecResult.Found[id]
-		if !found {
-			continue
+		rawData, isFoundInL1 := vectorBatchResult.Found[id]
+		if !isFoundInL1 {
+			continue // Sera traité par le fallback juste après
 		}
 
 		var payload ContentVectorPayload
-		// Optimisation RAM/CPU absolue : Lecture directe du flux binaire MsgPack
-		if err := msgpack.Unmarshal(rawData, &payload); err != nil {
+		if err := msgpack.Unmarshal(rawData, &payload); err != nil || len(payload.Vector) != variables.VectorDimTotal {
 			continue
 		}
-		if len(payload.V) != variables.VectorDimTotal {
-			continue
-		}
+
 		allCandidates = append(allCandidates, PostCandidate{
 			PostID:        id,
 			AuthorID:      payload.AuthorID,
-			TrendScore:    trendScores[id],
-			ContentVec:    payload.V,
-			PriorityLevel: payload.PriorityLevel, // ✅ Lecture en O(1) de la priorité
+			TrendScore:    trendScoresMap[id],
+			ContentVec:    payload.Vector,
+			PriorityLevel: payload.PriorityLevel,
 			MatrixIdx:     len(allCandidates),
 		})
+	}
+
+	// 2. AUTO-GUÉRISON : Fallback L2 (Mongo) et L3 (Postgres) pour les vecteurs disparus de la RAM
+	missingIDs := vectorBatchResult.MissingIDs
+	if len(missingIDs) > 0 {
+		logger.Log.Info().Int("missing_count", len(missingIDs)).Msg("Cache Miss sur ContentVectors, déclenchement du Fallback L2/L3...")
+
+		// Fallback L2 (Mongo)
+		mongoPosts, _ := mongo.MongoLoadPosts(missingIDs)
+		foundInMongo := make(map[int64]bool)
+
+		for _, post := range mongoPosts {
+			foundInMongo[post.ID] = true
+			if len(post.Vector) == variables.VectorDimTotal {
+				allCandidates = append(allCandidates, PostCandidate{
+					PostID:        post.ID,
+					AuthorID:      post.UserID,
+					TrendScore:    trendScoresMap[post.ID],
+					ContentVec:    post.Vector,
+					PriorityLevel: post.PriorityLevel,
+					MatrixIdx:     len(allCandidates),
+				})
+				// Auto-guérison asynchrone du L1
+				go StoreContentVector(context.Background(), post)
+			}
+		}
+
+		// Fallback L3 (Postgres) pour ce qui manque toujours
+		var stillMissingIDs []int64
+		for _, id := range missingIDs {
+			if !foundInMongo[id] {
+				stillMissingIDs = append(stillMissingIDs, id)
+			}
+		}
+
+		if len(stillMissingIDs) > 0 {
+			pgPosts, _ := postgres.FuncLoadPosts(stillMissingIDs, 1, 0)
+			for _, post := range pgPosts {
+				if len(post.Vector) == variables.VectorDimTotal {
+					allCandidates = append(allCandidates, PostCandidate{
+						PostID:        post.ID,
+						AuthorID:      post.UserID,
+						TrendScore:    trendScoresMap[post.ID],
+						ContentVec:    post.Vector,
+						PriorityLevel: post.PriorityLevel,
+						MatrixIdx:     len(allCandidates),
+					})
+					// Auto-guérison asynchrone du L1
+					go StoreContentVector(context.Background(), post)
+				}
+			}
+		}
 	}
 
 	if len(allCandidates) == 0 {
 		return []int64{}, nil
 	}
 
-	if len(opts.UserVec) != variables.VectorDimTotal {
+	// Si l'utilisateur n'a pas de profil vectoriel, on court-circuite le MMR complexe
+	if len(options.UserVec) != variables.VectorDimTotal {
 		return extractIDsFromCandidates(allCandidates, feedSize), nil
 	}
 
-	// ── ÉTAPE C: Pré-filtrage LSH (si confidence > 0.70) ─────────────────
-	var (
-		filteredCandidates []PostCandidate
-		G                  []float32
-		totalN             int
-		useOnTheFlyMatrix  bool
-	)
+	// ############################################################################
+	// # ÉTAPE D : PRÉ-FILTRAGE LSH (Locality-Sensitive Hashing)
+	// ############################################################################
 
-	if opts.UserConfidence > LSHConfidenceThreshold {
-		lshHash := DefaultLSHEngine.ComputeHash(opts.UserVec)
-		lshIDSet, _ := GetLSHCandidateIDs(ctx, lshHash)
+	var filteredCandidates []PostCandidate
+	var similarityMatrix []float32
+	var matrixDimension int
+	var isMatrixCalculatedOnTheFly bool
 
-		filtered := make([]PostCandidate, 0, len(lshIDSet))
-		for _, c := range allCandidates {
-			if lshIDSet[c.PostID] {
-				filtered = append(filtered, c)
+	if options.UserConfidence > variables.TDDLSHConfidenceThreshold {
+		lshHash := DefaultLSHEngine.ComputeHash(options.UserVec)
+		lshTargetIDSet, _ := GetLSHCandidateIDs(ctx, lshHash)
+
+		filtered := make([]PostCandidate, 0, len(lshTargetIDSet))
+		for _, candidate := range allCandidates {
+			if lshTargetIDSet[candidate.PostID] {
+				filtered = append(filtered, candidate)
 			}
 		}
 
+		// Si le LSH a conservé assez de candidats, on l'utilise
 		if len(filtered) >= feedSize*2 {
 			filteredCandidates = filtered
 			for i := range filteredCandidates {
 				filteredCandidates[i].MatrixIdx = i
 			}
-			useOnTheFlyMatrix = true
+			isMatrixCalculatedOnTheFly = true
 		} else {
 			filteredCandidates = allCandidates
 		}
@@ -138,82 +205,94 @@ func BuildPersonalizedFeed(ctx context.Context, opts PersonalizedFeedOptions) ([
 		filteredCandidates = allCandidates
 	}
 
-	// ── ÉTAPE D: Calcul des scores R(u,p) ────────────────────────────────
+	// ############################################################################
+	// # ÉTAPE E : ÉVALUATION PERSONNALISÉE R(u,p)
+	// ############################################################################
+
 	for i := range filteredCandidates {
 		filteredCandidates[i].PersonalScore = ComputePersonalizedScore(
 			filteredCandidates[i].TrendScore,
-			opts.UserVec,
+			options.UserVec,
 			filteredCandidates[i].ContentVec,
 			filteredCandidates[i].AuthorID,
-			opts.FriendIDs,
-			filteredCandidates[i].PriorityLevel, // ✅ Transmission
+			options.FriendIDs,
+			filteredCandidates[i].PriorityLevel,
 		)
 	}
 
-	// ── ÉTAPE E: Matrice de similarité G ─────────────────────────────────
-	if useOnTheFlyMatrix {
-		G, totalN = buildSimilarityMatrix(filteredCandidates)
+	// ############################################################################
+	// # ÉTAPE F : CONTRÔLE DE DIVERSITÉ (MMR) ET MATRICE
+	// ############################################################################
+
+	if isMatrixCalculatedOnTheFly {
+		similarityMatrix, matrixDimension = buildSimilarityMatrix(filteredCandidates)
 	} else {
-		G, totalN = getOrBuildSimMatrix(filteredCandidates)
+		similarityMatrix, matrixDimension = getOrBuildSimMatrix(filteredCandidates)
 	}
 
-	// ── ÉTAPE F: MMR itératif — K = 50 itérations ─────────────────────
-	selected := RunMMR(filteredCandidates, G, totalN, variables.TDDLambdaMMR, feedSize)
+	// Exécution du Maximal Marginal Relevance
+	selectedCandidates := RunMMR(filteredCandidates, similarityMatrix, matrixDimension, variables.TDDLambdaMMR, feedSize)
 
-	// ── ÉTAPE G: Injection de sérendipité (La Vague de Dopamine) ──────────
-	serendipPool := make([]int64, len(allCandidates))
-	for i, c := range allCandidates {
-		serendipPool[i] = c.PostID
-	}
-	// ✅ Initialisation stricte du générateur avec la Seed du panier
-	rng := rand.New(rand.NewSource(opts.Seed))
-	selected = InjectSerendipity(selected, serendipPool, rng, opts.StartIndex) // ✅ Transmission du décalage
+	// ############################################################################
+	// # ÉTAPE G : ONDE DE SÉRENDIPITÉ (DÉCOUVERTE)
+	// ############################################################################
 
-	feedIDs := make([]int64, len(selected))
-	for i, c := range selected {
-		feedIDs[i] = c.PostID
+	serendipityDiscoveryPool := make([]int64, len(allCandidates))
+	for i, candidate := range allCandidates {
+		serendipityDiscoveryPool[i] = candidate.PostID
 	}
 
-	// ── ÉTAPE H: Retour du flux calculé ──────────────────────────────────
-	// La Caissière (MMR) a produit la liste finale de postIDs ordonnés.
-	// Le Distributeur se chargera de l'enregistrer dans le FeedState.
+	// Le générateur est ancré sur la Seed de ce panier pour garantir la stabilité de la Vague
+	deterministicRNG := rand.New(rand.NewSource(options.Seed))
+	selectedCandidates = InjectSerendipity(selectedCandidates, serendipityDiscoveryPool, deterministicRNG, options.StartIndex)
 
-	// Correction de l'idempotence : On fige le calcul en RAM pour intercepter les requêtes concurrentes simultanées
-	_ = redis.FeedsPersonalized.SetObject(ctx, opts.UserID, feedIDs)
+	// Extraction de la liste finale d'IDs
+	finalFeedIDs := make([]int64, len(selectedCandidates))
+	for i, candidate := range selectedCandidates {
+		finalFeedIDs[i] = candidate.PostID
+	}
 
-	return feedIDs, nil
+	// ############################################################################
+	// # ÉTAPE H : SAUVEGARDE ET GARANTIE D'IDEMPOTENCE
+	// ############################################################################
+
+	// On fige le calcul en RAM pour intercepter les futures requêtes identiques
+	_ = redis.FeedsPersonalized.SetObject(ctx, options.UserID, finalFeedIDs)
+
+	return finalFeedIDs, nil
 }
 
-// InvalidatePersonalizedFeedCache invalide le cache_service du feed_service si le vecteur a changé significativement.
-func InvalidatePersonalizedFeedCache(ctx context.Context, userID int64, oldVec, newVec []float32) bool {
-	if len(oldVec) != variables.VectorDimTotal || len(newVec) != variables.VectorDimTotal {
+// InvalidatePersonalizedFeedCache détruit le cache si le vecteur de l'utilisateur a changé drastiquement.
+func InvalidatePersonalizedFeedCache(ctx context.Context, userID int64, oldVector, newVector []float32) bool {
+	if len(oldVector) != variables.VectorDimTotal || len(newVector) != variables.VectorDimTotal {
 		return false
 	}
 
-	var sumSq float64
-	for i, nv := range newVec {
-		diff := float64(nv - oldVec[i])
-		sumSq += diff * diff
+	var sumOfSquares float64
+	for i, newVelocity := range newVector {
+		difference := float64(newVelocity - oldVector[i])
+		sumOfSquares += difference * difference
 	}
-	// Calcul de l'écart géométrique Euclidien L2 :
-	// \displaystyle \delta = \sqrt{\sum_{i=1}^{224} (u^{\text{new}}_i - u^{\text{old}}_i)^2}
-	delta := math.Sqrt(sumSq)
 
-	if delta > variables.TDDDeltaInvalid {
-		// Invalidation de l'Object Cache de manière pure et atomique
+	// Calcul de l'écart géométrique Euclidien (L2)
+	euclideanDelta := math.Sqrt(sumOfSquares)
+
+	if euclideanDelta > variables.TDDDeltaInvalid {
+		// Invalidation pure et atomique
 		_ = redis.FeedsPersonalized.DeleteObject(ctx, userID)
 		return true
 	}
+
 	return false
 }
 
-func extractIDsFromCandidates(candidates []PostCandidate, k int) []int64 {
-	if k > len(candidates) {
-		k = len(candidates)
+func extractIDsFromCandidates(candidates []PostCandidate, limit int) []int64 {
+	if limit > len(candidates) {
+		limit = len(candidates)
 	}
-	ids := make([]int64, k)
-	for i := 0; i < k; i++ {
-		ids[i] = candidates[i].PostID
+	extractedIDs := make([]int64, limit)
+	for i := 0; i < limit; i++ {
+		extractedIDs[i] = candidates[i].PostID
 	}
-	return ids
+	return extractedIDs
 }

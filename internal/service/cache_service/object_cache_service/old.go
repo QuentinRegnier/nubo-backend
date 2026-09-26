@@ -11,107 +11,101 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-// GetPostsView : Le Pipeline d'Hydratation Optimisé (L1 Redis → L2 Mongo → L3 Postgres)
-func GetPostsView(ids []int64) ([]post_models.PostPayload, error) {
-	if len(ids) == 0 {
+// ############################################################################
+// # PIPELINE D'HYDRATATION GLOBAL : L1 (REDIS) -> L2 (MONGO) -> L3 (POSTGRES)
+// ############################################################################
+
+// GetPostsView exécute le pipeline d'hydratation optimisé pour une liste d'IDs de publications.
+func GetPostsView(targetPostIDs []int64) ([]post_models.PostPayload, error) {
+	if len(targetPostIDs) == 0 {
 		return []post_models.PostPayload{}, nil
 	}
 
-	ctx := context.Background()
-	finalPosts := make([]post_models.PostPayload, 0, len(ids))
-	tempMap := make(map[int64]post_models.PostPayload)
+	backgroundCtx := context.Background()
+	finalHydratedPostsList := make([]post_models.PostPayload, 0, len(targetPostIDs))
+	temporaryPostsMap := make(map[int64]post_models.PostPayload)
 
-	// ========================================================================
-	// NIVEAU 1 : REDIS MGET (Ultra Rapide)
-	// ========================================================================
-	result, err := redis.Posts.GetMany(ctx, ids)
-	if err != nil {
-		logger.Log.Warn().Err(err).Msg("Redis MGET error (fallback vers L2 déclenché)")
-		result = &redis.GetManyResult{MissingIDs: ids}
+	// ── ÉTAPE 1 : NIVEAU 1 (REDIS MGET ULTRA-RAPIDE) ────────────────────────
+	mgetResult, errMGet := redis.Posts.GetMany(backgroundCtx, targetPostIDs)
+	if errMGet != nil {
+		logger.Log.Warn().Err(errMGet).Msg("Erreur Redis MGET (fallback vers L2 Mongo déclenché)")
+		mgetResult = &redis.GetManyResult{MissingIDs: targetPostIDs}
 	} else {
-		for id, data := range result.Found {
-			var p post_models.PostPayload
-			// Décodage du binaire MsgPack au lieu du JSON
-			if msgpack.Unmarshal(data, &p) == nil {
-				tempMap[id] = p
+		for postID, binaryData := range mgetResult.Found {
+			var postPayload post_models.PostPayload
+			// Décodage du binaire MsgPack
+			if msgpack.Unmarshal(binaryData, &postPayload) == nil {
+				temporaryPostsMap[postID] = postPayload
 			} else {
-				result.MissingIDs = append(result.MissingIDs, id)
+				mgetResult.MissingIDs = append(mgetResult.MissingIDs, postID)
 			}
 		}
 	}
 
-	// ========================================================================
-	// NIVEAU 2 : MONGO FALLBACK (Pour les trous du Cache RAM)
-	// ========================================================================
-	var stillMissingIDs []int64
+	// ── ÉTAPE 2 : NIVEAU 2 (MONGO FALLBACK WARM STORAGE) ───────────────────
+	var stillMissingPostIDs []int64
 
-	if len(result.MissingIDs) > 0 {
-		mongoPosts, err := mongo.MongoLoadPosts(result.MissingIDs)
+	if len(mgetResult.MissingIDs) > 0 {
+		mongoPostsList, errMongo := mongo.MongoLoadPosts(mgetResult.MissingIDs)
 
-		if err == nil {
-			mongoFound := make(map[int64]bool)
+		if errMongo == nil {
+			mongoFoundMap := make(map[int64]bool)
 
-			// Traitement des posts trouvés
-			for _, p := range mongoPosts {
-				tempMap[p.ID] = p
-				mongoFound[p.ID] = true
+			for _, mongoPost := range mongoPostsList {
+				temporaryPostsMap[mongoPost.ID] = mongoPost
+				mongoFoundMap[mongoPost.ID] = true
 
-				// ⬆️ PROMOTION L2 -> L1 (Réparation du Cache RAM)
-				go func(post post_models.PostPayload) {
-					_ = SetPostInObjectCache(context.Background(), post)
-				}(p)
+				// PROMOTION L2 -> L1 (Réparation asynchrone du Cache RAM)
+				go func(postToPromote post_models.PostPayload) {
+					bgRoutineCtx := context.Background()
+					_ = SetPostInObjectCache(bgRoutineCtx, postToPromote)
+				}(mongoPost)
 			}
 
-			// Identifier ce qui manque ENCORE après l'étape Mongo
-			for _, id := range result.MissingIDs {
-				if !mongoFound[id] {
-					stillMissingIDs = append(stillMissingIDs, id)
+			// Identification de ce qui manque ENCORE après l'étape Mongo
+			for _, missingID := range mgetResult.MissingIDs {
+				if !mongoFoundMap[missingID] {
+					stillMissingPostIDs = append(stillMissingPostIDs, missingID)
 				}
 			}
 		} else {
-			logger.Log.Error().Err(err).Msg("Mongo Fallback error (fallback total vers Postgres)")
-			stillMissingIDs = result.MissingIDs // Si Mongo plante, on cherchera tout dans Postgres
+			logger.Log.Error().Err(errMongo).Msg("Erreur Mongo Fallback (fallback total vers Postgres)")
+			stillMissingPostIDs = mgetResult.MissingIDs // Si Mongo plante, on cherchera tout dans Postgres
 		}
 	}
 
-	// ========================================================================
-	// NIVEAU 3 : POSTGRES FALLBACK (La Source de Vérité Absolue)
-	// ========================================================================
-	if len(stillMissingIDs) > 0 {
-		logger.Log.Info().Int("missing_count", len(stillMissingIDs)).Msg("Postgres Fallback déclenché")
+	// ── ÉTAPE 3 : NIVEAU 3 (POSTGRESQL FALLBACK COLD STORAGE) ──────────────
+	if len(stillMissingPostIDs) > 0 {
+		logger.Log.Info().Int("missing_count", len(stillMissingPostIDs)).Msg("Postgres Fallback déclenché pour les posts")
 
-		// 1. Appel de la NOUVELLE FONCTION
-		posts, err := postgres.FuncLoadPosts(stillMissingIDs, len(stillMissingIDs), 0)
+		postgresPostsList, errPg := postgres.FuncLoadPosts(stillMissingPostIDs, len(stillMissingPostIDs), 0)
 
-		if err != nil {
-			logger.Log.Error().Err(err).Msg("Postgres Fallback error")
+		if errPg != nil {
+			logger.Log.Error().Err(errPg).Msg("Erreur critique Postgres Fallback lors de l'hydratation des posts")
 		} else {
-			// 2. Boucle sur les posts propres retournés par la fonction
-			for _, p := range posts {
-				tempMap[p.ID] = p
+			for _, postgresPost := range postgresPostsList {
+				temporaryPostsMap[postgresPost.ID] = postgresPost
 
-				// ⬆️ PROMOTION L3 -> L2 & L1 (Auto-Guérison du Système)
-				go func(post post_models.PostPayload) {
-					bgCtx := context.Background()
+				// PROMOTION L3 -> L2 & L1 (Auto-guérison complète du système)
+				go func(postToHeal post_models.PostPayload) {
+					bgRoutineCtx := context.Background()
 
 					// 1. Réparer Redis L1 (Immédiat)
-					_ = SetPostInObjectCache(bgCtx, post)
+					_ = SetPostInObjectCache(bgRoutineCtx, postToHeal)
 
 					// 2. Réparer Mongo L2 (Asynchrone via Worker BulkWrite)
-					_ = redis.EnqueueDB(bgCtx, post.ID, post.UserID, redis.EntityPost, redis.ActionUpdate, post, redis.TargetMongo)
-				}(p)
+					_ = redis.EnqueueDB(bgRoutineCtx, postToHeal.ID, postToHeal.UserID, redis.EntityPost, redis.ActionUpdate, postToHeal, redis.TargetMongo)
+				}(postgresPost)
 			}
 		}
 	}
 
-	// ========================================================================
-	// ASSEMBLAGE FINAL (Garantit que l'ordre des IDs demandés est respecté)
-	// ========================================================================
-	for _, id := range ids {
-		if p, ok := tempMap[id]; ok {
-			finalPosts = append(finalPosts, p)
+	// ── ÉTAPE 4 : ASSEMBLAGE FINAL STRICT (GARANTIE DE L'ORDRE DES IDs) ─────
+	for _, targetID := range targetPostIDs {
+		if postPayload, isFound := temporaryPostsMap[targetID]; isFound {
+			finalHydratedPostsList = append(finalHydratedPostsList, postPayload)
 		}
 	}
 
-	return finalPosts, nil
+	return finalHydratedPostsList, nil
 }

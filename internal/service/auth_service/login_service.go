@@ -21,151 +21,167 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// Login retourne uniquement les tokens et l'ID utilisateur. Les métadonnées sont déléguées à /sync.
-func Login(
-	input auth_models.LoginInput,
-	IPAddress []string,
-) (int64, auth_models.SessionsPayload, string, error) {
-	logger.Log.Info().Str("email", input.Email).Msg("Tentative de connexion")
+// ############################################################################
+// # SERVICE : CONNEXION UTILISATEUR (LOGIN)
+// ############################################################################
 
-	var user auth_models.UserPayload
-	var sessions auth_models.SessionsPayload
-	var err error
+// Login retourne uniquement les tokens et l'ID utilisateur.
+// Les métadonnées complètes (profil, avatar) seront appelées plus tard via /sync.
+func Login(input auth_models.LoginInput, ipAddresses []string) (int64, auth_models.SessionsPayload, string, error) {
+	logger.Log.Info().Str("email", input.Email).Msg("Tentative de connexion entrante...")
+
+	var userPayload auth_models.UserPayload
+	var sessionPayload auth_models.SessionsPayload
 	ctx := context.Background()
 
-	// -------------------------------------------------------------------------
-	// 1. CHARGEMENT DE L'UTILISATEUR (L2 -> L3)
-	// -------------------------------------------------------------------------
-	user, err = mongo.MongoLoadUser(-1, "", input.Email, "")
-	if err != nil {
-		logger.Log.Warn().Err(err).Str("email", input.Email).Msg("Mongo: utilisateur absent ou erreur")
-	}
+	// ── ÉTAPE 1 : CHARGEMENT DE L'UTILISATEUR (CASCADE L2 -> L3) ────────────
 
-	if user.ID == 0 {
-		user, err = postgresgo.FuncLoadUser(-1, "", input.Email, "")
-		if err != nil {
-			return -1, auth_models.SessionsPayload{}, "", nubo_error.NewInternal(err)
+	// Tentative L2 (MongoDB - Warm Storage)
+	userPayload, errMongo := mongo.MongoLoadUser(-1, "", input.Email, "")
+	if errMongo != nil || userPayload.ID == 0 {
+		if errMongo != nil {
+			logger.Log.Warn().Err(errMongo).Str("email", input.Email).Msg("Mongo L2 : Utilisateur absent ou erreur de connexion.")
 		}
 
-		if user.ID == 0 {
-			return -1, auth_models.SessionsPayload{}, "", nubo_error.NewNotFound("USER_NOT_FOUND", "Identifiants incorrects.", nil) // On ne dit pas "email non trouvé" pour des raisons de sécu
+		// FALLBACK L3 (PostgreSQL - Cold Storage)
+		var errPg error
+		userPayload, errPg = postgresgo.FuncLoadUser(-1, "", input.Email, "")
+		if errPg != nil {
+			return -1, auth_models.SessionsPayload{}, "", nubo_error.NewInternal()
 		}
 
-		if errQueue := redis.EnqueueDB(ctx, user.ID, 0, redis.EntityUser, redis.ActionCreate, &user, redis.TargetMongo); errQueue != nil {
-			logger.Log.Warn().Err(errQueue).Int64("user_id", user.ID).Msg("Échec de la mise en file d'attente MongoDB pour l'utilisateur")
+		if userPayload.ID == 0 {
+			// SÉCURITÉ : On ne dit jamais si l'email existe ou pas (Prévention de l'énumération de comptes)
+			return -1, auth_models.SessionsPayload{}, "", nubo_error.NewUnauthorized(nubo_error.CodeUnauthorized, "L'email ou le mot de passe est incorrect.", nil)
+		}
+
+		// AUTO-GUÉRISON L3 -> L2 (Asynchrone via Queue)
+		if errQueue := redis.EnqueueDB(ctx, userPayload.ID, 0, redis.EntityUser, redis.ActionCreate, &userPayload, redis.TargetMongo); errQueue != nil {
+			logger.Log.Warn().Err(errQueue).Int64("user_id", userPayload.ID).Msg("Échec de la guérison L2 pour l'utilisateur")
 		}
 	}
 
-	// 2. CONTRÔLE SÉCURITÉ ET STATUT DU COMPTE
-	if strings.TrimSpace(user.PasswordHash) != strings.TrimSpace(input.PasswordHash) {
-		return -1, auth_models.SessionsPayload{}, "", nubo_error.NewForbidden("INVALID_CREDENTIALS", "Identifiants incorrects.", nil)
+	// ── ÉTAPE 2 : CONTRÔLE DE SÉCURITÉ ET STATUT DU COMPTE ──────────────────
+
+	// Vérification du mot de passe
+	if strings.TrimSpace(userPayload.PasswordHash) != strings.TrimSpace(input.PasswordHash) {
+		return -1, auth_models.SessionsPayload{}, "", nubo_error.NewUnauthorized(nubo_error.CodeUnauthorized, "L'email ou le mot de passe est incorrect.", nil)
 	}
 
-	if user.Desactivated || user.Banned {
-		if user.Desactivated {
-			return -1, auth_models.SessionsPayload{}, "", nubo_error.NewForbidden("ACCOUNT_DEACTIVATED", "Ce compte est désactivé.", nil)
+	// Vérification des suspensions
+	if userPayload.Desactivated || userPayload.Banned {
+		if userPayload.Desactivated {
+			return -1, auth_models.SessionsPayload{}, "", nubo_error.NewForbidden(nubo_error.CodeForbidden, "Ce compte est actuellement désactivé.", nil)
 		}
-		return -1, auth_models.SessionsPayload{}, "", nubo_error.NewForbidden("ACCOUNT_BANNED", "Ce compte est banni.", nil)
+		return -1, auth_models.SessionsPayload{}, "", nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : Ce compte a été banni.", nil)
 	}
 
-	// -------------------------------------------------------------------------
-	// 3. GESTION DE LA SESSION DE L'APPAREIL (Hot Data)
-	// -------------------------------------------------------------------------
-	now := time.Now().UTC()
+	// ── ÉTAPE 3 : GESTION DE LA SESSION DE L'APPAREIL (CASCADE L1->L2->L3) ──
+
+	currentTime := time.Now().UTC()
 	isNewSession := false
-	firebaseInstallationID := input.FirebaseInstallationID
+	deviceFirebaseID := input.FirebaseInstallationID
 
-	sessions, _ = cache_service.LoadSessionFromCache(ctx, user.ID, firebaseInstallationID, "")
-	if sessions.ID == 0 {
-		sessions, _ = mongo.MongoLoadSession(user.ID, firebaseInstallationID, "", "")
-		if sessions.ID == 0 {
-			sessions, _ = postgresgo.FuncLoadSession(-1, user.ID, firebaseInstallationID, "")
+	// TENTATIVE L1 (RAM)
+	sessionPayload, _ = cache_service.LoadSessionFromCache(ctx, userPayload.ID, deviceFirebaseID, "")
 
-			if sessions.ID != 0 {
-				// ⬆️ PROMOTION L3 -> L2 (Asynchrone via Worker)
+	if sessionPayload.ID == 0 {
+		// FALLBACK L2 (Mongo)
+		sessionPayload, _ = mongo.MongoLoadSession(userPayload.ID, deviceFirebaseID, "", "")
+
+		if sessionPayload.ID == 0 {
+			// FALLBACK L3 (Postgres)
+			sessionPayload, _ = postgresgo.FuncLoadSession(-1, userPayload.ID, deviceFirebaseID, "")
+
+			if sessionPayload.ID != 0 {
+				// AUTO-GUÉRISON L3 -> L2
 				go func(s auth_models.SessionsPayload) {
 					bgCtx := context.Background()
 					_ = redis.EnqueueDB(bgCtx, s.ID, s.UserID, redis.EntitySession, redis.ActionUpdate, s, redis.TargetMongo)
-				}(sessions)
+				}(sessionPayload)
 			}
 		}
 
-		if sessions.ID != 0 {
-			// ⬆️ PROMOTION L3/L2 -> L1 (Immédiate en RAM)
-			_ = cache_service.SetSessionInCache(ctx, sessions)
+		if sessionPayload.ID != 0 {
+			// AUTO-GUÉRISON L3/L2 -> L1
+			_ = cache_service.SetSessionInCache(ctx, sessionPayload)
 		}
 	}
 
-	if sessions.ID != 0 {
-		sessions.DeviceInfo = input.DeviceInfo
-		if len(IPAddress) > 0 && !pkg.Exists(sessions.IPHistory, IPAddress[0]) {
-			sessions.IPHistory = append(sessions.IPHistory, IPAddress[0])
+	// HYDRATATION DE LA SESSION (Mise à jour ou Création)
+	if sessionPayload.ID != 0 {
+		// La session existait déjà, on met à jour les infos matérielles
+		sessionPayload.DeviceInfo = input.DeviceInfo
+		if len(ipAddresses) > 0 && !pkg.Exists(sessionPayload.IPHistory, ipAddresses[0]) {
+			sessionPayload.IPHistory = append(sessionPayload.IPHistory, ipAddresses[0])
 		}
 	} else {
+		// L'appareil est inconnu, on forge une nouvelle session
 		isNewSession = true
-		sessions.ID = pkg.GenerateID()
-		sessions.UserID = user.ID
-		sessions.CreatedAt = domain.TimeToMillis(now)
-		sessions.FirebaseInstallationID = firebaseInstallationID
-		sessions.DeviceInfo = input.DeviceInfo
+		sessionPayload.ID = pkg.GenerateID()
+		sessionPayload.UserID = userPayload.ID
+		sessionPayload.CreatedAt = domain.TimeToMillis(currentTime)
+		sessionPayload.FirebaseInstallationID = deviceFirebaseID
+		sessionPayload.DeviceInfo = input.DeviceInfo
 
-		if len(IPAddress) > 0 {
-			sessions.IPHistory = []string{IPAddress[0]}
+		if len(ipAddresses) > 0 {
+			sessionPayload.IPHistory = []string{ipAddresses[0]}
 		} else {
-			return -1, auth_models.SessionsPayload{}, "", nubo_error.NewBadRequest("INVALID_IP", "Adresse IP requise pour la connexion.", nil)
+			return -1, auth_models.SessionsPayload{}, "", nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "L'adresse IP est requise pour authentifier une nouvelle connexion.", nil)
 		}
 	}
 
-	sessions.ExpiresAt = domain.TimeToMillis(now.Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second))
-	sessions.MasterToken, err = pkg.GenerateToken(user.ID, firebaseInstallationID, variables.MasterTokenExpirationSeconds)
-	if err != nil {
-		return -1, auth_models.SessionsPayload{}, "", nubo_error.NewInternal(err)
+	// GESTION DES TOKENS SÉCURISÉS (Master & JWT)
+	var errToken error
+	sessionPayload.ExpiresAt = domain.TimeToMillis(currentTime.Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second))
+
+	sessionPayload.MasterToken, errToken = pkg.GenerateToken(userPayload.ID, deviceFirebaseID, variables.MasterTokenExpirationSeconds)
+	if errToken != nil {
+		return -1, auth_models.SessionsPayload{}, "", nubo_error.NewInternal()
 	}
 
-	sessions.CurrentSecret = security.DeriveNextSecret(sessions.FirebaseInstallationID, sessions.MasterToken, sessions.MasterToken, sessions.FirebaseInstallationID)
-	sessions.LastSecret = sessions.FirebaseInstallationID
-	sessions.LastJWT = ""
-	sessions.ToleranceTime = domain.TimeToMillis(time.Time{})
+	sessionPayload.CurrentSecret = security.DeriveNextSecret(sessionPayload.FirebaseInstallationID, sessionPayload.MasterToken, sessionPayload.MasterToken, sessionPayload.FirebaseInstallationID)
+	sessionPayload.LastSecret = sessionPayload.FirebaseInstallationID
+	sessionPayload.LastJWT = ""
+	sessionPayload.ToleranceTime = domain.TimeToMillis(time.Time{})
 
-	newJWT, err := pkg.GenerateToken(user.ID, sessions.FirebaseInstallationID, variables.JWTExpirationSeconds)
-	if err != nil {
-		return -1, auth_models.SessionsPayload{}, "", nubo_error.NewInternal(err)
+	newJWT, errJwt := pkg.GenerateToken(userPayload.ID, sessionPayload.FirebaseInstallationID, variables.JWTExpirationSeconds)
+	if errJwt != nil {
+		return -1, auth_models.SessionsPayload{}, "", nubo_error.NewInternal()
 	}
 
-	// 4. SYNCHRONISATION DES COUCHES DE CACHE L1 & ALIGNEMENT DE VITESSE
-	if errSet := cache_service.SetSessionInCache(ctx, sessions); errSet != nil {
-		logger.Log.Warn().Err(errSet).Int64("session_id", sessions.ID).Msg("Échec mise en cache L1 de la Session")
+	// ── ÉTAPE 4 : SYNCHRONISATION L1 & SPEED CACHE (Cold Start User) ────────
+
+	if errSet := cache_service.SetSessionInCache(ctx, sessionPayload); errSet != nil {
+		logger.Log.Warn().Err(errSet).Int64("session_id", sessionPayload.ID).Msg("Échec mise en cache L1 de la Session lors du Login")
 	}
 
-	timelineKey := fmt.Sprintf("profile:posts:zset:%d", user.ID)
+	// Vérification de la Timeline Utilisateur
+	timelineKey := fmt.Sprintf("profile:posts:zset:%d", userPayload.ID)
 	timelineExists, errTimeline := redis.Exists(ctx, timelineKey)
 	if errTimeline != nil || !timelineExists {
-		_ = cache_service.MarkUserTimelineEmpty(ctx, user.ID)
+		_ = cache_service.MarkUserTimelineEmpty(ctx, userPayload.ID)
 	}
 
-	settings, _ := object_cache_service.GetUserSettingsCascade(ctx, user.ID)
-
+	// Vérification du Profil Lite (Pour affichage rapide UI)
 	var liteUser lite_models.UserLiteRequest
-	if errSpeed := redis.UsersLite.GetObject(ctx, user.ID, &liteUser); errSpeed != nil {
-		uReq := auth_models.UserPayload{
-			ID:               user.ID,
-			Username:         user.Username,
-			FirstName:        user.FirstName,
-			LastName:         user.LastName,
-			ProfilePictureID: user.ProfilePictureID,
-		}
-		_ = cache_service.AddUserToSpeedCache(ctx, uReq, settings)
+	if errSpeed := redis.UsersLite.GetObject(ctx, userPayload.ID, &liteUser); errSpeed != nil {
+		settingsPayload, _ := object_cache_service.GetUserSettingsCascade(ctx, userPayload.ID)
+		_ = cache_service.AddUserToSpeedCache(ctx, userPayload, settingsPayload)
 	}
 
-	// 5. ENREGISTREMENT SUR LA QUEUE DE PERSISTANCE (Write-Behind)
-	action := redis.ActionUpdate
+	// ── ÉTAPE 5 : MISE EN FILE D'ATTENTE (Write-Behind) ─────────────────────
+
+	dbAction := redis.ActionUpdate
 	if isNewSession {
-		action = redis.ActionCreate
-	}
-	err = redis.EnqueueDB(ctx, sessions.ID, user.ID, redis.EntitySession, action, sessions, redis.TargetAll)
-	if err != nil {
-		logger.Log.Error().Err(err).Int64("session_id", sessions.ID).Msg("Rupture du Write-Behind pour la session")
+		dbAction = redis.ActionCreate
 	}
 
-	return user.ID, sessions, newJWT, nil
+	errQueue := redis.EnqueueDB(ctx, sessionPayload.ID, userPayload.ID, redis.EntitySession, dbAction, sessionPayload, redis.TargetAll)
+	if errQueue != nil {
+		// Loggué en Error car la persistance est brisée, mais on ne bloque pas le retour du token au client
+		logger.Log.Error().Err(errQueue).Int64("session_id", sessionPayload.ID).Msg("Rupture du Write-Behind pour la session lors du Login")
+	}
+
+	return userPayload.ID, sessionPayload, newJWT, nil
 }

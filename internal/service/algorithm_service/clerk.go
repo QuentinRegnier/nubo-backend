@@ -11,233 +11,246 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// CollectCandidates construit les 3 paniers (A, B, C) avec leurs ADN respectifs
+// ############################################################################
+// # LE MAGASINIER : COLLECTE ET EXPANSION SÉMANTIQUE
+// ############################################################################
+
+// CollectCandidates construit les 3 paniers (A, B, C) avec leurs ADN respectifs.
 func CollectCandidates(ctx context.Context, userID int64, seeds [3]int64, quotas Quotas) (*FeedBaskets, error) {
 	if err := quotas.Validate(); err != nil {
-		return nil, err // L'erreur est déjà une AppError propre !
+		return nil, err // Utilise l'AppError générée par la validation
 	}
 
 	baskets := NewFeedBaskets(quotas.MaxCandidates, seeds[0], seeds[1], seeds[2])
 
 	// ─────────────────────────────────────────────────────────────────────────────
-	// ACTION 1 : Le Socle Social (Boîte aux lettres)
+	// ÉTAPE 1 : Le Socle Social (Boîte aux lettres)
 	// ─────────────────────────────────────────────────────────────────────────────
 	_ = baskets.LoadSocialMailbox(ctx, userID)
 
 	// ─────────────────────────────────────────────────────────────────────────────
-	// ACTION 2 : Fusion Télémétrie / Graph 1-Hop / Leaderboard Mondial
+	// ÉTAPE 2 : Fusion Télémétrie / Graph 1-Hop / Leaderboard Mondial
 	// ─────────────────────────────────────────────────────────────────────────────
-	tagCloud := buildTagCloud(ctx, userID) // ✅ NOUVEAU : Transmission du userID
+	semanticTagCloud := buildTagCloud(ctx, userID)
 
 	// ─────────────────────────────────────────────────────────────────────────────
-	// REMPLISSAGE DÉTERMINISTE DES 3 PANIERS
+	// ÉTAPE 3 : Remplissage Déterministe des 3 Paniers
 	// ─────────────────────────────────────────────────────────────────────────────
-	fillBasket(ctx, userID, baskets.A, quotas, tagCloud)
-	fillBasket(ctx, userID, baskets.B, quotas, tagCloud)
-	fillBasket(ctx, userID, baskets.C, quotas, tagCloud)
+	fillBasket(ctx, userID, baskets.FeedA, quotas, semanticTagCloud)
+	fillBasket(ctx, userID, baskets.FeedB, quotas, semanticTagCloud)
+	fillBasket(ctx, userID, baskets.FeedC, quotas, semanticTagCloud)
 
 	return baskets, nil
 }
 
-// CollectSingleBasket construit un unique panier avec son ADN strict (Cas 3 : Extension)
+// CollectSingleBasket construit un unique panier avec son ADN strict (Cas d'Extension).
 // Utilise la Seed du flux actif pour garantir la continuité de l'identité algorithmique.
-func CollectSingleBasket(ctx context.Context, userID int64, seed int64, quotas Quotas) (*CandidateBasket, error) {
+func CollectSingleBasket(ctx context.Context, userID int64, activeSeed int64, quotas Quotas) (*CandidateBasket, error) {
 	if err := quotas.Validate(); err != nil {
 		return nil, err
 	}
 
-	// Astuce : On utilise la mécanique FeedBaskets pour charger la boîte aux lettres,
-	// mais on ne garde et ne remplit que le panier A.
-	baskets := NewFeedBaskets(quotas.MaxCandidates, seed, seed, seed)
+	// Astuce d'orchestration : On utilise la mécanique FeedBaskets pour charger
+	// la boîte aux lettres, mais on ne garde et ne remplit que le panier A.
+	baskets := NewFeedBaskets(quotas.MaxCandidates, activeSeed, activeSeed, activeSeed)
 	_ = baskets.LoadSocialMailbox(ctx, userID)
 
-	singleBasket := baskets.A
+	singleBasket := baskets.FeedA
+	semanticTagCloud := buildTagCloud(ctx, userID)
 
-	// Fusion Télémétrie / Graph 1-Hop / Leaderboard
-	tagCloud := buildTagCloud(ctx, userID) // ✅ NOUVEAU : Transmission du userID
-
-	// Remplissage ciblé
-	fillBasket(ctx, userID, singleBasket, quotas, tagCloud)
+	fillBasket(ctx, userID, singleBasket, quotas, semanticTagCloud)
 
 	return singleBasket, nil
 }
 
-// buildTagCloud abstrait la création du Super-Nuage sémantique pour éviter la duplication de code.
-// ✅ NOUVEAU : Elle accepte userID pour pouvoir interroger la télémétrie de cet utilisateur précis.
+// ############################################################################
+// # CRÉATION DU NUAGE SÉMANTIQUE (L'Effet Pingouin)
+// ############################################################################
+
+// buildTagCloud abstrait la création du Super-Nuage sémantique pour éviter la duplication.
+// Interroge la télémétrie, le graphe 1-Hop et les top tendances mondiales.
 func buildTagCloud(ctx context.Context, userID int64) map[string]float64 {
 
-	// ─────────────────────────────────────────────────────────────────────────────
-	// 1. LECTURE DE LA TÉLÉMÉTRIE (L1 SPEED CACHE)
-	// ─────────────────────────────────────────────────────────────────────────────
-	userTelemetry := make(map[string]float64)
+	userTelemetryMap := make(map[string]float64)
 
-	// On récupère le "TopTags" que le téléphone a envoyé lors du dernier /sync/telemetry.
-	// La méthode GetTelemetryTags est ultra-rapide (O(1)) car elle tape en RAM.
-	topTags, err := cache_service.GetTelemetryTags(ctx, userID)
+	// 1. Lecture de la Télémétrie Personnelle (L1 Speed Cache)
+	topPersonalTags, err := cache_service.GetTelemetryTags(ctx, userID)
 
-	if err == nil && len(topTags) > 0 {
-		// La télémétrie renvoie un tableau classé du plus fort au plus faible.
-		// On va leur attribuer un poids décroissant.
-		// Ex: Le 1er tag vaut 1.0, le 2ème vaut 0.9, le 3ème vaut 0.8...
-		weight := 1.0
-		for _, tag := range topTags {
-			userTelemetry[tag] = weight
-			weight -= 0.1 // On baisse le poids de 10% pour le tag suivant
-			if weight < 0.1 {
-				weight = 0.1 // Poids minimum
+	if err == nil && len(topPersonalTags) > 0 {
+		var currentWeight = 1.0
+		for _, tag := range topPersonalTags {
+			userTelemetryMap[tag] = currentWeight
+			currentWeight -= 0.1
+			if currentWeight < 0.1 {
+				currentWeight = 0.1
 			}
 		}
 	} else {
-		// 🚨 FALLBACK UX : Cold Start (Nouvel utilisateur ou Télémétrie absente)
-		// On utilise les tags du Leaderboard mondial (les sujets les plus chauds du moment)
-		// pour amorcer la pompe et lui proposer du contenu qualitatif par défaut.
-		leaderboardData, errL := redis.ZRevRangeWithScores(ctx, variables.RedisKeyHashtagLeaderboard, 0, 4)
-		if errL == nil && len(leaderboardData) > 0 {
-			weight := 1.0
-			for _, z := range leaderboardData {
-				userTelemetry[z.Member.(string)] = weight
-				weight -= 0.1
+		// FALLBACK : Si le profil est vierge (Nouvel Utilisateur), on le branche sur le Top Mondial
+		leaderboardData, errLeaderboard := redis.ZRevRangeWithScores(ctx, variables.RedisKeyHashtagLeaderboard, 0, 4)
+		if errLeaderboard == nil && len(leaderboardData) > 0 {
+			var currentWeight = 1.0
+			for _, zData := range leaderboardData {
+				tagName := zData.Member.(string)
+				userTelemetryMap[tagName] = currentWeight
+				currentWeight -= 0.1
 			}
 		} else {
-			// Dernier filet de sécurité (Si même le Leaderboard est vide, ex: Reset BDD)
-			userTelemetry["bienvenue"] = 1.0
+			userTelemetryMap["bienvenue"] = 1.0 // Sécurité absolue
 		}
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────────
-	// 2. LECTURE DU LEADERBOARD (Pour les Multiplicateurs de Viralité)
-	// ─────────────────────────────────────────────────────────────────────────────
+	// 1.5 OPTIMISATION "JUSTIN BIEBER" : Injection des auteurs suivis dans le nuage
+	// On récupère les relations suivies en O(log N) RAM.
+	if followedIDs, errRel := cache_service.GetSpeedRelationsIndex(ctx, userID); errRel == nil && len(followedIDs) > 0 {
+		for _, followedID := range followedIDs {
+			vipTag := fmt.Sprintf("user_%d", followedID)
+			userTelemetryMap[vipTag] = 1.0 // Poids maximum pour les créateurs choisis
+		}
+	}
+
+	// 2. Lecture du Leaderboard pour le calcul des Multiplicateurs de Viralité
 	leaderboardData, _ := redis.ZRevRangeWithScores(ctx, variables.RedisKeyHashtagLeaderboard, 0, 49)
-	leaderboardBoosts := make(map[string]float64)
+	leaderboardBoostsMap := make(map[string]float64)
+
 	if len(leaderboardData) > 0 {
-		maxScore := leaderboardData[0].Score
-		for _, z := range leaderboardData {
-			// Normalisation du boost (Le #1 mondial donnera un boost de 1.5x)
-			if maxScore > 0 {
-				leaderboardBoosts[z.Member.(string)] = 1.0 + (z.Score / maxScore * 0.5)
+		maxGlobalScore := leaderboardData[0].Score
+		for _, zData := range leaderboardData {
+			if maxGlobalScore > 0 {
+				tagName := zData.Member.(string)
+				// Le boost de viralité va de 1.0 à 1.5 selon le score du tag vs le Tag #1 Mondial
+				leaderboardBoostsMap[tagName] = 1.0 + (zData.Score / maxGlobalScore * 0.5)
 			}
 		}
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────────
-	// 3. EXPANSION ET ASSEMBLAGE DU SUPER-NUAGE (L'Effet Pingouin)
-	// ─────────────────────────────────────────────────────────────────────────────
-	tagCloud := make(map[string]float64)
-	for coreTag, affinity := range userTelemetry {
-		boost := 1.0
-		if val, ok := leaderboardBoosts[coreTag]; ok {
-			boost = val
-		}
-		tagCloud[coreTag] += affinity * 1.0 * boost
+	// 3. Expansion Sémantique (Graphe 1-Hop) et Assemblage du Super-Nuage
+	finalTagCloud := make(map[string]float64)
 
-		// L'EFFET PINGOUIN (Expansion 1-Hop Mathématique)
-		neighbors := cache_service.GetRelatedTagsLazy(ctx, coreTag)
-		for neighbor, edgeWeight := range neighbors {
-			nBoost := 1.0
-			if val, ok := leaderboardBoosts[neighbor]; ok {
-				nBoost = val
+	for coreTag, personalAffinity := range userTelemetryMap {
+		var tagBoost = 1.0
+		if val, exists := leaderboardBoostsMap[coreTag]; exists {
+			tagBoost = val
+		}
+
+		finalTagCloud[coreTag] += personalAffinity * 1.0 * tagBoost
+
+		// Gain CPU : On ne fait pas d'expansion de graphe sur les tags d'auteurs
+		if len(coreTag) > 5 && coreTag[:5] == "user_" {
+			continue
+		}
+
+		// Recherche des "cousins sémantiques" (1-Hop) via le Graph Cache
+		neighborTags := cache_service.GetRelatedTagsLazy(ctx, coreTag)
+		for neighborTag, edgeWeight := range neighborTags {
+			var neighborBoost = 1.0
+			if val, exists := leaderboardBoostsMap[neighborTag]; exists {
+				neighborBoost = val
 			}
-			tagCloud[neighbor] += affinity * edgeWeight * nBoost
+			finalTagCloud[neighborTag] += personalAffinity * edgeWeight * neighborBoost
 		}
 	}
 
-	return tagCloud
+	return finalTagCloud
 }
+
+// ############################################################################
+// # LE REMPLISSAGE (Gestion du Quota et Dérive Sémantique)
+// ############################################################################
 
 // fillBasket remplit un panier spécifique en respectant les quotas et en appliquant l'expansion dynamique.
 func fillBasket(ctx context.Context, userID int64, basket *CandidateBasket, quotas Quotas, initialTagCloud map[string]float64) {
-	globalTarget := int(float64(quotas.MaxCandidates) * quotas.GlobalRatio)
-	tagTarget := int(float64(quotas.MaxCandidates) * quotas.TagRatio)
+	globalTargetQuota := int(float64(quotas.MaxCandidates) * quotas.GlobalRatio)
+	tagTargetQuota := int(float64(quotas.MaxCandidates) * quotas.TagRatio)
 
 	// ─────────────────────────────────────────────────────────────────────────────
-	// 1. COLLECTE GLOBALE (Avec report du déficit)
+	// PHASE 1 : COLLECTE GLOBALE (SÉRENDIPITÉ PURE)
 	// ─────────────────────────────────────────────────────────────────────────────
-	dateKey := time.Now().UTC().Format("20060102")
-	globalKey := fmt.Sprintf(variables.RedisKeyTrendGlobalDaily, dateKey)
+	currentDateStr := time.Now().UTC().Format("20060102")
+	globalTrendKey := fmt.Sprintf(variables.RedisKeyTrendGlobalDaily, currentDateStr)
 
-	globalAdded := basket.FetchDeterministicallyFromZSET(ctx, userID, globalKey, globalTarget, OriginGlobal)
+	successfullyAddedGlobally := basket.FetchDeterministicallyFromZSET(ctx, userID, globalTrendKey, globalTargetQuota, OriginGlobal)
 
-	// ✅ S'il manque des posts globaux (ZSET épuisé ou doublons), on reporte la charge sur les tags
-	if globalAdded < globalTarget {
-		deficit := globalTarget - globalAdded
-		tagTarget += deficit
+	// Gestion du déficit : si on a épuisé le ZSET global (très rare), on reporte la charge sur les tags
+	if successfullyAddedGlobally < globalTargetQuota {
+		deficit := globalTargetQuota - successfullyAddedGlobally
+		tagTargetQuota += deficit
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────────
-	// 2. COLLECTE CIBLÉE (Nuage de Tags Dynamique)
+	// PHASE 2 : COLLECTE CIBLÉE (NUAGE DE TAGS)
 	// ─────────────────────────────────────────────────────────────────────────────
-	tagCloud := make(map[string]float64)
-	for k, v := range initialTagCloud {
-		tagCloud[k] = v // Clone pour ne pas altérer la base commune aux autres paniers
+	// Clonage du nuage pour préserver la base commune aux autres paniers
+	workingTagCloud := make(map[string]float64)
+	for tag, weight := range initialTagCloud {
+		workingTagCloud[tag] = weight
 	}
 
-	tagAdded := 0
-	depth := 1
-	maxDepth := 2 // ✅ 1 = Nuage initial, 2 = 1-Hop (Cousins directs).
+	successfullyAddedFromTags := 0
+	currentGraphDepth := 1
+	const maxGraphDepth = 2 // 1 = Nuage initial, 2 = Cousins directs (1-Hop). On bloque ensuite.
 
-	// Boucle dynamique : on itère tant qu'il manque des posts et qu'on n'a pas atteint le fond du graphe
-	for tagAdded < tagTarget && depth <= maxDepth {
-		totalWeight := 0.0
-		for _, weight := range tagCloud {
-			totalWeight += weight
+	// Boucle dynamique : on itère tant qu'il manque des posts et qu'on n'a pas atteint le fond du graphe autorisé
+	for successfullyAddedFromTags < tagTargetQuota && currentGraphDepth <= maxGraphDepth {
+
+		var totalCloudWeight = 0.0
+		for _, weight := range workingTagCloud {
+			totalCloudWeight += weight
 		}
 
-		addedInThisDepth := 0
-
-		// Tirage dans le nuage actuel
-		for tag, weight := range tagCloud {
-			if tagAdded >= tagTarget {
+		// Tirage proportionnel dans le nuage actuel
+		for tag, weight := range workingTagCloud {
+			if successfullyAddedFromTags >= tagTargetQuota {
 				break
 			}
 
-			// Demande proportionnelle au poids du tag dans le nuage
-			targetForTag := int(math.Ceil(float64(tagTarget-tagAdded) * (weight / totalWeight)))
-			if targetForTag <= 0 {
-				targetForTag = 1
+			// Demande proportionnelle au poids du tag dans le nuage face au quota restant
+			targetForThisTag := int(math.Ceil(float64(tagTargetQuota-successfullyAddedFromTags) * (weight / totalCloudWeight)))
+			if targetForThisTag <= 0 {
+				targetForThisTag = 1
 			}
 
-			// Note : Assure-toi que la variable correspond à ton nommage Redis exact
-			key := fmt.Sprintf("trend:tag:%s:daily", tag)
-			added := basket.FetchDeterministicallyFromZSET(ctx, userID, key, targetForTag, OriginTag)
+			tagRedisKey := fmt.Sprintf(variables.RedisKeyTrendTagDaily, tag, currentDateStr)
+			addedCount := basket.FetchDeterministicallyFromZSET(ctx, userID, tagRedisKey, targetForThisTag, OriginTag)
 
-			addedInThisDepth += added
-			tagAdded += added
+			successfullyAddedFromTags += addedCount
 		}
 
-		if tagAdded >= tagTarget {
+		if successfullyAddedFromTags >= tagTargetQuota {
 			break // Objectif final atteint
 		}
 
-		// ✅ EXPANSION DYNAMIQUE (Le quota n'est pas rempli, on creuse le graphe sémantique)
-		newTags := make(map[string]float64)
-		for tag, weight := range tagCloud {
-			neighbors := cache_service.GetRelatedTagsLazy(ctx, tag) // Recherche des voisins
-			for neighbor, edgeWeight := range neighbors {
-				// Si c'est un tout nouveau tag, on l'ajoute avec un poids atténué par la profondeur
-				if _, exists := tagCloud[neighbor]; !exists {
-					newTags[neighbor] = weight * edgeWeight * 0.8
+		// EXPANSION DYNAMIQUE (Si le quota n'est pas rempli, on creuse d'un niveau dans le graphe)
+		newDiscoveredTags := make(map[string]float64)
+		for tag, weight := range workingTagCloud {
+			neighborTags := cache_service.GetRelatedTagsLazy(ctx, tag)
+			for neighborTag, edgeWeight := range neighborTags {
+				// Si c'est un nouveau tag, on l'ajoute avec un poids atténué (-20%)
+				if _, alreadyExists := workingTagCloud[neighborTag]; !alreadyExists {
+					newDiscoveredTags[neighborTag] = weight * edgeWeight * 0.8
 				}
 			}
 		}
 
-		// 🛑 UX LIMIT : On bloque la dérive sémantique stricte au 1-Hop.
-		if len(newTags) == 0 || depth >= maxDepth {
+		// UX LIMIT : On bloque la dérive sémantique stricte. Si plus rien à découvrir, on stoppe.
+		if len(newDiscoveredTags) == 0 || currentGraphDepth >= maxGraphDepth {
 			break
 		}
 
-		// On fusionne les nouveaux tags découverts pour la prochaine itération (Plongée +1)
-		for k, v := range newTags {
-			tagCloud[k] = v
+		// Fusion des nouveaux tags découverts pour la prochaine itération
+		for tag, weight := range newDiscoveredTags {
+			workingTagCloud[tag] = weight
 		}
-		depth++
+		currentGraphDepth++
 	}
 
-	// ✅ FALLBACK UX (L'Éléphant partiel) : Si la niche est épuisée, on remplit le déficit
-	// avec du contenu Viral Mondial (Bangers) plutôt que de proposer du hors-sujet.
-	if tagAdded < tagTarget {
-		deficit := tagTarget - tagAdded
-		dateKey := time.Now().UTC().Format("20060102")
-		globalKey := fmt.Sprintf(variables.RedisKeyTrendGlobalDaily, dateKey)
-		basket.FetchDeterministicallyFromZSET(ctx, userID, globalKey, deficit, OriginGlobal)
+	// ─────────────────────────────────────────────────────────────────────────────
+	// PHASE 3 : FALLBACK UX (LE DÉFICIT DE L'ÉLÉPHANT)
+	// ─────────────────────────────────────────────────────────────────────────────
+	// Si l'utilisateur a une niche très étroite qui est épuisée, on comble le déficit
+	// avec du contenu Viral Mondial plutôt que de proposer du hors-sujet.
+	if successfullyAddedFromTags < tagTargetQuota {
+		deficit := tagTargetQuota - successfullyAddedFromTags
+		basket.FetchDeterministicallyFromZSET(ctx, userID, globalTrendKey, deficit, OriginGlobal)
 	}
 }

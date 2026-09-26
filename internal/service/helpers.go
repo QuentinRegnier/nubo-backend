@@ -1,13 +1,16 @@
 package service
 
 import (
-	"time"
-
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 )
 
+// ############################################################################
+// # MAPPERS ET UTILITAIRES DE MODÈLES (DOMAIN <-> LITE)
+// ############################################################################
+
+// ToMemberSettingsLite compresse les paramètres d'un membre pour le Speed Cache RAM (MsgPack).
 func ToMemberSettingsLite(domainSettings member_models.MemberSettings) lite_models.MemberSettingsLite {
 	return lite_models.MemberSettingsLite{
 		IsMuted:           domainSettings.IsMuted,
@@ -18,6 +21,7 @@ func ToMemberSettingsLite(domainSettings member_models.MemberSettings) lite_mode
 	}
 }
 
+// ToDomainMemberSettings décompresse les paramètres d'un membre pour la logique métier.
 func ToDomainMemberSettings(liteSettings lite_models.MemberSettingsLite) member_models.MemberSettings {
 	return member_models.MemberSettings{
 		IsMuted:           liteSettings.IsMuted,
@@ -28,6 +32,7 @@ func ToDomainMemberSettings(liteSettings lite_models.MemberSettingsLite) member_
 	}
 }
 
+// ToConversationSettingsLite compresse les paramètres d'une conversation pour le Speed Cache.
 func ToConversationSettingsLite(domainSettings conversation_models.ConversationSettings) lite_models.ConversationSettings {
 	return lite_models.ConversationSettings{
 		JoinApprovalRequired: domainSettings.JoinApprovalRequired,
@@ -40,6 +45,7 @@ func ToConversationSettingsLite(domainSettings conversation_models.ConversationS
 	}
 }
 
+// ToDomainConversationSettings décompresse les paramètres d'une conversation pour la logique métier.
 func ToDomainConversationSettings(liteSettings lite_models.ConversationSettings) conversation_models.ConversationSettings {
 	return conversation_models.ConversationSettings{
 		JoinApprovalRequired: liteSettings.JoinApprovalRequired,
@@ -50,9 +56,4 @@ func ToDomainConversationSettings(liteSettings lite_models.ConversationSettings)
 		JoinWithLinkDuration: liteSettings.JoinWithLinkDuration,
 		SendSurveyPermission: liteSettings.SendSurveyPermission,
 	}
-}
-
-// NowMillis retourne le timestamp actuel en millisecondes UTC.
-func NowMillis() int64 {
-	return time.Now().UTC().UnixMilli()
 }

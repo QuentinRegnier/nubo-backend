@@ -6,42 +6,53 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
 
+// ############################################################################
+// # SERVICE : ACTIVATION / DÉSACTIVATION DES MÉDIAS (MODE FANTÔME)
+// ############################################################################
+
 // ActivateMediaBatch valide et sort une liste de médias de leur état "fantôme" (Out-of-Band).
+// Appelé lorsqu'un média est rattaché à un Post, un Commentaire ou un Profil.
 func ActivateMediaBatch(ctx context.Context, mediaIDs []int64, ownerID int64) error {
 	if len(mediaIDs) == 0 {
 		return nil
 	}
 
-	now := time.Now().UTC()
+	currentTime := time.Now().UTC()
 
 	for _, mediaID := range mediaIDs {
 		if mediaID <= 0 {
 			continue
 		}
-		// 1. Lecture instantanée en RAM (O(1))
-		mediaPayload, err := object_cache_service.GetMediaFromObjectCache(ctx, mediaID)
-		if err != nil {
-			return nubo_error.NewNotFound("MEDIA_NOT_FOUND", "Le média est introuvable ou a expiré.", err)
+
+		// ── ÉTAPE 1 : RÉCUPÉRATION DU MÉDIA (CASCADE) ───────────────────────
+		// GetMediaCascade (défini dans helpers.go) s'occupe du fallback L1->L2->L3
+		mediaPayload, errCascade := GetMediaCascade(ctx, mediaID)
+		if errCascade != nil {
+			return errCascade
 		}
 
-		// 2. Sécurité Zero-Trust
+		// ── ÉTAPE 2 : SÉCURITÉ ZERO-TRUST ───────────────────────────────────
 		if mediaPayload.OwnerID != ownerID {
-			return nubo_error.NewForbidden("ACCESS_DENIED", "Tentative d'utilisation d'un média qui ne vous appartient pas.", nil)
+			return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Tentative d'utilisation d'un média qui ne vous appartient pas.", nil)
 		}
 
-		// 3. Activation
+		// ── ÉTAPE 3 : ACTIVATION ────────────────────────────────────────────
 		mediaPayload.Visibility = true
-		mediaPayload.UpdatedAt = domain.TimeToMillis(now)
+		mediaPayload.UpdatedAt = domain.TimeToMillis(currentTime)
 
-		// 4. Mise à jour L1 et File Asynchrone
+		// ── ÉTAPE 4 : MISE À JOUR SYNCHRONE (L1) ────────────────────────────
 		_ = object_cache_service.SetMediaInObjectCache(ctx, mediaPayload)
-		errEnqueue := redis.EnqueueDB(ctx, mediaID, ownerID, redis.EntityMedia, redis.ActionUpdate, mediaPayload, redis.TargetAll)
-		if errEnqueue != nil {
-			return nubo_error.NewInternal(errEnqueue)
+
+		// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────
+		errQueue := redis.EnqueueDB(ctx, mediaID, ownerID, redis.EntityMedia, redis.ActionUpdate, mediaPayload, redis.TargetAll)
+		if errQueue != nil {
+			logger.Log.Error().Err(errQueue).Int64("media_id", mediaID).Msg("Échec du Write-Behind lors de l'activation du média")
+			return nubo_error.NewInternal()
 		}
 	}
 
@@ -49,36 +60,42 @@ func ActivateMediaBatch(ctx context.Context, mediaIDs []int64, ownerID int64) er
 }
 
 // DeactivateMediaBatch repasse une liste de médias à l'état de fantôme (Soft Delete).
-// Le Garbage Collector viendra les balayer physiquement 24h plus tard.
+// Le Garbage Collector (Worker) viendra les balayer physiquement et en BDD plus tard.
 func DeactivateMediaBatch(ctx context.Context, mediaIDs []int64, ownerID int64) error {
 	if len(mediaIDs) == 0 {
 		return nil
 	}
 
-	now := time.Now().UTC()
+	currentTime := time.Now().UTC()
 
 	for _, mediaID := range mediaIDs {
 		if mediaID <= 0 {
 			continue
 		}
-		mediaPayload, err := object_cache_service.GetMediaFromObjectCache(ctx, mediaID)
-		if err != nil {
-			return nubo_error.NewNotFound("MEDIA_NOT_FOUND", "Le média est introuvable ou a expiré.", err)
+
+		// ── ÉTAPE 1 : RÉCUPÉRATION DU MÉDIA (CASCADE) ───────────────────────
+		mediaPayload, errCascade := GetMediaCascade(ctx, mediaID)
+		if errCascade != nil {
+			return errCascade
 		}
 
-		// Sécurité Zero-Trust
+		// ── ÉTAPE 2 : SÉCURITÉ ZERO-TRUST ───────────────────────────────────
 		if mediaPayload.OwnerID != ownerID {
-			return nubo_error.NewForbidden("ACCESS_DENIED", "Accès refusé : tentative de suppression d'un média qui ne vous appartient pas.", nil)
+			return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : tentative de suppression d'un média qui ne vous appartient pas.", nil)
 		}
 
-		// Désactivation (Mode Fantôme)
+		// ── ÉTAPE 3 : DÉSACTIVATION (MODE FANTÔME) ──────────────────────────
 		mediaPayload.Visibility = false
-		mediaPayload.UpdatedAt = domain.TimeToMillis(now)
+		mediaPayload.UpdatedAt = domain.TimeToMillis(currentTime)
 
+		// ── ÉTAPE 4 : MISE À JOUR SYNCHRONE (L1) ────────────────────────────
 		_ = object_cache_service.SetMediaInObjectCache(ctx, mediaPayload)
-		errEnqueue := redis.EnqueueDB(ctx, mediaID, ownerID, redis.EntityMedia, redis.ActionUpdate, mediaPayload, redis.TargetAll)
-		if errEnqueue != nil {
-			return nubo_error.NewInternal(errEnqueue)
+
+		// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────
+		errQueue := redis.EnqueueDB(ctx, mediaID, ownerID, redis.EntityMedia, redis.ActionUpdate, mediaPayload, redis.TargetAll)
+		if errQueue != nil {
+			logger.Log.Error().Err(errQueue).Int64("media_id", mediaID).Msg("Échec du Write-Behind lors de la désactivation du média")
+			return nubo_error.NewInternal()
 		}
 	}
 

@@ -6,11 +6,14 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
 // Structure locale privée pour casser la dépendance cyclique vers le package worker
@@ -20,89 +23,96 @@ type pushJob struct {
 	Payload   any    `json:"payload"`
 }
 
-// DispatchNotification forge la notif, la sauvegarde (L1+L2), la diffuse en temps réel (WS),
-// et l'envoie au Push Worker si les paramètres de l'utilisateur l'autorisent.
-func DispatchNotification(ctx context.Context, targetUserID int64, actorID int64, eventType string, targetID int64) error {
+// ############################################################################
+// # SERVICE : DISTRIBUTION GLOBALE DES NOTIFICATIONS (WS & PUSH FCM)
+// ############################################################################
 
-	if targetUserID == actorID {
-		return nil // Règle métier : On ne s'auto-notifie pas !
+// DispatchNotification forge la notification, la sauvegarde (L1+L2), la diffuse
+// en temps réel (WS), et l'envoie au Push Worker FCM si les paramètres l'autorisent.
+func DispatchNotification(ctx context.Context, targetUserID int64, actorUserID int64, eventType string, targetResourceID int64) error {
+
+	// ── ÉTAPE 1 : RÈGLE MÉTIER (AUTO-NOTIFICATION INTERDITE) ────────────────
+	if targetUserID == actorUserID {
+		return nil // Succès silencieux, on ne spam pas l'utilisateur avec ses propres actions.
 	}
 
-	notif := notification_models.NotificationPayload{
+	// ── ÉTAPE 2 : PRÉPARATION DU PAYLOAD ────────────────────────────────────
+	notificationPayload := notification_models.NotificationPayload{
 		ID:        pkg.GenerateID(),
 		UserID:    targetUserID,
-		ActorID:   actorID,
+		ActorID:   actorUserID,
 		Type:      eventType,
-		TargetID:  targetID,
+		TargetID:  targetResourceID,
 		IsRead:    false,
 		CreatedAt: domain.NowMillis(),
 	}
 
-	// 1. RAM L1 (JSON + Index ZSET plafonné à 100)
-	_ = object_cache_service.SetNotificationInObjectCache(ctx, notif)
-	_ = cache_service.AddNotificationToZSET(ctx, targetUserID, notif.ID, notif.CreatedAt)
+	// ── ÉTAPE 3 : CACHE L1 IMMÉDIAT (JSON + ZSET) ───────────────────────────
+	_ = object_cache_service.SetNotificationInObjectCache(ctx, notificationPayload)
+	_ = cache_service.AddNotificationToZSET(ctx, targetUserID, notificationPayload.ID, notificationPayload.CreatedAt)
 
-	// 2. Persistance L2 (Mongo uniquement)
-	_ = redis.EnqueueDB(ctx, notif.ID, targetUserID, redis.EntityNotification, redis.ActionCreate, notif, redis.TargetMongo)
+	// ── ÉTAPE 4 : PERSISTANCE L2 ASYNCHRONE (MONGODB) ───────────────────────
+	errQueue := redis.EnqueueDB(ctx, notificationPayload.ID, targetUserID, redis.EntityNotification, redis.ActionCreate, notificationPayload, redis.TargetMongo)
+	if errQueue != nil {
+		logger.Log.Error().Err(errQueue).Int64("user_id", targetUserID).Msg("Échec de la persistance L2 d'une notification")
+		return nubo_error.NewInternal()
+	}
 
-	// 3. Temps Réel (WebSocket)
-	notifView := hydrateNotificationView(ctx, targetUserID, notif)
-	_ = realtime_service.DistributeToUsers(ctx, "notification."+eventType, notifView, []int64{targetUserID})
+	// ── ÉTAPE 5 : TEMPS RÉEL (WEBSOCKETS) ───────────────────────────────────
+	notificationView := hydrateNotificationView(ctx, targetUserID, notificationPayload)
+	eventChannelName := "notification." + eventType
+	_ = realtime_service.DistributeToUsers(ctx, eventChannelName, notificationView, []int64{targetUserID})
 
-	// =====================================================================
-	// MATRICE DE ROUTAGE DES NOTIFICATIONS PUSH
-	// =====================================================================
+	// ── ÉTAPE 6 : MATRICE DE ROUTAGE DES NOTIFICATIONS PUSH ─────────────────
 
-	// 4. FILTRE DE PRÉSENCE (O(1))
-	// Si l'utilisateur a l'application ouverte, le WebSocket a déjà fait le travail silencieusement.
+	// Filtre de présence : Si l'utilisateur est actif, on stoppe le Push (le WS a suffi)
 	if cache_service.IsUserOnline(ctx, targetUserID) {
-		return nil // On coupe ici pour le Push
+		return nil
 	}
 
-	// 5. RÉCUPÉRATION DES PARAMÈTRES (O(1) L1 -> L2 -> L3)
-	settings, err := object_cache_service.GetUserSettingsCascade(ctx, targetUserID)
-	if err != nil {
-		return err // Impossible de vérifier les droits, on refuse l'envoi par sécurité
+	userSettingsPayload, errSettings := object_cache_service.GetUserSettingsCascade(ctx, targetUserID)
+	if errSettings != nil {
+		logger.Log.Error().Err(errSettings).Int64("user_id", targetUserID).Msg("Échec de de la lecture des droits de l'utilisateur")
+		return nubo_error.NewInternal() // Si on ne peut pas lire les droits, on refuse l'envoi
 	}
 
-	// 6. MASTER SWITCH
-	if !settings.Notifications.MasterPushEnabled {
-		return nil // L'utilisateur a coupé toutes les notifications
+	if !userSettingsPayload.Notifications.MasterPushEnabled {
+		return nil // Mode silencieux complet activé
 	}
 
-	// 7. MATRICE DE ROUTAGE GLOBALE
-	canSendPush := false
+	isPushAuthorized := false
 
+	// Aiguillage granulaire selon les préférences de l'utilisateur
 	switch eventType {
-	case "post_liked", "comment_liked":
-		canSendPush = settings.Notifications.NotifyLikes
-	case "comment_added":
-		canSendPush = settings.Notifications.NotifyComments
-	case "relation_followed":
-		canSendPush = settings.Notifications.NotifyNewFollower
-	case "friendship_established":
-		canSendPush = settings.Notifications.NotifyFriendRequest
-	case "group_invited":
-		canSendPush = settings.Notifications.NotifyGroupInvites
-	// Les cas "message" et "mention" ne sont PAS ici car gérés par le push_dispatcher de la messagerie
+	case variables.EventPostLiked, variables.EventCommentLiked:
+		isPushAuthorized = userSettingsPayload.Notifications.NotifyLikes
+	case variables.EventCommentAdded:
+		isPushAuthorized = userSettingsPayload.Notifications.NotifyComments
+	case variables.EventRelationFollowed:
+		isPushAuthorized = userSettingsPayload.Notifications.NotifyNewFollower
+	case variables.EventFriendshipEst:
+		isPushAuthorized = userSettingsPayload.Notifications.NotifyFriendRequest
+	case variables.EventGroupInvited:
+		isPushAuthorized = userSettingsPayload.Notifications.NotifyGroupInvites
 	default:
-		canSendPush = true // Fallback pour les alertes systèmes vitales
+		isPushAuthorized = true // Fallback autorisé pour les alertes systèmes vitales
 	}
 
-	// 8. EXPÉDITION AU WORKER FCM
-	if canSendPush {
-		job := pushJob{
+	// ── ÉTAPE 7 : EXPÉDITION AU WORKER FCM ──────────────────────────────────
+	if isPushAuthorized {
+		firebasePushJob := pushJob{
 			UserID:    targetUserID,
 			EventType: eventType,
 			Payload: map[string]interface{}{
-				"actor_id":  actorID,
-				"target_id": targetID,
+				"actor_id":  actorUserID,
+				"target_id": targetResourceID,
 			},
 		}
 
-		if jobBytes, err := json.Marshal(job); err == nil {
-			// APPEL PUR AU REPOSITORY (Collection WorkerQueue avec l'ID "firebase")
-			_ = redis.WorkerQueue.LPush(ctx, "firebase", jobBytes)
+		if jobBytes, errMarshal := json.Marshal(firebasePushJob); errMarshal == nil {
+			_ = redis.WorkerQueue.LPush(ctx, variables.WorkerQueueFirebase, jobBytes)
+		} else {
+			logger.Log.Error().Err(errMarshal).Msg("Impossible de sérialiser le Push Job FCM")
 		}
 	}
 

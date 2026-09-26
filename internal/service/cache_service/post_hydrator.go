@@ -4,103 +4,112 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 )
 
-// ============================================================================
-// 3. ROUTINES PRIVÉES D'ACCÈS AUX DONNÉES
-// ============================================================================
+// ############################################################################
+// # ROUTINES PRIVÉES D'ACCÈS AUX DONNÉES (HYDRATATION POSTS)
+// ############################################################################
 
-func fetchAndHydrateFromCollection(ctx context.Context, col *redis.Collection, id any, offset int64, limit int64) ([]post_models.PostPayload, error) {
-	idStrings, err := col.ZRevRange(ctx, id, offset, offset+limit-1)
-	if err != nil {
-		return nil, nubo_error.NewInternal(err)
+// fetchAndHydrateFromCollection abstrait la récupération d'IDs depuis un ZSET Redis
+// et lance la cascade d'hydratation L1 -> L2 -> L3.
+func fetchAndHydrateFromCollection(ctx context.Context, redisCollection *redis.Collection, targetKey any, offset int64, limit int64) ([]post_models.PostPayload, error) {
+	idStringsList, errRedis := redisCollection.ZRevRange(ctx, targetKey, offset, offset+limit-1)
+	if errRedis != nil {
+		logger.Log.Error().Err(errRedis).Msg("Échec de lecture ZSET dans fetchAndHydrateFromCollection")
+		return nil, nubo_error.NewInternal()
 	}
 
-	if len(idStrings) == 0 {
+	if len(idStringsList) == 0 {
 		return []post_models.PostPayload{}, nil
 	}
 
-	var ids []int64
-	for _, idStr := range idStrings {
-		var id int64
-		_, err := fmt.Sscanf(idStr, "%d", &id)
-		if err != nil {
-			return nil, err
+	var parsedIDsList []int64
+	for _, idString := range idStringsList {
+		var parsedID int64
+		_, errScan := fmt.Sscanf(idString, "%d", &parsedID)
+		if errScan != nil {
+			logger.Log.Warn().Err(errScan).Str("id_string", idString).Msg("Erreur de parsing d'ID dans ZSET")
+			continue
 		}
-		ids = append(ids, id)
+		parsedIDsList = append(parsedIDsList, parsedID)
 	}
 
-	return object_cache_service.GetPostsView(ids)
+	// Déclenchement de la cascade complète
+	return object_cache_service.GetPostsView(parsedIDsList)
 }
 
-func getPostsFromMongoPaginated(field string, value any, offset int64, limit int64) ([]post_models.PostPayload, error) {
-	filter := map[string]any{field: value}
-	sort := map[string]any{"created_at": -1}
+// getPostsFromMongoPaginated interroge directement le Warm Storage MongoDB.
+func getPostsFromMongoPaginated(fieldName string, expectedValue any, offset int64, limit int64) ([]post_models.PostPayload, error) {
+	mongoFilter := map[string]any{fieldName: expectedValue}
+	mongoSort := map[string]any{"created_at": -1}
 
-	docs, err := mongo.Posts.GetPaginated(filter, sort, offset, limit)
-	if err != nil {
-		return []post_models.PostPayload{}, err
+	mongoDocuments, errMongo := mongo.Posts.GetPaginated(mongoFilter, mongoSort, offset, limit)
+	if errMongo != nil {
+		logger.Log.Error().Err(errMongo).Msg("Erreur L2 lors de la récupération paginée Mongo")
+		return []post_models.PostPayload{}, nubo_error.NewInternal()
 	}
 
-	var posts []post_models.PostPayload
-	for _, doc := range docs {
-		var p post_models.PostPayload
-		if err := pkg.ToStruct(doc, &p); err == nil {
-			posts = append(posts, p)
+	var hydratedPosts []post_models.PostPayload
+	for _, document := range mongoDocuments {
+		var postPayload post_models.PostPayload
+		if errStruct := pkg.ToStruct(document, &postPayload); errStruct == nil {
+			hydratedPosts = append(hydratedPosts, postPayload)
 		}
 	}
 
-	return posts, nil
+	return hydratedPosts, nil
 }
 
+// getPostsFromPostgresPaginated est le fallback ultime (Cold Storage) pour les classements.
 func getPostsFromPostgresPaginated(ctx context.Context, rankType string, offset int64, limit int64) ([]post_models.PostPayload, error) {
-	// TODO: Optimiser ces requêtes avec des vues matérialisées si la BDD dépasse 1M de lignes
-	var query string
+	var sqlQuery string
 
+	// TODO: Optimiser ces requêtes avec des vues matérialisées si la BDD dépasse 1M de lignes
 	switch rankType {
 	case "likes:strict":
-		query = `
+		sqlQuery = `
 			SELECT p.id FROM content.posts p 
 			WHERE p.visibility != 2 
 			ORDER BY (SELECT COUNT(*) FROM content.likes l WHERE l.target_id = p.id AND l.target_type = 0) DESC, p.created_at DESC 
 			OFFSET $1 LIMIT $2`
 	case "views:strict":
-		query = `
+		sqlQuery = `
 			SELECT p.id FROM content.posts p 
 			WHERE p.visibility != 2 
 			ORDER BY (SELECT COUNT(*) FROM content.views v WHERE v.target_id = p.id AND v.target_type = 0) DESC, p.created_at DESC 
 			OFFSET $1 LIMIT $2`
 	default:
-		query = `SELECT id FROM content.posts WHERE visibility != 2 ORDER BY created_at DESC OFFSET $1 LIMIT $2`
+		sqlQuery = `SELECT id FROM content.posts WHERE visibility != 2 ORDER BY created_at DESC OFFSET $1 LIMIT $2`
 	}
 
-	rows, err := postgres.PostgresDB.QueryContext(ctx, query, offset, limit)
-	if err != nil {
-		return nil, err
+	sqlRows, errPg := postgres.PostgresDB.QueryContext(ctx, sqlQuery, offset, limit)
+	if errPg != nil {
+		logger.Log.Error().Err(errPg).Str("rank_type", rankType).Msg("Échec L3 lors de la requête de classement paginée")
+		return nil, nubo_error.NewInternal()
 	}
-	defer func(rows *sql.Rows) {
-		err := rows.Close()
-		if err != nil {
-			log.Printf("⚠️ Erreur fermeture rows L3 Postgres paginé: %v", err)
+
+	defer func(rowsToClose *sql.Rows) {
+		if errClose := rowsToClose.Close(); errClose != nil {
+			logger.Log.Warn().Err(errClose).Msg("Erreur lors de la fermeture du curseur Rows L3 Postgres")
 		}
-	}(rows)
+	}(sqlRows)
 
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err == nil {
-			ids = append(ids, id)
+	var extractedIDs []int64
+	for sqlRows.Next() {
+		var extractedID int64
+		if errScan := sqlRows.Scan(&extractedID); errScan == nil {
+			extractedIDs = append(extractedIDs, extractedID)
 		}
 	}
 
-	return object_cache_service.GetPostsView(ids)
+	return object_cache_service.GetPostsView(extractedIDs)
 }

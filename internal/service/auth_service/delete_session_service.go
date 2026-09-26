@@ -9,35 +9,54 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// RevokeSession vérifie la propriété et détruit une session à distance
-func RevokeSession(ctx context.Context, callerID int64, sessionID int64) error {
-	var s auth_models.SessionsPayload
+// ############################################################################
+// # SERVICE : RÉVOCATION DE SESSION À DISTANCE
+// ############################################################################
 
-	// 1. TENTATIVE L1 (RAM) : Récupération pour vérifier la propriété et obtenir le FirebaseInstallationID (pour l'index)
-	err := redis.Sessions.GetObject(ctx, sessionID, &s)
-	if err != nil || s.ID == 0 {
-		// FALLBACK L3 : Si la session n'est plus en RAM, on vérifie en BDD
-		sessionsPg, errPg := postgres.FuncLoadSession(sessionID, callerID, "", "")
-		if errPg != nil || sessionsPg.ID == 0 {
-			return nubo_error.NewNotFound("SESSION_NOT_FOUND", "Session introuvable ou accès refusé.", errPg)
+// RevokeSession vérifie la propriété et détruit une session active spécifique.
+func RevokeSession(ctx context.Context, callerID int64, targetSessionID int64) error {
+	var sessionPayload auth_models.SessionsPayload
+
+	// ── ÉTAPE 1 : TENTATIVE L1 (RAM) ─────────────────────────────────────────
+	// On récupère la session pour vérifier à qui elle appartient et obtenir son FirebaseInstallationID
+	errCache := redis.Sessions.GetObject(ctx, targetSessionID, &sessionPayload)
+
+	if errCache != nil || sessionPayload.ID == 0 {
+		// FALLBACK L3 : Si la session n'est plus en RAM, on interroge PostgreSQL (Source de Vérité)
+		sessionPg, errPg := postgres.FuncLoadSession(targetSessionID, callerID, "", "")
+		if errPg != nil {
+			// Erreur BDD -> On loggue en interne et on renvoie une 500 propre au client
+			return nubo_error.NewInternal()
 		}
-		s = sessionsPg
+		if sessionPg.ID == 0 {
+			return nubo_error.NewNotFound(nubo_error.CodeNotFound, "La session est introuvable ou a déjà été révoquée.", nil)
+		}
+		sessionPayload = sessionPg
 	}
 
-	// 2. SÉCURITÉ ABSOLUE : Vérification de la propriété
-	if s.UserID != callerID {
-		return nubo_error.NewForbidden("ACCESS_DENIED", "Cette session ne vous appartient pas.", nil)
+	// ── ÉTAPE 2 : SÉCURITÉ ABSOLUE (Vérification de la Propriété) ──────────
+	if sessionPayload.UserID != callerID {
+		return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : vous n'êtes pas le propriétaire de cette session.", nil)
 	}
 
-	// 3. PURGE DU CACHE L1 (Object + Index) via le service dédié (Pur DDD)
-	_ = cache_service.DeleteSessionFromCache(ctx, sessionID, s.UserID, s.FirebaseInstallationID)
+	// ── ÉTAPE 3 : PURGE DU CACHE L1 (Object + Index) ───────────────────────
+	_ = cache_service.DeleteSessionFromCache(ctx, targetSessionID, sessionPayload.UserID, sessionPayload.FirebaseInstallationID)
 
-	// 4. ENVOI NOTIFICATION
-	_ = realtime_service.DistributeToUsers(ctx, "session.revoked", map[string]int64{"session_id": sessionID}, []int64{callerID})
+	// ── ÉTAPE 4 : DÉCONNEXION TEMPS RÉEL (WebSockets) ──────────────────────
+	// Le client recevra l'événement et fermera son application ou redirigera vers le login
+	_ = realtime_service.DistributeToUsers(ctx, variables.NotificationSessionRevoked, map[string]int64{"session_id": targetSessionID}, []int64{callerID})
 
-	// 5. PERSISTANCE ASYNCHRONE : Envoi au Worker pour suppression SQL
-	payload := auth_models.SessionsPayload{ID: sessionID, UserID: callerID} // Payload minimal pour le mapping
-	return redis.EnqueueDB(ctx, sessionID, callerID, redis.EntitySession, redis.ActionDelete, payload, redis.TargetAll)
+	// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE (Write-Behind vers BDD) ───────────
+	minimalPayloadForDeletion := auth_models.SessionsPayload{ID: targetSessionID, UserID: callerID}
+
+	errQueue := redis.EnqueueDB(ctx, targetSessionID, callerID, redis.EntitySession, redis.ActionDelete, minimalPayloadForDeletion, redis.TargetAll)
+	if errQueue != nil {
+		// L'action est cruciale. Si la mise en file échoue, on retourne une erreur interne (500).
+		return nubo_error.NewInternal()
+	}
+
+	return nil
 }

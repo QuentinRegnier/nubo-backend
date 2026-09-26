@@ -6,35 +6,47 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// MarkNotificationsAsRead met à jour le curseur de lecture de l'utilisateur en O(1)
+// ############################################################################
+// # SERVICE : ACQUITTEMENT (MARQUAGE COMME LU) DES NOTIFICATIONS
+// ############################################################################
+
+// MarkNotificationsAsRead met à jour le curseur de lecture de l'utilisateur (Watermark)
+// en O(1) et synchronise l'état lu sur l'ensemble de ses appareils connectés.
 func MarkNotificationsAsRead(ctx context.Context, userID int64, input notification_models.ReadNotificationsInput) (notification_models.ReadNotificationsOutput, error) {
-	// 1. Sauvegarde instantanée du curseur en RAM (L1) via un entier brut
-	err := redis.NotificationCursors.SetPrimitive(ctx, userID, input.ReadUpToID)
-	if err != nil {
-		return notification_models.ReadNotificationsOutput{}, err
+
+	// ── ÉTAPE 1 : ENREGISTREMENT INSTANTANÉ DU CURSEUR (RAM L1) ─────────────
+
+	errRedis := redis.NotificationCursors.SetPrimitive(ctx, userID, input.ReadUpToID)
+	if errRedis != nil {
+		logger.Log.Error().Err(errRedis).Int64("user_id", userID).Msg("Impossible de sauvegarder le curseur de lecture des notifications")
+		return notification_models.ReadNotificationsOutput{}, nubo_error.NewInternal()
 	}
 
-	// 2. TEMPS RÉEL MULTI-DEVICE
-	payload := map[string]any{
+	// ── ÉTAPE 2 : SYNCHRONISATION MULTI-APPAREILS (WEBSOCKETS) ──────────────
+
+	websocketPayload := map[string]any{
 		"read_up_to_id": input.ReadUpToID,
 		"read_at":       time.Now().UTC().Format(time.RFC3339),
 	}
 
-	// On capture l'erreur du broadcast sans la retourner immédiatement
-	broadcastErr := realtime_service.DistributeToUsers(ctx, "notification.read", payload, []int64{userID})
+	errBroadcast := realtime_service.DistributeToUsers(ctx, variables.NotificationRead, websocketPayload, []int64{userID})
+	if errBroadcast != nil {
+		logger.Log.Warn().Err(errBroadcast).Msg("Échec de la distribution WS pour " + variables.NotificationRead)
+	}
 
-	// ========================================================================
-	// 3. MARQUAGE DU TEMPS (DIRTY FLAG)
-	// ========================================================================
-	// Placé à la fin absolue de la fonction pour garantir l'ordre temporel
-	timestampMs := cache_service.TouchActivityTimestamp(ctx, userID)
+	// ── ÉTAPE 3 : MARQUAGE D'ACTIVITÉ (DIRTY FLAG) ──────────────────────────
+
+	latestActivityTimestampMs := cache_service.TouchActivityTimestamp(ctx, userID)
 
 	return notification_models.ReadNotificationsOutput{
-		ActivityUpdateAt: domain.TimeToMillis(time.UnixMilli(timestampMs)),
-	}, broadcastErr
+		ActivityUpdateAt: domain.TimeToMillis(time.UnixMilli(latestActivityTimestampMs)),
+	}, nil // Ne bloque pas le client HTTP pour une erreur WebSocket
 }

@@ -7,54 +7,82 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// UnbanMembers débannit un lot d'utilisateurs
+// ############################################################################
+// # SERVICE : LEVÉE DE BANNISSEMENT (UNBAN EN MASSE)
+// ############################################################################
+
+// UnbanMembers annule le bannissement d'un lot d'utilisateurs.
+// L'action les passe au statut "A Quitté" (-1), leur permettant de postuler à nouveau.
 func UnbanMembers(ctx context.Context, callerID int64, input member_models.UnbanMembersInput) (member_models.UnbanMembersOutput, error) {
-	// 1. SÉCURITÉ : Vérifier que l'appelant est Admin ou Propriétaire
-	mem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
-	if err != nil || mem.Role < 1 {
-		return member_models.UnbanMembersOutput{}, nubo_error.NewForbidden("ACCESS_DENIED", "Seuls les administrateurs peuvent débannir des utilisateurs.", nil)
+
+	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS ZERO-TRUST ────────────────────────────────
+
+	callerMemberPayload, errSecurity := security_service.LeftMember(ctx, input.ConversationID, callerID)
+	if errSecurity != nil {
+		return member_models.UnbanMembersOutput{}, errSecurity
+	}
+	if callerMemberPayload.Role < variables.MemberRoleAdmin {
+		return member_models.UnbanMembersOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seuls les administrateurs peuvent débannir des utilisateurs.", nil)
 	}
 
-	now := domain.NowMillis()
+	currentTimeMs := domain.NowMillis()
 
-	for _, targetID := range input.TargetUserIDs {
-		// Récupérer le membre ciblé
-		targetMem, errMem := security_service.LeftMember(ctx, input.ConversationID, targetID)
-		if errMem != nil {
-			continue // S'il n'existe pas, on passe au suivant
+	// ── ÉTAPE 2 : TRAITEMENT EN LOTS (BATCH UNBAN) ──────────────────────────
+
+	for _, targetUserID := range input.TargetUserIDs {
+
+		// Extraction du membre banni (Cascade L1 -> L2 -> L3 traitée par LeftMember)
+		targetMemberPayload, errFetchTarget := security_service.LeftMember(ctx, input.ConversationID, targetUserID)
+		if errFetchTarget != nil {
+			continue // S'il n'existe pas, on ignore silencieusement
 		}
 
-		// Si l'utilisateur est bien banni
-		if targetMem.Role == -2 {
-			// On modifie le rôle à -1 (Quit). Ainsi, l'utilisateur n'est plus banni et pourra rejoindre librement la communauté à l'avenir.
-			targetMem.Role = -1
-			targetMem.UpdatedAt = now
-			targetMem.FrozenMessageID = 0 // On enlève le plafond
+		if targetMemberPayload.Role == variables.MemberRoleBanned {
 
-			// Mise à jour RAM (L1)
-			_ = cache_service.UpdateMemberSpeedCache(ctx, lite_models.MemberLiteRequest{
-				ConversationID:    targetMem.ConversationID,
-				UserID:            targetMem.UserID,
-				Role:              targetMem.Role,
-				Settings:          service.ToMemberSettingsLite(targetMem.Settings),
-				UnreadCount:       targetMem.UnreadCount,
-				FrozenMessageID:   targetMem.FrozenMessageID,
-				LastReadMessageID: targetMem.LastReadMessageID,
-				JoinedAt:          targetMem.JoinedAt,
-			})
+			// ── ÉTAPE 3 : APPLICATION DU PARDON ─────────────────────────────
 
-			// Write-Behind pour L2 / L3
-			_ = redis.EnqueueDB(ctx, targetMem.ID, targetMem.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMem, redis.TargetAll)
+			// On modifie le rôle à -1 (A Quitté). L'utilisateur n'est plus banni
+			// et pourra rejoindre librement la communauté à l'avenir.
+			targetMemberPayload.Role = variables.MemberRoleLeft
+			targetMemberPayload.UpdatedAt = currentTimeMs
+			targetMemberPayload.FrozenMessageID = 0 // Suppression de la restriction d'historique
+
+			// ── ÉTAPE 4 : MISE À JOUR SYNCHRONE RAM L1 ──────────────────────
+
+			liteMemberRequest := lite_models.MemberLiteRequest{
+				ConversationID:    targetMemberPayload.ConversationID,
+				UserID:            targetMemberPayload.UserID,
+				Role:              targetMemberPayload.Role,
+				Settings:          service.ToMemberSettingsLite(targetMemberPayload.Settings),
+				UnreadCount:       targetMemberPayload.UnreadCount,
+				FrozenMessageID:   targetMemberPayload.FrozenMessageID,
+				LastReadMessageID: targetMemberPayload.LastReadMessageID,
+				JoinedAt:          targetMemberPayload.JoinedAt,
+			}
+			_ = cache_service.UpdateMemberSpeedCache(ctx, liteMemberRequest)
+
+			// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE ────────────────────────────
+
+			errQueue := redis.EnqueueDB(ctx, targetMemberPayload.ID, targetMemberPayload.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMemberPayload, redis.TargetAll)
+			if errQueue != nil {
+				logger.Log.Error().Err(errQueue).Int64("user_id", targetUserID).Msg("Échec du Write-Behind lors du débannissement")
+			}
 		}
 	}
 
-	// 4. Dirty Flag de la boite aux lettres de l'admin
-	timestampMs := cache_service.TouchInboxActivity(ctx, callerID)
-	return member_models.UnbanMembersOutput{InboxUpdateAt: timestampMs}, nil
+	// ── ÉTAPE 6 : MARQUAGE D'ACTIVITÉ (DIRTY FLAG) ──────────────────────────
+
+	latestActivityTimestampMs := cache_service.TouchInboxActivity(ctx, callerID)
+
+	return member_models.UnbanMembersOutput{
+		InboxUpdateAt: latestActivityTimestampMs, // Modifié ici, il ne faut plus utiliser `TimeToMillis` si `TouchInboxActivity` renvoie déjà les ms
+	}, nil
 }
