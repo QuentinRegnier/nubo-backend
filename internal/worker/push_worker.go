@@ -4,53 +4,66 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"time"
 
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/messaging"
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
 var fcmClient *messaging.Client
 
+// PushJob représente la structure d'une tâche de notification en attente dans Redis.
 type PushJob struct {
 	UserID    int64  `json:"user_id"`
 	EventType string `json:"event_type"`
 	Payload   any    `json:"payload"`
 }
 
-// StartPushNotificationWorker initialise la connexion à Google et écoute Redis
-func StartPushNotificationWorker(ctx context.Context) {
-	log.Println("Démarrage du Worker Firebase Cloud Messaging...")
+// ############################################################################
+// # WORKER : FIREBASE CLOUD MESSAGING (PUSH NOTIFICATIONS)
+// ############################################################################
 
+// StartPushNotificationWorker initialise la connexion à l'API Google Firebase
+// et lance la boucle d'écoute sur la file Redis (Consumer).
+func StartPushNotificationWorker(ctx context.Context) {
+	logger.Log.Info().Msg("Démarrage du Worker Firebase Cloud Messaging...")
+
+	// Initialisation de l'application Firebase
 	app, err := firebase.NewApp(ctx, nil)
 	if err != nil {
-		log.Printf("Erreur Firebase non initialisé : %v", err)
+		logger.Log.Fatal().Err(err).Msg("Erreur critique : Impossible d'initialiser Firebase")
 		return
 	}
 
+	// Création du client Messaging
 	fcmClient, err = app.Messaging(ctx)
 	if err != nil {
-		log.Printf("Erreur Client Firebase Messaging : %v", err)
+		logger.Log.Fatal().Err(err).Msg("Erreur critique : Impossible d'initialiser le client FCM")
 		return
 	}
 
+	// Lancement de la Goroutine de consommation (Blocking Pop)
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
-				return
+				return // Arrêt gracieux
 			default:
-				res, err := redisgo.Rdb.BLPop(ctx, 2*time.Second, "worker:queue:firebase").Result()
-				if err != nil {
-					continue // File vide
+				// BLPop bloque l'exécution jusqu'à ce qu'un élément soit disponible ou que le timeout expire
+				res, errPop := redis.Rdb.BLPop(ctx, variables.PushWorkerBLPopTimeout, variables.PushWorkerQueueName).Result()
+				if errPop != nil {
+					continue // File vide ou timeout atteint, on reboucle
 				}
+
 				if len(res) == 2 {
 					var job PushJob
-					if err := json.Unmarshal([]byte(res[1]), &job); err == nil {
+					if errUnmarshal := json.Unmarshal([]byte(res[1]), &job); errUnmarshal == nil {
 						processFirebaseJob(ctx, job)
+					} else {
+						logger.Log.Warn().Err(errUnmarshal).Msg("Push Worker : Impossible de désérialiser le job FCM")
 					}
 				}
 			}
@@ -58,27 +71,28 @@ func StartPushNotificationWorker(ctx context.Context) {
 	}()
 }
 
+// processFirebaseJob formate et expédie la notification aux serveurs d'Apple/Google.
 func processFirebaseJob(ctx context.Context, job PushJob) {
-	// 1. On récupère TOUS les identifiants d'appareils via la cascade L1 -> L2 -> L3
-	fids, err := cache_service.GetFirebaseInstallationIDsCascade(ctx, job.UserID)
-	if err != nil || len(fids) == 0 {
-		return // L'utilisateur n'a aucun appareil connecté
+	// ── ÉTAPE 1 : RÉCUPÉRATION DES IDENTIFIANTS D'APPAREILS (FIDS) ──────────
+	// Cascade L1 -> L2 -> L3 pour récupérer tous les appareils actifs de l'utilisateur.
+	fids, errCache := cache_service.GetFirebaseInstallationIDsCascade(ctx, job.UserID)
+	if errCache != nil || len(fids) == 0 {
+		return // L'utilisateur n'a aucun appareil connecté, annulation silencieuse.
 	}
 
-	// 2. Conversion du Payload dynamique en string JSON pour FCM
+	// ── ÉTAPE 2 : FORMATAGE DU PAYLOAD ET DES MÉTADONNÉES ───────────────────
 	payloadBytes, _ := json.Marshal(job.Payload)
 	payloadStr := string(payloadBytes)
 
-	// === NOUVEAU : FORMATAGE DYNAMIQUE (Titres, Corps et Sons) ===
-	title := "Nubo"
-	body := "Nouvelle notification"
-	soundIOS := "default"
-	channelAndroid := "default_channel"
+	title := variables.PushWorkerDefaultTitle
+	body := variables.PushWorkerDefaultBody
+	soundIOS := variables.PushWorkerDefaultSound
+	channelAndroid := variables.PushWorkerDefaultChannel
 
-	// On parse le payload pour en extraire les informations (pseudo, contenu)
 	var payloadMap map[string]interface{}
 	_ = json.Unmarshal(payloadBytes, &payloadMap)
 
+	// Aiguillage selon le type d'événement pour personnaliser l'affichage OS
 	switch job.EventType {
 	case "message.new":
 		if sender, ok := payloadMap["sender_username"].(string); ok && sender != "" {
@@ -99,17 +113,17 @@ func processFirebaseJob(ctx context.Context, job PushJob) {
 		if content, ok := payloadMap["content"].(string); ok && content != "" {
 			body = content
 		}
-		// Personnalisation des alertes pour les mentions
-		soundIOS = "mention.wav"            // Fichier audio à inclure dans Xcode
-		channelAndroid = "mentions_channel" // Channel ID à configurer sur Android (Flutter)
+		// Personnalisation des alertes OS pour les mentions
+		soundIOS = "mention.wav"
+		channelAndroid = "mentions_channel"
 	}
 
-	// 3. Construction du message Multicast (Le standard officiel pour le multi-session)
+	// ── ÉTAPE 3 : CONSTRUCTION DU MESSAGE MULTICAST (FCM BATCH) ─────────────
 	message := &messaging.MulticastMessage{
-		Fids: fids,
+		Fids: fids, // Ciblage de multiples appareils en une seule requête réseau
 		Data: map[string]string{
 			"event_type": job.EventType,
-			"payload":    payloadStr,
+			"payload":    payloadStr, // Data silencieuse traitée par l'application
 		},
 		Notification: &messaging.Notification{
 			Title: title,
@@ -119,7 +133,7 @@ func processFirebaseJob(ctx context.Context, job PushJob) {
 			CollapseKey: job.EventType,
 			Priority:    "high",
 			Notification: &messaging.AndroidNotification{
-				ChannelID: channelAndroid, // Gestion des sons/priorités native sur Android
+				ChannelID: channelAndroid,
 			},
 		},
 		APNS: &messaging.APNSConfig{
@@ -128,8 +142,8 @@ func processFirebaseJob(ctx context.Context, job PushJob) {
 			},
 			Payload: &messaging.APNSPayload{
 				Aps: &messaging.Aps{
-					MutableContent: true,
-					Sound:          soundIOS, // Son spécifique sur iOS
+					MutableContent: true, // Autorise l'extension iOS à modifier la notif
+					Sound:          soundIOS,
 				},
 			},
 		},
@@ -140,11 +154,15 @@ func processFirebaseJob(ctx context.Context, job PushJob) {
 		},
 	}
 
-	// 4. Envoi physique chez Google/Apple
-	br, err := fcmClient.SendEachForMulticast(ctx, message)
-	if err != nil {
-		log.Printf("Erreur Firebase: %v", err)
+	// ── ÉTAPE 4 : EXPÉDITION PHYSIQUE VIA L'API FIREBASE ────────────────────
+	br, errSend := fcmClient.SendEachForMulticast(ctx, message)
+	if errSend != nil {
+		logger.Log.Error().Err(errSend).Int64("user_id", job.UserID).Msg("Échec critique lors de l'envoi Firebase")
 	} else if br.FailureCount > 0 {
-		log.Printf("Firebase a rejeté %d/%d tokens pour l'utilisateur %d", br.FailureCount, len(fids), job.UserID)
+		logger.Log.Warn().
+			Int("failures", br.FailureCount).
+			Int("total", len(fids)).
+			Int64("user_id", job.UserID).
+			Msg("Firebase a rejeté un ou plusieurs tokens (Possiblement expirés)")
 	}
 }

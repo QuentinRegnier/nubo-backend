@@ -11,15 +11,22 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
+// ############################################################################
+// # WORKER : FEED WARM-UP & SOCIAL FAN-OUT
+// ############################################################################
+
 // StartFeedWarmupCron orchestre l'auto-génération des flux d'actualités par lots pour les utilisateurs inactifs.
-// S'exécute à intervalles réguliers sans jamais scanner l'intégralité de la base de données (O(log(N) + M)).
+// S'exécute à intervalles réguliers sans jamais scanner l'intégralité de la BDD (O(log(N) + M)).
 func StartFeedWarmupCron(ctx context.Context) {
-	logger.Log.Info().Msg("Démarrage du Moteur de Warm-up Algorithmique (Cron 5m)...")
+	logger.Log.Info().Msg("Démarrage du Moteur de Warm-up Algorithmique (Feed)...")
+
 	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
+		ticker := time.NewTicker(variables.FeedWarmupCronInterval)
 		defer ticker.Stop()
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -31,97 +38,83 @@ func StartFeedWarmupCron(ctx context.Context) {
 	}()
 }
 
+// processScheduledWarmups identifie et régénère les flux des utilisateurs dont le cache L1 a expiré.
 func processScheduledWarmups(ctx context.Context) {
 	now := time.Now().Unix()
-	const batchSize = 500
 
-	// 1. Extraction chirurgicale des seuls utilisateurs arrivés à échéance (O(log(N) + M))
-	expiredUserIDs, err := redis.FeedSchedule.ZRangeByScoreWithLimit(ctx, "global", now, batchSize)
+	// ── ÉTAPE 1 : EXTRACTION CHIRURGICALE DES UTILISATEURS (L1) ─────────────
+	expiredUserIDs, err := redis.FeedSchedule.ZRangeByScoreWithLimit(ctx, "global", now, variables.FeedWarmupBatchSize)
 	if err != nil || len(expiredUserIDs) == 0 {
-		return
+		return // Personne n'est arrivé à échéance
 	}
 
-	logger.Log.Info().Int("count", len(expiredUserIDs)).Msg("Warm-up : Analyse d'un lot d'utilisateurs éligibles.")
+	logger.Log.Info().Int("count", len(expiredUserIDs)).Msg("Warm-up Feed : Traitement d'un lot d'utilisateurs éligibles.")
 
+	// ── ÉTAPE 2 : ANALYSE DU NIVEAU D'INACTIVITÉ (TÉLÉMÉTRIE L1) ────────────
 	for _, idStr := range expiredUserIDs {
-		userID, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
+		userID, errParse := strconv.ParseInt(idStr, 10, 64)
+		if errParse != nil {
 			continue
 		}
 
-		// 2. Récupération des données de télémétrie depuis le Cache L1 (O(1))
-		lastActiveAt, isOnline := getTelemetryData(ctx, userID) // ✅ CORRECTION
+		lastActiveAt, isOnline := getTelemetryData(ctx, userID)
 
-		// Si l'utilisateur est actuellement en ligne, on ne pollue pas sa session active
+		// Coupe-circuit : Si l'utilisateur est en ligne, le Feed est géré en direct.
 		if isOnline {
-			// On repousse simplement sa vérification à plus tard
 			_ = redis.FeedSchedule.ZAdd(ctx, "global", float64(time.Now().Add(1*time.Hour).Unix()), userID)
 			continue
 		}
 
 		inactivityDuration := time.Since(lastActiveAt)
 
-		// 3. Application de la loi de décroissance exponentielle du calcul (§4.4)
+		// ── ÉTAPE 3 : LOI DE DÉCROISSANCE EXPONENTIELLE DU CALCUL (§4.4) ─────
 		if inactivityDuration < 2*24*time.Hour {
-			// --- NIVEAU 1 : Inactivité récente (< 2 jours) ---
-			// Rythme soutenu : Régénération complète 2 fois par jour (Toutes les 12 heures)
+			// NIVEAU 1 : Inactivité récente (< 2 jours) -> Régénération soutenue (12h)
 			executeBackgroundGeneration(ctx, userID)
 			nextRun := time.Now().Add(12 * time.Hour).Unix()
 			_ = redis.FeedSchedule.ZAdd(ctx, "global", float64(nextRun), userID)
 
 		} else if inactivityDuration >= 2*24*time.Hour && inactivityDuration < 7*24*time.Hour {
-			// --- NIVEAU 2 : Absent temporaire (Entre 2 et 7 jours) ---
-			// Rythme dégradé : Régénération toutes les 48 heures pour capter les grandes tendances mondiales
+			// NIVEAU 2 : Absent temporaire (2-7 jours) -> Régénération dégradée (48h)
 			executeBackgroundGeneration(ctx, userID)
 			nextRun := time.Now().Add(48 * time.Hour).Unix()
 			_ = redis.FeedSchedule.ZAdd(ctx, "global", float64(nextRun), userID)
 
 		} else {
-			// --- NIVEAU 3 : Mode Dormant (>= 7 jours d'inactivity) ---
-			// L'utilisateur a probablement désinstallé ou abandonné l'app.
-			// Protection RAM absolue : On l'exclut de la boucle et on vide ses structures volatiles.
-			logger.Log.Info().Int64("user_id", userID).Msg("Warm-up : Utilisateur classé comme DORMANT. Éviction de la RAM L1 en cours.")
+			// NIVEAU 3 : Mode Dormant (>= 7 jours) -> Éviction absolue
+			// Protection RAM : L'utilisateur a abandonné l'app, on libère l'espace.
+			logger.Log.Info().Int64("user_id", userID).Msg("Warm-up Feed : Utilisateur classé DORMANT. Éviction de la RAM L1 en cours.")
 
-			// Invalidation et destruction complète de son orchestrateur d'état via la couche Domaine
 			_ = algorithm_service.DeleteUserFeedState(ctx, userID)
-
-			// Retrait définitif du planificateur pour couper les requêtes Redis obsolètes
 			_ = redis.FeedSchedule.ZRem(ctx, "global", userID)
 		}
 	}
 }
 
-// executeBackgroundGeneration réutilise la route de service officielle pour éviter la duplication de code
+// executeBackgroundGeneration simule une requête API interne pour forcer la régénération algorithmique.
 func executeBackgroundGeneration(ctx context.Context, userID int64) {
-	logger.Log.Info().Int64("user_id", userID).Msg("Warm-up : Pré-calcul d'un flux frais pour l'utilisateur inactif.")
+	logger.Log.Info().Int64("user_id", userID).Msg("Warm-up Feed : Pré-calcul d'un flux frais (Background).")
 
-	// Simulation de l'input d'un Pull-to-refresh destructif forcé
 	input := feed_models.GetFeedInput{
 		UserID:        userID,
-		Force:         true, // Déclenche la purge du filtre Cuckoo et la re-sélection des paniers
+		Force:         true, // Purge le Cuckoo Filter pour brasser de nouveaux contenus
 		LastSeenIndex: 0,
 	}
 
-	// Appel du cas d'usage unifié. L'underscore ignore les structures hydratées/signées (le but est purement le remplissage du cache L1)
+	// Appel transparent au Service Unifié
 	_, _, _, _ = feed_service.GetFeed(ctx, input)
 }
 
-// getTelemetryData interroge les vrais caches L1 pour déterminer la fraîcheur de l'utilisateur
+// getTelemetryData interroge les caches L1 pour déterminer le statut d'activité d'un profil.
 func getTelemetryData(ctx context.Context, userID int64) (time.Time, bool) {
-	// 1. Est-il en train d'utiliser l'application en ce moment même ?
 	isOnline := cache_service.IsUserOnline(ctx, userID)
-
-	// 2. À quand remonte sa dernière interaction synchronisée ?
 	var lastActiveAt time.Time
 
 	tsMs, err := cache_service.GetTelemetryTimestamp(ctx, userID)
 	if err == nil && tsMs > 0 {
-		// La télémétrie nous envoie un timestamp Unix en millisecondes
 		lastActiveAt = time.UnixMilli(tsMs)
 	} else {
-		// FALLBACK : Si on n'a aucune donnée de télémétrie (ex: nouvel utilisateur ou cache évincé),
-		// on le considère comme inactif depuis très longtemps pour forcer le Niveau 3 (Dormant)
-		// et ne pas gaspiller de CPU à régénérer son flux dans le vide.
+		// En l'absence totale de télémétrie, on simule une inactivité lointaine pour déclencher le Mode Dormant.
 		lastActiveAt = time.Now().Add(-30 * 24 * time.Hour)
 	}
 
@@ -129,76 +122,67 @@ func getTelemetryData(ctx context.Context, userID int64) (time.Time, bool) {
 }
 
 // handleSocialFanOut intercepte les créations de posts pour distribuer l'ID
-// dans les boîtes aux lettres Redis ciblées (Amis ou Abonnés).
+// dans les boîtes aux lettres Redis (Mailboxes) du graphe social de l'auteur.
 func handleSocialFanOut(ctx context.Context, events []redis.AsyncEvent) {
 	for _, evt := range events {
-		// On ne cible que les créations de posts réussies
 		if evt.Type == redis.EntityPost && evt.Action == redis.ActionCreate {
 			postID := evt.ID
 
-			// 1. Vérification absolue via le fallback BDD/Cache (Sécurité & Visibilité)
-			// getPostWithFallback est disponible dans le package worker (défini dans most_cache_worker.go)
-			p, err := getPostWithFallback(ctx, postID)
-			if err != nil || p.Visibility == -1 {
-				continue // Le post a été supprimé ou est introuvable entre temps
+			// ── ÉTAPE 1 : VÉRIFICATION ABSOLUE VIA FALLBACK (SÉCURITÉ) ──────
+			p, errFallback := getPostWithFallback(ctx, postID)
+			if errFallback != nil || p.Visibility == -1 {
+				continue // Post introuvable ou supprimé dans l'intervalle
 			}
 
 			authorID := p.UserID
 			var targetIDs []int64
+			var errGraph error
 
-			// 2. LE FILTRE DE VISIBILITÉ ET LE FAN-OUT HYBRIDE
+			// ── ÉTAPE 2 : FILTRE DE VISIBILITÉ ET ROUTAGE HYBRIDE ───────────
 			if p.Visibility == 2 {
-				// ✅ CAS 1 : Post Privé (Amis Uniquement)
-				// On ne l'envoie qu'aux amis (graphe bidirectionnel) pour ne pas polluer les simples abonnés.
-				// (Assure-toi d'avoir implémenté GetSpeedFriends dans cache_service)
-				targetIDs, err = cache_service.GetSpeedFriends(ctx, authorID)
+				// POST PRIVÉ : Graphe Bidirectionnel Strict (Amis Uniquement)
+				targetIDs, errGraph = cache_service.GetSpeedFriends(ctx, authorID)
 			} else {
-				// ✅ CAS 2 : Post Public ou Abonnés (Visibility 0 ou 1)
-				// Protection Anti-Crash "Justin Bieber" : On compte avant de charger en RAM
-				// (Assure-toi d'avoir implémenté GetFollowerCount dans cache_service, via un ZCARD par exemple)
+				// POST PUBLIC/ABONNÉS : Graphe Unidirectionnel
+				// Coupe-Circuit : Empêcher le blocage RAM pour les comptes hyper-suivis
 				followerCount := cache_service.GetFollowerCount(ctx, authorID)
-				if followerCount > 50000 {
+				if followerCount > variables.FanOutVIPThreshold {
 					logger.Log.Info().
 						Int64("author_id", authorID).
 						Int64("follower_count", followerCount).
-						Msg("FanOut annulé pour VIP. Délégation au Most Cache Global.")
+						Msg("FanOut annulé pour profil VIP (Justin Bieber Effect). Délégation au Most Cache.")
 					continue
 				}
 
-				targetIDs, err = cache_service.GetSpeedRelationsIndex(ctx, authorID)
+				targetIDs, errGraph = cache_service.GetSpeedRelationsIndex(ctx, authorID)
 			}
 
-			if err != nil {
-				logger.Log.Warn().Err(err).Int64("author_id", authorID).Msg("FanOut : Impossible de lire le graphe utilisateur.")
+			if errGraph != nil {
+				logger.Log.Warn().Err(errGraph).Int64("author_id", authorID).Msg("FanOut : Impossible de résoudre le graphe social.")
 				continue
 			}
 
 			if len(targetIDs) == 0 {
-				continue // L'utilisateur n'a pas d'audience (Ville fantôme locale), rien à distribuer
+				continue // Aucune audience, annulation du FanOut
 			}
 
-			// 3. Distribution de masse via Redis Pipeline encapsulé (DDD)
+			// ── ÉTAPE 3 : DISTRIBUTION DE MASSE VIA PIPELINE REDIS ──────────
 			pipe := redis.FeedsMailbox.Pipeline()
-			score := float64(time.Now().UnixMilli()) // Le score chronologique absolu
+			score := float64(time.Now().UnixMilli())
 
-			// ✅ CORRECTION : On itère sur targetIDs (qui contient les amis ou les abonnés filtrés)
 			for _, followerID := range targetIDs {
-				// ✅ Génération propre de la clé via le wrapper de manager.go
 				mailboxKey := redis.FeedsMailbox.Key(followerID)
 
-				// ✅ On utilise pipe.Do() pour éviter les erreurs de structure avec redisgo.Z{}
+				// Injection du PostID au sommet chronologique
 				pipe.Do(ctx, "ZADD", mailboxKey, score, postID)
 
-				// ✅ ZREMRANGEBYRANK remplace LTRIM.
-				// En supprimant du rang 0 au rang -501, on demande à Redis de ne conserver que
-				// les 500 posts avec le score le plus élevé (les plus récents).
-				pipe.Do(ctx, "ZREMRANGEBYRANK", mailboxKey, 0, -501)
+				// Purge glissante (Capacité stricte à 500 posts par mailbox)
+				pipe.Do(ctx, "ZREMRANGEBYRANK", mailboxKey, 0, variables.FanOutRetentionLimit)
 			}
 
-			// Exécution atomique du lot de distribution
-			_, err = pipe.Exec(ctx)
-			if err != nil {
-				logger.Log.Error().Err(err).Int64("post_id", postID).Msg("FanOut : Échec de l'exécution du pipeline de distribution.")
+			_, errPipe := pipe.Exec(ctx)
+			if errPipe != nil {
+				logger.Log.Error().Err(errPipe).Int64("post_id", postID).Msg("Échec de l'exécution du pipeline de distribution FanOut.")
 			}
 		}
 	}

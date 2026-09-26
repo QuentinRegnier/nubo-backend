@@ -7,21 +7,27 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
+// ############################################################################
+// # WORKER : LIKE CLEANUP (GARBAGE COLLECTOR DES LIKES ORPHELINS)
+// ############################################################################
+
 // StartLikeCleanupCron lance le Garbage Collector qui détruit les likes orphelins.
+// Un like devient orphelin lorsque la publication (Post) ou le Commentaire qu'il ciblait a été supprimé.
 func StartLikeCleanupCron(ctx context.Context) {
-	logger.Log.Info().Msg("Démarrage du Garbage Collector de Likes (6h)...")
+	logger.Log.Info().Msg("Démarrage du Garbage Collector de Likes (Cron 6h)...")
 
 	go func() {
-		ticker := time.NewTicker(6 * time.Hour) // Tourne toutes les 6 heures
+		ticker := time.NewTicker(variables.LikeCleanupCronInterval)
 		defer ticker.Stop()
 
 		for {
 			select {
 			case <-ctx.Done():
-				return
+				return // Arrêt gracieux
 			case <-ticker.C:
 				processLikeCleanup(ctx)
 			}
@@ -29,25 +35,29 @@ func StartLikeCleanupCron(ctx context.Context) {
 	}()
 }
 
+// processLikeCleanup centralise la logique de purge en cascade (L3 -> L2).
 func processLikeCleanup(ctx context.Context) {
-	// 1. Purge et récupération via PostgreSQL (Source de vérité absolue L3)
-	orphanTargets, err := postgres.FuncDeleteOrphanLikes(ctx)
-	if err != nil {
-		logger.Log.Error().Err(err).Msg("Garbage Collector Likes : Erreur Postgres")
+	// ── ÉTAPE 1 : IDENTIFICATION ET PURGE L3 (POSTGRESQL - SOURCE DE VÉRITÉ) ──
+	// PostgreSQL exécute la jointure pour trouver les likes sans cible existante
+	// et les supprime. Il nous retourne la liste de ce qu'il a supprimé.
+	orphanTargets, errPg := postgres.FuncDeleteOrphanLikes(ctx)
+	if errPg != nil {
+		logger.Log.Error().Err(errPg).Msg("Garbage Collector Likes : Échec critique de la purge PostgreSQL (L3)")
 		return
 	}
 
 	if len(orphanTargets) == 0 {
-		return // Rien à nettoyer
+		return // Rien à nettoyer ce cycle, on s'arrête ici.
 	}
 
-	logger.Log.Info().Int("count", len(orphanTargets)).Msg("Garbage Collector : Likes orphelins purgés de Postgres.")
+	logger.Log.Info().Int("count", len(orphanTargets)).Msg("Garbage Collector Likes : Purge L3 terminée. Répercussion sur le L2 en cours...")
 
-	// 2. Tri des cibles pour répercuter la suppression sur Mongo (L2)
+	// ── ÉTAPE 2 : TRI PAR TYPE DE CIBLE POUR LA PURGE NOSQL ───────────────────
 	var postIDs []int64
 	var commentIDs []int64
 
 	for _, target := range orphanTargets {
+		// TargetType = 0 (Post), TargetType = 1 (Commentaire)
 		if target.TargetType == 0 {
 			postIDs = append(postIDs, target.TargetID)
 		} else if target.TargetType == 1 {
@@ -55,25 +65,29 @@ func processLikeCleanup(ctx context.Context) {
 		}
 	}
 
-	// 3. Purge du Warm Storage (MongoDB L2)
+	// ── ÉTAPE 3 : PURGE DU WARM STORAGE L2 (MONGODB) ──────────────────────────
+	// On doit répercuter cette suppression physique sur Mongo pour éviter
+	// que le Cache L2 ne renvoie des likes fantômes lors d'un Fallback.
 	if mongo.Likes != nil {
+		// Purge des likes de posts
 		if len(postIDs) > 0 {
-			_, err := mongo.Likes.DB.Collection(mongo.Likes.Name).DeleteMany(ctx, bson.M{
+			_, errMongoPost := mongo.Likes.DB.Collection(mongo.Likes.Name).DeleteMany(ctx, bson.M{
 				"target_type": 0,
 				"target_id":   bson.M{"$in": postIDs},
 			})
-			if err != nil {
-				logger.Log.Error().Err(err).Msg("Garbage Collector Likes : Échec suppression Mongo (Posts)")
+			if errMongoPost != nil {
+				logger.Log.Error().Err(errMongoPost).Msg("Garbage Collector Likes : Échec de la suppression Mongo (Posts)")
 			}
 		}
 
+		// Purge des likes de commentaires
 		if len(commentIDs) > 0 {
-			_, err := mongo.Likes.DB.Collection(mongo.Likes.Name).DeleteMany(ctx, bson.M{
+			_, errMongoComment := mongo.Likes.DB.Collection(mongo.Likes.Name).DeleteMany(ctx, bson.M{
 				"target_type": 1,
 				"target_id":   bson.M{"$in": commentIDs},
 			})
-			if err != nil {
-				logger.Log.Error().Err(err).Msg("Garbage Collector Likes : Échec suppression Mongo (Commentaires)")
+			if errMongoComment != nil {
+				logger.Log.Error().Err(errMongoComment).Msg("Garbage Collector Likes : Échec de la suppression Mongo (Commentaires)")
 			}
 		}
 	}

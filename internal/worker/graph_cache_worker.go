@@ -5,40 +5,69 @@ import (
 	"encoding/json"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// handleGraphUpdate intercepte les créations de posts pour tisser le graphe de tags
+// ############################################################################
+// # WORKER : GRAPH CACHE (ÉMERGENCE COLLECTIVE & SÉMANTIQUE)
+// ############################################################################
+
+// handleGraphUpdate intercepte les événements asynchrones de création de posts
+// pour tisser le graphe relationnel de tags (Co-occurrences) basé sur la chaîne de Markov.
 func handleGraphUpdate(ctx context.Context, events []redis.AsyncEvent) {
 	for _, evt := range events {
-		// On s'intéresse uniquement aux publications fraîchement créées
+
+		// ── ÉTAPE 1 : FILTRAGE DES ÉVÉNEMENTS (UNIQUEMENT LES CRÉATIONS) ────────
 		if evt.Type == redis.EntityPost && evt.Action == redis.ActionCreate {
-			jsonBytes, err := json.Marshal(evt.Payload)
-			if err != nil {
+
+			// Sérialisation inverse du payload générique vers le modèle Post
+			jsonBytes, errMarshal := json.Marshal(evt.Payload)
+			if errMarshal != nil {
+				logger.Log.Warn().Err(errMarshal).Msg("Graph Worker : Impossible de sérialiser le payload du post")
 				continue
 			}
 
 			var post post_models.PostPayload
-			if err := json.Unmarshal(jsonBytes, &post); err == nil {
-				// ✅ Fusionner pour le calcul sémantique
-				allTags := append(post.Hashtags, post.IndirectHashtags...)
-				if len(allTags) > 1 {
-					filterSemanticTags(allTags)
-					cache_service.UpdateTagCooccurrences(ctx, allTags, post.CreatedAt)
+			if errUnmarshal := json.Unmarshal(jsonBytes, &post); errUnmarshal != nil {
+				logger.Log.Warn().Err(errUnmarshal).Msg("Graph Worker : Impossible de désérialiser le payload du post")
+				continue
+			}
+
+			// ── ÉTAPE 2 : FUSION DES TAGS DIRECTS ET INDIRECTS ──────────────────
+			// On combine les hashtags écrits par l'auteur et ceux ajoutés par la communauté
+			// dans les commentaires pour créer un contexte sémantique riche.
+			allTags := append(post.Hashtags, post.IndirectHashtags...)
+
+			// Il faut au moins 2 tags pour créer un segment (une arête) dans le graphe
+			if len(allTags) > 1 {
+
+				// ── ÉTAPE 3 : FILTRAGE SÉMANTIQUE DU BRUIT ──────────────────────
+				semanticTags := filterSemanticTags(allTags)
+
+				// ── ÉTAPE 4 : MISE À JOUR DU GRAPHE DE CO-OCCURRENCES (L1) ──────
+				if len(semanticTags) > 1 {
+					cache_service.UpdateTagCooccurrences(ctx, semanticTags, post.CreatedAt)
 				}
 			}
 		}
 	}
 }
 
+// filterSemanticTags nettoie la liste des tags pour ne conserver que la matière
+// sémantique utile au graphe de Markov. Elle exclut notamment les auto-tags d'utilisateurs.
 func filterSemanticTags(tags []string) []string {
 	semantic := make([]string, 0, len(tags))
+
 	for _, t := range tags {
-		if len(t) > 5 && t[:5] == "user_" {
+		// Exclusion des tags trop courts ou des tags d'identification d'utilisateurs
+		if len(t) > variables.GraphTagMinLength && t[:len(variables.GraphUserTagPrefix)] == variables.GraphUserTagPrefix {
 			continue
 		}
 		semantic = append(semantic, t)
 	}
+
 	return semantic
 }

@@ -1,5 +1,7 @@
 package variables
 
+import "time"
+
 // ############################################################################
 // # PARAMÈTRES ET CONSTANTES DU DOMAINE NOTIFICATIONS
 // ############################################################################
@@ -17,4 +19,16 @@ const (
 	WorkerQueueFirebase = "firebase"
 
 	MaxZsetNotification = 100
+)
+
+// ============================================================================
+// CONSTANTES SPÉCIFIQUES AU WORKER DE PUSH NOTIFICATIONS
+// ============================================================================
+const (
+	PushWorkerQueueName      = "worker:queue:firebase"
+	PushWorkerBLPopTimeout   = 2 * time.Second
+	PushWorkerDefaultTitle   = "Nubo"
+	PushWorkerDefaultBody    = "Nouvelle notification"
+	PushWorkerDefaultSound   = "default"
+	PushWorkerDefaultChannel = "default_channel"
 )

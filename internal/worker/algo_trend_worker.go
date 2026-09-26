@@ -13,13 +13,19 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
+// ############################################################################
+// # WORKER : HASHTAG TRENDS (ÉVALUATION DES TENDANCES MONDIALES)
+// ############################################################################
+
 // StartHashtagTrendCron lance l'évaluation des tendances mondiales de hashtags (TDD §3.3).
-// Il tourne toutes les 15 minutes pour maintenir le Top 100 des tags sans saturer le CPU.
+// Il tourne à intervalle régulier pour maintenir le Top 100 des tags sans saturer le CPU.
 func StartHashtagTrendCron(ctx context.Context) {
-	logger.Log.Info().Msg("Démarrage du Moteur de Tendances Hashtags (15m)...")
+	logger.Log.Info().Msg("Démarrage du Moteur de Tendances Hashtags...")
+
 	go func() {
-		ticker := time.NewTicker(15 * time.Minute)
+		ticker := time.NewTicker(variables.TrendCronInterval)
 		defer ticker.Stop()
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -31,37 +37,36 @@ func StartHashtagTrendCron(ctx context.Context) {
 	}()
 }
 
+// processHashtagTrends calcule le score de popularité des tags basés sur la viralité des posts récents.
 func processHashtagTrends(ctx context.Context) {
-	// 1. Extraction des meilleurs posts mondiaux (Most Cache L1)
+	// ── ÉTAPE 1 : EXTRACTION DES MEILLEURS POSTS MONDIAUX (L1) ──────────────
 	now := time.Now().UTC()
-	dateStr := now.Format("20060102") // Format attendu par UpdateTrendZSETs
+	dateStr := now.Format("20060102")
 
-	// Reconstruction de la clé physique du ZSET telle que définie dans le TDD / most_cache_service
+	// Reconstruction de la clé physique du ZSET Global
 	dailyGlobalKey := fmt.Sprintf(variables.RedisKeyTrendGlobalDaily, dateStr)
 
-	// Utilisation du client Redis brut (Rdb) en attendant la refonte des Collections
-	topPosts, err := redis.ZRevRangeWithScores(ctx, dailyGlobalKey, 0, 1000)
+	// Récupération du Top 1000 de la journée (O(log(N) + M))
+	topPosts, err := redis.ZRevRangeWithScores(ctx, dailyGlobalKey, 0, variables.TrendTopPostsLimit)
 	if err != nil || len(topPosts) == 0 {
-		return
+		return // Pas d'activité suffisante pour dégager une tendance
 	}
 
 	postScoresByTag := make(map[string]map[int64]float64)
 	postAgesByTag := make(map[string]map[int64]float64)
 
-	// 2. Hydratation et Groupement O(N)
+	// ── ÉTAPE 2 : HYDRATATION ET GROUPEMENT O(N) ────────────────────────────
 	for _, item := range topPosts {
 		var postID int64
 		var errParse error
 
-		// go-redis renvoie Member sous forme d'interface{}.
-		// Selon la façon dont il a été inséré, ça peut être un string ou autre.
+		// Normalisation robuste du type renvoyé par go-redis
 		switch v := item.Member.(type) {
 		case string:
 			postID, errParse = strconv.ParseInt(v, 10, 64)
 		case []byte:
 			postID, errParse = strconv.ParseInt(string(v), 10, 64)
 		default:
-			// Si c'est un format inattendu, on force la conversion string
 			postID, errParse = strconv.ParseInt(fmt.Sprintf("%v", v), 10, 64)
 		}
 
@@ -71,16 +76,15 @@ func processHashtagTrends(ctx context.Context) {
 
 		score := item.Score
 
-		// Hydratation via le Cache L1 (ou L2/L3 en fallback)
-		// (getPostWithFallback est déjà défini dans most_cache_worker.go)
-		p, err := getPostWithFallback(ctx, postID)
-		if err != nil || p.Visibility != 0 {
-			continue // Sécurité : On ignore les posts privés pour les tendances mondiales
+		// Hydratation via le Fallback global (L1 -> L2 -> L3)
+		p, errHydration := getPostWithFallback(ctx, postID)
+		if errHydration != nil || p.Visibility != variables.PostVisibilityAll {
+			continue // Sécurité : Les posts privés (Abonnés/Amis) n'influencent pas les tendances mondiales
 		}
 
 		ageSeconds := now.Sub(domain.MillisToTime(p.CreatedAt)).Seconds()
 
-		// ✅ NOUVEAU : Agrégation par Tag (On fusionne Directs et Indirects)
+		// Fusion des Tags Directs et Indirects pour une couverture sémantique totale
 		allTags := append(p.Hashtags, p.IndirectHashtags...)
 		for _, tag := range allTags {
 			if postScoresByTag[tag] == nil {
@@ -92,7 +96,7 @@ func processHashtagTrends(ctx context.Context) {
 		}
 	}
 
-	// 3. Calcul mathématique de T(h,t) et Persistance via Pipeline
+	// ── ÉTAPE 3 : CALCUL MATHÉMATIQUE ET PERSISTANCE (PIPELINE L1) ──────────
 	if len(postScoresByTag) > 0 {
 		pipe := redis.Tags.Pipeline()
 		trendingKey := redis.Tags.Key("trending")
@@ -100,7 +104,7 @@ func processHashtagTrends(ctx context.Context) {
 		for tag, scoresMap := range postScoresByTag {
 			agesMap := postAgesByTag[tag]
 
-			// Appel du moteur mathématique pur (TDD §3.3)
+			// Appel du moteur mathématique pur (Implémentation du TDD §3.3)
 			trendScore := service.ComputeHashtagTrendScore(scoresMap, agesMap)
 
 			if trendScore > 0 {
@@ -108,14 +112,14 @@ func processHashtagTrends(ctx context.Context) {
 			}
 		}
 
-		// Protection RAM (LFU/Cap) : On ne conserve que le Top 100 des tendances
-		pipe.Do(ctx, "ZREMRANGEBYRANK", trendingKey, 0, -101)
+		// Protection RAM stricte (LFU/Cap) : On ne conserve que le Top 100
+		pipe.Do(ctx, "ZREMRANGEBYRANK", trendingKey, 0, variables.TrendTagsRetention)
 
-		_, err = pipe.Exec(ctx)
-		if err != nil {
-			logger.Log.Error().Err(err).Msg("Hashtag Trends : Échec de la sauvegarde L1")
+		_, errPipe := pipe.Exec(ctx)
+		if errPipe != nil {
+			logger.Log.Error().Err(errPipe).Msg("Échec critique lors de l'enregistrement des tendances Hashtags en RAM (L1)")
 		} else {
-			logger.Log.Info().Msg("Hashtag Trends : Mise à jour du Top 100 réussie.")
+			logger.Log.Info().Msg("Moteur de Tendances : Mise à jour du Top 100 mondial réussie.")
 		}
 	}
 }

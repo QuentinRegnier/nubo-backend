@@ -1,5 +1,7 @@
 package variables
 
+import "time"
+
 // ============================================================================
 // PARAMÈTRES DE CONFIGURATION — ALGORITHMES DE RECOMMANDATION v1.0
 // Source: TDD Algorithmes Recommandation, Section 6
@@ -43,4 +45,50 @@ const (
 	// V(p) = exp(-γ_auth · k_author(p, W))
 	// k=0→V=1.0 ; k=1→V≈0.607 ; k=2→V≈0.368
 	TDDGammaAuth = 0.50 // γ_auth — taux de pénalité diversité auteur
+)
+
+// ============================================================================
+// PARAMÈTRES DE CONFIGURATION — ALGORITHMES DE RECOMMANDATION
+// (La "Table de mixage" - Fusionnée depuis l'ancien TDD)
+// ============================================================================
+
+const (
+
+	// --- PILIER 3 : SCORE PERSONNALISÉ R(u,p) ---
+	TDDRho  = 0.65 // ρ — poids composante vectorielle vs sociale
+	TDDEta  = 0.20 // η — boost amis directs
+	TDDEtaP = 0.10 // η_P — poids corrélation de Pearson engagement
+
+	TDDLambdaMMR = 0.72 // λ_d — paramètre de diversité MMR
+
+	TDDDeltaInvalid = 0.15 // δ_inval — seuil d'invalidation du cache_service feed_service
+
+	TDDLSHBits                = 32        // b — bits de projection aléatoire (SimHash)
+	TDDLSHSeed                = int64(42) // Graine LSH
+	TDDLSHConfidenceThreshold = 0.70
+)
+
+// ============================================================================
+// CONSTANTES SPÉCIFIQUES AU WORKER TIME-DECAY
+// ============================================================================
+const (
+	TimeDecayJobBuffer = 10000 // Taille maximale de la file d'attente en RAM
+)
+
+// ============================================================================
+// CONSTANTES SPÉCIFIQUES AU WORKER DE TENDANCES (TRENDS)
+// ============================================================================
+const (
+	TrendCronInterval  = 15 * time.Minute // Fréquence d'actualisation des tendances
+	TrendTopPostsLimit = 1000             // Volume de posts analysés pour dégager une tendance
+	TrendTagsRetention = -101             // Rétention ZSET (Garde les 100 premiers, purge le reste)
+)
+
+// ============================================================================
+// CONSTANTES SPÉCIFIQUES AU WORKER DE CANONICALISATION DES TAGS
+// ============================================================================
+const (
+	HashtagCanonCronInterval = 24 * time.Hour // Fréquence d'exécution du Job (Nuit)
+	HashtagCanonMinLength    = 4              // Longueur minimum pour éviter les faux positifs (ex: "ia", "it")
+	HashtagCanonMaxDistance  = 0.15           // Seuil TDD de Levenshtein (Tolérance de 15% de différence)
 )

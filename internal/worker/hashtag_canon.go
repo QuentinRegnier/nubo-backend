@@ -8,17 +8,24 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
+	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/lib/pq"
 )
+
+// ############################################################################
+// # WORKER : HASHTAG CANON (RÉSOLUTION DES FAUTES DE FRAPPE & ALIASING)
+// ############################################################################
 
 // StartHashtagCanonCron lance un worker qui calcule les similarités (Levenshtein)
 // entre les tags communautaires toutes les 24h pour absorber les fautes de frappe.
 func StartHashtagCanonCron(ctx context.Context) {
-	logger.Log.Info().Msg("Démarrage du Canoniseur de Hashtags (24h)...")
+	logger.Log.Info().Msg("Démarrage du Canoniseur de Hashtags (Cron 24h)...")
+
 	go func() {
-		// En production, utiliser un vrai cron pour viser 03:00 AM
-		ticker := time.NewTicker(24 * time.Hour)
+		// En production, utiliser un vrai cron pour viser les heures creuses (ex: 03:00 AM)
+		ticker := time.NewTicker(variables.HashtagCanonCronInterval)
 		defer ticker.Stop()
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -30,41 +37,46 @@ func StartHashtagCanonCron(ctx context.Context) {
 	}()
 }
 
+// processHashtagCanonicalization est le cœur de l'algorithme de nettoyage.
 func processHashtagCanonicalization(ctx context.Context) {
-	// 1. Récupération de tous les tags communautaires actifs via Collection
+	// ── ÉTAPE 1 : RÉCUPÉRATION DU RÉSERVOIR DE TAGS COMMUNAUTAIRES (L1) ─────
 	tags, err := redis.Tags.SMembers(ctx, "active")
 	if err != nil || len(tags) == 0 {
-		return
+		return // Aucun nouveau tag à analyser
 	}
 
-	// 1.5 PERSISTANCE SQL (Option B : Immortalisation des tags)
+	// ── ÉTAPE 2 : PERSISTANCE SQL DÉFINITIVE (L3) ───────────────────────────
+	// Immortalisation des tags dans la base de données relationnelle
 	persistCommunityTags(ctx, tags)
 
+	// S'il n'y a pas assez de tags pour faire des paires de comparaison, on s'arrête
 	if len(tags) < 2 {
-		return // Pas assez de tags pour faire un calcul de distance
+		return
 	}
 
 	logger.Log.Info().Int("count", len(tags)).Msg("Canonicalisation de tags communautaires en cours...")
 	aliasMap := make(map[string]string)
 
-	// Algorithme O(N^2) : Comparaison par paires.
-	// (Gérable jusqu'à ~100k tags car exécuté 1 seule fois par nuit).
+	// ── ÉTAPE 3 : ALGORITHME D'APPARIEMENT O(N²) ────────────────────────────
+	// Comparaison par paires. (Gérable jusqu'à ~100k tags car exécuté 1 seule fois par nuit).
 	for i := 0; i < len(tags); i++ {
 		for j := i + 1; j < len(tags); j++ {
 			t1 := tags[i]
 			t2 := tags[j]
 
-			// On ignore les tags très courts pour éviter les faux positifs (ex: "ia" et "it")
-			if len(t1) < 4 || len(t2) < 4 {
+			// Protection contre les faux positifs sur des mots trop courts
+			if len(t1) < variables.HashtagCanonMinLength || len(t2) < variables.HashtagCanonMinLength {
 				continue
 			}
 
-			// Utilisation du Levenshtein normalisé de Claude (Gère le Français et les Runes)
+			// Calcul de la distance d'édition (Levenshtein) normalisée
 			distNorm := NormalizedLevenshtein(t1, t2)
 
-			// Critère TDD : Distance <= 0.15 ET même racine morphologique
-			if distNorm <= 0.15 && service.StemHashtag(t1) == service.StemHashtag(t2) {
+			// Critère strict : Distance <= 15% ET même racine morphologique (Stemming)
+			if distNorm <= variables.HashtagCanonMaxDistance && service.StemHashtag(t1) == service.StemHashtag(t2) {
 				canon, typo := t1, t2
+
+				// Règle empirique : Le mot le plus long est souvent le plus correct
 				if len(t2) < len(t1) {
 					canon, typo = t2, t1
 				}
@@ -73,48 +85,50 @@ func processHashtagCanonicalization(ctx context.Context) {
 		}
 	}
 
-	// 2. Sauvegarde des alias dans le HASH Redis (Pipeline pour performance via Collection)
+	// ── ÉTAPE 4 : MISE À JOUR DU DICTIONNAIRE D'ALIAS (PIPELINE L1) ─────────
 	if len(aliasMap) > 0 {
 		pipe := redis.HashtagCanon.Pipeline()
 		for typo, canon := range aliasMap {
-			// On demande proprement la clé finale à la Collection
 			pipe.HSet(ctx, redis.HashtagCanon.Key("map"), typo, canon)
 		}
-		_, err := pipe.Exec(ctx)
-		if err == nil {
-			logger.Log.Info().Int("alias_count", len(aliasMap)).Msg("Canonicalisation terminée (Fautes de frappes mappées)")
+
+		_, errExec := pipe.Exec(ctx)
+		if errExec == nil {
+			logger.Log.Info().Int("alias_count", len(aliasMap)).Msg("Canonicalisation terminée : Dictionnaire de fautes de frappes mis à jour.")
 		} else {
-			logger.Log.Error().Err(err).Msg("Échec de la canonicalisation Redis")
+			logger.Log.Error().Err(errExec).Msg("Échec critique lors de l'enregistrement des alias dans Redis (L1)")
 		}
 	}
 }
 
+// ============================================================================
+// MOTEUR MATHÉMATIQUE DE DISTANCE D'ÉDITION
+// ============================================================================
+
 // NormalizedLevenshtein calcule la distance de Levenshtein normalisée.
-//
-// TDD §3.3 — Formule:
-//
-//	d_Lev(h_i, h_j) = Lev(h_i, h_j) / max(|h_i|, |h_j|)
-//
-// Retourne une valeur dans [0.0, 1.0]:
-//
-//	0.0 = chaînes identiques,  1.0 = chaînes totalement différentes.
+// TDD §3.3 — Formule: d_Lev(h_i, h_j) = Lev(h_i, h_j) / max(|h_i|, |h_j|)
+// Retourne une valeur dans [0.0, 1.0]: 0.0 = chaînes identiques, 1.0 = totalement différentes.
 func NormalizedLevenshtein(a, b string) float64 {
 	ra, rb := []rune(a), []rune(b)
 	la, lb := len(ra), len(rb)
+
 	maxLen := la
 	if lb > maxLen {
 		maxLen = lb
 	}
+
 	if maxLen == 0 {
 		return 0.0
 	}
+
 	return float64(levenshteinRunes(ra, rb)) / float64(maxLen)
 }
 
 // levenshteinRunes calcule la distance d'édition de Levenshtein entre deux slices de runes.
-// Implémentation optimisée en espace O(min(|a|,|b|)) via deux rangées glissantes.
+// Implémentation ultra-optimisée en espace O(min(|a|,|b|)) via deux rangées glissantes.
 func levenshteinRunes(a, b []rune) int {
 	la, lb := len(a), len(b)
+
 	// Optimisation: garantir |a| ≤ |b| pour minimiser l'allocation mémoire.
 	if la > lb {
 		a, b = b, a
@@ -142,6 +156,7 @@ func levenshteinRunes(a, b []rune) int {
 		}
 		prev, curr = curr, prev
 	}
+
 	return prev[la]
 }
 
@@ -176,8 +191,8 @@ func persistCommunityTags(ctx context.Context, tags []string) {
 	// Exécution atomique
 	_, err := postgres.PostgresDB.ExecContext(ctx, query, pq.Array(tags))
 	if err != nil {
-		logger.Log.Error().Err(err).Msg("Erreur lors de la persistance SQL des tags")
+		logger.Log.Error().Err(err).Msg("Échec lors de la persistance SQL des tags communautaires (L3)")
 	} else {
-		logger.Log.Info().Int("count", len(tags)).Msg("Persistance SQL des tags communautaires terminée.")
+		logger.Log.Info().Int("count", len(tags)).Msg("Persistance SQL des tags communautaires terminée avec succès.")
 	}
 }

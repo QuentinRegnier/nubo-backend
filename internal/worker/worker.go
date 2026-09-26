@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
@@ -12,63 +13,69 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 )
 
-// --- CONFIGURATION DU CERVEAU (Modifiable via .env) ---
+// ============================================================================
+// CONSTANTES DE CONFIGURATION DU CERVEAU ASYNCHRONE
+// ============================================================================
 var (
-	MaxBatchSize int64
-	MinBackoff   time.Duration
-	MaxBackoff   time.Duration
+	// Limite dynamique du nombre d'événements traités en un seul cycle
+	MaxBatchSize int64 = 5000
+
+	// Backoff Minimum (Période d'hyperactivité : vitesse de scrutation max)
+	MinBackoff = 50 * time.Millisecond
+
+	// Backoff Maximum (Sommeil profond : pour économiser le CPU si la file est vide)
+	MaxBackoff = 1 * time.Second
 )
 
+// init surcharge les variables par défaut si elles sont définies dans le .env
 func init() {
-	// 1. Taille du Batch (Ex: 5000)
 	if val, err := strconv.ParseInt(os.Getenv("WORKER_MAX_BATCH_SIZE"), 10, 64); err == nil && val > 0 {
 		MaxBatchSize = val
-	} else {
-		MaxBatchSize = 5000 // Valeur par défaut
 	}
-
-	// 2. Backoff Minimum (Période d'hyperactivité, ex: 50ms)
 	if val, err := strconv.Atoi(os.Getenv("WORKER_MIN_BACKOFF_MS")); err == nil && val > 0 {
 		MinBackoff = time.Duration(val) * time.Millisecond
-	} else {
-		MinBackoff = 50 * time.Millisecond // Valeur par défaut
 	}
-
-	// 3. Backoff Maximum (Sommeil profond, ex: 1000ms)
 	if val, err := strconv.Atoi(os.Getenv("WORKER_MAX_BACKOFF_MS")); err == nil && val > 0 {
 		MaxBackoff = time.Duration(val) * time.Millisecond
-	} else {
-		MaxBackoff = 1 * time.Second // Valeur par défaut
 	}
 }
 
+// ############################################################################
+// # WORKER PRINCIPAL : MOTEUR DE DÉPILEMENT ET DE DISPATCH
+// ############################################################################
+
+// runWorker est la boucle infinie exécutée par chaque Shard.
+// Elle consomme les événements Redis et applique un backoff exponentiel en cas d'inactivité.
 func runWorker(ctx context.Context, shardID int) {
 	currentBackoff := MinBackoff
 
 	for {
-		// 1. Vérification de l'arrêt gracieux du serveur
+		// ── ÉTAPE 1 : ÉCOUTE DU SIGNAL D'ARRÊT GRACIEUX ─────────────────────
 		select {
 		case <-ctx.Done():
+			logger.Log.Info().Int("shard_id", shardID).Msg("Worker : Arrêt gracieux de la boucle de consommation.")
 			return
 		default:
 		}
 
-		// 2. Blocage absolu (0 CPU) via BLMPOP / BLPOP
-		// On limite la taille via MaxBatchSize (dynamique)
+		// ── ÉTAPE 2 : DÉPILEMENT BLOQUANT (BLMPOP) ──────────────────────────
+		// Le worker se met en pause (0 CPU) jusqu'à ce qu'un événement arrive
+		// ou que le timeout de Redis soit atteint.
 		events, err := redis.PopSmartBatchBlocking(ctx, shardID, MaxBatchSize)
 		if err != nil {
-			logger.Log.Error().Err(err).Int("shard_id", shardID).Msg("Worker Redis Error (BLMPOP)")
-			time.Sleep(1 * time.Second)
+			logger.Log.Error().Err(err).Int("shard_id", shardID).Msg("Worker Redis : Échec critique lors du dépilement (BLMPOP)")
+			time.Sleep(1 * time.Second) // Temporisation de sécurité en cas de crash réseau
 			continue
 		}
 
-		// 3. Traitement dynamique
+		// ── ÉTAPE 3 : TRAITEMENT ET GESTION DE L'ÉNERGIE (BACKOFF) ──────────
 		if len(events) > 0 {
 			processBatch(ctx, events)
-			// RESET DU SOMMEIL : on a trouvé du travail, on repasse à la vitesse max !
+
+			// RESET DU SOMMEIL : on a trouvé du travail, on repasse en hyperactivité !
 			currentBackoff = MinBackoff
 		} else {
-			// SLEEP : la file était vide (malgré le blocage), on s'endort doucement
+			// SLEEP : la file était vide (malgré le blocage initial), on s'endort doucement.
 			time.Sleep(currentBackoff)
 			currentBackoff *= 2
 			if currentBackoff > MaxBackoff {
@@ -78,13 +85,18 @@ func runWorker(ctx context.Context, shardID int) {
 	}
 }
 
-// processBatch trie les événements et les envoie aux bases ET au cache algorithmique
+// processBatch orchestre le traitement d'un lot d'événements. Il filtre, route vers les BDD,
+// attend leur validation, puis met à jour les algorithmes en RAM.
 func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 
-	// 🛡️ BOUCLIER DE SÉCURITÉ ASYNCHRONE
-	// On purge les événements illégaux AVANT de les distribuer aux BDD et aux Caches.
+	// ── ÉTAPE 1 : BOUCLIER DE SÉCURITÉ (PURIFICATION ASYNCHRONE) ────────────
+	// On purge les événements illégaux ou corrompus AVANT de les distribuer.
 	validEvents := purifyBatch(ctx, events)
+	if len(validEvents) == 0 {
+		return // Tout a été rejeté par le pare-feu
+	}
 
+	// ── ÉTAPE 2 : ROUTAGE VERS LES BASES DE DONNÉES ─────────────────────────
 	var mongoEvents []redis.AsyncEvent
 	var pgEvents []redis.AsyncEvent
 
@@ -97,99 +109,111 @@ func processBatch(ctx context.Context, events []redis.AsyncEvent) {
 		}
 	}
 
-	// Étape 1 : Exécution Parallèle des bases de données (Mongo & Postgres)
-	done := make(chan bool)
-	go func() {
-		if len(mongoEvents) > 0 {
+	// ── ÉTAPE 3 : PERSISTANCE CONCOURANTE (L2 & L3) ─────────────────────────
+	var wg sync.WaitGroup
+
+	if len(mongoEvents) > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			flushMongo(ctx, mongoEvents)
-		}
-		done <- true
-	}()
-
-	go func() {
-		if len(pgEvents) > 0 {
-			flushPostgres(ctx, pgEvents)
-		}
-		done <- true
-	}()
-
-	// BARRIÈRE DE SYNCHRONISATION
-	// On DOIT attendre que la BDD ait validé les transactions sur le disque
-	// avant de mettre à jour le cache, sinon on lira des valeurs périmées !
-	<-done
-	<-done
-
-	// ÉTAPE 2 : MISE À JOUR DES CACHES ALGORITHMIQUES
-	// À cet instant, on est certain que le disque est à jour.
-	if len(validEvents) > 0 {
-
-		// Le Cerveau (ZSETs et Recommandations)
-		go updateMostCache(ctx, validEvents)
-
-		// Étape 3 : Fan-Out Social de masse (Distribution dans les boîtes aux lettres du Speed Cache)
-		// S'exécute de manière ultra-rapide en RAM juste après la validation BDD
-		handleSocialFanOut(ctx, validEvents)
-
-		// Étape 4 : Mise à jour du Graphe Sémantique (Émergence Collective)
-		// Crée les segments (arêtes) entre les tags co-occurrents via le modèle de Markov
-		handleGraphUpdate(ctx, validEvents)
+		}()
 	}
+
+	if len(pgEvents) > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			flushPostgres(ctx, pgEvents)
+		}()
+	}
+
+	// ── ÉTAPE 4 : BARRIÈRE DE SYNCHRONISATION ───────────────────────────────
+	// On DOIT attendre que la BDD (L2/L3) ait validé les transactions sur le disque.
+	// Si on mettait à jour le cache algorithmique avant, une erreur BDD créerait
+	// une désynchronisation permanente entre la RAM et le disque.
+	wg.Wait()
+
+	// ── ÉTAPE 5 : HYDRATATION DES CACHES ALGORITHMIQUES (L1) ────────────────
+	// À cet instant, on est certain que le disque est à jour.
+
+	// 1. Le Cerveau (ZSETs et Vecteurs de Recommandations ML)
+	go updateMostCache(ctx, validEvents)
+
+	// 2. Fan-Out Social de masse (Distribution dans les boîtes aux lettres L1)
+	handleSocialFanOut(ctx, validEvents)
+
+	// 3. Mise à jour du Graphe Sémantique (Émergence Collective de Markov)
+	handleGraphUpdate(ctx, validEvents)
 }
 
-// purifyBatch agit comme un pare-feu asynchrone.
-// Il élimine les événements illégaux (ex: un Like sur un post privé) pour protéger
-// Postgres, Mongo, et le Most Cache en un seul point de contrôle.
+// ============================================================================
+// PARE-FEU ASYNCHRONE (BOUCLIER DE SÉCURITÉ)
+// ============================================================================
+
+// purifyBatch élimine les événements illégaux. Il garantit qu'un utilisateur banni
+// ou n'ayant pas les droits ne puisse pas forcer des incrémentations de compteurs en BDD.
 func purifyBatch(ctx context.Context, events []redis.AsyncEvent) []redis.AsyncEvent {
 	validEvents := make([]redis.AsyncEvent, 0, len(events))
 
 	for _, e := range events {
-		// On inspecte les interactions ET les Commentaires
+
+		// On inspecte exclusivement les événements d'interactions (vulnérables au brigading)
 		if e.Type == redis.EntityLike || e.Type == redis.EntityView || e.Type == redis.EntityComment {
-			jsonBytes, err := json.Marshal(e.Payload)
-			if err != nil {
-				continue // Payload corrompu, on drop
+			jsonBytes, errMarshal := json.Marshal(e.Payload)
+			if errMarshal != nil {
+				continue // Payload corrompu, événement détruit
 			}
 
+			// Extraction générique des IDs cibles
 			var payload struct {
 				PostID   int64 `json:"post_id"`
 				TargetID int64 `json:"target_id"` // Historique
 				UserID   int64 `json:"user_id"`
 			}
-			if err := json.Unmarshal(jsonBytes, &payload); err == nil {
+
+			if errUnmarshal := json.Unmarshal(jsonBytes, &payload); errUnmarshal == nil {
 				targetID := payload.TargetID
 				if payload.PostID != 0 {
 					targetID = payload.PostID
 				}
 
 				if targetID != 0 && payload.UserID != 0 {
-					// VÉRIFICATION DES DROITS (Cascade L1 -> L2 -> L3)
-					// (getPostWithFallback est défini dans most_cache_worker.go et accessible ici)
-					p, err := getPostWithFallback(ctx, targetID)
+					// ── CONTRÔLE DE SÉCURITÉ (CASCADE L1 -> L2 -> L3) ───────────────
+					// On doit s'assurer que le Post existe toujours et récupérer ses règles.
+					// (getPostWithFallback est défini dans most_cache_worker.go)
+					p, errFallback := getPostWithFallback(ctx, targetID)
 
-					// Règle 1 : Post supprimé ou introuvable
-					if err != nil || p.Visibility == -1 {
-						continue // Événement détruit
+					// Règle 1 : Post supprimé (Soft Delete ou inexistant)
+					if errFallback != nil || p.Visibility == -1 {
+						continue // L'interaction cible un fantôme -> Événement détruit
 					}
 
-					// Règle 2 : Matrice de Confidentialité
+					// Règle 2 : Application de la Matrice de Confidentialité
 					isAuthor := p.UserID == payload.UserID
 					if !isAuthor {
 						relationState := cache_service.RelationValue(ctx, p.UserID, payload.UserID)
+
+						// A. L'utilisateur est bloqué par l'auteur
 						if relationState == -1 {
-							continue // Hacker banni -> Événement détruit
+							continue
 						}
+						// B. Le post est réservé aux Abonnés et l'utilisateur ne l'est pas
 						if p.Visibility == 1 && relationState < 1 {
-							continue // Réservé Abonnés -> Événement détruit
+							continue
 						}
+						// C. Le post est réservé aux Amis et l'utilisateur ne l'est pas
 						if p.Visibility == 2 && relationState != 2 {
-							continue // Réservé Amis -> Événement détruit
+							continue
 						}
 					}
 				}
+			} else {
+				continue // Structure du payload invalide
 			}
 		}
 
-		// Si l'événement survit au pare-feu (ou si ce n'est pas une interaction), on l'accepte
+		// L'événement a survécu au pare-feu (ou ne nécessitait pas d'inspection), on l'accepte
 		validEvents = append(validEvents, e)
 	}
 
