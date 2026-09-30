@@ -5,6 +5,7 @@ import (
 	"database/sql"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
@@ -14,7 +15,8 @@ func FuncSearchPostIDsByTag(ctx context.Context, tag string, orderMode int, offs
 	query := `SELECT id FROM content.func_search_post_ids_by_tag($1, $2::smallint, $3::integer, $4::integer)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, tag, orderMode, offset, limit)
 	if err != nil {
-		return nil, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête SQL (QueryContext)")
+		return nil, nubo_error.NewInternal()
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()

@@ -7,11 +7,12 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 )
 
 // MongoGetMember récupère le payload complet d'un membre avec le Smart Fallback (Retard BDD)
-func MongoGetMember(convID int64, userID int64) (member_models.MemberPayload, error) {
+func MongoGetMember(ctx context.Context, convID int64, userID int64) (member_models.MemberPayload, error) {
 	var mem member_models.MemberPayload
 
 	filter := map[string]any{"conversation_id": convID, "user_id": userID}
@@ -21,7 +22,8 @@ func MongoGetMember(convID int64, userID int64) (member_models.MemberPayload, er
 	}
 
 	if err := pkg.ToStruct(docs[0], &mem); err != nil {
-		return mem, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Échec de la conversion du document MongoDB en structure membre (ToStruct)")
+		return mem, nubo_error.NewInternal()
 	}
 
 	// SMART RE-COUNT : Si le compteur est à 0 ou qu'on a plus de 5s de retard

@@ -37,7 +37,7 @@ func Login(input auth_models.LoginInput, ipAddresses []string) (int64, auth_mode
 	// ── ÉTAPE 1 : CHARGEMENT DE L'UTILISATEUR (CASCADE L2 -> L3) ────────────
 
 	// Tentative L2 (MongoDB - Warm Storage)
-	userPayload, errMongo := mongo.MongoLoadUser(-1, "", input.Email, "")
+	userPayload, errMongo := mongo.MongoLoadUser(ctx, -1, "", input.Email, "")
 	if errMongo != nil || userPayload.ID == 0 {
 		if errMongo != nil {
 			logger.Log.Warn().Err(errMongo).Str("email", input.Email).Msg("Mongo L2 : Utilisateur absent ou erreur de connexion.")
@@ -45,7 +45,7 @@ func Login(input auth_models.LoginInput, ipAddresses []string) (int64, auth_mode
 
 		// FALLBACK L3 (PostgreSQL - Cold Storage)
 		var errPg error
-		userPayload, errPg = postgresgo.FuncLoadUser(-1, "", input.Email, "")
+		userPayload, errPg = postgresgo.FuncLoadUser(ctx, -1, "", input.Email, "")
 		if errPg != nil {
 			return -1, auth_models.SessionsPayload{}, "", nubo_error.NewInternal()
 		}
@@ -87,11 +87,11 @@ func Login(input auth_models.LoginInput, ipAddresses []string) (int64, auth_mode
 
 	if sessionPayload.ID == 0 {
 		// FALLBACK L2 (Mongo)
-		sessionPayload, _ = mongo.MongoLoadSession(userPayload.ID, deviceFirebaseID, "", "")
+		sessionPayload, _ = mongo.MongoLoadSession(ctx, userPayload.ID, deviceFirebaseID, "", "")
 
 		if sessionPayload.ID == 0 {
 			// FALLBACK L3 (Postgres)
-			sessionPayload, _ = postgresgo.FuncLoadSession(-1, userPayload.ID, deviceFirebaseID, "")
+			sessionPayload, _ = postgresgo.FuncLoadSession(ctx, -1, userPayload.ID, deviceFirebaseID, "")
 
 			if sessionPayload.ID != 0 {
 				// AUTO-GUÉRISON L3 -> L2

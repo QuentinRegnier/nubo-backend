@@ -31,7 +31,7 @@ func GetSavedPosts(ctx context.Context, userID int64, limit int, offset int) ([]
 	} else {
 
 		// ── ÉTAPE 2 : FALLBACK L2 (MONGODB WARM STORAGE) ────────────────────
-		savedPayloadsFromMongo, errMongo := mongo.MongoLoadSavedPosts(userID, int64(limit), int64(offset))
+		savedPayloadsFromMongo, errMongo := mongo.MongoLoadSavedPosts(ctx, userID, int64(limit), int64(offset))
 
 		if errMongo == nil && len(savedPayloadsFromMongo) > 0 {
 			for _, savedPayload := range savedPayloadsFromMongo {

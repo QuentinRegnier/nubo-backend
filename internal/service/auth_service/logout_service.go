@@ -31,11 +31,11 @@ func Logout(ctx context.Context, callerID int64, firebaseInstallationID string) 
 
 	if sessionPayload.ID == 0 {
 		// FALLBACK L2 (Mongo - Warm Storage)
-		sessionPayload, _ = mongo.MongoLoadSession(callerID, firebaseInstallationID, "", "")
+		sessionPayload, _ = mongo.MongoLoadSession(ctx, callerID, firebaseInstallationID, "", "")
 
 		if sessionPayload.ID == 0 {
 			// FALLBACK L3 (Postgres - Cold Storage)
-			sessionPg, errPg := postgres.FuncLoadSession(-1, callerID, firebaseInstallationID, "")
+			sessionPg, errPg := postgres.FuncLoadSession(ctx, -1, callerID, firebaseInstallationID, "")
 			if errPg != nil {
 				// On loggue l'erreur interne, mais on ne la remonte pas au client.
 				logger.Log.Error().Err(errPg).Msg("Erreur lors du fallback L3 pour le Logout")

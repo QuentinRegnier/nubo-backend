@@ -1,10 +1,12 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
@@ -18,11 +20,12 @@ type RelationSeedPayload struct {
 }
 
 // FuncLoadRelationsPaginated appelle la fonction SQL auth.func_load_relations_paginated
-func FuncLoadRelationsPaginated(limit, offset int) ([]RelationSeedPayload, error) {
+func FuncLoadRelationsPaginated(ctx context.Context, limit, offset int) ([]RelationSeedPayload, error) {
 	query := `SELECT * FROM auth.func_load_relations_paginated($1, $2)`
 	rows, err := postgres.PostgresDB.Query(query, limit, offset)
 	if err != nil {
-		return nil, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête SQL (Query)")
+		return nil, nubo_error.NewInternal()
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()

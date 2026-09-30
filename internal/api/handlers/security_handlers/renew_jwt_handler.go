@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/security_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
@@ -120,13 +121,15 @@ func RenewJWT(c *gin.Context) {
 	// 5. Génération Nouveau JWT
 	newJWT, err := pkg.GenerateToken(userID, firebaseInstallationID, variables.JWTExpirationSeconds)
 	if err != nil {
-		nubo_error.RespondWithError(c, nubo_error.NewInternal(err))
+		nubo_log.Error(c).Err(err).Msg("Échec de la génération du JWT")
+		nubo_error.RespondWithError(c, nubo_error.NewInternal())
 		return
 	}
 
 	// 6. Rotation du Ratchet & Mise à jour Session
 	if err := security.RotateRatchet(c, userID, firebaseInstallationID, clientSecret, authHeader); err != nil {
-		nubo_error.RespondWithError(c, err)
+		nubo_log.Error(c).Err(err).Msg("Échec de la rotation cryptographique (RotateRatchet)")
+		nubo_error.RespondWithError(c, nubo_error.NewInternal())
 		return
 	}
 
@@ -138,7 +141,8 @@ func RenewJWT(c *gin.Context) {
 
 	respBytes, err := json.Marshal(respData)
 	if err != nil {
-		nubo_error.RespondWithError(c, nubo_error.NewInternal(err))
+		nubo_log.Error(c).Err(err).Msg("Échec de la sérialisation JSON de la réponse")
+		nubo_error.RespondWithError(c, nubo_error.NewInternal())
 		return
 	}
 

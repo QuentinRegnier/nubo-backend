@@ -38,7 +38,7 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 
 	if errCache != nil || conversationPayload.ID == 0 {
 		var errMongo error
-		conversationPayload, errMongo = mongo.MongoGetConversation(input.ConversationID)
+		conversationPayload, errMongo = mongo.MongoGetConversation(ctx, input.ConversationID)
 
 		if errMongo != nil || conversationPayload.ID == 0 {
 			var errPostgres error

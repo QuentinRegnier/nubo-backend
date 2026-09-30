@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
@@ -28,7 +29,8 @@ func FuncGetConversation(ctx context.Context, convID int64) (conversation_models
 		if errors.Is(err, sql.ErrNoRows) {
 			return c, nubo_error.NewNotFound("CONV_NOT_FOUND", "Conversation introuvable.", err)
 		}
-		return c, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Erreur SQL inattendue lors de la vérification de l'enregistrement")
+		return c, nubo_error.NewInternal()
 	}
 
 	if cTitle.Valid {

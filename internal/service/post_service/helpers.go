@@ -38,7 +38,7 @@ func fetchPostsCascade(ctx context.Context, requestedPostIDs []int64) map[int64]
 	// ── ÉTAPE 2 : TENTATIVE L2 (MONGODB WARM STORAGE) ───────────────────────
 	var postIDsMissingFromL2 []int64
 
-	postsFromMongo, errMongo := mongo.MongoLoadPosts(postIDsMissingFromL1)
+	postsFromMongo, errMongo := mongo.MongoLoadPosts(ctx, postIDsMissingFromL1)
 	if errMongo == nil && len(postsFromMongo) > 0 {
 		for _, postPayload := range postsFromMongo {
 			resolvedPostsMap[postPayload.ID] = postPayload
@@ -61,7 +61,7 @@ func fetchPostsCascade(ctx context.Context, requestedPostIDs []int64) map[int64]
 
 	// ── ÉTAPE 3 : SOURCE DE VÉRITÉ L3 (POSTGRESQL COLD STORAGE) ─────────────
 
-	postsFromPostgres, errPg := postgres.FuncLoadPosts(postIDsMissingFromL2, len(postIDsMissingFromL2), 0)
+	postsFromPostgres, errPg := postgres.FuncLoadPosts(ctx, postIDsMissingFromL2, len(postIDsMissingFromL2), 0)
 	if errPg != nil {
 		logger.Log.Error().Err(errPg).Msg("Erreur critique lors du Fetch L3 des posts manquants")
 		return resolvedPostsMap // Retourne la map partielle pour limiter les dégâts

@@ -2,11 +2,11 @@ package mongo
 
 import (
 	"context"
-	"errors"
 	"reflect"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/schemas"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"go.mongodb.org/mongo-driver/bson"
@@ -19,21 +19,21 @@ import (
 // ---------------- Initialisation ----------------
 // declarations globales
 var (
-	Users            *MongoCollection
-	UserSettings     *MongoCollection
-	Sessions         *MongoCollection
-	Relations        *MongoCollection
-	Posts            *MongoCollection
-	Comments         *MongoCollection
-	Likes            *MongoCollection
-	Media            *MongoCollection
-	Conversations    *MongoCollection
-	Members          *MongoCollection
-	Messages         *MongoCollection
-	MessageReactions *MongoCollection
-	Saved            *MongoCollection
+	Users            *Collection
+	UserSettings     *Collection
+	Sessions         *Collection
+	Relations        *Collection
+	Posts            *Collection
+	Comments         *Collection
+	Likes            *Collection
+	Media            *Collection
+	Conversations    *Collection
+	Members          *Collection
+	Messages         *Collection
+	MessageReactions *Collection
+	Saved            *Collection
 
-	Notifications *MongoCollection
+	Notifications *Collection
 )
 
 // InitCacheDatabase initialise la structure logique de Redis pour les caches
@@ -57,36 +57,36 @@ func InitCacheDatabase() {
 	schemaNotifications := schemas.NotificationsSchema
 
 	// variables globales
-	Users = NewMongoCollection("nubo_mongo", "auth.users", schemaUsers)
-	UserSettings = NewMongoCollection("nubo_mongo", "auth.user_settings", schemaUserSettings)
-	Sessions = NewMongoCollection("nubo_mongo", "auth.sessions", schemaSessions)
-	Relations = NewMongoCollection("nubo_mongo", "auth.relations", schemaRelations)
-	Posts = NewMongoCollection("nubo_mongo", "content.posts", schemaPosts)
-	Comments = NewMongoCollection("nubo_mongo", "content.comments", schemaComments)
-	Likes = NewMongoCollection("nubo_mongo", "content.likes", schemaLikes)
-	Media = NewMongoCollection("nubo_mongo", "content.media", schemaMedia)
-	Conversations = NewMongoCollection("nubo_mongo", "messaging.conversations", schemaConversations)
-	Members = NewMongoCollection("nubo_mongo", "messaging.members", schemaMembers)
-	Messages = NewMongoCollection("nubo_mongo", "messaging.messages", schemaMessages)
-	MessageReactions = NewMongoCollection("nubo_mongo", "messaging.message_reactions", schemaMessageReactions)
-	Saved = NewMongoCollection("nubo_mongo", "content.saved", schemaSaved)
+	Users = newMongoCollection("nubo_mongo", "auth.users", schemaUsers)
+	UserSettings = newMongoCollection("nubo_mongo", "auth.user_settings", schemaUserSettings)
+	Sessions = newMongoCollection("nubo_mongo", "auth.sessions", schemaSessions)
+	Relations = newMongoCollection("nubo_mongo", "auth.relations", schemaRelations)
+	Posts = newMongoCollection("nubo_mongo", "content.posts", schemaPosts)
+	Comments = newMongoCollection("nubo_mongo", "content.comments", schemaComments)
+	Likes = newMongoCollection("nubo_mongo", "content.likes", schemaLikes)
+	Media = newMongoCollection("nubo_mongo", "content.media", schemaMedia)
+	Conversations = newMongoCollection("nubo_mongo", "messaging.conversations", schemaConversations)
+	Members = newMongoCollection("nubo_mongo", "messaging.members", schemaMembers)
+	Messages = newMongoCollection("nubo_mongo", "messaging.messages", schemaMessages)
+	MessageReactions = newMongoCollection("nubo_mongo", "messaging.message_reactions", schemaMessageReactions)
+	Saved = newMongoCollection("nubo_mongo", "content.saved", schemaSaved)
 
-	Notifications = NewMongoCollection("nubo_mongo", "activity.notifications", schemaNotifications)
+	Notifications = newMongoCollection("nubo_mongo", "activity.notifications", schemaNotifications)
 
 	logger.Log.Info().Msg("Structure de collections MongoDB initialisée")
 }
 
 // ---------------- Collection et schéma ----------------
 
-type MongoCollection struct {
+type Collection struct {
 	Name   string
 	Schema map[string]reflect.Kind
 	DB     *mongo.Database
 }
 
-// NewMongoCollection crée une collection Mongo avec un schéma
-func NewMongoCollection(dbName, name string, schema map[string]reflect.Kind) *MongoCollection {
-	return &MongoCollection{
+// newMongoCollection crée une collection Mongo avec un schéma
+func newMongoCollection(dbName, name string, schema map[string]reflect.Kind) *Collection {
+	return &Collection{
 		Name:   name,
 		Schema: schema,
 		DB:     mongogo.MongoClient.Database(dbName),
@@ -94,12 +94,13 @@ func NewMongoCollection(dbName, name string, schema map[string]reflect.Kind) *Mo
 }
 
 // validate vérifie les types.
-// partial = true : permet de ne vérifier QUE les champs présents (pour Update)
-func (c *MongoCollection) validate(obj map[string]any, partial bool) error {
+// partial = true : permet de ne vérifier QUE les champs présents (pour update)
+func (c *Collection) validate(ctx context.Context, obj map[string]any, partial bool) error {
 	if !partial {
 		for field := range c.Schema {
 			if _, ok := obj[field]; !ok {
-				return nubo_error.NewInternal(errors.New("champ manquant dans MongoDB"))
+				nubo_log.Error(ctx).Str("field", field).Msg("Champ requis manquant dans le document MongoDB")
+				return nubo_error.NewInternal()
 			}
 		}
 	}
@@ -110,24 +111,24 @@ func (c *MongoCollection) validate(obj map[string]any, partial bool) error {
 			continue
 		}
 		if reflect.TypeOf(val).Kind() != expectedKind {
-			return nubo_error.NewInternal(errors.New("type invalide dans MongoDB"))
+			nubo_log.Error(ctx).Str("field", field).Str("expected_kind", expectedKind.String()).Str("actual_kind", reflect.TypeOf(val).Kind().String()).Msg("Type de donnée invalide détecté dans MongoDB")
+			return nubo_error.NewInternal()
 		}
 	}
 	return nil
 }
 
 // Set insère ou met à jour un objet dans la collection
-func (c *MongoCollection) Set(obj map[string]any) error {
+func (c *Collection) Set(obj map[string]any) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	// false = on veut valider que TOUS les champs sont là
-	if err := c.validate(obj, false); err != nil {
+	if err := c.validate(ctx, obj, false); err != nil {
 		return err
 	}
 
 	// AUTOMATISATION DU SLIDING TTL
 	obj["last_use"] = time.Now().UTC()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 
 	collection := c.DB.Collection(c.Name)
 
@@ -137,11 +138,12 @@ func (c *MongoCollection) Set(obj map[string]any) error {
 	opts := options.Update().SetUpsert(true)
 
 	_, err := collection.UpdateOne(ctx, filter, update, opts)
-	return nubo_error.NewInternal(err)
+	nubo_log.Error(ctx).Err(err).Msg("Échec de l'opération UpdateOne sur MongoDB")
+	return nubo_error.NewInternal()
 }
 
 // Get récupère les objets correspondant au filtre avec une projection optionnelle
-func (c *MongoCollection) Get(filter map[string]any, projection map[string]any) ([]map[string]any, error) {
+func (c *Collection) Get(filter map[string]any, projection map[string]any) ([]map[string]any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -154,7 +156,8 @@ func (c *MongoCollection) Get(filter map[string]any, projection map[string]any) 
 
 	cur, err := collection.Find(ctx, filter, opts)
 	if err != nil {
-		return nil, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Échec de l'opération Find sur MongoDB")
+		return nil, nubo_error.NewInternal()
 	}
 
 	defer func() {
@@ -165,14 +168,15 @@ func (c *MongoCollection) Get(filter map[string]any, projection map[string]any) 
 
 	var results []map[string]any
 	if err := cur.All(ctx, &results); err != nil {
-		return nil, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Échec de la lecture complète du curseur MongoDB (cur.All)")
+		return nil, nubo_error.NewInternal()
 	}
 
 	return results, nil
 }
 
 // Delete supprime les objets correspondant au filtre
-func (c *MongoCollection) Delete(filter map[string]any) error {
+func (c *Collection) Delete(filter map[string]any) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -181,18 +185,18 @@ func (c *MongoCollection) Delete(filter map[string]any) error {
 	return err
 }
 
-// Update met à jour les éléments correspondant au filtre avec les nouvelles valeurs fournies dans update
-func (c *MongoCollection) Update(filter map[string]any, update map[string]any) error {
+// update met à jour les éléments correspondant au filtre avec les nouvelles valeurs fournies dans update
+func (c *Collection) update(filter map[string]any, update map[string]any) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	// true = on valide seulement les champs qu'on veut mettre à jour
-	if err := c.validate(update, true); err != nil {
+	if err := c.validate(ctx, update, true); err != nil {
 		return err
 	}
 
 	// AUTOMATISATION DU SLIDING TTL (Y compris pour les Soft Deletes)
 	update["last_use"] = time.Now().UTC()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 
 	collection := c.DB.Collection(c.Name)
 	_, err := collection.UpdateMany(ctx, filter, bson.M{"$set": update})
@@ -200,7 +204,7 @@ func (c *MongoCollection) Update(filter map[string]any, update map[string]any) e
 }
 
 // GetPaginated récupère les objets avec pagination (Skip/Limit) et tri (Sort)
-func (c *MongoCollection) GetPaginated(filter map[string]any, sort map[string]any, skip int64, limit int64) ([]map[string]any, error) {
+func (c *Collection) GetPaginated(filter map[string]any, sort map[string]any, skip int64, limit int64) ([]map[string]any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -215,7 +219,8 @@ func (c *MongoCollection) GetPaginated(filter map[string]any, sort map[string]an
 
 	cur, err := collection.Find(ctx, filter, opts)
 	if err != nil {
-		return nil, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête Find sur MongoDB")
+		return nil, nubo_error.NewInternal()
 	}
 
 	defer func() {
@@ -226,7 +231,8 @@ func (c *MongoCollection) GetPaginated(filter map[string]any, sort map[string]an
 
 	var results []map[string]any
 	if err := cur.All(ctx, &results); err != nil {
-		return nil, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Échec de l'extraction des résultats du curseur MongoDB")
+		return nil, nubo_error.NewInternal()
 	}
 
 	return results, nil

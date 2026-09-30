@@ -12,8 +12,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -33,6 +33,12 @@ import (
 // AddMembersToConversation orchestre l'ajout direct de membres ou l'envoi d'invitations
 // en appliquant les matrices de confidentialité et les autorisations de groupe.
 func AddMembersToConversation(ctx context.Context, callerID int64, input conversation_models.AddMemberInput) (conversation_models.AddMemberOutput, error) {
+
+	nubo_log.Info(ctx).
+		Entity("conversation", input.ConversationID).
+		Int("participants_count", len(input.ParticipantIDs)).
+		Action(nubo_log.ActionUpdate).
+		Msg("Traitement d'une demande d'ajout de membres")
 
 	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS DU DEMANDEUR (CALLER) ────────────────────
 	callerMember, errSecurity := security_service.LeftMember(ctx, input.ConversationID, callerID)
@@ -142,7 +148,12 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 
 			errEnqueue := redis.EnqueueDB(ctx, memberPayload.ID, conversationPayload.ID, redis.EntityMembers, redis.ActionCreate, memberPayload, redis.TargetAll)
 			if errEnqueue != nil {
-				logger.Log.Error().Err(errEnqueue).Int64("user_id", targetUserID).Msg("Échec de mise en file de l'ajout de membre")
+				nubo_log.Error(ctx).
+					Err(errEnqueue).
+					Entity(string(redis.EntityMembers), memberPayload.ID).
+					Action(nubo_log.ActionCreate).
+					Int64("target_user_id", targetUserID).
+					Msg("Échec du Write-Behind lors de l'ajout d'un membre")
 			}
 
 			// Message système d'intégration

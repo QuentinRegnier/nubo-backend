@@ -35,7 +35,7 @@ func GetPostLikes(ctx context.Context, input like_models.GetPostLikesInput) (lik
 		isPostFound = true
 	} else {
 		// TENTATIVE L2 (MongoDB - Warm Storage)
-		postsFromMongo, errMongo := mongo.MongoLoadPosts([]int64{input.PostID})
+		postsFromMongo, errMongo := mongo.MongoLoadPosts(ctx, []int64{input.PostID})
 		if errMongo == nil && len(postsFromMongo) > 0 {
 			postPayload = postsFromMongo[0]
 			isPostFound = true
@@ -46,7 +46,7 @@ func GetPostLikes(ctx context.Context, input like_models.GetPostLikesInput) (lik
 
 		} else {
 			// TENTATIVE L3 (PostgreSQL - Cold Storage)
-			postsFromPostgres, errPg := postgres.FuncLoadPosts([]int64{input.PostID}, 1, 0)
+			postsFromPostgres, errPg := postgres.FuncLoadPosts(ctx, []int64{input.PostID}, 1, 0)
 			if errPg != nil {
 				logger.Log.Error().Err(errPg).Int64("post_id", input.PostID).Msg("Erreur L3 lors de la vérification du post pour GetPostLikes")
 				return like_models.GetPostLikesOutput{}, nubo_error.NewInternal()
@@ -90,7 +90,7 @@ func GetPostLikes(ctx context.Context, input like_models.GetPostLikesInput) (lik
 	var userIDsThatLiked []int64
 
 	// On tente Mongo (L2) d'abord
-	userIDsThatLiked, errMongo := mongo.MongoGetPostLikes(input.PostID, input.Limit, input.Offset)
+	userIDsThatLiked, errMongo := mongo.MongoGetPostLikes(ctx, input.PostID, input.Limit, input.Offset)
 
 	// Si Mongo échoue ou ne renvoie rien (Cache miss), on tape Postgres (L3)
 	if errMongo != nil || len(userIDsThatLiked) == 0 {

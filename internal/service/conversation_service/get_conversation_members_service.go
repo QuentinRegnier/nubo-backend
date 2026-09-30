@@ -35,7 +35,7 @@ func GetConversationMembers(ctx context.Context, callerID int64, input member_mo
 		// ── ÉTAPE 2 : IDENTIFICATION DU TYPE DE CONVERSATION ───────────────────
 		conversationPayload, errConv := object_cache_service.GetConversationFromObjectCache(ctx, conversationID)
 		if errConv != nil || conversationPayload.ID == 0 {
-			conversationPayload, _ = mongo.MongoGetConversation(conversationID)
+			conversationPayload, _ = mongo.MongoGetConversation(ctx, conversationID)
 			if conversationPayload.ID == 0 {
 				var errPg error
 				conversationPayload, errPg = postgres.FuncGetConversation(ctx, conversationID)
@@ -77,7 +77,7 @@ func GetConversationMembers(ctx context.Context, callerID int64, input member_mo
 
 			if errCacheMember != nil || memberPayload.ID == 0 {
 				var errMongo error
-				memberPayload, errMongo = mongo.MongoGetMember(conversationID, participantUserID)
+				memberPayload, errMongo = mongo.MongoGetMember(ctx, conversationID, participantUserID)
 				if errMongo == nil && memberPayload.ID != 0 {
 					go func(m member_models.MemberPayload) {
 						_ = object_cache_service.SetMemberInObjectCache(context.Background(), m)

@@ -20,14 +20,14 @@ import (
 // ############################################################################
 
 // SeedMostCache lit l'intégralité de Postgres pour populer le L1 (RAM), L2 (Mongo) et le MOST Cache.
-func SeedMostCache() error {
+func SeedMostCache(ctx context.Context) error {
 	backgroundCtx := context.Background()
 
 	// ── PHASE 1 : RESTAURATION DU SYSTÈME DE TAGS ───────────────────────────
 
 	logger.Log.Info().Msg("Restauration des tags communautaires depuis le Cold Storage SQL...")
 
-	tagsListFromPg, errPgTags := postgres.FuncLoadAllTags()
+	tagsListFromPg, errPgTags := postgres.FuncLoadAllTags(ctx)
 	if errPgTags != nil {
 		logger.Log.Error().Err(errPgTags).Msg("Échec L3 lors du chargement initial des tags")
 	} else if len(tagsListFromPg) > 0 {
@@ -47,7 +47,7 @@ func SeedMostCache() error {
 	totalPostsProcessed := 0
 
 	for {
-		postsBatchFromPg, errPgPosts := postgres.FuncLoadPostsPaginated(paginationLimit, paginationOffset)
+		postsBatchFromPg, errPgPosts := postgres.FuncLoadPostsPaginated(ctx, paginationLimit, paginationOffset)
 		if errPgPosts != nil {
 			logger.Log.Error().Err(errPgPosts).Msg("Échec L3 lors du seeding paginé des posts")
 			return nubo_error.NewInternal()
@@ -91,7 +91,7 @@ func SeedMostCache() error {
 			winningIDsList = append(winningIDsList, id)
 		}
 
-		elitePostsList, errPgElite := postgres.FuncLoadPosts(winningIDsList, len(winningIDsList), 0)
+		elitePostsList, errPgElite := postgres.FuncLoadPosts(ctx, winningIDsList, len(winningIDsList), 0)
 		if errPgElite == nil {
 			for _, elitePost := range elitePostsList {
 				// L1 : Sanctuarisation immédiate en RAM
@@ -105,7 +105,7 @@ func SeedMostCache() error {
 	}
 
 	logger.Log.Info().Msg("Synchronisation MongoDB pour les posts des 30 derniers jours...")
-	recentPostsFromPg, errPgRecent := postgres.FuncLoadRecentPosts(30)
+	recentPostsFromPg, errPgRecent := postgres.FuncLoadRecentPosts(ctx, 30)
 
 	if errPgRecent == nil {
 		for _, recentPost := range recentPostsFromPg {
@@ -148,7 +148,7 @@ func SeedCommunitySpeedCache(ctx context.Context) error {
 }
 
 // SeedSpeedCache charge les profils allégés et le graphe social relationnel en RAM L1.
-func SeedSpeedCache() error {
+func SeedSpeedCache(ctx context.Context) error {
 	backgroundCtx := context.Background()
 	paginationLimit := 10000
 
@@ -157,7 +157,7 @@ func SeedSpeedCache() error {
 	logger.Log.Info().Msg("Amorçage SPEED Cache: Chargement des Utilisateurs...")
 	offsetUsers := 0
 	for {
-		usersBatchFromPg, errPg := postgres.FuncLoadUsersPaginated(paginationLimit, offsetUsers)
+		usersBatchFromPg, errPg := postgres.FuncLoadUsersPaginated(ctx, paginationLimit, offsetUsers)
 		if errPg != nil {
 			logger.Log.Warn().Err(errPg).Msg("Erreur L3 lors du chargement paginé des utilisateurs")
 			break
@@ -179,7 +179,7 @@ func SeedSpeedCache() error {
 	logger.Log.Info().Msg("Amorçage SPEED Cache: Chargement des Relations...")
 	offsetRelations := 0
 	for {
-		relationsBatchFromPg, errPg := postgres.FuncLoadRelationsPaginated(paginationLimit, offsetRelations)
+		relationsBatchFromPg, errPg := postgres.FuncLoadRelationsPaginated(ctx, paginationLimit, offsetRelations)
 		if errPg != nil {
 			logger.Log.Warn().Err(errPg).Msg("Erreur L3 lors du chargement paginé des relations")
 			break
@@ -216,7 +216,7 @@ func SeedSpeedCache() error {
 // ############################################################################
 
 // SeedUserCache reconstruit les chronologies des profils utilisateurs (ZSETs L1).
-func SeedUserCache() error {
+func SeedUserCache(ctx context.Context) error {
 	backgroundCtx := context.Background()
 	paginationLimit := 10000
 	paginationOffset := 0
@@ -224,7 +224,7 @@ func SeedUserCache() error {
 	logger.Log.Info().Msg("Amorçage USER Cache: Construction des Timelines L1 (ZSETs)...")
 
 	for {
-		timelineSeedsFromPg, errPg := postgres.FuncLoadTimelineSeedPaginated(paginationLimit, paginationOffset)
+		timelineSeedsFromPg, errPg := postgres.FuncLoadTimelineSeedPaginated(ctx, paginationLimit, paginationOffset)
 		if errPg != nil {
 			logger.Log.Warn().Err(errPg).Msg("Erreur L3 lors du chargement des graines de timelines")
 			break

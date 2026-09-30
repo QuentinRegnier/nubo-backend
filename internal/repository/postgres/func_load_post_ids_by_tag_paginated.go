@@ -5,6 +5,7 @@ import (
 	"database/sql"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
@@ -13,7 +14,8 @@ func FuncLoadPostIDsByTagPaginated(ctx context.Context, tag string, offset, limi
 	query := `SELECT id FROM content.func_load_post_ids_by_tag_paginated($1, $2::integer, $3::integer)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, tag, offset, limit)
 	if err != nil {
-		return nil, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Erreur lors de l'itération sur les résultats SQL (rows.Err)")
+		return nil, nubo_error.NewInternal()
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()

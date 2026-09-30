@@ -1,14 +1,17 @@
 package mongo
 
 import (
+	"context"
+
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
 // MongoLoadCommentsPaginated lit L2 en utilisant un Index Composé B-Tree ultra-rapide
-func MongoLoadCommentsPaginated(postID int64, offset int64, limit int64) ([]comment_models.CommentPayload, error) {
+func MongoLoadCommentsPaginated(ctx context.Context, postID int64, offset int64, limit int64) ([]comment_models.CommentPayload, error) {
 	// Filtre de base
 	filter := bson.M{
 		"post_id":    postID,
@@ -25,7 +28,8 @@ func MongoLoadCommentsPaginated(postID int64, offset int64, limit int64) ([]comm
 	// Appel propre de ton wrapper métier
 	docs, err := Comments.GetPaginated(filter, sortMap, offset, limit)
 	if err != nil {
-		return nil, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Erreur interne lors de l'exécution de l'opération")
+		return nil, nubo_error.NewInternal()
 	}
 
 	var comments []comment_models.CommentPayload

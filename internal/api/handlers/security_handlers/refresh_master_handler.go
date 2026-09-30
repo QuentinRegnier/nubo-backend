@@ -14,6 +14,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/security_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
@@ -100,7 +101,7 @@ func RefreshMaster(c *gin.Context) {
 	}
 
 	if !sessionFound {
-		if s, err := mongo.MongoLoadSession(input.UserID, "", input.MasterToken, ""); err == nil && s.ID != 0 {
+		if s, err := mongo.MongoLoadSession(c, input.UserID, "", input.MasterToken, ""); err == nil && s.ID != 0 {
 			sessionRaw = s
 			sessionFound = true
 			_ = cache_service.SetSessionInCache(c, sessionRaw)
@@ -108,7 +109,7 @@ func RefreshMaster(c *gin.Context) {
 	}
 
 	if !sessionFound {
-		s, err := postgres.FuncLoadSession(-1, input.UserID, "", input.MasterToken)
+		s, err := postgres.FuncLoadSession(c, -1, input.UserID, "", input.MasterToken)
 		if err == nil && s.ID != 0 {
 			sessionRaw = s
 			sessionFound = true
@@ -132,18 +133,21 @@ func RefreshMaster(c *gin.Context) {
 
 	newMasterToken, err := pkg.GenerateToken(input.UserID, sessionRaw.FirebaseInstallationID, variables.MasterTokenExpirationSeconds)
 	if err != nil {
-		nubo_error.RespondWithError(c, nubo_error.NewInternal(err))
+		nubo_log.Error(c).Err(err).Msg("Échec de la génération du MasterToken")
+		nubo_error.RespondWithError(c, nubo_error.NewInternal())
 		return
 	}
 
 	newJWT, err := pkg.GenerateToken(input.UserID, sessionRaw.FirebaseInstallationID, variables.JWTExpirationSeconds)
 	if err != nil {
-		nubo_error.RespondWithError(c, nubo_error.NewInternal(err))
+		nubo_log.Error(c).Err(err).Msg("Échec de la génération du JWT")
+		nubo_error.RespondWithError(c, nubo_error.NewInternal())
 		return
 	}
 
 	if sessionRaw.CurrentSecret, err = security.ResetRatchet(newMasterToken, sessionRaw.FirebaseInstallationID); err != nil {
-		nubo_error.RespondWithError(c, nubo_error.NewInternal(err))
+		nubo_log.Error(c).Err(err).Msg("Échec de la réinitialisation du Ratchet")
+		nubo_error.RespondWithError(c, nubo_error.NewInternal())
 		return
 	}
 
@@ -169,7 +173,8 @@ func RefreshMaster(c *gin.Context) {
 
 	respBytes, err := json.Marshal(respData)
 	if err != nil {
-		nubo_error.RespondWithError(c, nubo_error.NewInternal(err))
+		nubo_log.Error(c).Err(err).Msg("Échec de la sérialisation JSON de la réponse")
+		nubo_error.RespondWithError(c, nubo_error.NewInternal())
 		return
 	}
 

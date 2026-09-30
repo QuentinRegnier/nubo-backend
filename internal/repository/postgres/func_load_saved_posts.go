@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/saved_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
@@ -14,7 +15,8 @@ func FuncLoadSavedPosts(ctx context.Context, userID int64, limit int, offset int
 	query := `SELECT id, user_id, post_id, created_at FROM content.func_load_saved_posts($1, $2, $3)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, userID, limit, offset)
 	if err != nil {
-		return nil, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête SQL (QueryContext)")
+		return nil, nubo_error.NewInternal()
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()

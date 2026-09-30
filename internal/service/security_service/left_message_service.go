@@ -31,7 +31,7 @@ func LeftMessage(ctx context.Context, messageID int64, userID int64) (message_mo
 
 		// ── ÉTAPE 2 : TENTATIVE L2 (MONGODB WARM STORAGE) ───────────────────
 
-		mongoMessagesList, errMongo := mongo.MongoLoadMessagesByIDs([]int64{messageID})
+		mongoMessagesList, errMongo := mongo.MongoLoadMessagesByIDs(ctx, []int64{messageID})
 		if errMongo == nil && len(mongoMessagesList) > 0 {
 			messagePayload = mongoMessagesList[0]
 			isMessageFound = true

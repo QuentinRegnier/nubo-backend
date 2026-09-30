@@ -5,6 +5,7 @@ import (
 	"database/sql"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
@@ -20,7 +21,8 @@ func FuncLoadMessageIDsPaginated(ctx context.Context, convID int64, offsetID int
 
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, convID, offsetID, limit, direction, pFrozenID)
 	if err != nil {
-		return nil, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Erreur lors de l'itération sur les résultats SQL (rows.Err)")
+		return nil, nubo_error.NewInternal()
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()

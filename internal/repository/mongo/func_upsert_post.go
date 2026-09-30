@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -13,7 +14,7 @@ import (
 // MongoUpsertPost insère ou met à jour un payload complet de publication dans le Cold Storage L2.
 // Cette fonction est indispensable lors de la remontée en cascade (L3 PostgreSQL -> L2 MongoDB)
 // pour garantir la cohérence des lectures asynchrones ultérieures.
-func MongoUpsertPost(post post_models.PostPayload) error {
+func MongoUpsertPost(c context.Context, post post_models.PostPayload) error {
 	// Sécurité si l'initialisation globale de la collection Mongo a échoué
 	if Posts == nil {
 		return nil
@@ -33,5 +34,6 @@ func MongoUpsertPost(post post_models.PostPayload) error {
 	opts := options.Update().SetUpsert(true)
 
 	_, err := Posts.DB.Collection(Posts.Name).UpdateOne(ctx, filter, update, opts)
-	return nubo_error.NewInternal(err)
+	nubo_log.Error(c).Err(err).Msg("Erreur interne lors de l'exécution de l'opération")
+	return nubo_error.NewInternal()
 }

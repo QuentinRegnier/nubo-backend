@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
@@ -14,7 +15,8 @@ func FuncAddIndirectTagToPost(ctx context.Context, postID int64, tag string) err
 
 	_, err := postgres.PostgresDB.ExecContext(ctx, query, postID, tag)
 	if err != nil {
-		return nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Int64("post_id", postID).Str("tag", tag).Msg("Échec de l'exécution de la requête SQL (ExecContext)")
+		return nubo_error.NewInternal()
 	}
 
 	return nil

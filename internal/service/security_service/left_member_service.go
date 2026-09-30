@@ -33,7 +33,7 @@ func LeftMember(ctx context.Context, conversationID int64, userID int64) (member
 	// ── ÉTAPE 2 : CASCADE L2 (MONGODB WARM STORAGE) ─────────────────────────
 
 	if !isMemberFound {
-		if mongoMember, err := mongo.MongoGetMember(conversationID, userID); err == nil && mongoMember.ID != 0 {
+		if mongoMember, err := mongo.MongoGetMember(ctx, conversationID, userID); err == nil && mongoMember.ID != 0 {
 			memberPayload = mongoMember
 			isMemberFound = true
 			_ = object_cache_service.SetMemberInObjectCache(ctx, memberPayload) // Auto-Guérison L1

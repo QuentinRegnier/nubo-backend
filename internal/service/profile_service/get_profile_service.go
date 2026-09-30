@@ -79,11 +79,11 @@ func GetProfile(ctx context.Context, callerID int64, input profile_models.GetPro
 
 	// ── ÉTAPE 3 : IDENTITÉ DE L'UTILISATEUR (CASCADE L2 -> L3) ──────────────
 
-	userPayload, errMongo := mongo.MongoLoadUser(targetID, "", "", "")
+	userPayload, errMongo := mongo.MongoLoadUser(ctx, targetID, "", "", "")
 
 	if errMongo != nil || userPayload.ID == 0 {
 		var errPg error
-		userPayload, errPg = postgres.FuncLoadUser(targetID, "", "", "")
+		userPayload, errPg = postgres.FuncLoadUser(ctx, targetID, "", "", "")
 		if errPg != nil {
 			logger.Log.Error().Err(errPg).Int64("user_id", targetID).Msg("Échec de la récupération L3 du profil utilisateur")
 			return profile_models.GetProfileOutput{}, nubo_error.NewInternal()

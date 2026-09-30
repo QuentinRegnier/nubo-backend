@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -13,7 +14,7 @@ import (
 // MongoUpsertUser insère ou met à jour le profil complet d'un utilisateur dans le Cold Storage L2.
 // Indispensable pour la remontée d'informations en cascade (L3 PostgreSQL -> L2 MongoDB)
 // afin de synchroniser l'empreinte utilisateur lors d'un cache miss général.
-func MongoUpsertUser(user auth_models.UserPayload) error {
+func MongoUpsertUser(c context.Context, user auth_models.UserPayload) error {
 	// Sécurité si l'initialisation de la collection globale a échoué au démarrage
 	if Users == nil {
 		return nil
@@ -33,5 +34,6 @@ func MongoUpsertUser(user auth_models.UserPayload) error {
 	opts := options.Update().SetUpsert(true)
 
 	_, err := Users.DB.Collection(Users.Name).UpdateOne(ctx, filter, update, opts)
-	return nubo_error.NewInternal(err)
+	nubo_log.Error(c).Err(err).Msg("Erreur interne lors de l'exécution de l'opération")
+	return nubo_error.NewInternal()
 }

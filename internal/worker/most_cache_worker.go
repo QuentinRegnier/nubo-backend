@@ -229,7 +229,7 @@ func getPostWithFallback(ctx context.Context, postID int64) (post_models.PostPay
 	}
 
 	// FALLBACK L3 (PostgreSQL Cold Storage)
-	posts, errL3 := postgres.FuncLoadPosts([]int64{postID}, 1, 0)
+	posts, errL3 := postgres.FuncLoadPosts(ctx, []int64{postID}, 1, 0)
 	if errL3 == nil && len(posts) > 0 {
 		p = posts[0]
 		// Auto-guérison : Remonte la donnée L3 vers le L1

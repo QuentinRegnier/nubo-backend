@@ -32,7 +32,7 @@ func LeftComment(ctx context.Context, commentID int64, userID int64) (comment_mo
 
 		// ── ÉTAPE 2 : TENTATIVE L2 (MONGODB WARM STORAGE) ───────────────────
 
-		mongoCommentsList, errMongo := mongo.MongoLoadComments([]int64{commentID})
+		mongoCommentsList, errMongo := mongo.MongoLoadComments(ctx, []int64{commentID})
 		if errMongo == nil && len(mongoCommentsList) > 0 {
 			commentPayload = mongoCommentsList[0]
 			isCommentFound = true

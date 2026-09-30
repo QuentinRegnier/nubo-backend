@@ -47,7 +47,7 @@ func AcceptCommunityRequest(ctx context.Context, callerID int64, input member_mo
 	targetMemberPayload, errCache := object_cache_service.GetMemberFromObjectCache(ctx, input.ConversationID, input.TargetUserID)
 	if errCache != nil || targetMemberPayload.ID == 0 {
 		var errMongo error
-		targetMemberPayload, errMongo = mongo.MongoGetMember(input.ConversationID, input.TargetUserID)
+		targetMemberPayload, errMongo = mongo.MongoGetMember(ctx, input.ConversationID, input.TargetUserID)
 
 		if errMongo != nil || targetMemberPayload.ID == 0 {
 			var errPg error

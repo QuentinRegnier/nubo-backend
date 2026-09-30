@@ -37,7 +37,7 @@ func GetMessageReactions(ctx context.Context, callerID int64, input message_mode
 	// ── ÉTAPE 2 : RÉCUPÉRATION DES RÉACTIONS (L2 -> L3) ─────────────────────
 
 	// TENTATIVE L2 (MongoDB - Warm Storage)
-	reactionsFromMongo, errMongo := mongo.MongoGetMessageReactionsPaginated(input.MessageID, int64(input.Limit), int64(input.Offset))
+	reactionsFromMongo, errMongo := mongo.MongoGetMessageReactionsPaginated(ctx, input.MessageID, int64(input.Limit), int64(input.Offset))
 	if errMongo == nil && len(reactionsFromMongo) > 0 {
 		messageReactions = reactionsFromMongo
 	} else {

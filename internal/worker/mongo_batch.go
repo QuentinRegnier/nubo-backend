@@ -35,7 +35,7 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 
 	// ── ÉTAPE 2 : TRAITEMENT DE CHAQUE COLLECTION BDD ───────────────────────
 	for entity, evts := range grouped {
-		var c *mongo.MongoCollection
+		var c *mongo.Collection
 
 		switch entity {
 		case redis.EntityUser:

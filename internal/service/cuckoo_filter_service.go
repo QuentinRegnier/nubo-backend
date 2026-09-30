@@ -80,7 +80,7 @@ func IsUnique(ctx context.Context, entityType redis.EntityType, fieldName string
 	}
 
 	// ── ÉTAPE 3 : Warm Storage L2 (MongoDB) ────────────────────────────────
-	existsInMongo, errMongo := mongo.MongoCheckUnique(entityType, fieldName, valueToCheck)
+	existsInMongo, errMongo := mongo.MongoCheckUnique(ctx, entityType, fieldName, valueToCheck)
 	if errMongo == nil && existsInMongo {
 		// AUTO-GUÉRISON L1 : Le Cuckoo Filter RAM l'avait oublié (éviction LFU), on le répare.
 		cuckoo.BroadcastCuckooUpdate(cuckoo.ActionAdd, fieldName, valueToCheck)

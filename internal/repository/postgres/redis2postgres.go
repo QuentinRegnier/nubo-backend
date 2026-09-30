@@ -1,9 +1,10 @@
 package postgres
 
 import (
-	"errors"
+	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
@@ -13,7 +14,7 @@ type PostgresTarget struct {
 }
 
 // Redis2Postgres fait le pont entre le domaine (Redis EntityType) et le schéma physique SQL.
-func Redis2Postgres(entity redis.EntityType) (PostgresTarget, error) {
+func Redis2Postgres(ctx context.Context, entity redis.EntityType) (PostgresTarget, error) {
 	switch entity {
 	case redis.EntityUser:
 		return PostgresTarget{Schema: "auth", Table: "users"}, nil
@@ -38,6 +39,7 @@ func Redis2Postgres(entity redis.EntityType) (PostgresTarget, error) {
 	case redis.EntityMessage:
 		return PostgresTarget{Schema: "messaging", Table: "messages"}, nil
 	default:
-		return PostgresTarget{}, nubo_error.NewInternal(errors.New("entité non supportée pour vérification Postgres"))
+		nubo_log.Error(ctx).Str("entity", string(entity)).Msg("Entité non supportée pour la vérification PostgreSQL")
+		return PostgresTarget{}, nubo_error.NewInternal()
 	}
 }

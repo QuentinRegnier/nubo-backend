@@ -40,7 +40,7 @@ func GetConversations(ctx context.Context, callerID int64, input conversation_mo
 
 		if errCache != nil || conversationPayload.ID == 0 {
 			var errMongo error
-			conversationPayload, errMongo = mongo.MongoGetConversation(targetConversationID)
+			conversationPayload, errMongo = mongo.MongoGetConversation(ctx, targetConversationID)
 
 			if errMongo != nil || conversationPayload.ID == 0 {
 				var errPostgres error

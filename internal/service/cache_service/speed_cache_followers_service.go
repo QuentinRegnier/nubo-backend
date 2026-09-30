@@ -33,7 +33,7 @@ func RelationValue(ctx context.Context, targetID int64, callerID int64) int {
 	}
 
 	// ── ÉTAPE 2 : COLD STORAGE L2 (MONGODB WARM STORAGE) ────────────────────
-	relationStateFromMongo, errMongo := mongo.MongoGetRelationState(callerID, targetID)
+	relationStateFromMongo, errMongo := mongo.MongoGetRelationState(ctx, callerID, targetID)
 	if errMongo == nil {
 		_ = redis.SpeedRelations.HSet(ctx, targetID, callerIDString, relationStateFromMongo)
 		return relationStateFromMongo

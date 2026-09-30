@@ -40,7 +40,7 @@ func GetOrCreateDirectConversation(ctx context.Context, callerID, targetID int64
 	}
 
 	// ── ÉTAPE 2 : TENTATIVE L2 (MongoDB - Warm Storage) ─────────────────────
-	if mongoConversation, errMongo := mongo.MongoGetDirectConversation(callerID, targetID); errMongo == nil && mongoConversation.ID > 0 {
+	if mongoConversation, errMongo := mongo.MongoGetDirectConversation(ctx, callerID, targetID); errMongo == nil && mongoConversation.ID > 0 {
 		hydrateConversationCascade(ctx, mongoConversation, callerID, targetID, false)
 		return mongoConversation.ID, nil
 	}
@@ -115,7 +115,7 @@ func hydrateMember(ctx context.Context, conversationID, userID int64, isFromCold
 			}(memberPayload)
 		}
 	} else {
-		memberPayload, errFetch = mongo.MongoGetMember(conversationID, userID)
+		memberPayload, errFetch = mongo.MongoGetMember(ctx, conversationID, userID)
 	}
 
 	if errFetch == nil && memberPayload.ID != 0 {

@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"context"
 	"fmt"
 	"html"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 	"github.com/go-playground/validator/v10"
@@ -27,7 +29,8 @@ func ValidateStruct(obj any) error {
 	if v, ok := binding.Validator.Engine().(*validator.Validate); ok {
 		return v.Struct(obj)
 	}
-	return nubo_error.NewInternal() //errors.New("impossible de charger le validateur")
+	nubo_log.Error(context.Background()).Msg("Impossible de charger le validateur Gin (binding.Validator.Engine)")
+	return nubo_error.NewInternal()
 }
 
 // CleanStr : Nettoyage anti-XSS et suppression des espaces superflus.
@@ -50,7 +53,8 @@ func GenerateToken(userID int64, firebaseInstallationID string, expirationSecond
 
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		return "", nubo_error.NewInternal() //errors.New("JWT_SECRET manquant dans les variables d'environnement")
+		nubo_log.Error(context.Background()).Msg("Variable d'environnement JWT_SECRET manquante")
+		return "", nubo_error.NewInternal()
 	}
 	return token.SignedString([]byte(secret))
 }
@@ -65,7 +69,8 @@ func ToMap(in any) (map[string]any, error) {
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
-		return nil, nubo_error.NewInternal() //errors.New("ToMap: attend une struct")
+		nubo_log.Error(context.Background()).Str("kind", v.Kind().String()).Msg("ToMap attend une struct en paramètre")
+		return nil, nubo_error.NewInternal()
 	}
 
 	t := v.Type()
@@ -160,7 +165,8 @@ func GetUserIDFromContext(c *gin.Context) (int64, error) {
 	case int:
 		return int64(v), nil
 	default:
-		return 0, nubo_error.NewInternal() // errors.New("type userID inconnu")
+		nubo_log.Error(c).Interface("val", val).Msg("Type inattendu pour le userID extrait du contexte")
+		return 0, nubo_error.NewInternal()
 	}
 }
 

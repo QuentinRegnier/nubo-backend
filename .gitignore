@@ -15,3 +15,6 @@
 qodana.yaml
 .air.toml
 wiki.html
+docs.html
+arborescence.md
+.agents/

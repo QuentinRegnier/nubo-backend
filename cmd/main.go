@@ -107,7 +107,7 @@ func main() {
 
 	if count == 0 {
 		log.Println("⚠️ Cache Redis vide détecté : Lancement du Seeding massif...")
-		if err := cache_service.SeedMostCache(); err != nil {
+		if err := cache_service.SeedMostCache(context.Background()); err != nil {
 			log.Printf("⚠️ Avertissement lors du seeding: %v", err)
 		}
 		if err := cache_service.SeedGraphCache(context.Background()); err != nil {
@@ -115,12 +115,12 @@ func main() {
 		}
 
 		// ✅ Seeding du profilage allégé et du graphe relationnel restreint
-		if err := cache_service.SeedSpeedCache(); err != nil {
+		if err := cache_service.SeedSpeedCache(context.Background()); err != nil {
 			log.Printf("⚠️ Avertissement lors du seeding du SPEED cache: %v", err)
 		}
 
 		// ✅ Seeding des chronologies utilisateurs pour le profil
-		if err := cache_service.SeedUserCache(); err != nil {
+		if err := cache_service.SeedUserCache(context.Background()); err != nil {
 			log.Printf("⚠️ Avertissement lors du seeding du USER cache: %v", err)
 		}
 	} else {

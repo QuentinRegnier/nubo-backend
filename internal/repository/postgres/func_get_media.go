@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
@@ -27,7 +28,8 @@ func FuncGetMedia(ctx context.Context, mediaID int64) (media_models.MediaPayload
 		if errors.Is(err, sql.ErrNoRows) {
 			return m, nubo_error.NewNotFound("MEDIA_NOT_FOUND", "Média introuvable.", err)
 		}
-		return m, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Erreur SQL inattendue lors de la vérification de l'enregistrement")
+		return m, nubo_error.NewInternal()
 	}
 
 	// ✅ Rejet si le média a été supprimé (Soft-Delete)

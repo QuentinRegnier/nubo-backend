@@ -44,7 +44,7 @@ func fetchAndHydrateFromCollection(ctx context.Context, redisCollection *redis.C
 	}
 
 	// Déclenchement de la cascade complète
-	return object_cache_service.GetPostsView(parsedIDsList)
+	return object_cache_service.GetPostsView(ctx, parsedIDsList)
 }
 
 // getPostsFromMongoPaginated interroge directement le Warm Storage MongoDB.
@@ -111,5 +111,5 @@ func getPostsFromPostgresPaginated(ctx context.Context, rankType string, offset 
 		}
 	}
 
-	return object_cache_service.GetPostsView(extractedIDs)
+	return object_cache_service.GetPostsView(ctx, extractedIDs)
 }

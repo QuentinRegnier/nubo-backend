@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
@@ -19,7 +20,8 @@ func FuncGetRelationState(ctx context.Context, callerID int64, targetID int64) (
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil
 		}
-		return 0, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Erreur SQL inattendue lors de la vérification de l'enregistrement")
+		return 0, nubo_error.NewInternal()
 	}
 
 	return state, nil

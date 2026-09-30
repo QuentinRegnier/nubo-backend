@@ -31,10 +31,10 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 	// ── ÉTAPE 1 : RÉCUPÉRATION DU PROFIL ACTUEL (CASCADE L2 -> L3) ──────────
 	// Nécessaire pour préserver les champs critiques (Grade, Banni, etc.) non soumis au PUT.
 
-	userPayload, errMongo := mongo.MongoLoadUser(userID, "", "", "")
+	userPayload, errMongo := mongo.MongoLoadUser(ctx, userID, "", "", "")
 	if errMongo != nil || userPayload.ID == 0 {
 		var errPg error
-		userPayload, errPg = postgres.FuncLoadUser(userID, "", "", "")
+		userPayload, errPg = postgres.FuncLoadUser(ctx, userID, "", "", "")
 		if errPg != nil {
 			return auth_models.UpdateProfileOutput{}, nubo_error.NewInternal()
 		}

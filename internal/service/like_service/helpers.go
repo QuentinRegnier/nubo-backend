@@ -26,7 +26,7 @@ func getCommentCascade(ctx context.Context, commentID int64) (comment_models.Com
 	}
 
 	// ── ÉTAPE 2 : TENTATIVE L2 (MONGODB WARM STORAGE) ───────────────────────
-	commentsFromMongo, errMongo := mongo.MongoLoadComments([]int64{commentID})
+	commentsFromMongo, errMongo := mongo.MongoLoadComments(ctx, []int64{commentID})
 	if errMongo == nil && len(commentsFromMongo) > 0 {
 		_ = object_cache_service.SetCommentInObjectCache(ctx, commentsFromMongo[0])
 		return commentsFromMongo[0], nil

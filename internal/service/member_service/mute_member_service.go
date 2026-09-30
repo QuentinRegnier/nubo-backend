@@ -59,7 +59,7 @@ func MuteMember(ctx context.Context, callerID int64, input member_models.MuteMem
 
 	if errCache != nil || conversationPayload.ID == 0 {
 		var errMongo error
-		conversationPayload, errMongo = mongo.MongoGetConversation(input.ConversationID)
+		conversationPayload, errMongo = mongo.MongoGetConversation(ctx, input.ConversationID)
 
 		if errMongo == nil && conversationPayload.ID != 0 {
 			// AUTO-GUÉRISON L2 -> L1

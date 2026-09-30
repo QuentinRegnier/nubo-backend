@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -9,11 +10,12 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/lib/pq"
 )
 
-func FuncLoadUser(ID int64, Username string, Email string, Phone string) (auth_models.UserPayload, error) {
+func FuncLoadUser(ctx context.Context, ID int64, Username string, Email string, Phone string) (auth_models.UserPayload, error) {
 
 	// Args...
 	args := make([]any, 4)
@@ -84,7 +86,8 @@ func FuncLoadUser(ID int64, Username string, Email string, Phone string) (auth_m
 		if errors.Is(err, sql.ErrNoRows) {
 			return auth_models.UserPayload{}, nil // Pas d'erreur technique
 		}
-		return auth_models.UserPayload{}, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Erreur SQL inattendue lors de la vérification de l'enregistrement")
+		return auth_models.UserPayload{}, nubo_error.NewInternal()
 	}
 
 	// 🕵️ DEBUG : On affiche ce qu'on a scanné

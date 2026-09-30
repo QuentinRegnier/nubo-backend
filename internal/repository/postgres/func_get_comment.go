@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
@@ -23,7 +24,8 @@ func FuncGetComment(ctx context.Context, commentID int64) (comment_models.Commen
 		if errors.Is(err, sql.ErrNoRows) {
 			return c, nubo_error.NewNotFound("COMMENT_NOT_FOUND", "Commentaire introuvable.", err)
 		}
-		return c, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Erreur SQL inattendue lors de la vérification de l'enregistrement")
+		return c, nubo_error.NewInternal()
 	}
 
 	return c, nil

@@ -75,7 +75,7 @@ func GetMessagesView(ctx context.Context, targetMessageIDs []int64) ([]message_m
 	// ── ÉTAPE 2 : NIVEAU 2 (MONGO FALLBACK WARM STORAGE) ───────────────────
 	var stillMissingMessageIDs []int64
 	if len(mgetResult.MissingIDs) > 0 {
-		mongoMessagesList, errMongo := mongo.MongoLoadMessagesByIDs(mgetResult.MissingIDs)
+		mongoMessagesList, errMongo := mongo.MongoLoadMessagesByIDs(ctx, mgetResult.MissingIDs)
 		if errMongo == nil {
 			mongoFoundMap := make(map[int64]bool)
 			for _, mongoMessage := range mongoMessagesList {

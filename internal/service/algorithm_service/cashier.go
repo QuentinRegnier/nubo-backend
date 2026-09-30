@@ -116,7 +116,7 @@ func BuildPersonalizedFeed(ctx context.Context, options PersonalizedFeedOptions)
 		logger.Log.Info().Int("missing_count", len(missingIDs)).Msg("Cache Miss sur ContentVectors, déclenchement du Fallback L2/L3...")
 
 		// Fallback L2 (Mongo)
-		mongoPosts, _ := mongo.MongoLoadPosts(missingIDs)
+		mongoPosts, _ := mongo.MongoLoadPosts(ctx, missingIDs)
 		foundInMongo := make(map[int64]bool)
 
 		for _, post := range mongoPosts {
@@ -144,7 +144,7 @@ func BuildPersonalizedFeed(ctx context.Context, options PersonalizedFeedOptions)
 		}
 
 		if len(stillMissingIDs) > 0 {
-			pgPosts, _ := postgres.FuncLoadPosts(stillMissingIDs, 1, 0)
+			pgPosts, _ := postgres.FuncLoadPosts(ctx, stillMissingIDs, 1, 0)
 			for _, post := range pgPosts {
 				if len(post.Vector) == variables.VectorDimTotal {
 					allCandidates = append(allCandidates, PostCandidate{

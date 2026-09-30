@@ -38,7 +38,7 @@ func GetMessages(ctx context.Context, callerID int64, input message_models.GetMe
 
 	if errCache != nil || conversationPayload.ID == 0 {
 		var errMongo error
-		conversationPayload, errMongo = mongo.MongoGetConversation(input.ConversationID)
+		conversationPayload, errMongo = mongo.MongoGetConversation(ctx, input.ConversationID)
 
 		if errMongo != nil || conversationPayload.ID == 0 {
 			var errPg error

@@ -16,7 +16,7 @@ import (
 // ############################################################################
 
 // GetPostsView exécute le pipeline d'hydratation optimisé pour une liste d'IDs de publications.
-func GetPostsView(targetPostIDs []int64) ([]post_models.PostPayload, error) {
+func GetPostsView(ctx context.Context, targetPostIDs []int64) ([]post_models.PostPayload, error) {
 	if len(targetPostIDs) == 0 {
 		return []post_models.PostPayload{}, nil
 	}
@@ -46,7 +46,7 @@ func GetPostsView(targetPostIDs []int64) ([]post_models.PostPayload, error) {
 	var stillMissingPostIDs []int64
 
 	if len(mgetResult.MissingIDs) > 0 {
-		mongoPostsList, errMongo := mongo.MongoLoadPosts(mgetResult.MissingIDs)
+		mongoPostsList, errMongo := mongo.MongoLoadPosts(ctx, mgetResult.MissingIDs)
 
 		if errMongo == nil {
 			mongoFoundMap := make(map[int64]bool)
@@ -78,7 +78,7 @@ func GetPostsView(targetPostIDs []int64) ([]post_models.PostPayload, error) {
 	if len(stillMissingPostIDs) > 0 {
 		logger.Log.Info().Int("missing_count", len(stillMissingPostIDs)).Msg("Postgres Fallback déclenché pour les posts")
 
-		postgresPostsList, errPg := postgres.FuncLoadPosts(stillMissingPostIDs, len(stillMissingPostIDs), 0)
+		postgresPostsList, errPg := postgres.FuncLoadPosts(ctx, stillMissingPostIDs, len(stillMissingPostIDs), 0)
 
 		if errPg != nil {
 			logger.Log.Error().Err(errPg).Msg("Erreur critique Postgres Fallback lors de l'hydratation des posts")

@@ -122,7 +122,7 @@ func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([
 				logger.Log.Error().Err(errPg).Str("slug", slug).Msg("Erreur L3 lors de la pagination des tags")
 				return []post_models.PostPayload{}, nubo_error.NewInternal()
 			}
-			return object_cache_service.GetPostsView(pgIDs)
+			return object_cache_service.GetPostsView(ctx, pgIDs)
 		}
 		return postsFromMongo, nil
 	}
@@ -243,5 +243,5 @@ func GetPostsByTagFromCache(ctx context.Context, targetTag string, offset int64,
 	}
 
 	// Déclenchement de la cascade complète (Object Cache -> Mongo -> Postgres)
-	return object_cache_service.GetPostsView(extractedPostIDs)
+	return object_cache_service.GetPostsView(ctx, extractedPostIDs)
 }

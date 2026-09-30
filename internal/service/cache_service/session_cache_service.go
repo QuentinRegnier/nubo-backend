@@ -125,7 +125,7 @@ func GetFirebaseInstallationIDsCascade(ctx context.Context, userID int64) ([]str
 
 	// ── ÉTAPE 2 : FALLBACK L2 (MONGODB WARM STORAGE) ────────────────────────
 
-	firebaseTokensList, errMongo := mongo.MongoGetFirebaseInstallationIDs(userID)
+	firebaseTokensList, errMongo := mongo.MongoGetFirebaseInstallationIDs(ctx, userID)
 	if errMongo == nil && len(firebaseTokensList) > 0 {
 		// AUTO-GUÉRISON L1 : On répare le cache RAM
 		go healSessionIndexL1(userID, firebaseTokensList)

@@ -1,20 +1,23 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 // FuncLoadAllTags récupère tous les slugs actifs depuis la base de données.
-func FuncLoadAllTags() ([]string, error) {
+func FuncLoadAllTags(ctx context.Context) ([]string, error) {
 	sqlStatement := `SELECT slug FROM content.func_load_all_tags()`
 
 	rows, err := postgres.PostgresDB.Query(sqlStatement)
 	if err != nil {
-		return nil, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête SQL (Query)")
+		return nil, nubo_error.NewInternal()
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
@@ -35,7 +38,8 @@ func FuncLoadAllTags() ([]string, error) {
 	}
 
 	if err = rows.Err(); err != nil {
-		return nil, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Erreur lors de l'itération sur les résultats SQL (rows.Err)")
+		return nil, nubo_error.NewInternal()
 	}
 
 	return tags, nil

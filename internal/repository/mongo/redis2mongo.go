@@ -1,14 +1,15 @@
 package mongo
 
 import (
-	"errors"
+	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
 // Redis2Mongo fait le pont entre le domaine (Redis EntityType) et les collections MongoDB.
-func Redis2Mongo(entity redis.EntityType) (*MongoCollection, error) {
+func Redis2Mongo(ctx context.Context, entity redis.EntityType) (*Collection, error) {
 	switch entity {
 	case redis.EntityUser:
 		return Users, nil
@@ -33,6 +34,7 @@ func Redis2Mongo(entity redis.EntityType) (*MongoCollection, error) {
 	case redis.EntityMessage:
 		return Messages, nil
 	default:
-		return nil, nubo_error.NewInternal(errors.New("entité non supportée pour vérification Mongo"))
+		nubo_log.Error(ctx).Str("entity", string(entity)).Msg("Entité non supportée pour la résolution de la collection MongoDB")
+		return nil, nubo_error.NewInternal()
 	}
 }

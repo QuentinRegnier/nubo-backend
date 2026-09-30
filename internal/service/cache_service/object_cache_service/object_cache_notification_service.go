@@ -52,7 +52,7 @@ func GetNotificationsView(ctx context.Context, targetNotificationIDs []int64) ([
 
 	// ── ÉTAPE 2 : FALLBACK L2 (MONGO WARM STORAGE) ──────────────────────────
 	if len(mgetResult.MissingIDs) > 0 {
-		mongoNotificationsList, errMongo := mongo.MongoLoadNotificationsByIDs(mgetResult.MissingIDs)
+		mongoNotificationsList, errMongo := mongo.MongoLoadNotificationsByIDs(ctx, mgetResult.MissingIDs)
 		if errMongo == nil {
 			for _, mongoNotification := range mongoNotificationsList {
 				temporaryNotificationsMap[mongoNotification.ID] = mongoNotification

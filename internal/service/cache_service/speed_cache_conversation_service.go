@@ -221,7 +221,7 @@ func ProcessNewMessageInSpeedCache(ctx context.Context, messageID int64, convers
 
 	if errMeta != nil || convLiteRequest.ID == 0 {
 		// Cache Miss : La conversation a été évincée de la RAM, réhydratation via Mongo (L2)
-		mongoConv, errMongo := mongo.MongoGetConversation(conversationID)
+		mongoConv, errMongo := mongo.MongoGetConversation(ctx, conversationID)
 		if errMongo == nil && mongoConv.ID != 0 {
 			convLiteRequest = lite_models.ConvLiteRequest{
 				ID:            mongoConv.ID,

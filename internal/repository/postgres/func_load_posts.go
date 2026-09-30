@@ -1,16 +1,18 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/lib/pq"
 )
 
-func FuncLoadPosts(postIDs []int64, limit int, offset int) ([]post_models.PostPayload, error) {
+func FuncLoadPosts(ctx context.Context, postIDs []int64, limit int, offset int) ([]post_models.PostPayload, error) {
 	// 1. Préparation de l'argument des IDs
 	var pPostIDs any
 	if len(postIDs) > 0 {
@@ -37,7 +39,8 @@ func FuncLoadPosts(postIDs []int64, limit int, offset int) ([]post_models.PostPa
 	// 3. Exécution de la requête
 	rows, err := postgres.PostgresDB.Query(sqlStatement, pPostIDs, limit, offset)
 	if err != nil {
-		return nil, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête SQL (Query)")
+		return nil, nubo_error.NewInternal()
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
@@ -47,5 +50,5 @@ func FuncLoadPosts(postIDs []int64, limit int, offset int) ([]post_models.PostPa
 	}(rows)
 
 	// NOUVEAU : Un seul appel remplace toute la boucle
-	return scanPosts(rows)
+	return scanPosts(ctx, rows)
 }

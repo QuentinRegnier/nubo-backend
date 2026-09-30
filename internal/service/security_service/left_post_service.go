@@ -31,7 +31,7 @@ func LeftPost(ctx context.Context, postID int64, userID int64) (post_models.Post
 
 		// ── ÉTAPE 2 : TENTATIVE L2 (MONGODB WARM STORAGE) ───────────────────
 
-		mongoPostsList, errMongo := mongo.MongoLoadPosts([]int64{postID})
+		mongoPostsList, errMongo := mongo.MongoLoadPosts(ctx, []int64{postID})
 		if errMongo == nil && len(mongoPostsList) > 0 {
 			postPayload = mongoPostsList[0]
 			isPostFound = true
@@ -46,7 +46,7 @@ func LeftPost(ctx context.Context, postID int64, userID int64) (post_models.Post
 
 			// ── ÉTAPE 3 : FALLBACK ABSOLU L3 (POSTGRESQL COLD STORAGE) ──────
 
-			pgPostsList, errPg := postgres.FuncLoadPosts([]int64{postID}, 1, 0)
+			pgPostsList, errPg := postgres.FuncLoadPosts(ctx, []int64{postID}, 1, 0)
 			if errPg != nil {
 				logger.Log.Error().Err(errPg).Int64("post_id", postID).Msg("Erreur L3 lors de la vérification de sécurité d'un post")
 				return post_models.PostPayload{}, nubo_error.NewInternal()

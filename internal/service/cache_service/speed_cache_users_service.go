@@ -157,7 +157,7 @@ func GetUserLite(ctx context.Context, userID int64) (lite_models.UserLiteRequest
 	}
 
 	// ── ÉTAPE 2 : FALLBACK L2 (WARM STORAGE MONGODB) ────────────────────────
-	userFromMongo, errMongo := mongo.MongoLoadUser(userID, "", "", "")
+	userFromMongo, errMongo := mongo.MongoLoadUser(ctx, userID, "", "", "")
 	if errMongo == nil {
 		// Récupération des paramètres de confidentialité L1
 		settingsPayload, _ := object_cache_service.GetUserSettingsCascade(ctx, userID)
@@ -184,7 +184,7 @@ func GetUserLite(ctx context.Context, userID int64) (lite_models.UserLiteRequest
 	}
 
 	// ── ÉTAPE 3 : FALLBACK ABSOLU L3 (COLD STORAGE POSTGRESQL) ──────────────
-	userFromPg, errPg := postgres.FuncLoadUser(userID, "", "", "")
+	userFromPg, errPg := postgres.FuncLoadUser(ctx, userID, "", "", "")
 	if errPg == nil {
 
 		// PROMOTION L3 -> L2 (Write-Behind)

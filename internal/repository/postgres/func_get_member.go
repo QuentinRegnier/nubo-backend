@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
@@ -28,7 +29,8 @@ func FuncGetMember(ctx context.Context, convID int64, userID int64) (member_mode
 		if errors.Is(err, sql.ErrNoRows) {
 			return m, nubo_error.NewNotFound("MEMBER_NOT_FOUND", "Membre introuvable.", err)
 		}
-		return m, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Erreur SQL inattendue lors de la vérification de l'enregistrement")
+		return m, nubo_error.NewInternal()
 	}
 
 	if frozenID.Valid {

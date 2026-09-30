@@ -1,13 +1,14 @@
 package mongo
 
 import (
-	"errors"
+	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 )
 
 // MongoGetRelationState vérifie l'état de la relation dans le stockage à froid Mongo.
-func MongoGetRelationState(callerID int64, targetID int64) (int, error) {
+func MongoGetRelationState(ctx context.Context, callerID int64, targetID int64) (int, error) {
 	// Filtre strict sur l'appelant et la cible
 	filter := map[string]any{
 		"caller_id": callerID,
@@ -33,5 +34,6 @@ func MongoGetRelationState(callerID int64, targetID int64) (int, error) {
 		return stateInt, nil
 	}
 
-	return 0, nubo_error.NewInternal(errors.New("format de state invalide dans la collection relations"))
+	nubo_log.Error(ctx).Msg("Format de 'state' invalide détecté dans la collection relations MongoDB")
+	return 0, nubo_error.NewInternal()
 }

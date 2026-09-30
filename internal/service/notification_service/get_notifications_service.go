@@ -37,7 +37,7 @@ func GetNotifications(ctx context.Context, callerID int64, input notification_mo
 	// ── ÉTAPE 2 : DÉPASSEMENT OU CACHE MISS -> FALLBACK L2 (MONGODB) ────────
 
 	if errCacheIndex != nil || len(orderedNotificationIDs) == 0 {
-		notificationsFromMongo, errMongo := mongo.MongoLoadNotificationsPaginated(callerID, input.Limit, input.Offset)
+		notificationsFromMongo, errMongo := mongo.MongoLoadNotificationsPaginated(ctx, callerID, input.Limit, input.Offset)
 		if errMongo != nil {
 			logger.Log.Error().Err(errMongo).Int64("user_id", callerID).Msg("Erreur L2 lors de la récupération des notifications")
 			return nil, nubo_error.NewInternal()

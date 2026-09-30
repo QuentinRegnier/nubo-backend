@@ -30,7 +30,7 @@ func SyncIdentity(ctx context.Context, input sync_models.SyncIdentityInput) (syn
 	// ── ÉTAPE 1 : DELTA SYNC DU PROFIL UTILISATEUR (CASCADE L2 -> L3) ───────
 	// Note architecturale : Pas de L1 ici car le Speed Cache ne stocke pas les données privées (Email, Phone).
 
-	userPayload, errMongo := mongo.MongoLoadUser(input.UserID, "", "", "")
+	userPayload, errMongo := mongo.MongoLoadUser(ctx, input.UserID, "", "", "")
 	if errMongo != nil && errMongo.Error() != "mongo: no documents in result" {
 		logger.Log.Warn().Err(errMongo).Msg("Avertissement L2 Mongo lors du SyncIdentity")
 	}
@@ -38,7 +38,7 @@ func SyncIdentity(ctx context.Context, input sync_models.SyncIdentityInput) (syn
 	if userPayload.ID == 0 {
 		// FALLBACK L3 (PostgreSQL)
 		var errPg error
-		userPayload, errPg = postgres.FuncLoadUser(input.UserID, "", "", "")
+		userPayload, errPg = postgres.FuncLoadUser(ctx, input.UserID, "", "", "")
 		if errPg != nil {
 			return output, nubo_error.NewInternal() // 500 générique au client, log l'erreur SQL
 		}

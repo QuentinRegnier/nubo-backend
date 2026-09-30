@@ -32,13 +32,13 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 
 	if errCache != nil {
 		// FALLBACK L2 (MongoDB) : On cherche le post dans le stockage tiède
-		postsFromMongo, errMongo := mongo.MongoLoadPosts([]int64{input.PostID})
+		postsFromMongo, errMongo := mongo.MongoLoadPosts(ctx, []int64{input.PostID})
 		if errMongo == nil && len(postsFromMongo) > 0 {
 			postPayload = postsFromMongo[0]
 			_ = object_cache_service.SetPostInObjectCache(ctx, postPayload) // Hydratation L1
 		} else {
 			// FALLBACK ABSOLU L3 (PostgreSQL)
-			postsFromPostgres, errPg := postgres.FuncLoadPosts([]int64{input.PostID}, 1, 0)
+			postsFromPostgres, errPg := postgres.FuncLoadPosts(ctx, []int64{input.PostID}, 1, 0)
 			if errPg != nil {
 				logger.Log.Error().Err(errPg).Int64("post_id", input.PostID).Msg("Erreur L3 lors de la vérification du post parent")
 				return nil, nubo_error.NewInternal()
@@ -105,7 +105,7 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 
 	// ── ÉTAPE 2 : TENTATIVE L2 (MONGODB) ────────────────────────────────────
 
-	commentsFromMongo, errMongo := mongo.MongoLoadCommentsPaginated(input.PostID, input.Offset, input.Limit)
+	commentsFromMongo, errMongo := mongo.MongoLoadCommentsPaginated(ctx, input.PostID, input.Offset, input.Limit)
 	if errMongo == nil && len(commentsFromMongo) > 0 {
 		for _, commentPayload := range commentsFromMongo {
 			_ = object_cache_service.SetCommentInObjectCache(ctx, commentPayload)

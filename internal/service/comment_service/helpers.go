@@ -69,7 +69,7 @@ func fetchCommentsCascade(ctx context.Context, commentIDs []int64) map[int64]com
 	// ── ÉTAPE 2 : WARM STORAGE (MONGODB) ────────────────────────────────────
 
 	var missingFromL2 []int64
-	commentsFromMongo, errMongo := mongo.MongoLoadComments(missingFromL1)
+	commentsFromMongo, errMongo := mongo.MongoLoadComments(ctx, missingFromL1)
 
 	if errMongo == nil {
 		for _, commentPayload := range commentsFromMongo {

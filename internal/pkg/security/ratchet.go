@@ -33,9 +33,9 @@ func RotateRatchet(ctx context.Context, userID int64, firebaseInstallationID str
 	// 1. CASCADE L1 -> L2 -> L3 (Recherche sécurisée)
 	sessionRaw, err := cache_service.LoadSessionFromCache(ctx, userID, firebaseInstallationID, "")
 	if err != nil || sessionRaw.ID == 0 {
-		sessionRaw, err = mongo.MongoLoadSession(userID, firebaseInstallationID, "", "")
+		sessionRaw, err = mongo.MongoLoadSession(ctx, userID, firebaseInstallationID, "", "")
 		if err != nil || sessionRaw.ID == 0 {
-			sessionRaw, err = postgres.FuncLoadSession(-1, userID, firebaseInstallationID, "")
+			sessionRaw, err = postgres.FuncLoadSession(ctx, -1, userID, firebaseInstallationID, "")
 			if err != nil || sessionRaw.ID == 0 {
 				return nubo_error.NewNotFound("SESSION_NOT_FOUND", "Session introuvable.", err)
 			}

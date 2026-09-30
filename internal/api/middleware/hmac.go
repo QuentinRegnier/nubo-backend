@@ -101,7 +101,7 @@ func HMACMiddleware() gin.HandlerFunc {
 
 		if !sessionFound {
 			// B. Essai Mongo L2
-			session, errMongo := mongo.MongoLoadSession(userID, firebaseInstallationID, "", "")
+			session, errMongo := mongo.MongoLoadSession(c, userID, firebaseInstallationID, "", "")
 			if errMongo == nil && session.ID != 0 {
 				logger.Log.Debug().Msg("Session trouvée dans Mongo L2, réhydratation L1...")
 				sessionFound = true
@@ -111,7 +111,7 @@ func HMACMiddleware() gin.HandlerFunc {
 
 		if !sessionFound {
 			// C. Essai Postgres L3
-			session, errPg := postgres.FuncLoadSession(-1, userID, firebaseInstallationID, "")
+			session, errPg := postgres.FuncLoadSession(c, -1, userID, firebaseInstallationID, "")
 			if errPg == nil && session.ID != 0 {
 				logger.Log.Debug().Msg("Session trouvée dans Postgres L3, réhydratation massive...")
 				sessionFound = true

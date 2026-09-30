@@ -1,16 +1,18 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/lib/pq"
 )
 
 // scanPosts mutualise la logique d'itération et de scan des lignes (DRY).
-func scanPosts(rows *sql.Rows) ([]post_models.PostPayload, error) {
+func scanPosts(ctx context.Context, rows *sql.Rows) ([]post_models.PostPayload, error) {
 	var posts []post_models.PostPayload
 	for rows.Next() {
 		var p post_models.PostPayload
@@ -54,7 +56,8 @@ func scanPosts(rows *sql.Rows) ([]post_models.PostPayload, error) {
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Erreur lors de l'itération sur les résultats SQL (rows.Err)")
+		return nil, nubo_error.NewInternal()
 	}
 
 	return posts, nil

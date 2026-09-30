@@ -26,7 +26,7 @@ func RevokeSession(ctx context.Context, callerID int64, targetSessionID int64) e
 
 	if errCache != nil || sessionPayload.ID == 0 {
 		// FALLBACK L3 : Si la session n'est plus en RAM, on interroge PostgreSQL (Source de Vérité)
-		sessionPg, errPg := postgres.FuncLoadSession(targetSessionID, callerID, "", "")
+		sessionPg, errPg := postgres.FuncLoadSession(ctx, targetSessionID, callerID, "", "")
 		if errPg != nil {
 			// Erreur BDD -> On loggue en interne et on renvoie une 500 propre au client
 			return nubo_error.NewInternal()

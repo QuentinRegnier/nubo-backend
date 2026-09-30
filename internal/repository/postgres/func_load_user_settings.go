@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 	"github.com/lib/pq"
 )
@@ -36,7 +37,8 @@ func FuncLoadUserSettings(ctx context.Context, userID int64) (user_settings_mode
 			// Ce n'est pas une erreur, l'utilisateur n'a simplement pas encore de settings
 			return s, nil
 		}
-		return s, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Erreur SQL inattendue lors de la vérification de l'enregistrement")
+		return s, nubo_error.NewInternal()
 	}
 
 	// Conversion des JSONB en Map

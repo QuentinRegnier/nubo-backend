@@ -86,7 +86,7 @@ func CreateMessage(ctx context.Context, senderID int64, conversationID int64, in
 
 	if errCache != nil || conversationPayload.ID == 0 {
 		var errMongo error
-		conversationPayload, errMongo = mongo.MongoGetConversation(conversationID)
+		conversationPayload, errMongo = mongo.MongoGetConversation(ctx, conversationID)
 
 		if errMongo != nil || conversationPayload.ID == 0 {
 			var errPg error

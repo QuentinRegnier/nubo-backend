@@ -1,13 +1,16 @@
 package mongo
 
 import (
+	"context"
+
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
 )
 
 // MongoLoadPosts récupère une liste de posts en fonction de leurs IDs (Niveau 2 Fallback)
-func MongoLoadPosts(ids []int64) ([]post_models.PostPayload, error) {
+func MongoLoadPosts(ctx context.Context, ids []int64) ([]post_models.PostPayload, error) {
 	if len(ids) == 0 {
 		return []post_models.PostPayload{}, nil
 	}
@@ -18,7 +21,8 @@ func MongoLoadPosts(ids []int64) ([]post_models.PostPayload, error) {
 
 	docs, err := Posts.Get(filter, nil)
 	if err != nil {
-		return nil, nubo_error.NewInternal(err)
+		nubo_log.Error(ctx).Err(err).Msg("Erreur interne lors de l'exécution de l'opération")
+		return nil, nubo_error.NewInternal()
 	}
 
 	var posts []post_models.PostPayload
