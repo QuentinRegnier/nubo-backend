@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
@@ -16,7 +16,7 @@ import (
 // Il déploie les planificateurs (Crons) et les pools de travailleurs (Sharding) qui
 // dépilent les files d'attente Redis H24.
 func StartBackgroundWorkers(ctx context.Context) {
-	logger.Log.Info().Msg("Démarrage du moteur de persistance et des processus asynchrones...")
+	nubo_log.Info(ctx).Msg("Démarrage du moteur de persistance et des processus asynchrones...")
 
 	// ── ÉTAPE 1 : LANCEMENT DES MOTEURS ALGORITHMIQUES (CRONS) ──────────────
 
@@ -71,5 +71,5 @@ func StartBackgroundWorkers(ctx context.Context) {
 	// car le maintien en vie de l'application est géré directement par le serveur
 	// HTTP principal (Gin) dans cmd/main.go. Les workers tourneront tant que
 	// le contexte global ne recevra pas le signal d'arrêt (ctx.Done).
-	logger.Log.Info().Msg("Moteur de persistance asynchrone opérationnel. Les 64 Workers sont à l'écoute.")
+	nubo_log.Info(ctx).Msg("Moteur de persistance asynchrone opérationnel. Les 64 Workers sont à l'écoute.")
 }

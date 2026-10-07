@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
@@ -20,7 +20,7 @@ import (
 // StartHashtagTrendCron lance l'évaluation des tendances mondiales de hashtags (TDD §3.3).
 // Il tourne à intervalle régulier pour maintenir le Top 100 des tags sans saturer le CPU.
 func StartHashtagTrendCron(ctx context.Context) {
-	logger.Log.Info().Msg("Démarrage du Moteur de Tendances Hashtags...")
+	nubo_log.Info(ctx).Msg("Démarrage du Moteur de Tendances Hashtags...")
 
 	go func() {
 		ticker := time.NewTicker(variables.TrendCronInterval)
@@ -117,9 +117,9 @@ func processHashtagTrends(ctx context.Context) {
 
 		_, errPipe := pipe.Exec(ctx)
 		if errPipe != nil {
-			logger.Log.Error().Err(errPipe).Msg("Échec critique lors de l'enregistrement des tendances Hashtags en RAM (L1)")
+			nubo_log.Error(ctx).Err(errPipe).Msg("Échec critique lors de l'enregistrement des tendances Hashtags en RAM (L1)")
 		} else {
-			logger.Log.Info().Msg("Moteur de Tendances : Mise à jour du Top 100 mondial réussie.")
+			nubo_log.Info(ctx).Msg("Moteur de Tendances : Mise à jour du Top 100 mondial réussie.")
 		}
 	}
 }

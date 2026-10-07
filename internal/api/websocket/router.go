@@ -10,7 +10,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/api/websocket/ws_handlers"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
@@ -20,7 +20,7 @@ import (
 func (c *Client) Route(message []byte) {
 	var req WSRequest
 	if err := json.Unmarshal(message, &req); err != nil {
-		logger.Log.Error().Err(err).Msg("WS Route Error: Payload illisible")
+		nubo_log.Error(context.Background()).Err(err).Msg("WS Route Error: Payload illisible")
 		return
 	}
 

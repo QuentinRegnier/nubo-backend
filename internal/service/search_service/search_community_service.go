@@ -7,7 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/search_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 )
@@ -24,7 +24,7 @@ func SearchCommunities(ctx context.Context, callerID int64, input search_models.
 
 	liteCommunitiesResults, errRedis := cache_service.SearchCommunitiesByPrefix(ctx, input.Prefix, input.Limit)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Str("prefix", input.Prefix).Msg("Erreur L1 lors de la recherche des communautés")
+		nubo_log.Error(ctx).Err(errRedis).Str("prefix", input.Prefix).Msg("Erreur L1 lors de la recherche des communautés")
 		return search_models.CommunitySearchOutput{}, nubo_error.NewInternal()
 	}
 

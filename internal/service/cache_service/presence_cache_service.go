@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
@@ -20,14 +20,14 @@ func MarkUserOnline(ctx context.Context, userID int64) error {
 	// 1. On stocke une simple string "1" pour minimiser l'empreinte RAM (O(1))
 	errRedis := redis.Presence.SetPrimitive(ctx, userID, "1")
 	if errRedis != nil {
-		logger.Log.Warn().Err(errRedis).Int64("user_id", userID).Msg("Impossible de marquer l'utilisateur comme en ligne dans le cache")
+		nubo_log.Warn(ctx).Err(errRedis).Int64("user_id", userID).Msg("Impossible de marquer l'utilisateur comme en ligne dans le cache")
 		return nubo_error.NewInternal()
 	}
 
 	// 2. Application stricte du TTL de 90 secondes (Lissage de déconnexion)
 	errExpire := redis.Expire(ctx, redis.Presence.Key(userID), 90*time.Second)
 	if errExpire != nil {
-		logger.Log.Warn().Err(errExpire).Int64("user_id", userID).Msg("Impossible de prolonger le TTL de présence")
+		nubo_log.Warn(ctx).Err(errExpire).Int64("user_id", userID).Msg("Impossible de prolonger le TTL de présence")
 		return nubo_error.NewInternal()
 	}
 
@@ -38,7 +38,7 @@ func MarkUserOnline(ctx context.Context, userID int64) error {
 func IsUserOnline(ctx context.Context, userID int64) bool {
 	isOnline, errRedis := redis.Presence.Exists(ctx, userID)
 	if errRedis != nil {
-		logger.Log.Warn().Err(errRedis).Int64("user_id", userID).Msg("Échec de la vérification de présence L1")
+		nubo_log.Warn(ctx).Err(errRedis).Int64("user_id", userID).Msg("Échec de la vérification de présence L1")
 		return false // En cas de doute ou de panne cache, on considère hors-ligne
 	}
 	return isOnline
@@ -62,7 +62,7 @@ func AreUsersOnline(ctx context.Context, requestedUserIDs []int64) (map[int64]bo
 	// Appel pur au repository/redis via la méthode abstraite MGet
 	redisValues, errRedis := redis.Presence.MGet(ctx, userIDsAsAny...)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Msg("Échec du MGet sur la collection de Présence")
+		nubo_log.Error(ctx).Err(errRedis).Msg("Échec du MGet sur la collection de Présence")
 		return nil, nubo_error.NewInternal()
 	}
 

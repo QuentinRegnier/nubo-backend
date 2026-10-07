@@ -7,7 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -44,7 +44,7 @@ func GetMessageReactions(ctx context.Context, callerID int64, input message_mode
 		// FALLBACK ABSOLU L3 (PostgreSQL - Cold Storage)
 		reactionsFromPostgres, errPg := postgres.FuncGetMessageReactionsPaginated(ctx, input.MessageID, input.Limit, input.Offset)
 		if errPg != nil {
-			logger.Log.Error().Err(errPg).Int64("message_id", input.MessageID).Msg("Erreur L3 lors de la récupération des réactions de message")
+			nubo_log.Error(ctx).Err(errPg).Int64("message_id", input.MessageID).Msg("Erreur L3 lors de la récupération des réactions de message")
 			return message_models.GetMessageReactionsOutput{}, nubo_error.NewInternal()
 		}
 

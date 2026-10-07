@@ -12,8 +12,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
@@ -47,7 +47,7 @@ func UploadMedia(fileStream io.ReadSeeker, ownerID int64, mediaID int64, isVisib
 
 	// Remise à zéro du curseur de lecture après l'analyse
 	if _, errSeek := fileStream.Seek(0, io.SeekStart); errSeek != nil {
-		logger.Log.Error().Err(errSeek).Msg("Erreur lors du reset du curseur de lecture du fichier uploadé")
+		nubo_log.Error(context.Background()).Err(errSeek).Msg("Erreur lors du reset du curseur de lecture du fichier uploadé")
 		return nubo_error.NewInternal()
 	}
 
@@ -70,7 +70,7 @@ func UploadMedia(fileStream io.ReadSeeker, ownerID int64, mediaID int64, isVisib
 	}
 
 	if errEncode := avif.Encode(&avifBuffer, decodedImage, encodingOptions); errEncode != nil {
-		logger.Log.Error().Err(errEncode).Msg("Erreur interne lors de l'encodage AVIF de l'image")
+		nubo_log.Error(context.Background()).Err(errEncode).Msg("Erreur interne lors de l'encodage AVIF de l'image")
 		return nubo_error.NewInternal()
 	}
 
@@ -96,7 +96,7 @@ func UploadMedia(fileStream io.ReadSeeker, ownerID int64, mediaID int64, isVisib
 	)
 
 	if errUpload != nil {
-		logger.Log.Error().Err(errUpload).Str("path", storagePath).Msg("Échec de l'upload du fichier vers l'Object Storage (MinIO/S3)")
+		nubo_log.Error(context.Background()).Err(errUpload).Str("path", storagePath).Msg("Échec de l'upload du fichier vers l'Object Storage (MinIO/S3)")
 		return nubo_error.NewInternal()
 	}
 
@@ -115,7 +115,7 @@ func UploadMedia(fileStream io.ReadSeeker, ownerID int64, mediaID int64, isVisib
 	ctx := context.Background()
 
 	if errCache := object_cache_service.SetMediaInObjectCache(ctx, mediaPayload); errCache != nil {
-		logger.Log.Error().Err(errCache).Int64("media_id", mediaID).Msg("Échec de la mise en cache L1 du Média")
+		nubo_log.Error(context.Background()).Err(errCache).Int64("media_id", mediaID).Msg("Échec de la mise en cache L1 du Média")
 	}
 
 	// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ET ROLLBACK ─────────
@@ -123,14 +123,14 @@ func UploadMedia(fileStream io.ReadSeeker, ownerID int64, mediaID int64, isVisib
 	errQueue := redis.EnqueueDB(ctx, mediaID, ownerID, redis.EntityMedia, redis.ActionCreate, mediaPayload, redis.TargetAll)
 
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("media_id", mediaID).Msg("Impossible d'enqueue le Média, lancement du Rollback S3...")
+		nubo_log.Error(context.Background()).Err(errQueue).Int64("media_id", mediaID).Msg("Impossible d'enqueue le Média, lancement du Rollback S3...")
 		// ROLLBACK : On supprime le fichier orphelin sur le S3 si la BDD n'a pas pu être notifiée
 		_ = minio.MinioClient.RemoveObject(context.Background(), bucketName, storagePath, miniogo.RemoveObjectOptions{})
 
 		return nubo_error.NewInternal()
 	}
 
-	logger.Log.Info().
+	nubo_log.Info(context.Background()).
 		Int64("media_id", mediaID).
 		Bool("visible", isVisible).
 		Int64("owner_id", ownerID).

@@ -5,8 +5,8 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -33,7 +33,7 @@ func GetUserSettings(ctx context.Context, userID int64) (user_settings_models.Us
 func SetUserSettings(ctx context.Context, userSettingsPayload user_settings_models.UserSettingsPayload) error {
 	errRedis := redis.UserSettings.SetObject(ctx, userSettingsPayload.UserID, userSettingsPayload)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Int64("user_id", userSettingsPayload.UserID).Msg("Impossible de sauvegarder les UserSettings en RAM L1")
+		nubo_log.Error(ctx).Err(errRedis).Int64("user_id", userSettingsPayload.UserID).Msg("Impossible de sauvegarder les UserSettings en RAM L1")
 		return nubo_error.NewInternal()
 	}
 	return nil
@@ -62,7 +62,7 @@ func GetUserSettingsCascade(ctx context.Context, userID int64) (user_settings_mo
 	// ── ÉTAPE 3 : TENTATIVE L3 (POSTGRESQL COLD STORAGE) ────────────────────
 	postgresSettings, errPg := postgres.FuncLoadUserSettings(ctx, userID)
 	if errPg != nil {
-		logger.Log.Error().Err(errPg).Int64("user_id", userID).Msg("Erreur critique L3 lors du chargement des UserSettings")
+		nubo_log.Error(ctx).Err(errPg).Int64("user_id", userID).Msg("Erreur critique L3 lors du chargement des UserSettings")
 		return user_settings_models.UserSettingsPayload{}, nubo_error.NewInternal()
 	}
 

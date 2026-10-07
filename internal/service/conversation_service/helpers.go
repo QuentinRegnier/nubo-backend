@@ -12,7 +12,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -308,7 +308,7 @@ func acceptAllPendingMembers(ctx context.Context, conversationID int64, callerAd
 			if errPg == nil && len(membersFromPostgres) > 0 {
 				pendingMembersPayloads = membersFromPostgres
 			} else if errPg != nil {
-				logger.Log.Error().Err(errPg).Int64("conv_id", conversationID).Msg("Échec L3 de récupération des membres en attente d'approbation")
+				nubo_log.Error(ctx).Err(errPg).Int64("conv_id", conversationID).Msg("Échec L3 de récupération des membres en attente d'approbation")
 				break
 			}
 		}
@@ -344,7 +344,7 @@ func acceptAllPendingMembers(ctx context.Context, conversationID int64, callerAd
 			// 2. PERSISTANCE BATCH (Write-Behind)
 			errQueue := redis.EnqueueDB(ctx, targetMemberPayload.ID, conversationID, redis.EntityMembers, redis.ActionUpdate, targetMemberPayload, redis.TargetAll)
 			if errQueue != nil {
-				logger.Log.Error().Err(errQueue).Int64("member_id", targetMemberPayload.ID).Msg("Échec file d'attente pour l'intégration de membre en masse")
+				nubo_log.Error(ctx).Err(errQueue).Int64("member_id", targetMemberPayload.ID).Msg("Échec file d'attente pour l'intégration de membre en masse")
 			}
 
 			// 3. MESSAGES SYSTÈMES ET DIFFUSION WEBSOCKET (Mode Twitch Communauté)

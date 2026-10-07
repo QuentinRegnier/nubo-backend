@@ -5,7 +5,7 @@ import (
 	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
@@ -20,7 +20,7 @@ func SetWatermarkInSpeedCache(ctx context.Context, conversationID int64, userID 
 	// Le HSET crée la clé si elle n'existe pas, ou met à jour le champ (userID) avec la nouvelle valeur.
 	errRedis := redis.ConvWatermarks.HSet(ctx, conversationID, strconv.FormatInt(userID, 10), lastReadMessageID)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Int64("conv_id", conversationID).Msg("Impossible de mettre à jour le watermark dans le Speed Cache L1")
+		nubo_log.Error(ctx).Err(errRedis).Int64("conv_id", conversationID).Msg("Impossible de mettre à jour le watermark dans le Speed Cache L1")
 		return nubo_error.NewInternal()
 	}
 
@@ -35,7 +35,7 @@ func GetWatermarksFromSpeedCache(ctx context.Context, conversationID int64) (map
 
 	rawWatermarksMap, errRedis := redis.ConvWatermarks.HGetAll(ctx, conversationID).Result()
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Int64("conv_id", conversationID).Msg("Erreur L1 lors de la récupération des watermarks de la conversation")
+		nubo_log.Error(ctx).Err(errRedis).Int64("conv_id", conversationID).Msg("Erreur L1 lors de la récupération des watermarks de la conversation")
 		return nil, nubo_error.NewInternal()
 	}
 

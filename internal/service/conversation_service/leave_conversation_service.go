@@ -8,7 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -58,7 +58,7 @@ func LeaveConversation(ctx context.Context, callerID int64, conversationID int64
 		_ = object_cache_service.SetMemberInObjectCache(ctx, newOwnerPayload)
 		errQueueOwner := redis.EnqueueDB(ctx, newOwnerPayload.ID, conversationID, redis.EntityMembers, redis.ActionUpdate, newOwnerPayload, redis.TargetAll)
 		if errQueueOwner != nil {
-			logger.Log.Error().Err(errQueueOwner).Int64("user_id", newOwnerPayload.UserID).Msg("Échec d'enqueue de la promotion du propriétaire")
+			nubo_log.Error(ctx).Err(errQueueOwner).Int64("user_id", newOwnerPayload.UserID).Msg("Échec d'enqueue de la promotion du propriétaire")
 		}
 	}
 
@@ -71,7 +71,7 @@ func LeaveConversation(ctx context.Context, callerID int64, conversationID int64
 
 	errQueueLeave := redis.EnqueueDB(ctx, memberPayload.ID, conversationID, redis.EntityMembers, redis.ActionUpdate, memberPayload, redis.TargetAll)
 	if errQueueLeave != nil {
-		logger.Log.Error().Err(errQueueLeave).Int64("user_id", memberPayload.UserID).Msg("Échec d'enqueue du départ de l'utilisateur")
+		nubo_log.Error(ctx).Err(errQueueLeave).Int64("user_id", memberPayload.UserID).Msg("Échec d'enqueue du départ de l'utilisateur")
 		return conversation_models.LeaveConversationOutput{}, nubo_error.NewInternal()
 	}
 
@@ -81,7 +81,7 @@ func LeaveConversation(ctx context.Context, callerID int64, conversationID int64
 
 		errBroadcast := realtime_service.BroadcastToConversation(backgroundContext, conversationID, "member.left", memberPayload)
 		if errBroadcast != nil {
-			logger.Log.Error().Err(errBroadcast).Msg("Échec de la diffusion WebSocket pour member.left")
+			nubo_log.Error(ctx).Err(errBroadcast).Msg("Échec de la diffusion WebSocket pour member.left")
 		}
 
 		// SYNC LEDGER : On avertit tous les autres participants qu'une mutation globale a eu lieu

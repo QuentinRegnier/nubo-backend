@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
@@ -19,7 +19,7 @@ import (
 // StartHashtagCanonCron lance un worker qui calcule les similarités (Levenshtein)
 // entre les tags communautaires toutes les 24h pour absorber les fautes de frappe.
 func StartHashtagCanonCron(ctx context.Context) {
-	logger.Log.Info().Msg("Démarrage du Canoniseur de Hashtags (Cron 24h)...")
+	nubo_log.Info(ctx).Msg("Démarrage du Canoniseur de Hashtags (Cron 24h)...")
 
 	go func() {
 		// En production, utiliser un vrai cron pour viser les heures creuses (ex: 03:00 AM)
@@ -54,7 +54,7 @@ func processHashtagCanonicalization(ctx context.Context) {
 		return
 	}
 
-	logger.Log.Info().Int("count", len(tags)).Msg("Canonicalisation de tags communautaires en cours...")
+	nubo_log.Info(ctx).Int("count", len(tags)).Msg("Canonicalisation de tags communautaires en cours...")
 	aliasMap := make(map[string]string)
 
 	// ── ÉTAPE 3 : ALGORITHME D'APPARIEMENT O(N²) ────────────────────────────
@@ -94,9 +94,9 @@ func processHashtagCanonicalization(ctx context.Context) {
 
 		_, errExec := pipe.Exec(ctx)
 		if errExec == nil {
-			logger.Log.Info().Int("alias_count", len(aliasMap)).Msg("Canonicalisation terminée : Dictionnaire de fautes de frappes mis à jour.")
+			nubo_log.Info(ctx).Int("alias_count", len(aliasMap)).Msg("Canonicalisation terminée : Dictionnaire de fautes de frappes mis à jour.")
 		} else {
-			logger.Log.Error().Err(errExec).Msg("Échec critique lors de l'enregistrement des alias dans Redis (L1)")
+			nubo_log.Error(ctx).Err(errExec).Msg("Échec critique lors de l'enregistrement des alias dans Redis (L1)")
 		}
 	}
 }
@@ -191,8 +191,8 @@ func persistCommunityTags(ctx context.Context, tags []string) {
 	// Exécution atomique
 	_, err := postgres.PostgresDB.ExecContext(ctx, query, pq.Array(tags))
 	if err != nil {
-		logger.Log.Error().Err(err).Msg("Échec lors de la persistance SQL des tags communautaires (L3)")
+		nubo_log.Error(ctx).Err(err).Msg("Échec lors de la persistance SQL des tags communautaires (L3)")
 	} else {
-		logger.Log.Info().Int("count", len(tags)).Msg("Persistance SQL des tags communautaires terminée avec succès.")
+		nubo_log.Info(ctx).Int("count", len(tags)).Msg("Persistance SQL des tags communautaires terminée avec succès.")
 	}
 }

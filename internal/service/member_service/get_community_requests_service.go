@@ -7,7 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -47,7 +47,7 @@ func GetCommunityRequests(ctx context.Context, callerID int64, input member_mode
 		// FALLBACK L3 (Cold Storage PostgreSQL)
 		membersFromPostgres, errPg := postgres.FuncLoadMembersByRolePaginated(ctx, input.ConversationID, variables.MemberRolePending, input.Limit, input.Offset)
 		if errPg != nil {
-			logger.Log.Error().Err(errPg).Int64("conv_id", input.ConversationID).Msg("Échec L3 lors de la récupération des candidatures en attente")
+			nubo_log.Error(ctx).Err(errPg).Int64("conv_id", input.ConversationID).Msg("Échec L3 lors de la récupération des candidatures en attente")
 			return member_models.GetCommunityRequestsOutput{}, nubo_error.NewInternal()
 		}
 

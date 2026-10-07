@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -28,7 +28,7 @@ func GetPostsView(ctx context.Context, targetPostIDs []int64) ([]post_models.Pos
 	// ── ÉTAPE 1 : NIVEAU 1 (REDIS MGET ULTRA-RAPIDE) ────────────────────────
 	mgetResult, errMGet := redis.Posts.GetMany(backgroundCtx, targetPostIDs)
 	if errMGet != nil {
-		logger.Log.Warn().Err(errMGet).Msg("Erreur Redis MGET (fallback vers L2 Mongo déclenché)")
+		nubo_log.Warn(ctx).Err(errMGet).Msg("Erreur Redis MGET (fallback vers L2 Mongo déclenché)")
 		mgetResult = &redis.GetManyResult{MissingIDs: targetPostIDs}
 	} else {
 		for postID, binaryData := range mgetResult.Found {
@@ -69,19 +69,19 @@ func GetPostsView(ctx context.Context, targetPostIDs []int64) ([]post_models.Pos
 				}
 			}
 		} else {
-			logger.Log.Error().Err(errMongo).Msg("Erreur Mongo Fallback (fallback total vers Postgres)")
+			nubo_log.Error(ctx).Err(errMongo).Msg("Erreur Mongo Fallback (fallback total vers Postgres)")
 			stillMissingPostIDs = mgetResult.MissingIDs // Si Mongo plante, on cherchera tout dans Postgres
 		}
 	}
 
 	// ── ÉTAPE 3 : NIVEAU 3 (POSTGRESQL FALLBACK COLD STORAGE) ──────────────
 	if len(stillMissingPostIDs) > 0 {
-		logger.Log.Info().Int("missing_count", len(stillMissingPostIDs)).Msg("Postgres Fallback déclenché pour les posts")
+		nubo_log.Info(ctx).Int("missing_count", len(stillMissingPostIDs)).Msg("Postgres Fallback déclenché pour les posts")
 
 		postgresPostsList, errPg := postgres.FuncLoadPosts(ctx, stillMissingPostIDs, len(stillMissingPostIDs), 0)
 
 		if errPg != nil {
-			logger.Log.Error().Err(errPg).Msg("Erreur critique Postgres Fallback lors de l'hydratation des posts")
+			nubo_log.Error(ctx).Err(errPg).Msg("Erreur critique Postgres Fallback lors de l'hydratation des posts")
 		} else {
 			for _, postgresPost := range postgresPostsList {
 				temporaryPostsMap[postgresPost.ID] = postgresPost

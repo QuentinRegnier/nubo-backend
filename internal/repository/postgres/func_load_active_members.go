@@ -9,8 +9,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 type ActiveMemberResult struct {
@@ -28,7 +28,7 @@ func FuncLoadActiveMembers(ctx context.Context) ([]ActiveMemberResult, error) {
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres)")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres)")
 		}
 	}(rows)
 

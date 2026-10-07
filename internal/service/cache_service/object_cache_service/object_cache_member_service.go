@@ -6,7 +6,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
@@ -35,7 +35,7 @@ func SetMemberInObjectCache(ctx context.Context, memberPayload member_models.Mem
 
 	errRedis := redis.Members.SetObject(ctx, compositeMemberKey, memberPayload)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Int64("user_id", memberPayload.UserID).Msg("Échec de l'écriture du membre dans l'Object Cache")
+		nubo_log.Error(ctx).Err(errRedis).Int64("user_id", memberPayload.UserID).Msg("Échec de l'écriture du membre dans l'Object Cache")
 		return nubo_error.NewInternal()
 	}
 
@@ -48,7 +48,7 @@ func DeleteMemberFromObjectCache(ctx context.Context, conversationID int64, user
 
 	errRedis := redis.Members.DeleteObject(ctx, compositeMemberKey)
 	if errRedis != nil {
-		logger.Log.Warn().Err(errRedis).Msg("Échec de la suppression du membre de l'Object Cache")
+		nubo_log.Warn(ctx).Err(errRedis).Msg("Échec de la suppression du membre de l'Object Cache")
 		return nubo_error.NewInternal()
 	}
 

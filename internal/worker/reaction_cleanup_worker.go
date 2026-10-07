@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
@@ -18,7 +18,7 @@ import (
 // StartReactionCleanupCron lance le Garbage Collector qui détruit les réactions orphelines.
 // Une réaction devient orpheline lorsque le message parent a été supprimé ou est invisible.
 func StartReactionCleanupCron(ctx context.Context) {
-	logger.Log.Info().Msg("Démarrage du Garbage Collector de Réactions (Cron 6h)...")
+	nubo_log.Info(ctx).Msg("Démarrage du Garbage Collector de Réactions (Cron 6h)...")
 
 	go func() {
 		ticker := time.NewTicker(variables.ReactionCleanupCronInterval)
@@ -42,7 +42,7 @@ func processReactionCleanup(ctx context.Context) {
 	// Elle supprime les réactions orphelines et nous retourne la liste des messages impactés.
 	orphanMessageIDs, errPg := postgres.FuncDeleteOrphanReactions(ctx)
 	if errPg != nil {
-		logger.Log.Error().Err(errPg).Msg("Garbage Collector Réactions : Échec critique de la purge PostgreSQL (L3)")
+		nubo_log.Error(ctx).Err(errPg).Msg("Garbage Collector Réactions : Échec critique de la purge PostgreSQL (L3)")
 		return
 	}
 
@@ -50,7 +50,7 @@ func processReactionCleanup(ctx context.Context) {
 		return // Rien à nettoyer ce cycle
 	}
 
-	logger.Log.Info().Int("count", len(orphanMessageIDs)).Msg("Garbage Collector Réactions : Purge L3 terminée. Répercussion sur le L2 en cours...")
+	nubo_log.Info(ctx).Int("count", len(orphanMessageIDs)).Msg("Garbage Collector Réactions : Purge L3 terminée. Répercussion sur le L2 en cours...")
 
 	// ── ÉTAPE 2 : PURGE DU WARM STORAGE L2 (MONGODB) ──────────────────────────
 	// On répercute la suppression sur Mongo pour éviter des réactions fantômes
@@ -61,7 +61,7 @@ func processReactionCleanup(ctx context.Context) {
 		})
 
 		if errMongo != nil {
-			logger.Log.Error().Err(errMongo).Msg("Garbage Collector Réactions : Échec de la suppression sur MongoDB (L2)")
+			nubo_log.Error(ctx).Err(errMongo).Msg("Garbage Collector Réactions : Échec de la suppression sur MongoDB (L2)")
 		}
 	}
 }

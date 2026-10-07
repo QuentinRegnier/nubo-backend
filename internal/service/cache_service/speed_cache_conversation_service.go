@@ -12,7 +12,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -41,7 +41,7 @@ func GetInboxView(ctx context.Context, userID int64, paginationLimit int64, pagi
 	// ── ÉTAPE 1 : LECTURE DU ZSET INBOX (L1) ────────────────────────────────
 	conversationIDStringsList, errRedisInbox := redis.UserInbox.ZRevRange(ctx, userID, paginationOffset, paginationOffset+paginationLimit-1)
 	if errRedisInbox != nil {
-		logger.Log.Error().Err(errRedisInbox).Int64("user_id", userID).Msg("Erreur L1 lors de la lecture du UserInbox ZSET")
+		nubo_log.Error(ctx).Err(errRedisInbox).Int64("user_id", userID).Msg("Erreur L1 lors de la lecture du UserInbox ZSET")
 		return nil, nubo_error.NewInternal()
 	}
 
@@ -123,7 +123,7 @@ func GetInboxView(ctx context.Context, userID int64, paginationLimit int64, pagi
 	}
 
 	if len(aggregatedMissingIDs) > 0 {
-		logger.Log.Info().Int("missing_conversations", len(aggregatedMissingIDs)).Msg("Postgres Fallback déclenché pour l'Inbox (Cache Miss)")
+		nubo_log.Info(ctx).Int("missing_conversations", len(aggregatedMissingIDs)).Msg("Postgres Fallback déclenché pour l'Inbox (Cache Miss)")
 
 		fallbackResultsFromPg, errPgFallback := postgres.FuncLoadConversationFallback(ctx, userID, aggregatedMissingIDs)
 		if errPgFallback == nil {
@@ -164,7 +164,7 @@ func GetInboxView(ctx context.Context, userID int64, paginationLimit int64, pagi
 				}(convLiteRequest, memberLiteRequest)
 			}
 		} else {
-			logger.Log.Error().Err(errPgFallback).Msg("Échec critique lors du Fallback Postgres pour l'Inbox")
+			nubo_log.Error(ctx).Err(errPgFallback).Msg("Échec critique lors du Fallback Postgres pour l'Inbox")
 		}
 	}
 
@@ -306,7 +306,7 @@ func AddMemberToSpeedCache(ctx context.Context, memberPayload lite_models.Member
 
 	errSet := redis.ConvMembers.SetObject(ctx, compositeMemberKey, memberPayload)
 	if errSet != nil {
-		logger.Log.Error().Err(errSet).Msg("Impossible d'ajouter le membre dans le Speed Cache")
+		nubo_log.Error(ctx).Err(errSet).Msg("Impossible d'ajouter le membre dans le Speed Cache")
 		return nubo_error.NewInternal()
 	}
 
@@ -418,7 +418,7 @@ func RehydrateConversationItemInSpeedCache(ctx context.Context, fullConversation
 
 // SeedMessagingSpeedCache reconstruit l'intégralité du cache Inbox et Conversations depuis Postgres.
 func SeedMessagingSpeedCache(ctx context.Context) error {
-	logger.Log.Info().Msg("Amorçage SPEED Cache: Chargement de la messagerie (Conversations et Inboxes)...")
+	nubo_log.Info(ctx).Msg("Amorçage SPEED Cache: Chargement de la messagerie (Conversations et Inboxes)...")
 
 	activeConversationsList, errPgConv := postgres.FuncLoadActiveConversations(ctx)
 	if errPgConv != nil {
@@ -466,7 +466,7 @@ func SeedMessagingSpeedCache(ctx context.Context) error {
 		}
 	}
 
-	logger.Log.Info().Int("conversations", len(activeConversationsList)).Int("membres", len(activeMembersList)).Msg("SPEED Cache Messaging initialisé avec succès.")
+	nubo_log.Info(ctx).Int("conversations", len(activeConversationsList)).Int("membres", len(activeMembersList)).Msg("SPEED Cache Messaging initialisé avec succès.")
 	return nil
 }
 

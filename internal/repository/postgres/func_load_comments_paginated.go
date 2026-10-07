@@ -8,7 +8,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 // FuncLoadCommentsPaginated lit L3 et trie par pertinence
@@ -24,7 +23,7 @@ func FuncLoadCommentsPaginated(ctx context.Context, postID int64, offset int64, 
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
 		}
 	}(rows)
 

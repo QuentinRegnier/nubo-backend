@@ -7,7 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/search_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -62,7 +62,7 @@ func SearchPosts(ctx context.Context, callerID int64, input search_models.Search
 		if targetRankType != "" {
 			rankedPayloadsFromCache, errRedis := cache_service.GetRankedPosts(ctx, targetRankType, input.Offset, input.Limit)
 			if errRedis != nil {
-				logger.Log.Error().Err(errRedis).Str("rank_type", targetRankType).Msg("Erreur L1 lors de la récupération des tops posts")
+				nubo_log.Error(ctx).Err(errRedis).Str("rank_type", targetRankType).Msg("Erreur L1 lors de la récupération des tops posts")
 				return search_models.SearchPostOutput{}, nubo_error.NewInternal()
 			}
 
@@ -95,7 +95,7 @@ func SearchPosts(ctx context.Context, callerID int64, input search_models.Search
 					resolvedPostIDs = append(resolvedPostIDs, pgIDs...)
 					hasQueryBeenIntercepted = true
 				} else {
-					logger.Log.Warn().Err(errPg).Msg("Échec L3 de la recherche de Post par Tag trié")
+					nubo_log.Warn(ctx).Err(errPg).Msg("Échec L3 de la recherche de Post par Tag trié")
 				}
 			}
 		}
@@ -115,7 +115,7 @@ func SearchPosts(ctx context.Context, callerID int64, input search_models.Search
 				resolvedPostIDs = append(resolvedPostIDs, pgIDs...)
 				hasQueryBeenIntercepted = true
 			} else {
-				logger.Log.Warn().Err(errPg).Msg("Échec L3 de la recherche de Post par Auteur Exact")
+				nubo_log.Warn(ctx).Err(errPg).Msg("Échec L3 de la recherche de Post par Auteur Exact")
 			}
 		}
 	}
@@ -125,7 +125,7 @@ func SearchPosts(ctx context.Context, callerID int64, input search_models.Search
 	if !hasQueryBeenIntercepted && input.Query != "" {
 		pgIDs, errPg := postgres.FuncSearchPostIDsByText(ctx, input.Query, targetOrderMode, input.Offset, input.Limit)
 		if errPg != nil {
-			logger.Log.Error().Err(errPg).Str("query", input.Query).Msg("Erreur critique L3 lors de la Full-Text Search des posts")
+			nubo_log.Error(ctx).Err(errPg).Str("query", input.Query).Msg("Erreur critique L3 lors de la Full-Text Search des posts")
 			return search_models.SearchPostOutput{}, nubo_error.NewInternal()
 		}
 		resolvedPostIDs = append(resolvedPostIDs, pgIDs...)

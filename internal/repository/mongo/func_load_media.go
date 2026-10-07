@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 )
@@ -31,7 +31,7 @@ func MongoLoadMedia(mediaIDs []int64) ([]media_models.MediaPayload, error) {
 	defer func(cursor *mongo.Cursor, ctx context.Context) {
 		err := cursor.Close(ctx)
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture du curseur Mongo (Media)")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture du curseur Mongo (Media)")
 		}
 	}(cursor, ctx)
 

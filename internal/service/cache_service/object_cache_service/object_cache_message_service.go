@@ -5,7 +5,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -32,7 +32,7 @@ func GetMessageFromObjectCache(ctx context.Context, messageID int64) (message_mo
 func SetMessageInObjectCache(ctx context.Context, messagePayload message_models.MessagePayload) error {
 	errRedis := redis.Messages.SetObject(ctx, messagePayload.ID, messagePayload)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Int64("msg_id", messagePayload.ID).Msg("Échec de l'écriture du message dans l'Object Cache")
+		nubo_log.Error(ctx).Err(errRedis).Int64("msg_id", messagePayload.ID).Msg("Échec de l'écriture du message dans l'Object Cache")
 		return nubo_error.NewInternal()
 	}
 	return nil
@@ -42,7 +42,7 @@ func SetMessageInObjectCache(ctx context.Context, messagePayload message_models.
 func DeleteMessageFromObjectCache(ctx context.Context, messageID int64) error {
 	errRedis := redis.Messages.DeleteObject(ctx, messageID)
 	if errRedis != nil {
-		logger.Log.Warn().Err(errRedis).Int64("msg_id", messageID).Msg("Échec de la suppression du message de l'Object Cache")
+		nubo_log.Warn(ctx).Err(errRedis).Int64("msg_id", messageID).Msg("Échec de la suppression du message de l'Object Cache")
 		return nubo_error.NewInternal()
 	}
 	return nil
@@ -95,7 +95,7 @@ func GetMessagesView(ctx context.Context, targetMessageIDs []int64) ([]message_m
 				}
 			}
 		} else {
-			logger.Log.Warn().Err(errMongo).Msg("Échec L2 lors de la récupération des messages par IDs")
+			nubo_log.Warn(ctx).Err(errMongo).Msg("Échec L2 lors de la récupération des messages par IDs")
 			stillMissingMessageIDs = mgetResult.MissingIDs
 		}
 	}
@@ -119,7 +119,7 @@ func GetMessagesView(ctx context.Context, targetMessageIDs []int64) ([]message_m
 				}(pgMessage)
 			}
 		} else {
-			logger.Log.Error().Err(errPg).Msg("Échec critique L3 lors du chargement des messages manquants")
+			nubo_log.Error(ctx).Err(errPg).Msg("Échec critique L3 lors du chargement des messages manquants")
 		}
 	}
 

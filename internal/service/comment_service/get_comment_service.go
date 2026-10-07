@@ -6,7 +6,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -40,7 +40,7 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 			// FALLBACK ABSOLU L3 (PostgreSQL)
 			postsFromPostgres, errPg := postgres.FuncLoadPosts(ctx, []int64{input.PostID}, 1, 0)
 			if errPg != nil {
-				logger.Log.Error().Err(errPg).Int64("post_id", input.PostID).Msg("Erreur L3 lors de la vérification du post parent")
+				nubo_log.Error(ctx).Err(errPg).Int64("post_id", input.PostID).Msg("Erreur L3 lors de la vérification du post parent")
 				return nil, nubo_error.NewInternal()
 			}
 			if len(postsFromPostgres) == 0 {
@@ -123,7 +123,7 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 	if input.Offset == 0 {
 		commentsFromPostgres, errPg := postgres.FuncLoadCommentsPaginated(ctx, input.PostID, input.Offset, input.Limit)
 		if errPg != nil {
-			logger.Log.Error().Err(errPg).Int64("post_id", input.PostID).Msg("Erreur L3 lors de la récupération des commentaires")
+			nubo_log.Error(ctx).Err(errPg).Int64("post_id", input.PostID).Msg("Erreur L3 lors de la récupération des commentaires")
 			return nil, nubo_error.NewInternal()
 		}
 

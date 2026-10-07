@@ -10,7 +10,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -31,13 +31,13 @@ func StoreUserLiteInSpeedCache(ctx context.Context, userLitePayload lite_models.
 	lexicographicValue := fmt.Sprintf("%s:%d", strings.ToLower(userLitePayload.Username), userLitePayload.ID)
 	errLex := redis.UsersLex.ZAdd(ctx, variables.LexicographicGlobalKey, 0, lexicographicValue)
 	if errLex != nil {
-		logger.Log.Warn().Err(errLex).Msg("Échec de l'indexation lexicographique d'un utilisateur")
+		nubo_log.Warn(ctx).Err(errLex).Msg("Échec de l'indexation lexicographique d'un utilisateur")
 	}
 
 	// 2. Sauvegarde dans l'Object Cache Rapide L1
 	errSet := redis.UsersLite.SetObject(ctx, userLitePayload.ID, userLitePayload)
 	if errSet != nil {
-		logger.Log.Error().Err(errSet).Msg("Échec de la sauvegarde du UserLiteRequest dans le Speed Cache")
+		nubo_log.Error(ctx).Err(errSet).Msg("Échec de la sauvegarde du UserLiteRequest dans le Speed Cache")
 		return nubo_error.NewInternal()
 	}
 
@@ -101,7 +101,7 @@ func SearchUserByPrefix(ctx context.Context, searchPrefix string, searchLimit in
 	// 1. Recherche ultra-rapide dans l'index lexicographique
 	lexicographicResultsList, errLex := redis.UsersLex.ZRangeByLex(ctx, variables.LexicographicGlobalKey, strings.ToLower(searchPrefix), searchLimit)
 	if errLex != nil {
-		logger.Log.Error().Err(errLex).Msg("Erreur L1 lors du ZRangeByLex utilisateurs")
+		nubo_log.Error(ctx).Err(errLex).Msg("Erreur L1 lors du ZRangeByLex utilisateurs")
 		return nil, nubo_error.NewInternal()
 	}
 
@@ -124,7 +124,7 @@ func SearchUserByPrefix(ctx context.Context, searchPrefix string, searchLimit in
 	// 3. Hydratation massive via MGET sur la collection UsersLite
 	multiGetResult, errMGet := redis.UsersLite.GetMany(ctx, extractedIDsList)
 	if errMGet != nil {
-		logger.Log.Error().Err(errMGet).Msg("Échec L1 lors de l'hydratation massive des SpeedUsers")
+		nubo_log.Error(ctx).Err(errMGet).Msg("Échec L1 lors de l'hydratation massive des SpeedUsers")
 		return nil, nubo_error.NewInternal()
 	}
 

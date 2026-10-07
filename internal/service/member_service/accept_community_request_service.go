@@ -10,7 +10,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -53,7 +53,7 @@ func AcceptCommunityRequest(ctx context.Context, callerID int64, input member_mo
 			var errPg error
 			targetMemberPayload, errPg = postgres.FuncGetMember(ctx, input.ConversationID, input.TargetUserID)
 			if errPg != nil {
-				logger.Log.Error().Err(errPg).Int64("user_id", input.TargetUserID).Msg("Échec L3 lors de la récupération du membre en attente")
+				nubo_log.Error(ctx).Err(errPg).Int64("user_id", input.TargetUserID).Msg("Échec L3 lors de la récupération du membre en attente")
 				return member_models.AcceptCommunityRequestOutput{}, nubo_error.NewInternal()
 			}
 			if targetMemberPayload.ID == 0 {
@@ -93,7 +93,7 @@ func AcceptCommunityRequest(ctx context.Context, callerID int64, input member_mo
 	// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
 	errQueue := redis.EnqueueDB(ctx, targetMemberPayload.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMemberPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("member_id", targetMemberPayload.ID).Msg("Échec du Write-Behind pour l'acceptation de candidature")
+		nubo_log.Error(ctx).Err(errQueue).Int64("member_id", targetMemberPayload.ID).Msg("Échec du Write-Behind pour l'acceptation de candidature")
 		return member_models.AcceptCommunityRequestOutput{}, nubo_error.NewInternal()
 	}
 

@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -25,10 +25,10 @@ func InitRedis() {
 
 	err := Rdb.Ping(ctx).Err()
 	if err != nil {
-		logger.Log.Fatal().Err(err).Msg("Impossible de se connecter à Redis")
+		nubo_log.Fatal(ctx).Err(err).Msg("Impossible de se connecter à Redis")
 	}
 
-	logger.Log.Info().Msg("Connexion à Redis réussie")
+	nubo_log.Info(ctx).Msg("Connexion à Redis réussie")
 }
 
 // GetWithTimeout récupère une valeur avec un timeout custom

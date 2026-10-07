@@ -6,8 +6,8 @@ import (
 	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
 )
 
@@ -42,7 +42,7 @@ func CustomRecoveryMiddleware() gin.HandlerFunc {
 				stack := debug.Stack()
 
 				// Log asynchrone et propre du crash
-				logger.Log.Error().
+				nubo_log.Error(c).
 					Str("trace_id", traceID).
 					Interface("panic_reason", r).
 					Bytes("stack_trace", stack).

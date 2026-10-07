@@ -2,6 +2,7 @@ package security
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,7 +13,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 )
 
 // CheckHMAC vérifie la signature (utilisable par Middleware et Handler)
@@ -21,7 +22,7 @@ func CheckHMAC(stringToSign string, secret string, signatureToCheck string) bool
 	h.Write([]byte(stringToSign))
 	computedSig := hex.EncodeToString(h.Sum(nil))
 
-	logger.Log.Debug().
+	nubo_log.Debug(context.Background()).
 		Str("string_to_sign", stringToSign).
 		Str("computed_sig", computedSig).
 		Str("expected_sig", signatureToCheck).

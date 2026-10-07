@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -168,7 +168,7 @@ func PopSmartBatchBlocking(ctx context.Context, shardID int, batchSize int64) ([
 		if err == nil && len(rest) > 0 {
 			rawElements = append(rawElements, rest...)
 		} else if err != nil && !errors.Is(err, redis.Nil) {
-			logger.Log.Warn().Err(err).Str("queue_key", queueKey).Msg("Erreur LPopCount secondaire")
+			nubo_log.Warn(ctx).Err(err).Str("queue_key", queueKey).Msg("Erreur LPopCount secondaire")
 		}
 	}
 
@@ -184,7 +184,7 @@ func PopSmartBatchBlocking(ctx context.Context, shardID int, batchSize int64) ([
 		if err := decoder.Decode(&evt); err == nil {
 			events = append(events, evt)
 		} else {
-			logger.Log.Error().Err(err).Msg("Erreur de décodage d'un événement de la queue asynchrone")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur de décodage d'un événement de la queue asynchrone")
 		}
 	}
 

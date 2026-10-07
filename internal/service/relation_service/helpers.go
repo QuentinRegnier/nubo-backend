@@ -7,7 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
@@ -66,7 +66,7 @@ func fetchRelationsHydrated(ctx context.Context, callerID int64, primaryTargetID
 	if errCacheIndex != nil || len(matchedUserIDs) == 0 {
 		matchedUserIDsFromPg, errPg := postgres.FuncLoadRelationsByDirectionPaginated(ctx, primaryTargetID, targetState, searchDirection, fetchLimit, fetchOffset)
 		if errPg != nil {
-			logger.Log.Error().Err(errPg).Int64("user_id", primaryTargetID).Msg("Échec L3 lors de la récupération des relations")
+			nubo_log.Error(ctx).Err(errPg).Int64("user_id", primaryTargetID).Msg("Échec L3 lors de la récupération des relations")
 			return nil, nubo_error.NewInternal()
 		}
 		matchedUserIDs = matchedUserIDsFromPg

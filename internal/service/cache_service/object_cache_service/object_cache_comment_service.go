@@ -6,7 +6,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
@@ -31,7 +31,7 @@ func GetCommentFromObjectCache(ctx context.Context, commentID int64) (comment_mo
 func SetCommentInObjectCache(ctx context.Context, commentPayload comment_models.CommentPayload) error {
 	errRedis := redis.Comments.SetObject(ctx, commentPayload.ID, commentPayload)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Int64("comment_id", commentPayload.ID).Msg("Impossible de sauvegarder le commentaire dans l'Object Cache")
+		nubo_log.Error(ctx).Err(errRedis).Int64("comment_id", commentPayload.ID).Msg("Impossible de sauvegarder le commentaire dans l'Object Cache")
 		return nubo_error.NewInternal()
 	}
 	return nil
@@ -41,7 +41,7 @@ func SetCommentInObjectCache(ctx context.Context, commentPayload comment_models.
 func DeleteCommentFromObjectCache(ctx context.Context, commentID int64) error {
 	errRedis := redis.Comments.DeleteObject(ctx, commentID)
 	if errRedis != nil {
-		logger.Log.Warn().Err(errRedis).Int64("comment_id", commentID).Msg("Impossible de supprimer le commentaire de l'Object Cache")
+		nubo_log.Warn(ctx).Err(errRedis).Int64("comment_id", commentID).Msg("Impossible de supprimer le commentaire de l'Object Cache")
 		return nubo_error.NewInternal()
 	}
 	return nil
@@ -55,7 +55,7 @@ func DeleteCommentFromObjectCache(ctx context.Context, commentID int64) error {
 func GetTopCommentIDs(ctx context.Context, postID int64, paginationOffset int64, paginationLimit int64) ([]int64, error) {
 	idStringsList, errRedis := redis.PostComments.ZRevRange(ctx, postID, paginationOffset, paginationOffset+paginationLimit-1)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Int64("post_id", postID).Msg("Erreur L1 lors de la lecture des IDs de commentaires")
+		nubo_log.Error(ctx).Err(errRedis).Int64("post_id", postID).Msg("Erreur L1 lors de la lecture des IDs de commentaires")
 		return nil, nubo_error.NewInternal()
 	}
 
@@ -75,7 +75,7 @@ func AddCommentToZSET(ctx context.Context, postID int64, commentID int64, commen
 
 	errZAdd := redis.PostComments.ZAddWithCap(ctx, postID, commentScore, commentIDString, variables.MaxZsetPostComment)
 	if errZAdd != nil {
-		logger.Log.Error().Err(errZAdd).Int64("post_id", postID).Msg("Impossible d'ajouter le commentaire au ZSET")
+		nubo_log.Error(ctx).Err(errZAdd).Int64("post_id", postID).Msg("Impossible d'ajouter le commentaire au ZSET")
 		return nubo_error.NewInternal()
 	}
 
@@ -89,7 +89,7 @@ func RemoveCommentFromZSET(ctx context.Context, postID int64, commentID int64) e
 
 	errZRem := redis.PostComments.ZRem(ctx, postID, commentIDString)
 	if errZRem != nil {
-		logger.Log.Warn().Err(errZRem).Msg("Impossible de supprimer le commentaire du ZSET")
+		nubo_log.Warn(ctx).Err(errZRem).Msg("Impossible de supprimer le commentaire du ZSET")
 		return nubo_error.NewInternal()
 	}
 
@@ -102,7 +102,7 @@ func IncrementCommentScoreInZSET(ctx context.Context, postID int64, commentID in
 
 	errIncr := redis.PostComments.ZIncrBy(ctx, postID, scoreIncrement, commentIDString)
 	if errIncr != nil {
-		logger.Log.Error().Err(errIncr).Msg("Impossible d'incrémenter le score du commentaire dans le ZSET")
+		nubo_log.Error(ctx).Err(errIncr).Msg("Impossible d'incrémenter le score du commentaire dans le ZSET")
 		return nubo_error.NewInternal()
 	}
 

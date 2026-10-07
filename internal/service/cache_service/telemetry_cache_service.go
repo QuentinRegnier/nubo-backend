@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
@@ -28,7 +28,7 @@ func GetTelemetryVector(ctx context.Context, userID int64) ([]float32, error) {
 func SetTelemetryVector(ctx context.Context, userID int64, newVector []float32) error {
 	errRedis := redis.TelemetryVectors.SetObject(ctx, userID, newVector)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Int64("user_id", userID).Msg("Impossible de sauvegarder le vecteur de télémétrie")
+		nubo_log.Error(ctx).Err(errRedis).Int64("user_id", userID).Msg("Impossible de sauvegarder le vecteur de télémétrie")
 		return nubo_error.NewInternal()
 	}
 	return nil
@@ -38,7 +38,7 @@ func SetTelemetryVector(ctx context.Context, userID int64, newVector []float32) 
 func SetTelemetryTags(ctx context.Context, userID int64, topTagsList []string) error {
 	errRedis := redis.TelemetryTags.SetObject(ctx, userID, topTagsList)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Int64("user_id", userID).Msg("Impossible de sauvegarder le Top Tags de télémétrie")
+		nubo_log.Error(ctx).Err(errRedis).Int64("user_id", userID).Msg("Impossible de sauvegarder le Top Tags de télémétrie")
 		return nubo_error.NewInternal()
 	}
 	return nil
@@ -61,7 +61,7 @@ func SetTelemetryTimestamp(ctx context.Context, userID int64, currentTimestampMs
 	// Stockage MsgPack unifié via SetObject
 	errRedis := redis.TelemetryTimestamps.SetObject(ctx, userID, currentTimestampMs)
 	if errRedis != nil {
-		logger.Log.Warn().Err(errRedis).Msg("Impossible de sauvegarder le timestamp de télémétrie")
+		nubo_log.Warn(ctx).Err(errRedis).Msg("Impossible de sauvegarder le timestamp de télémétrie")
 		return nubo_error.NewInternal()
 	}
 	return nil

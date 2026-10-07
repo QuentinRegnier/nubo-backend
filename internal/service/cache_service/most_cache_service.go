@@ -9,8 +9,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -51,7 +51,7 @@ func UpdatePostRecommendationScore(ctx context.Context, postPayload post_models.
 func EvaluatePostAfterLike(ctx context.Context, postPayload post_models.PostPayload) {
 	errRedis := redis.ZAddWithCap(ctx, variables.RedisKeyStrictLikes, float64(postPayload.LikeCount), postPayload.ID, variables.MaxStrictElements)
 	if errRedis != nil {
-		logger.Log.Warn().Err(errRedis).Int64("post_id", postPayload.ID).Msg("Impossible de mettre à jour le classement strict des likes")
+		nubo_log.Warn(ctx).Err(errRedis).Int64("post_id", postPayload.ID).Msg("Impossible de mettre à jour le classement strict des likes")
 	}
 	UpdatePostRecommendationScore(ctx, postPayload)
 }
@@ -60,7 +60,7 @@ func EvaluatePostAfterLike(ctx context.Context, postPayload post_models.PostPayl
 func EvaluatePostAfterView(ctx context.Context, postPayload post_models.PostPayload) {
 	errRedis := redis.ZAddWithCap(ctx, variables.RedisKeyStrictViews, float64(postPayload.ViewCount), postPayload.ID, variables.MaxStrictElements)
 	if errRedis != nil {
-		logger.Log.Warn().Err(errRedis).Int64("post_id", postPayload.ID).Msg("Impossible de mettre à jour le classement strict des vues")
+		nubo_log.Warn(ctx).Err(errRedis).Int64("post_id", postPayload.ID).Msg("Impossible de mettre à jour le classement strict des vues")
 	}
 	UpdatePostRecommendationScore(ctx, postPayload)
 }
@@ -119,7 +119,7 @@ func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([
 			// FALLBACK L3 (PostgreSQL) - Pur DDD
 			pgIDs, errPg := postgres.FuncLoadPostIDsByTagPaginated(ctx, slug, offset, limit)
 			if errPg != nil {
-				logger.Log.Error().Err(errPg).Str("slug", slug).Msg("Erreur L3 lors de la pagination des tags")
+				nubo_log.Error(ctx).Err(errPg).Str("slug", slug).Msg("Erreur L3 lors de la pagination des tags")
 				return []post_models.PostPayload{}, nubo_error.NewInternal()
 			}
 			return object_cache_service.GetPostsView(ctx, pgIDs)
@@ -135,12 +135,12 @@ func UpdateTrendZSETs(ctx context.Context, postID int64, score float64, directTa
 
 	// 1. Buckets Globaux
 	if err := redis.TrendGlobalHourly.ZAddWithCap(ctx, currentHour, score, postID, variables.TDDMaxZSET); err != nil {
-		logger.Log.Error().Err(err).Msg("Impossible de mettre à jour la tendance horaire")
+		nubo_log.Error(ctx).Err(err).Msg("Impossible de mettre à jour la tendance horaire")
 		return nubo_error.NewInternal()
 	}
 
 	if err := redis.TrendGlobalDaily.ZAddWithCap(ctx, currentDate, score, postID, variables.TDDMaxZSET); err != nil {
-		logger.Log.Error().Err(err).Msg("Impossible de mettre à jour la tendance journalière")
+		nubo_log.Error(ctx).Err(err).Msg("Impossible de mettre à jour la tendance journalière")
 		return nubo_error.NewInternal()
 	}
 
@@ -220,7 +220,7 @@ func GetPostsByTagFromCache(ctx context.Context, targetTag string, offset int64,
 	// Lecture de la grappe de binaires MsgPack en O(log N)
 	binaryResultsList, errRedis := redis.TrendTagDaily.ZRevRange(ctx, compositeID, offset, offset+limit-1)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Str("tag", targetTag).Msg("Échec de lecture ZSET Tag Daily")
+		nubo_log.Error(ctx).Err(errRedis).Str("tag", targetTag).Msg("Échec de lecture ZSET Tag Daily")
 		return nil, nubo_error.NewInternal()
 	}
 

@@ -8,7 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -48,7 +48,7 @@ func GetPostLikes(ctx context.Context, input like_models.GetPostLikesInput) (lik
 			// TENTATIVE L3 (PostgreSQL - Cold Storage)
 			postsFromPostgres, errPg := postgres.FuncLoadPosts(ctx, []int64{input.PostID}, 1, 0)
 			if errPg != nil {
-				logger.Log.Error().Err(errPg).Int64("post_id", input.PostID).Msg("Erreur L3 lors de la vérification du post pour GetPostLikes")
+				nubo_log.Error(ctx).Err(errPg).Int64("post_id", input.PostID).Msg("Erreur L3 lors de la vérification du post pour GetPostLikes")
 				return like_models.GetPostLikesOutput{}, nubo_error.NewInternal()
 			}
 
@@ -96,7 +96,7 @@ func GetPostLikes(ctx context.Context, input like_models.GetPostLikesInput) (lik
 	if errMongo != nil || len(userIDsThatLiked) == 0 {
 		likesFromPostgres, errPg := postgres.FuncLoadLikes(ctx, 0, input.PostID, 0, input.Limit, 0)
 		if errPg != nil {
-			logger.Log.Error().Err(errPg).Int64("post_id", input.PostID).Msg("Erreur L3 lors de la récupération de la liste des likes")
+			nubo_log.Error(ctx).Err(errPg).Int64("post_id", input.PostID).Msg("Erreur L3 lors de la récupération de la liste des likes")
 			return like_models.GetPostLikesOutput{}, nubo_error.NewInternal()
 		}
 

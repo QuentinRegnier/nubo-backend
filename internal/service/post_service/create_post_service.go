@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
+
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -149,7 +150,7 @@ func CreatePost(ctx context.Context, callerID int64, input post_models.CreatePos
 	// ── ÉTAPE 7 : CACHE REDIS L1 ET INDEXATION TIMELINE ─────────────────────
 
 	if errCache := object_cache_service.SetPostInObjectCache(ctx, postPayload); errCache != nil {
-		logger.Log.Warn().Err(errCache).Int64("post_id", newPostID).Msg("Échec de la mise en cache de la publication")
+		nubo_log.Warn(context.Background()).Err(errCache).Int64("post_id", newPostID).Msg("Échec de la mise en cache de la publication")
 	}
 
 	_ = cache_service.AddPostToUserProfile(ctx, callerID, newPostID, float64(currentTime.UnixMilli()))
@@ -158,7 +159,7 @@ func CreatePost(ctx context.Context, callerID int64, input post_models.CreatePos
 
 	errQueue := redis.EnqueueDB(ctx, newPostID, 0, redis.EntityPost, redis.ActionCreate, postPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("post_id", newPostID).Msg("Échec du Write-Behind lors de la création d'un post")
+		nubo_log.Error(context.Background()).Err(errQueue).Int64("post_id", newPostID).Msg("Échec du Write-Behind lors de la création d'un post")
 		return -1, nubo_error.NewInternal()
 	}
 

@@ -6,7 +6,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/saved_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -45,7 +45,7 @@ func GetSavedPosts(ctx context.Context, userID int64, limit int, offset int) ([]
 			// ── ÉTAPE 3 : FALLBACK ABSOLU L3 (POSTGRESQL COLD STORAGE) ──────
 			savedPayloadsFromPostgres, errPg := postgres.FuncLoadSavedPosts(ctx, userID, limit, offset)
 			if errPg != nil {
-				logger.Log.Error().Err(errPg).Int64("user_id", userID).Msg("Erreur L3 lors de la récupération des posts sauvegardés")
+				nubo_log.Error(ctx).Err(errPg).Int64("user_id", userID).Msg("Erreur L3 lors de la récupération des posts sauvegardés")
 				return nil, nubo_error.NewInternal()
 			}
 

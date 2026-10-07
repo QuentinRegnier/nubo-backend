@@ -8,7 +8,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/schemas"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -73,7 +72,7 @@ func InitCacheDatabase() {
 
 	Notifications = newMongoCollection("nubo_mongo", "activity.notifications", schemaNotifications)
 
-	logger.Log.Info().Msg("Structure de collections MongoDB initialisée")
+	nubo_log.Info(context.Background()).Msg("Structure de collections MongoDB initialisée")
 }
 
 // ---------------- Collection et schéma ----------------
@@ -162,7 +161,7 @@ func (c *Collection) Get(filter map[string]any, projection map[string]any) ([]ma
 
 	defer func() {
 		if err := cur.Close(ctx); err != nil {
-			logger.Log.Error().Err(err).Str("collection", c.Name).Msg("Erreur lors de la fermeture du curseur MongoDB")
+			nubo_log.Error(ctx).Err(err).Str("collection", c.Name).Msg("Erreur lors de la fermeture du curseur MongoDB")
 		}
 	}()
 
@@ -225,7 +224,7 @@ func (c *Collection) GetPaginated(filter map[string]any, sort map[string]any, sk
 
 	defer func() {
 		if err := cur.Close(ctx); err != nil {
-			logger.Log.Error().Err(err).Str("collection", c.Name).Msg("Erreur lors de la fermeture du curseur MongoDB")
+			nubo_log.Error(ctx).Err(err).Str("collection", c.Name).Msg("Erreur lors de la fermeture du curseur MongoDB")
 		}
 	}()
 

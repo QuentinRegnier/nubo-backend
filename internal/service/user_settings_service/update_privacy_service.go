@@ -6,7 +6,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -45,7 +45,7 @@ func UpdatePrivacy(ctx context.Context, userID int64, input user_settings_models
 
 	// ── ÉTAPE 3 : MISE À JOUR IMMÉDIATE DU CACHE L1 (OBJECT CACHE) ──────────
 	if errSet := object_cache_service.SetUserSettings(ctx, userSettingsPayload); errSet != nil {
-		logger.Log.Warn().Err(errSet).Int64("user_id", userID).Msg("Impossible de mettre à jour les paramètres de confidentialité dans le cache L1")
+		nubo_log.Warn(ctx).Err(errSet).Int64("user_id", userID).Msg("Impossible de mettre à jour les paramètres de confidentialité dans le cache L1")
 	}
 
 	// ── ÉTAPE 4 : MISE À JOUR SYNCHRONE DU SPEED CACHE ──────────────────────
@@ -62,13 +62,13 @@ func UpdatePrivacy(ctx context.Context, userID int64, input user_settings_models
 	// ── ÉTAPE 5 : NOTIFICATION TEMPS RÉEL (WEBSOCKET) ───────────────────────
 	errBroadcast := realtime_service.DistributeToUsers(ctx, variables.NotificationSettingsUpdated, userSettingsPayload, []int64{userID})
 	if errBroadcast != nil {
-		logger.Log.Warn().Err(errBroadcast).Msg("Échec de la distribution WebSocket pour la mise à jour de confidentialité")
+		nubo_log.Warn(ctx).Err(errBroadcast).Msg("Échec de la distribution WebSocket pour la mise à jour de confidentialité")
 	}
 
 	// ── ÉTAPE 6 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
 	errQueue := redis.EnqueueDB(ctx, userSettingsPayload.ID, userID, redis.EntityUserSettings, redis.ActionUpdate, userSettingsPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("user_id", userID).Msg("Échec du Write-Behind lors de la mise à jour de la confidentialité")
+		nubo_log.Error(ctx).Err(errQueue).Int64("user_id", userID).Msg("Échec du Write-Behind lors de la mise à jour de la confidentialité")
 		return user_settings_models.UpdatePrivacyOutput{}, nubo_error.NewInternal()
 	}
 

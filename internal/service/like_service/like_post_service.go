@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/like_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -72,7 +72,7 @@ func TogglePostLike(ctx context.Context, input like_models.LikePostInput) error 
 
 	errQueue := redis.EnqueueDB(ctx, likeRecordPayload.ID, 0, redis.EntityLike, redisActionType, likeRecordPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("post_id", input.PostID).Msg("Échec du Write-Behind pour TogglePostLike")
+		nubo_log.Error(ctx).Err(errQueue).Int64("post_id", input.PostID).Msg("Échec du Write-Behind pour TogglePostLike")
 		return nil // Non bloquant pour l'UX
 	}
 
@@ -82,7 +82,7 @@ func TogglePostLike(ctx context.Context, input like_models.LikePostInput) error 
 		go func(authorID int64) {
 			errNotif := notification_service.DispatchNotification(context.Background(), authorID, input.UserID, variables.EventPostLiked, input.PostID)
 			if errNotif != nil {
-				logger.Log.Error().Err(errNotif).Int64("post_id", input.PostID).Msg("Échec de l'envoi de la notification pour un like de post")
+				nubo_log.Error(ctx).Err(errNotif).Int64("post_id", input.PostID).Msg("Échec de l'envoi de la notification pour un like de post")
 			}
 		}(postAuthorID)
 	}

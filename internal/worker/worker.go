@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 )
@@ -53,7 +53,7 @@ func runWorker(ctx context.Context, shardID int) {
 		// ── ÉTAPE 1 : ÉCOUTE DU SIGNAL D'ARRÊT GRACIEUX ─────────────────────
 		select {
 		case <-ctx.Done():
-			logger.Log.Info().Int("shard_id", shardID).Msg("Worker : Arrêt gracieux de la boucle de consommation.")
+			nubo_log.Info(ctx).Int("shard_id", shardID).Msg("Worker : Arrêt gracieux de la boucle de consommation.")
 			return
 		default:
 		}
@@ -63,7 +63,7 @@ func runWorker(ctx context.Context, shardID int) {
 		// ou que le timeout de Redis soit atteint.
 		events, err := redis.PopSmartBatchBlocking(ctx, shardID, MaxBatchSize)
 		if err != nil {
-			logger.Log.Error().Err(err).Int("shard_id", shardID).Msg("Worker Redis : Échec critique lors du dépilement (BLMPOP)")
+			nubo_log.Error(ctx).Err(err).Int("shard_id", shardID).Msg("Worker Redis : Échec critique lors du dépilement (BLMPOP)")
 			time.Sleep(1 * time.Second) // Temporisation de sécurité en cas de crash réseau
 			continue
 		}

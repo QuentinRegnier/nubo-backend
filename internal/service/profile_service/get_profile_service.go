@@ -7,7 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/profile_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -85,7 +85,7 @@ func GetProfile(ctx context.Context, callerID int64, input profile_models.GetPro
 		var errPg error
 		userPayload, errPg = postgres.FuncLoadUser(ctx, targetID, "", "", "")
 		if errPg != nil {
-			logger.Log.Error().Err(errPg).Int64("user_id", targetID).Msg("Échec de la récupération L3 du profil utilisateur")
+			nubo_log.Error(ctx).Err(errPg).Int64("user_id", targetID).Msg("Échec de la récupération L3 du profil utilisateur")
 			return profile_models.GetProfileOutput{}, nubo_error.NewInternal()
 		}
 

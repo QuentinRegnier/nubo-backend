@@ -6,7 +6,7 @@ import (
 	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
@@ -115,7 +115,7 @@ func GetLSHCandidateIDs(ctx context.Context, targetHash uint32) (map[int64]bool,
 	for _, hashValue := range neighborHashes {
 		memberIDs, err := redis.LSHBuckets.SMembers(ctx, hashValue)
 		if err != nil {
-			logger.Log.Warn().Err(err).Uint32("bucket", hashValue).Msg("Lookup LSH bucket ignoré")
+			nubo_log.Warn(ctx).Err(err).Uint32("bucket", hashValue).Msg("Lookup LSH bucket ignoré")
 			continue
 		}
 

@@ -8,7 +8,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 // RelationSeedPayload structure temporaire pour l'amorçage
@@ -30,7 +29,7 @@ func FuncLoadRelationsPaginated(ctx context.Context, limit, offset int) ([]Relat
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
 		}
 	}(rows)
 

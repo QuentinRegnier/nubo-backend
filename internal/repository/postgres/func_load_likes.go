@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/like_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 // FuncLoadLikes charge les objets complets de likes pour permettre l'auto-guérison L2.
@@ -36,7 +36,7 @@ func FuncLoadLikes(ctx context.Context, targetType int, targetID int64, userID i
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres Likes)")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres Likes)")
 		}
 	}(rows)
 

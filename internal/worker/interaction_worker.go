@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
@@ -46,7 +46,7 @@ func RegisterUnread(convID int64, userID int64) {
 		// SÉCURITÉ (Backpressure) : Si le tampon est plein, on perd le compteur
 		// silencieusement plutôt que de crasher le thread HTTP. Le Fast Path L1
 		// et la fonction de guèrison automatique de func_get_member compenseront.
-		logger.Log.Warn().Int64("user_id", userID).Msg("Interaction Worker : Tampon RAM plein, perte d'un compteur Non-Lu")
+		nubo_log.Warn(context.Background()).Int64("user_id", userID).Msg("Interaction Worker : Tampon RAM plein, perte d'un compteur Non-Lu")
 	}
 }
 
@@ -62,7 +62,7 @@ func RegisterMessageReaction(msgID int64, emoji string, delta int) {
 		Timestamp: time.Now().Unix(),
 	}:
 	default:
-		logger.Log.Warn().Int64("msg_id", msgID).Msg("Interaction Worker : Tampon RAM plein, perte d'un delta de réaction")
+		nubo_log.Warn(context.Background()).Int64("msg_id", msgID).Msg("Interaction Worker : Tampon RAM plein, perte d'un delta de réaction")
 	}
 }
 
@@ -172,7 +172,7 @@ func processCacheUpdates(ctx context.Context, batch []Interaction) {
 		)
 
 		if errEnqueue != nil {
-			logger.Log.Error().
+			nubo_log.Error(context.Background()).
 				Err(errEnqueue).
 				Interface("event_type", event.Type).
 				Msg("Interaction Worker : Échec critique de l'Enqueue vers les bases de données")

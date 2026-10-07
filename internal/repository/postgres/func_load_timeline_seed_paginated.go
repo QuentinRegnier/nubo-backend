@@ -8,7 +8,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 // TimelineSeedPayload structure temporaire pour la reconstruction L1
@@ -29,7 +28,7 @@ func FuncLoadTimelineSeedPaginated(ctx context.Context, limit, offset int) ([]Ti
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
 		}
 	}(rows)
 

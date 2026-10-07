@@ -10,8 +10,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	postgresgo "github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -28,7 +28,7 @@ import (
 // Login retourne uniquement les tokens et l'ID utilisateur.
 // Les métadonnées complètes (profil, avatar) seront appelées plus tard via /sync.
 func Login(input auth_models.LoginInput, ipAddresses []string) (int64, auth_models.SessionsPayload, string, error) {
-	logger.Log.Info().Str("email", input.Email).Msg("Tentative de connexion entrante...")
+	nubo_log.Info(context.Background()).Str("email", input.Email).Msg("Tentative de connexion entrante...")
 
 	var userPayload auth_models.UserPayload
 	var sessionPayload auth_models.SessionsPayload
@@ -40,7 +40,7 @@ func Login(input auth_models.LoginInput, ipAddresses []string) (int64, auth_mode
 	userPayload, errMongo := mongo.MongoLoadUser(ctx, -1, "", input.Email, "")
 	if errMongo != nil || userPayload.ID == 0 {
 		if errMongo != nil {
-			logger.Log.Warn().Err(errMongo).Str("email", input.Email).Msg("Mongo L2 : Utilisateur absent ou erreur de connexion.")
+			nubo_log.Warn(ctx).Err(errMongo).Str("email", input.Email).Msg("Mongo L2 : Utilisateur absent ou erreur de connexion.")
 		}
 
 		// FALLBACK L3 (PostgreSQL - Cold Storage)
@@ -57,7 +57,7 @@ func Login(input auth_models.LoginInput, ipAddresses []string) (int64, auth_mode
 
 		// AUTO-GUÉRISON L3 -> L2 (Asynchrone via Queue)
 		if errQueue := redis.EnqueueDB(ctx, userPayload.ID, 0, redis.EntityUser, redis.ActionCreate, &userPayload, redis.TargetMongo); errQueue != nil {
-			logger.Log.Warn().Err(errQueue).Int64("user_id", userPayload.ID).Msg("Échec de la guérison L2 pour l'utilisateur")
+			nubo_log.Warn(ctx).Err(errQueue).Int64("user_id", userPayload.ID).Msg("Échec de la guérison L2 pour l'utilisateur")
 		}
 	}
 
@@ -153,7 +153,7 @@ func Login(input auth_models.LoginInput, ipAddresses []string) (int64, auth_mode
 	// ── ÉTAPE 4 : SYNCHRONISATION L1 & SPEED CACHE (Cold Start User) ────────
 
 	if errSet := cache_service.SetSessionInCache(ctx, sessionPayload); errSet != nil {
-		logger.Log.Warn().Err(errSet).Int64("session_id", sessionPayload.ID).Msg("Échec mise en cache L1 de la Session lors du Login")
+		nubo_log.Warn(ctx).Err(errSet).Int64("session_id", sessionPayload.ID).Msg("Échec mise en cache L1 de la Session lors du Login")
 	}
 
 	// Vérification de la Timeline Utilisateur
@@ -180,7 +180,7 @@ func Login(input auth_models.LoginInput, ipAddresses []string) (int64, auth_mode
 	errQueue := redis.EnqueueDB(ctx, sessionPayload.ID, userPayload.ID, redis.EntitySession, dbAction, sessionPayload, redis.TargetAll)
 	if errQueue != nil {
 		// Loggué en Error car la persistance est brisée, mais on ne bloque pas le retour du token au client
-		logger.Log.Error().Err(errQueue).Int64("session_id", sessionPayload.ID).Msg("Rupture du Write-Behind pour la session lors du Login")
+		nubo_log.Error(context.Background()).Err(errQueue).Int64("session_id", sessionPayload.ID).Msg("Rupture du Write-Behind pour la session lors du Login")
 	}
 
 	return userPayload.ID, sessionPayload, newJWT, nil

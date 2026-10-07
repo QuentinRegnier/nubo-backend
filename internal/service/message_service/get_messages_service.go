@@ -7,7 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -44,7 +44,7 @@ func GetMessages(ctx context.Context, callerID int64, input message_models.GetMe
 			var errPg error
 			conversationPayload, errPg = postgres.FuncGetConversation(ctx, input.ConversationID)
 			if errPg != nil {
-				logger.Log.Error().Err(errPg).Int64("conv_id", input.ConversationID).Msg("Erreur L3 lors de la récupération de la conversation")
+				nubo_log.Error(ctx).Err(errPg).Int64("conv_id", input.ConversationID).Msg("Erreur L3 lors de la récupération de la conversation")
 				return nil, nubo_error.NewInternal()
 			}
 			if conversationPayload.ID == 0 {
@@ -68,7 +68,7 @@ func GetMessages(ctx context.Context, callerID int64, input message_models.GetMe
 
 	messageIDsList, errIndex := cache_service.GetMessageIDsFromSpeedCache(ctx, input.ConversationID, input.OffsetID, input.Limit, input.Direction, callerMemberPayload.FrozenMessageID)
 	if errIndex != nil {
-		logger.Log.Error().Err(errIndex).Msg("Erreur lors de la résolution de l'index des messages")
+		nubo_log.Error(ctx).Err(errIndex).Msg("Erreur lors de la résolution de l'index des messages")
 		return nil, nubo_error.NewInternal()
 	}
 	if len(messageIDsList) == 0 {
@@ -79,7 +79,7 @@ func GetMessages(ctx context.Context, callerID int64, input message_models.GetMe
 
 	messagesPayloadList, errHydration := object_cache_service.GetMessagesView(ctx, messageIDsList)
 	if errHydration != nil {
-		logger.Log.Error().Err(errHydration).Msg("Erreur lors de l'hydratation massive des messages")
+		nubo_log.Error(ctx).Err(errHydration).Msg("Erreur lors de l'hydratation massive des messages")
 		return nil, nubo_error.NewInternal()
 	}
 

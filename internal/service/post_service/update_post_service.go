@@ -3,10 +3,11 @@ package post_service
 import (
 	"context"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
+
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -23,6 +24,7 @@ func UpdatePost(ctx context.Context, input post_models.UpdatePostInput) error {
 	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS ZERO-TRUST ET RÉCUPÉRATION DE L'OBJET ────
 	postPayload, errSecurity := security_service.LeftPost(ctx, input.PostID, input.UserID)
 	if errSecurity != nil {
+		nubo_log.Error(ctx).Err(errSecurity).Int64("post_id", input.PostID).Int64("user_id", input.UserID).Msg("Échec de la récupération sécurisée du post")
 		return nubo_error.NewInternal()
 	}
 
@@ -46,13 +48,13 @@ func UpdatePost(ctx context.Context, input post_models.UpdatePostInput) error {
 	// 1. Écrasement LFU immédiat en RAM
 	errCache := object_cache_service.SetPostInObjectCache(ctx, postPayload)
 	if errCache != nil {
-		logger.Log.Warn().Err(errCache).Int64("post_id", postPayload.ID).Msg("Échec de la mise à jour du post dans le cache L1")
+		nubo_log.Warn(ctx).Err(errCache).Int64("post_id", postPayload.ID).Msg("Échec de la mise à jour du post dans le cache L1")
 	}
 
 	// 2. Envoi de l'objet COMPLET dans la file asynchrone pour que les workers BulkUpdate fonctionnent
 	errQueue := redis.EnqueueDB(ctx, postPayload.ID, 0, redis.EntityPost, redis.ActionUpdate, postPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("post_id", postPayload.ID).Msg("Échec du Write-Behind pour la mise à jour du post")
+		nubo_log.Error(ctx).Err(errQueue).Int64("post_id", postPayload.ID).Msg("Échec du Write-Behind pour la mise à jour du post")
 		return nubo_error.NewInternal()
 	}
 

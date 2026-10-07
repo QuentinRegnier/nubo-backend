@@ -9,7 +9,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
@@ -29,13 +29,13 @@ func GetAddableUsersFromSpeedCache(ctx context.Context, callerID int64, limit in
 	if forceRefresh {
 		errDel := redis.Del(ctx, zsetTargetKey)
 		if errDel != nil {
-			logger.Log.Warn().Err(errDel).Int64("user_id", callerID).Msg("Impossible de purger le ZSET AddableUsers")
+			nubo_log.Warn(ctx).Err(errDel).Int64("user_id", callerID).Msg("Impossible de purger le ZSET AddableUsers")
 		}
 	}
 
 	isZsetPresent, errExists := redis.Exists(ctx, zsetTargetKey)
 	if errExists != nil {
-		logger.Log.Error().Err(errExists).Msg("Erreur L1 lors de la vérification du ZSET AddableUsers")
+		nubo_log.Error(ctx).Err(errExists).Msg("Erreur L1 lors de la vérification du ZSET AddableUsers")
 		return nil, nubo_error.NewInternal()
 	}
 
@@ -43,7 +43,7 @@ func GetAddableUsersFromSpeedCache(ctx context.Context, callerID int64, limit in
 	if !isZsetPresent {
 		addableRelationsList, errPg := postgres.FuncLoadAddableRelations(ctx, callerID)
 		if errPg != nil {
-			logger.Log.Error().Err(errPg).Int64("caller_id", callerID).Msg("Erreur L3 lors de la reconstruction des AddableUsers")
+			nubo_log.Error(ctx).Err(errPg).Int64("caller_id", callerID).Msg("Erreur L3 lors de la reconstruction des AddableUsers")
 			return nil, nubo_error.NewInternal()
 		}
 
@@ -59,7 +59,7 @@ func GetAddableUsersFromSpeedCache(ctx context.Context, callerID int64, limit in
 			// Récupération des données compressées L1 (MGET natif du manager)
 			multiGetResult, errMGet := redis.UsersLite.GetMany(ctx, extractedTargetIDs)
 			if errMGet != nil {
-				logger.Log.Warn().Err(errMGet).Msg("Échec MGET lors de la reconstruction SpeedAddable")
+				nubo_log.Warn(ctx).Err(errMGet).Msg("Échec MGET lors de la reconstruction SpeedAddable")
 			} else {
 				for _, targetID := range extractedTargetIDs {
 					binaryData, isFound := multiGetResult.Found[targetID]
@@ -94,7 +94,7 @@ func GetAddableUsersFromSpeedCache(ctx context.Context, callerID int64, limit in
 	// ── ÉTAPE 3 : LECTURE PAGINÉE (O(log(N))) ───────────────────────────────
 	memberStringsList, errZRange := redis.ZRange(ctx, zsetTargetKey, offset, offset+limit-1)
 	if errZRange != nil {
-		logger.Log.Error().Err(errZRange).Msg("Erreur L1 lors de la lecture paginée du ZSET AddableUsers")
+		nubo_log.Error(ctx).Err(errZRange).Msg("Erreur L1 lors de la lecture paginée du ZSET AddableUsers")
 		return nil, nubo_error.NewInternal()
 	}
 
@@ -119,7 +119,7 @@ func GetAddableUsersFromSpeedCache(ctx context.Context, callerID int64, limit in
 	// ── ÉTAPE 4 : HYDRATATION FINALE (MGET O(1)) ────────────────────────────
 	finalGetResult, errFinalMGet := redis.UsersLite.GetMany(ctx, parsedFinalIDs)
 	if errFinalMGet != nil {
-		logger.Log.Error().Err(errFinalMGet).Msg("Erreur L1 lors de l'hydratation finale des AddableUsers")
+		nubo_log.Error(ctx).Err(errFinalMGet).Msg("Erreur L1 lors de l'hydratation finale des AddableUsers")
 		return nil, nubo_error.NewInternal()
 	}
 

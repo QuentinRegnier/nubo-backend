@@ -9,7 +9,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
@@ -94,13 +94,13 @@ func SuggestContacts(ctx context.Context, callerID int64, input conversation_mod
 			var errCache error
 			potentialCandidates, errCache = cache_service.GetAddableUsersFromSpeedCache(ctx, callerID, fetchBatchLimit, currentOffset, false)
 			if errCache != nil {
-				logger.Log.Warn().Err(errCache).Msg("Erreur lors de la récupération des AddableUsers en RAM")
+				nubo_log.Warn(ctx).Err(errCache).Msg("Erreur lors de la récupération des AddableUsers en RAM")
 			}
 		} else {
 			var errCache error
 			potentialCandidates, errCache = cache_service.SearchUserByPrefix(ctx, input.Query, fetchBatchLimit)
 			if errCache != nil {
-				logger.Log.Warn().Err(errCache).Msg("Erreur lors de la recherche par préfixe en RAM")
+				nubo_log.Warn(ctx).Err(errCache).Msg("Erreur lors de la recherche par préfixe en RAM")
 			}
 			if len(potentialCandidates) == 0 {
 				break

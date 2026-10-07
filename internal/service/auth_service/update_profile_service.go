@@ -6,9 +6,9 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -113,7 +113,7 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 	// Récupération asynchrone/rapide des settings pour construire l'objet Lite du profil public
 	settingsPayload, _ := object_cache_service.GetUserSettingsCascade(ctx, userID)
 	if errCache := cache_service.AddUserToSpeedCache(ctx, userPayload, settingsPayload); errCache != nil {
-		logger.Log.Warn().Err(errCache).Msg("Impossible de mettre à jour l'utilisateur dans le Speed Cache L1")
+		nubo_log.Warn(ctx).Err(errCache).Msg("Impossible de mettre à jour l'utilisateur dans le Speed Cache L1")
 	}
 
 	// ── ÉTAPE 6 : MISE À JOUR DU CUCKOO FILTER (Asynchrone) ─────────────────
@@ -140,7 +140,7 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 	errQueue := redis.EnqueueDB(ctx, userPayload.ID, 0, redis.EntityUser, redis.ActionUpdate, userPayload, redis.TargetAll)
 	if errQueue != nil {
 		// Log en erreur car le worker n'a pas reçu l'ordre, mais on ne fait pas crasher la requête HTTP.
-		logger.Log.Error().Err(errQueue).Int64("user_id", userPayload.ID).Msg("Échec du Write-Behind lors de l'Update Profile")
+		nubo_log.Error(ctx).Err(errQueue).Int64("user_id", userPayload.ID).Msg("Échec du Write-Behind lors de l'Update Profile")
 	}
 
 	return auth_models.UpdateProfileOutput{

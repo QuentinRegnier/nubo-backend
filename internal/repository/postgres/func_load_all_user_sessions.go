@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/lib/pq"
 )
 
@@ -25,7 +25,7 @@ func FuncLoadAllUserSessions(ctx context.Context, userID int64) ([]auth_models.S
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur fermeture rows FuncLoadAllUserSessionsPayload")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur fermeture rows FuncLoadAllUserSessionsPayload")
 		}
 	}(rows)
 

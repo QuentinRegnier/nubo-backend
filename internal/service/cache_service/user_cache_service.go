@@ -5,7 +5,7 @@ import (
 	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
@@ -22,7 +22,7 @@ func GetTopUserPostIDs(ctx context.Context, userID int64, offset int64, limit in
 
 	isZSetPresent, errExists := redis.UserTimeline.Exists(ctx, userID)
 	if errExists != nil {
-		logger.Log.Warn().Err(errExists).Msg("Erreur lors de la vérification de l'existence de la UserTimeline")
+		nubo_log.Warn(ctx).Err(errExists).Msg("Erreur lors de la vérification de l'existence de la UserTimeline")
 	}
 
 	if !isZSetPresent {
@@ -34,7 +34,7 @@ func GetTopUserPostIDs(ctx context.Context, userID int64, offset int64, limit in
 
 	idStringsList, errRedis := redis.UserTimeline.ZRevRange(ctx, userID, offset, offset+limit-1)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Int64("user_id", userID).Msg("Échec de lecture de la timeline ZSET")
+		nubo_log.Error(ctx).Err(errRedis).Int64("user_id", userID).Msg("Échec de lecture de la timeline ZSET")
 		return nil, nubo_error.NewInternal()
 	}
 
@@ -60,7 +60,7 @@ func GetTopUserPostIDs(ctx context.Context, userID int64, offset int64, limit in
 func MarkUserTimelineEmpty(ctx context.Context, userID int64) error {
 	errRedis := redis.UserTimeline.ZAdd(ctx, userID, 0, variables.UserTimelineEmptyMarker)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Msg("Impossible de marquer la timeline comme vide")
+		nubo_log.Error(ctx).Err(errRedis).Msg("Impossible de marquer la timeline comme vide")
 		return nubo_error.NewInternal()
 	}
 
@@ -73,7 +73,7 @@ func PurgeUserTimeline(ctx context.Context, userID int64) error {
 	// DeleteObject encapsule le DEL physique de la clé Redis (Pur DDD)
 	errRedis := redis.UserTimeline.DeleteObject(ctx, userID)
 	if errRedis != nil {
-		logger.Log.Warn().Err(errRedis).Msg("Erreur lors de la purge de la UserTimeline")
+		nubo_log.Warn(ctx).Err(errRedis).Msg("Erreur lors de la purge de la UserTimeline")
 		return nubo_error.NewInternal()
 	}
 	return nil
@@ -89,7 +89,7 @@ func AddPostToUserProfile(ctx context.Context, userID int64, postID int64, times
 	postIDString := strconv.FormatInt(postID, 10)
 	errRedis := redis.UserTimeline.ZAdd(ctx, userID, timestampScore, postIDString)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Msg("Échec de l'ajout du post dans le ZSET utilisateur")
+		nubo_log.Error(ctx).Err(errRedis).Msg("Échec de l'ajout du post dans le ZSET utilisateur")
 		return nubo_error.NewInternal()
 	}
 
@@ -101,7 +101,7 @@ func RemovePostFromUserProfile(ctx context.Context, userID int64, postID int64) 
 	postIDString := strconv.FormatInt(postID, 10)
 	errRedis := redis.UserTimeline.ZRem(ctx, userID, postIDString)
 	if errRedis != nil {
-		logger.Log.Warn().Err(errRedis).Msg("Échec du retrait du post dans le ZSET utilisateur")
+		nubo_log.Warn(ctx).Err(errRedis).Msg("Échec du retrait du post dans le ZSET utilisateur")
 		return nubo_error.NewInternal()
 	}
 	return nil

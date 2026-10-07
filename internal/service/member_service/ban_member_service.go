@@ -10,7 +10,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -92,7 +92,7 @@ func BanMember(ctx context.Context, callerID int64, input member_models.BanMembe
 	// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
 	errQueue := redis.EnqueueDB(ctx, targetMemberPayload.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMemberPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("user_id", targetMemberPayload.UserID).Msg("Échec du Write-Behind pour le bannissement d'un membre")
+		nubo_log.Error(ctx).Err(errQueue).Int64("user_id", targetMemberPayload.UserID).Msg("Échec du Write-Behind pour le bannissement d'un membre")
 		return member_models.BanMemberOutput{}, nubo_error.NewInternal()
 	}
 
@@ -100,7 +100,7 @@ func BanMember(ctx context.Context, callerID int64, input member_models.BanMembe
 	go func() {
 		errBroadcast := realtime_service.BroadcastToConversation(context.Background(), input.ConversationID, "member.banned", targetMemberPayload)
 		if errBroadcast != nil {
-			logger.Log.Error().Err(errBroadcast).Msg("Échec de diffusion WebSocket pour le bannissement")
+			nubo_log.Error(ctx).Err(errBroadcast).Msg("Échec de diffusion WebSocket pour le bannissement")
 		}
 	}()
 

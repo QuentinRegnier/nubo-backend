@@ -5,7 +5,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -51,7 +51,7 @@ func DeletePost(ctx context.Context, input post_models.DeletePostInput) error {
 
 	errQueue := redis.EnqueueDB(ctx, postPayload.ID, 0, redis.EntityPost, redis.ActionDelete, postPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("post_id", input.PostID).Msg("Échec du Write-Behind lors de la suppression d'un post")
+		nubo_log.Error(ctx).Err(errQueue).Int64("post_id", input.PostID).Msg("Échec du Write-Behind lors de la suppression d'un post")
 		return nubo_error.NewInternal()
 	}
 

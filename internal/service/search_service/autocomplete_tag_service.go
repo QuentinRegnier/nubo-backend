@@ -7,7 +7,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/search_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
@@ -32,7 +32,7 @@ func AutocompleteTags(ctx context.Context, input search_models.AutocompleteTagIn
 
 	lexicographicTags, errRedis := cache_service.SearchTagsByPrefix(ctx, sanitizedQuery, searchLimit)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Str("query", sanitizedQuery).Msg("Erreur L1 lors de la recherche lexicographique des tags")
+		nubo_log.Error(ctx).Err(errRedis).Str("query", sanitizedQuery).Msg("Erreur L1 lors de la recherche lexicographique des tags")
 		return search_models.AutocompleteTagOutput{}, nubo_error.NewInternal()
 	}
 

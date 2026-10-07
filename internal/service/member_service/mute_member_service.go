@@ -11,7 +11,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -69,7 +69,7 @@ func MuteMember(ctx context.Context, callerID int64, input member_models.MuteMem
 			var errPg error
 			conversationPayload, errPg = postgres.FuncGetConversation(ctx, input.ConversationID)
 			if errPg != nil {
-				logger.Log.Error().Err(errPg).Int64("conv_id", input.ConversationID).Msg("Échec de la récupération L3 de la conversation pour le Mute")
+				nubo_log.Error(ctx).Err(errPg).Int64("conv_id", input.ConversationID).Msg("Échec de la récupération L3 de la conversation pour le Mute")
 				return nubo_error.NewInternal()
 			}
 
@@ -116,7 +116,7 @@ func MuteMember(ctx context.Context, callerID int64, input member_models.MuteMem
 
 	errQueue := redis.EnqueueDB(ctx, targetMemberPayload.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMemberPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("user_id", targetMemberPayload.UserID).Msg("Échec du Write-Behind pour la restriction d'un membre")
+		nubo_log.Error(ctx).Err(errQueue).Int64("user_id", targetMemberPayload.UserID).Msg("Échec du Write-Behind pour la restriction d'un membre")
 		return nubo_error.NewInternal()
 	}
 

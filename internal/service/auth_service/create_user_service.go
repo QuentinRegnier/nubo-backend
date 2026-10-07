@@ -9,9 +9,9 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
@@ -64,7 +64,7 @@ func CreateUser(ctx context.Context, input auth_models.SignUpInput, ipAddress st
 	newUserID := pkg.GenerateID()
 	newSessionID := pkg.GenerateID()
 
-	logger.Log.Info().Int64("user_id", newUserID).Msg("Initialisation d'un nouvel utilisateur...")
+	nubo_log.Info(ctx).Int64("user_id", newUserID).Msg("Initialisation d'un nouvel utilisateur...")
 
 	// ACTIVATION DU MÉDIA (Processus Out-of-Band)
 	if input.ProfilePictureID > 0 {
@@ -144,33 +144,33 @@ func CreateUser(ctx context.Context, input auth_models.SignUpInput, ipAddress st
 	// ── ÉTAPE 3 : MISE EN CACHE IMMÉDIATE (L1 RAM - Évite les latences) ────
 
 	if errCache := cache_service.MarkUserTimelineEmpty(ctx, userPayload.ID); errCache != nil {
-		logger.Log.Warn().Err(errCache).Int64("user_id", userPayload.ID).Msg("Échec initialisation Timeline ZSET")
+		nubo_log.Warn(ctx).Err(errCache).Int64("user_id", userPayload.ID).Msg("Échec initialisation Timeline ZSET")
 	}
 
 	if errCache := cache_service.SetSessionInCache(ctx, sessionPayload); errCache != nil {
-		logger.Log.Warn().Err(errCache).Int64("session_id", sessionPayload.ID).Msg("Échec mise en cache L1 de la Session")
+		nubo_log.Warn(ctx).Err(errCache).Int64("session_id", sessionPayload.ID).Msg("Échec mise en cache L1 de la Session")
 	}
 
 	if errCache := cache_service.AddUserToSpeedCache(ctx, userPayload, userSettingsPayload); errCache != nil {
-		logger.Log.Warn().Err(errCache).Int64("user_id", userPayload.ID).Msg("Échec mise en Speed Cache L1 de l'Utilisateur")
+		nubo_log.Warn(ctx).Err(errCache).Int64("user_id", userPayload.ID).Msg("Échec mise en Speed Cache L1 de l'Utilisateur")
 	}
 
 	if errCache := object_cache_service.SetUserSettings(ctx, userSettingsPayload); errCache != nil {
-		logger.Log.Warn().Err(errCache).Int64("user_id", userPayload.ID).Msg("Échec mise en cache L1 des UserSettings")
+		nubo_log.Warn(ctx).Err(errCache).Int64("user_id", userPayload.ID).Msg("Échec mise en cache L1 des UserSettings")
 	}
 
 	// ── ÉTAPE 4 : PERSISTANCE ASYNCHRONE (Write-Behind vers L2/L3) ─────────
 
 	if errQueue := redis.EnqueueDB(ctx, newUserID, 0, redis.EntityUser, redis.ActionCreate, userPayload, redis.TargetAll); errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("user_id", newUserID).Msg("CRITICAL: Impossible d'enqueue le User vers la BDD")
+		nubo_log.Error(ctx).Err(errQueue).Int64("user_id", newUserID).Msg("CRITICAL: Impossible d'enqueue le User vers la BDD")
 	}
 
 	if errQueue := redis.EnqueueDB(ctx, newSessionID, newUserID, redis.EntitySession, redis.ActionCreate, sessionPayload, redis.TargetAll); errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("session_id", newSessionID).Msg("CRITICAL: Impossible d'enqueue la Session vers la BDD")
+		nubo_log.Error(ctx).Err(errQueue).Int64("session_id", newSessionID).Msg("CRITICAL: Impossible d'enqueue la Session vers la BDD")
 	}
 
 	if errQueue := redis.EnqueueDB(ctx, settingsID, newUserID, redis.EntityUserSettings, redis.ActionCreate, userSettingsPayload, redis.TargetAll); errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("settings_id", settingsID).Msg("CRITICAL: Impossible d'enqueue les UserSettings vers la BDD")
+		nubo_log.Error(ctx).Err(errQueue).Int64("settings_id", settingsID).Msg("CRITICAL: Impossible d'enqueue les UserSettings vers la BDD")
 	}
 
 	// ── ÉTAPE 5 : CUCKOO FILTERS (Prévention O(1) de l'unicité en RAM) ─────

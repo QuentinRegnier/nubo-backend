@@ -8,7 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -58,7 +58,7 @@ func UpdateMemberSettings(ctx context.Context, callerID int64, input member_mode
 
 	errQueue := redis.EnqueueDB(ctx, memberPayload.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, memberPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("conv_id", input.ConversationID).Msg("Échec du Write-Behind pour la mise à jour des paramètres du membre")
+		nubo_log.Error(ctx).Err(errQueue).Int64("conv_id", input.ConversationID).Msg("Échec du Write-Behind pour la mise à jour des paramètres du membre")
 		return member_models.UpdateMemberSettingsOutput{}, nubo_error.NewInternal()
 	}
 

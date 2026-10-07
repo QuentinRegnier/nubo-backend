@@ -5,7 +5,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
@@ -57,7 +57,7 @@ func UnreactToMessage(ctx context.Context, callerID int64, input message_models.
 
 	errQueue := redis.EnqueueDB(ctx, messagePayload.ID, messagePayload.ConversationID, redis.EntityMessageReaction, redis.ActionDelete, reactionPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("message_id", messagePayload.ID).Msg("Échec du Write-Behind pour UnreactToMessage")
+		nubo_log.Error(ctx).Err(errQueue).Int64("message_id", messagePayload.ID).Msg("Échec du Write-Behind pour UnreactToMessage")
 		return nubo_error.NewInternal()
 	}
 
@@ -74,7 +74,7 @@ func UnreactToMessage(ctx context.Context, callerID int64, input message_models.
 
 		errBroadcast := realtime_service.BroadcastToConversation(backgroundCtx, messagePayload.ConversationID, "message.unreacted", messageViewDto)
 		if errBroadcast != nil {
-			logger.Log.Error().Err(errBroadcast).Msg("Échec de la diffusion WebSocket pour message.unreacted")
+			nubo_log.Error(ctx).Err(errBroadcast).Msg("Échec de la diffusion WebSocket pour message.unreacted")
 		}
 
 		// SYNC LEDGER : Trigger granulaire pour la base SQLite des clients

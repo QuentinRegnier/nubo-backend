@@ -5,7 +5,7 @@ import (
 	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -47,7 +47,7 @@ func GetConversations(ctx context.Context, callerID int64, input conversation_mo
 				conversationPayload, errPostgres = postgres.FuncGetConversation(ctx, targetConversationID)
 				if errPostgres != nil || conversationPayload.ID == 0 {
 					if errPostgres != nil {
-						logger.Log.Warn().Err(errPostgres).Int64("conv_id", targetConversationID).Msg("Échec fallback Postgres pour GetConversations")
+						nubo_log.Warn(ctx).Err(errPostgres).Int64("conv_id", targetConversationID).Msg("Échec fallback Postgres pour GetConversations")
 					}
 					continue // Échec total de la cascade, on passe à la conversation suivante
 				}

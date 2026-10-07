@@ -8,7 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -63,7 +63,7 @@ func UnpinConversation(ctx context.Context, callerID int64, input conversation_m
 	// La clé de partition est l'ID de la conversation pour conserver l'ordre des requêtes
 	errQueue := redis.EnqueueDB(ctx, memberPayload.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, memberPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("member_id", memberPayload.ID).Msg("Échec de mise en file asynchrone pour le retrait d'épingle")
+		nubo_log.Error(ctx).Err(errQueue).Int64("member_id", memberPayload.ID).Msg("Échec de mise en file asynchrone pour le retrait d'épingle")
 		return conversation_models.UnpinConversationOutput{}, nubo_error.NewInternal()
 	}
 

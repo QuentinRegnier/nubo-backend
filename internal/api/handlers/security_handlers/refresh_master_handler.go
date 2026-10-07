@@ -16,7 +16,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -133,20 +132,20 @@ func RefreshMaster(c *gin.Context) {
 
 	newMasterToken, err := pkg.GenerateToken(input.UserID, sessionRaw.FirebaseInstallationID, variables.MasterTokenExpirationSeconds)
 	if err != nil {
-		nubo_log.Error(c).Err(err).Msg("Échec de la génération du MasterToken")
+		nubo_log.Error(c).Err(err).Int64("user_id", input.UserID).Msg("Échec de la génération du MasterToken")
 		nubo_error.RespondWithError(c, nubo_error.NewInternal())
 		return
 	}
 
 	newJWT, err := pkg.GenerateToken(input.UserID, sessionRaw.FirebaseInstallationID, variables.JWTExpirationSeconds)
 	if err != nil {
-		nubo_log.Error(c).Err(err).Msg("Échec de la génération du JWT")
+		nubo_log.Error(c).Err(err).Int64("user_id", input.UserID).Msg("Échec de la génération du JWT")
 		nubo_error.RespondWithError(c, nubo_error.NewInternal())
 		return
 	}
 
 	if sessionRaw.CurrentSecret, err = security.ResetRatchet(newMasterToken, sessionRaw.FirebaseInstallationID); err != nil {
-		nubo_log.Error(c).Err(err).Msg("Échec de la réinitialisation du Ratchet")
+		nubo_log.Error(c).Err(err).Int64("user_id", input.UserID).Msg("Échec de la réinitialisation du Ratchet")
 		nubo_error.RespondWithError(c, nubo_error.NewInternal())
 		return
 	}
@@ -158,11 +157,11 @@ func RefreshMaster(c *gin.Context) {
 	sessionRaw.ExpiresAt = domain.TimeToMillis(time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second))
 
 	if errAdd := cache_service.SetSessionInCache(c, sessionRaw); errAdd != nil {
-		logger.Log.Warn().Err(errAdd).Msg("Warning: Echec update Session Cache L1")
+		nubo_log.Warn(c).Err(errAdd).Msg("Warning: Echec update Session Cache L1")
 	}
 
 	if err := redis.EnqueueDB(c, sessionRaw.ID, 0, redis.EntitySession, redis.ActionUpdate, sessionRaw, redis.TargetAll); err != nil {
-		logger.Log.Error().Err(err).Msg("Error enqueuing to DB")
+		nubo_log.Error(c).Err(err).Msg("Error enqueuing to DB")
 	}
 
 	respData := security_models.RefreshMasterResponse{
@@ -173,7 +172,7 @@ func RefreshMaster(c *gin.Context) {
 
 	respBytes, err := json.Marshal(respData)
 	if err != nil {
-		nubo_log.Error(c).Err(err).Msg("Échec de la sérialisation JSON de la réponse")
+		nubo_log.Error(c).Err(err).Int64("user_id", input.UserID).Msg("Échec de la sérialisation JSON de la réponse")
 		nubo_error.RespondWithError(c, nubo_error.NewInternal())
 		return
 	}

@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -22,7 +22,7 @@ func InitMongo() {
 
 	// SÉCURITÉ : Si vide, on met une valeur par défaut, MAIS on prévient
 	if uri == "" {
-		logger.Log.Warn().Msg("MONGO_URI vide, fallback sur localhost (ça plantera dans Docker !)")
+		nubo_log.Warn(context.Background()).Msg("MONGO_URI vide, fallback sur localhost (ça plantera dans Docker !)")
 		uri = "mongodb://localhost:27017"
 	}
 
@@ -33,17 +33,17 @@ func InitMongo() {
 	clientOptions := options.Client().ApplyURI(uri)
 	client, err := mongo.Connect(ctx, clientOptions)
 	if err != nil {
-		logger.Log.Fatal().Err(err).Msg("Impossible de créer le client Mongo")
+		nubo_log.Fatal(ctx).Err(err).Msg("Impossible de créer le client Mongo")
 	}
 
 	// 3. Ping pour vérifier que ça marche VRAIMENT
 	err = client.Ping(ctx, nil)
 	if err != nil {
-		logger.Log.Fatal().Err(err).Str("uri", uri).Msg("Impossible de ping Mongo")
+		nubo_log.Fatal(ctx).Err(err).Str("uri", uri).Msg("Impossible de ping Mongo")
 	}
 
 	MongoClient = client
-	logger.Log.Info().Msg("Connecté à MongoDB avec succès !")
+	nubo_log.Info(ctx).Msg("Connecté à MongoDB avec succès !")
 }
 
 func EnsureIndexes(ctx context.Context, db *mongo.Database) error {

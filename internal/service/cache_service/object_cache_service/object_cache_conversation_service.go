@@ -5,7 +5,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
@@ -29,7 +29,7 @@ func GetConversationFromObjectCache(ctx context.Context, conversationID int64) (
 func SetConversationInObjectCache(ctx context.Context, conversationPayload conversation_models.ConversationPayload) error {
 	errRedis := redis.Conversations.SetObject(ctx, conversationPayload.ID, conversationPayload)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Int64("conv_id", conversationPayload.ID).Msg("Échec de l'écriture de la conversation dans l'Object Cache")
+		nubo_log.Error(ctx).Err(errRedis).Int64("conv_id", conversationPayload.ID).Msg("Échec de l'écriture de la conversation dans l'Object Cache")
 		return nubo_error.NewInternal()
 	}
 	return nil
@@ -39,7 +39,7 @@ func SetConversationInObjectCache(ctx context.Context, conversationPayload conve
 func DeleteConversationFromObjectCache(ctx context.Context, conversationID int64) error {
 	errRedis := redis.Conversations.DeleteObject(ctx, conversationID)
 	if errRedis != nil {
-		logger.Log.Warn().Err(errRedis).Int64("conv_id", conversationID).Msg("Échec de la suppression de la conversation de l'Object Cache")
+		nubo_log.Warn(ctx).Err(errRedis).Int64("conv_id", conversationID).Msg("Échec de la suppression de la conversation de l'Object Cache")
 		return nubo_error.NewInternal()
 	}
 	return nil

@@ -8,7 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -90,7 +90,7 @@ func TogglePinConversation(ctx context.Context, callerID int64, input conversati
 	// ── ÉTAPE 4 : PERSISTANCE ASYNCHRONE ────────────────────────────────────
 	errQueue := redis.EnqueueDB(ctx, memberPayload.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, memberPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("member_id", memberPayload.ID).Msg("Échec du Write-Behind pour TogglePinConversation")
+		nubo_log.Error(ctx).Err(errQueue).Int64("member_id", memberPayload.ID).Msg("Échec du Write-Behind pour TogglePinConversation")
 		return conversation_models.PinConversationOutput{}, nubo_error.NewInternal()
 	}
 

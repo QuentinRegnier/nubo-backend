@@ -6,7 +6,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/sync_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -32,7 +32,7 @@ func SyncIdentity(ctx context.Context, input sync_models.SyncIdentityInput) (syn
 
 	userPayload, errMongo := mongo.MongoLoadUser(ctx, input.UserID, "", "", "")
 	if errMongo != nil && errMongo.Error() != "mongo: no documents in result" {
-		logger.Log.Warn().Err(errMongo).Msg("Avertissement L2 Mongo lors du SyncIdentity")
+		nubo_log.Warn(ctx).Err(errMongo).Msg("Avertissement L2 Mongo lors du SyncIdentity")
 	}
 
 	if userPayload.ID == 0 {
@@ -94,7 +94,7 @@ func SyncIdentity(ctx context.Context, input sync_models.SyncIdentityInput) (syn
 	settingsPayload, errSettings := object_cache_service.GetUserSettingsCascade(ctx, input.UserID)
 	if errSettings != nil {
 		// On loggue, mais on ne fait pas crasher l'identité entière pour un échec de settings.
-		logger.Log.Warn().Err(errSettings).Msg("Impossible de récupérer les UserSettings lors du SyncIdentity")
+		nubo_log.Warn(ctx).Err(errSettings).Msg("Impossible de récupérer les UserSettings lors du SyncIdentity")
 	} else if settingsPayload.ID != 0 {
 		if settingsPayload.UpdatedAt > input.SettingsUpdatedAt {
 			output.SettingsUpdated = true

@@ -14,7 +14,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -82,7 +82,7 @@ func HMACMiddleware() gin.HandlerFunc {
 		case int64:
 			userID = v
 		default:
-			logger.Log.Error().Msgf("Type userID inconnu: %T", v)
+			nubo_log.Error(c).Msgf("Type userID inconnu: %T", v)
 		}
 
 		firebaseInstallationID := fmt.Sprintf("%v", firebaseInstallationIDRaw)
@@ -96,14 +96,14 @@ func HMACMiddleware() gin.HandlerFunc {
 			sessionFound = true
 		} else {
 			// Optionnel : On peut logger en mode debug pour ne pas spammer la prod
-			logger.Log.Debug().Err(err).Int64("user_id", userID).Msg("Cache L1 Miss (Session)")
+			nubo_log.Debug(c).Err(err).Int64("user_id", userID).Msg("Cache L1 Miss (Session)")
 		}
 
 		if !sessionFound {
 			// B. Essai Mongo L2
 			session, errMongo := mongo.MongoLoadSession(c, userID, firebaseInstallationID, "", "")
 			if errMongo == nil && session.ID != 0 {
-				logger.Log.Debug().Msg("Session trouvée dans Mongo L2, réhydratation L1...")
+				nubo_log.Debug(c).Msg("Session trouvée dans Mongo L2, réhydratation L1...")
 				sessionFound = true
 				_ = cache_service.SetSessionInCache(c, session)
 			}
@@ -113,7 +113,7 @@ func HMACMiddleware() gin.HandlerFunc {
 			// C. Essai Postgres L3
 			session, errPg := postgres.FuncLoadSession(c, -1, userID, firebaseInstallationID, "")
 			if errPg == nil && session.ID != 0 {
-				logger.Log.Debug().Msg("Session trouvée dans Postgres L3, réhydratation massive...")
+				nubo_log.Debug(c).Msg("Session trouvée dans Postgres L3, réhydratation massive...")
 				sessionFound = true
 				_ = cache_service.SetSessionInCache(c, session)
 				_ = redis.EnqueueDB(c, session.ID, 0, redis.EntitySession, redis.ActionCreate, session, redis.TargetMongo)
@@ -196,7 +196,7 @@ func HMACMiddleware() gin.HandlerFunc {
 
 		_, err = w.ResponseWriter.Write(responseBody)
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur en écrivant la réponse signée HMAC")
+			nubo_log.Error(c).Err(err).Msg("Erreur en écrivant la réponse signée HMAC")
 			return
 		}
 	}

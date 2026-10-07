@@ -6,7 +6,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -40,7 +40,7 @@ func GetConversationMembers(ctx context.Context, callerID int64, input member_mo
 				var errPg error
 				conversationPayload, errPg = postgres.FuncGetConversation(ctx, conversationID)
 				if errPg != nil {
-					logger.Log.Warn().Err(errPg).Int64("conv_id", conversationID).Msg("Échec fallback Postgres pour conversation")
+					nubo_log.Warn(ctx).Err(errPg).Int64("conv_id", conversationID).Msg("Échec fallback Postgres pour conversation")
 					continue
 				}
 			}
@@ -60,7 +60,7 @@ func GetConversationMembers(ctx context.Context, callerID int64, input member_mo
 			var errPgParticipants error
 			participantIDs, errPgParticipants = postgres.FuncGetConversationParticipantIDs(ctx, conversationID)
 			if errPgParticipants != nil {
-				logger.Log.Error().Err(errPgParticipants).Int64("conv_id", conversationID).Msg("Erreur L3 lors du chargement des participants")
+				nubo_log.Error(ctx).Err(errPgParticipants).Int64("conv_id", conversationID).Msg("Erreur L3 lors du chargement des participants")
 				return nil, nubo_error.NewInternal()
 			}
 			// Auto-guérison L1 du set de distribution
@@ -86,7 +86,7 @@ func GetConversationMembers(ctx context.Context, callerID int64, input member_mo
 					var errPg error
 					memberPayload, errPg = postgres.FuncGetMember(ctx, conversationID, participantUserID)
 					if errPg != nil {
-						logger.Log.Warn().Err(errPg).Int64("user_id", participantUserID).Msg("Échec fallback Postgres pour membre")
+						nubo_log.Warn(ctx).Err(errPg).Int64("user_id", participantUserID).Msg("Échec fallback Postgres pour membre")
 						continue
 					}
 					if memberPayload.ID != 0 {

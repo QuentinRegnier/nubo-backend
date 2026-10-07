@@ -7,7 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/sync_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -35,7 +35,7 @@ func SyncMessages(ctx context.Context, callerID int64, input sync_models.SyncMes
 
 	modifiedMessageIDs, errCache := cache_service.GetModifiedMessageIDs(ctx, input.ConversationID, input.SinceMs)
 	if errCache != nil {
-		logger.Log.Error().Err(errCache).Int64("conv_id", input.ConversationID).Msg("Échec L1 lors de la récupération des deltas de messages")
+		nubo_log.Error(ctx).Err(errCache).Int64("conv_id", input.ConversationID).Msg("Échec L1 lors de la récupération des deltas de messages")
 		return sync_models.SyncMessagesOutput{}, nubo_error.NewInternal()
 	}
 
@@ -71,7 +71,7 @@ func SyncMessages(ctx context.Context, callerID int64, input sync_models.SyncMes
 		pgMessagesList, errPg := postgres.FuncLoadMessagesByIDs(ctx, missingMessageIDsFromL1)
 
 		if errPg != nil {
-			logger.Log.Error().Err(errPg).Msg("Échec L3 lors de la réhydratation des messages pour le Delta Sync")
+			nubo_log.Error(ctx).Err(errPg).Msg("Échec L3 lors de la réhydratation des messages pour le Delta Sync")
 		} else {
 			for _, pgMessage := range pgMessagesList {
 				temporaryMessagesMap[pgMessage.ID] = pgMessage

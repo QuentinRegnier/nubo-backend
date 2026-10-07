@@ -7,7 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
@@ -26,7 +26,7 @@ func MarkNotificationsAsRead(ctx context.Context, userID int64, input notificati
 
 	errRedis := redis.NotificationCursors.SetPrimitive(ctx, userID, input.ReadUpToID)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Int64("user_id", userID).Msg("Impossible de sauvegarder le curseur de lecture des notifications")
+		nubo_log.Error(ctx).Err(errRedis).Int64("user_id", userID).Msg("Impossible de sauvegarder le curseur de lecture des notifications")
 		return notification_models.ReadNotificationsOutput{}, nubo_error.NewInternal()
 	}
 
@@ -39,7 +39,7 @@ func MarkNotificationsAsRead(ctx context.Context, userID int64, input notificati
 
 	errBroadcast := realtime_service.DistributeToUsers(ctx, variables.NotificationRead, websocketPayload, []int64{userID})
 	if errBroadcast != nil {
-		logger.Log.Warn().Err(errBroadcast).Msg("Échec de la distribution WS pour " + variables.NotificationRead)
+		nubo_log.Warn(ctx).Err(errBroadcast).Msg("Échec de la distribution WS pour " + variables.NotificationRead)
 	}
 
 	// ── ÉTAPE 3 : MARQUAGE D'ACTIVITÉ (DIRTY FLAG) ──────────────────────────

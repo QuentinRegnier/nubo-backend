@@ -8,7 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -83,7 +83,7 @@ func GetUserConversationsPaginated(ctx context.Context, callerID int64, input co
 	if len(rawInboxItems) == 0 {
 		postgresConversations, errPostgres := postgres.FuncLoadConversationPaginated(ctx, callerID, input.Limit, input.Offset)
 		if errPostgres != nil {
-			logger.Log.Error().Err(errPostgres).Int64("user_id", callerID).Msg("Erreur L3 lors du chargement de l'inbox")
+			nubo_log.Error(ctx).Err(errPostgres).Int64("user_id", callerID).Msg("Erreur L3 lors du chargement de l'inbox")
 			return conversation_models.GetUserInboxOutput{}, nubo_error.NewInternal() // Erreur SQL protégée
 		}
 

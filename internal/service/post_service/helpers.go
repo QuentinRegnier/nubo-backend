@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -63,7 +63,7 @@ func fetchPostsCascade(ctx context.Context, requestedPostIDs []int64) map[int64]
 
 	postsFromPostgres, errPg := postgres.FuncLoadPosts(ctx, postIDsMissingFromL2, len(postIDsMissingFromL2), 0)
 	if errPg != nil {
-		logger.Log.Error().Err(errPg).Msg("Erreur critique lors du Fetch L3 des posts manquants")
+		nubo_log.Error(ctx).Err(errPg).Msg("Erreur critique lors du Fetch L3 des posts manquants")
 		return resolvedPostsMap // Retourne la map partielle pour limiter les dégâts
 	}
 

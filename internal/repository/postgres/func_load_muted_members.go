@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 type MutedMemberRecord struct {
@@ -22,7 +22,7 @@ func FuncLoadMutedMembersPaginated(ctx context.Context, convID int64, limit int,
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur fermeture rows FuncLoadMutedMembersPaginated")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur fermeture rows FuncLoadMutedMembersPaginated")
 		}
 	}(rows)
 

@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/like_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -78,7 +78,7 @@ func ToggleCommentLike(ctx context.Context, input like_models.LikeCommentInput) 
 
 	errQueue := redis.EnqueueDB(ctx, likeRecordPayload.ID, commentPayload.PostID, redis.EntityLike, redisActionType, likeRecordPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("comment_id", input.CommentID).Msg("Échec du Write-Behind pour ToggleCommentLike")
+		nubo_log.Error(ctx).Err(errQueue).Int64("comment_id", input.CommentID).Msg("Échec du Write-Behind pour ToggleCommentLike")
 		return nil // On ne fait pas crasher l'UX pour une perte de like
 	}
 
@@ -88,7 +88,7 @@ func ToggleCommentLike(ctx context.Context, input like_models.LikeCommentInput) 
 		go func() {
 			errNotif := notification_service.DispatchNotification(context.Background(), commentPayload.UserID, input.UserID, variables.EventCommentLiked, commentPayload.ID)
 			if errNotif != nil {
-				logger.Log.Error().Err(errNotif).Int64("comment_id", commentPayload.ID).Msg("Échec de l'envoi de la notification pour un like de commentaire")
+				nubo_log.Error(ctx).Err(errNotif).Int64("comment_id", commentPayload.ID).Msg("Échec de l'envoi de la notification pour un like de commentaire")
 			}
 		}()
 	}

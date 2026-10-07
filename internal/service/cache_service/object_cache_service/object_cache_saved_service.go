@@ -5,7 +5,7 @@ import (
 	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
@@ -19,7 +19,7 @@ func AddSavedToZSET(ctx context.Context, userID int64, postID int64, zsetScore f
 
 	errRedis := redis.Saved.ZAdd(ctx, userID, zsetScore, postIDString)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Int64("user_id", userID).Int64("post_id", postID).Msg("Impossible d'ajouter le favori dans le ZSET L1")
+		nubo_log.Error(ctx).Err(errRedis).Int64("user_id", userID).Int64("post_id", postID).Msg("Impossible d'ajouter le favori dans le ZSET L1")
 		return nubo_error.NewInternal()
 	}
 
@@ -32,7 +32,7 @@ func RemoveSavedFromZSET(ctx context.Context, userID int64, postID int64) error 
 
 	errRedis := redis.Saved.ZRem(ctx, userID, postIDString)
 	if errRedis != nil {
-		logger.Log.Warn().Err(errRedis).Int64("user_id", userID).Int64("post_id", postID).Msg("Impossible de supprimer le favori du ZSET L1")
+		nubo_log.Warn(ctx).Err(errRedis).Int64("user_id", userID).Int64("post_id", postID).Msg("Impossible de supprimer le favori du ZSET L1")
 		return nubo_error.NewInternal()
 	}
 
@@ -43,7 +43,7 @@ func RemoveSavedFromZSET(ctx context.Context, userID int64, postID int64) error 
 func GetSavedPostIDs(ctx context.Context, userID int64, paginationOffset int64, paginationLimit int64) ([]int64, error) {
 	idStringsList, errRedis := redis.Saved.ZRevRange(ctx, userID, paginationOffset, paginationOffset+paginationLimit-1)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Int64("user_id", userID).Msg("Erreur L1 lors de la lecture des IDs de posts sauvegardés")
+		nubo_log.Error(ctx).Err(errRedis).Int64("user_id", userID).Msg("Erreur L1 lors de la lecture des IDs de posts sauvegardés")
 		return nil, nubo_error.NewInternal()
 	}
 

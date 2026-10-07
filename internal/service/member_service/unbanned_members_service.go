@@ -7,7 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -73,7 +73,7 @@ func UnbanMembers(ctx context.Context, callerID int64, input member_models.Unban
 
 			errQueue := redis.EnqueueDB(ctx, targetMemberPayload.ID, targetMemberPayload.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMemberPayload, redis.TargetAll)
 			if errQueue != nil {
-				logger.Log.Error().Err(errQueue).Int64("user_id", targetUserID).Msg("Échec du Write-Behind lors du débannissement")
+				nubo_log.Error(ctx).Err(errQueue).Int64("user_id", targetUserID).Msg("Échec du Write-Behind lors du débannissement")
 			}
 		}
 	}

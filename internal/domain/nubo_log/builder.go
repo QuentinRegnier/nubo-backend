@@ -4,7 +4,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/rs/zerolog"
 )
 
@@ -19,14 +18,17 @@ func (b *LogBuilder) Err(err error) *LogBuilder {
 	if err == nil {
 		return b
 	}
-
-	var appErr *nubo_error.AppError
-	if errors.As(err, &appErr) {
-		// Intégration profonde avec le domaine d'erreur
-		b.event.Err(appErr.Err).
-			Str(LogKeyErrorCode, appErr.Code).
-			Int(LogKeyHTTPStatus, appErr.HTTPStatus)
+	var codeErr interface {
+		GetCode() string
+		GetHTTPStatus() int
+		Unwrap() error
+	}
+	if errors.As(err, &codeErr) {
+		b.event.Err(codeErr.Unwrap()).
+			Str(LogKeyErrorCode, codeErr.GetCode()).
+			Int(LogKeyHTTPStatus, codeErr.GetHTTPStatus())
 	} else {
+
 		b.event.Err(err)
 	}
 	return b
@@ -92,4 +94,13 @@ func (b *LogBuilder) Msg(msg string) {
 // Msgf finalise et écrit le log avec un message formaté.
 func (b *LogBuilder) Msgf(format string, args ...any) {
 	b.event.Msgf(format, args...)
+}
+
+func (b *LogBuilder) Uint32(key string, val uint32) *LogBuilder {
+	b.event.Uint32(key, val)
+	return b
+}
+func (b *LogBuilder) Bytes(key string, val []byte) *LogBuilder {
+	b.event.Bytes(key, val)
+	return b
 }

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
@@ -32,14 +32,14 @@ func DistributeToUsers(ctx context.Context, eventType string, payload any, targe
 
 	serializedEvent, errMarshal := json.Marshal(websocketEvent)
 	if errMarshal != nil {
-		logger.Log.Error().Err(errMarshal).Str("event", eventType).Msg("Erreur lors de la sérialisation de l'événement WebSocket")
+		nubo_log.Error(ctx).Err(errMarshal).Str("event", eventType).Msg("Erreur lors de la sérialisation de l'événement WebSocket")
 		return nubo_error.NewInternal()
 	}
 
 	// Appel pur du Repository Redis (Pub/Sub)
 	errRedis := redis.ChannelUser.PublishMultiple(ctx, targetUserIDs, serializedEvent)
 	if errRedis != nil {
-		logger.Log.Warn().Err(errRedis).Msg("Échec de la publication multiple sur le ChannelUser Redis")
+		nubo_log.Warn(ctx).Err(errRedis).Msg("Échec de la publication multiple sur le ChannelUser Redis")
 		return nubo_error.NewInternal()
 	}
 
@@ -55,14 +55,14 @@ func DistributeToCommunity(ctx context.Context, eventType string, payload any, c
 
 	serializedEvent, errMarshal := json.Marshal(websocketEvent)
 	if errMarshal != nil {
-		logger.Log.Error().Err(errMarshal).Str("event", eventType).Msg("Erreur lors de la sérialisation de l'événement WebSocket (Communauté)")
+		nubo_log.Error(ctx).Err(errMarshal).Str("event", eventType).Msg("Erreur lors de la sérialisation de l'événement WebSocket (Communauté)")
 		return nubo_error.NewInternal()
 	}
 
 	// Appel pur du Repository Redis (Pub/Sub)
 	errRedis := redis.ChannelCommunity.Publish(ctx, communityID, serializedEvent)
 	if errRedis != nil {
-		logger.Log.Warn().Err(errRedis).Int64("community_id", communityID).Msg("Échec de la publication sur le ChannelCommunity Redis")
+		nubo_log.Warn(ctx).Err(errRedis).Int64("community_id", communityID).Msg("Échec de la publication sur le ChannelCommunity Redis")
 		return nubo_error.NewInternal()
 	}
 

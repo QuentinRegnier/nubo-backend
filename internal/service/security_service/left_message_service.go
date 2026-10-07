@@ -5,7 +5,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -45,7 +45,7 @@ func LeftMessage(ctx context.Context, messageID int64, userID int64) (message_mo
 
 			pgMessagesList, errPg := postgres.FuncLoadMessagesByIDs(ctx, []int64{messageID})
 			if errPg != nil {
-				logger.Log.Error().Err(errPg).Int64("message_id", messageID).Msg("Erreur L3 lors de la vérification de sécurité d'un message")
+				nubo_log.Error(ctx).Err(errPg).Int64("message_id", messageID).Msg("Erreur L3 lors de la vérification de sécurité d'un message")
 				return message_models.MessagePayload{}, nubo_error.NewInternal()
 			}
 

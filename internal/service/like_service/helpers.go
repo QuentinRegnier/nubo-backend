@@ -5,7 +5,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -35,7 +35,7 @@ func getCommentCascade(ctx context.Context, commentID int64) (comment_models.Com
 	// ── ÉTAPE 3 : TENTATIVE L3 (POSTGRESQL COLD STORAGE) ────────────────────
 	commentFromPostgres, errPg := postgres.FuncGetComment(ctx, commentID)
 	if errPg != nil {
-		logger.Log.Error().Err(errPg).Int64("comment_id", commentID).Msg("Erreur L3 lors de la récupération du commentaire en cascade")
+		nubo_log.Error(ctx).Err(errPg).Int64("comment_id", commentID).Msg("Erreur L3 lors de la récupération du commentaire en cascade")
 		return comment_models.CommentPayload{}, nubo_error.NewInternal()
 	}
 

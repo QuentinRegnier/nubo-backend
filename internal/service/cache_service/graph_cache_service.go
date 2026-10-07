@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
@@ -87,13 +87,13 @@ func updateEdge(ctx context.Context, sourceTag, targetTag string, currentTimesta
 
 	newBinaryData, errMarshal := msgpack.Marshal(&currentEdge)
 	if errMarshal != nil {
-		logger.Log.Error().Err(errMarshal).Msg("Échec de la sérialisation MessagePack pour une arête de graphe")
+		nubo_log.Error(ctx).Err(errMarshal).Msg("Échec de la sérialisation MessagePack pour une arête de graphe")
 		return
 	}
 
 	errSet := redis.GraphEdges.HSet(ctx, sourceTag, targetTag, newBinaryData)
 	if errSet != nil {
-		logger.Log.Error().Err(errSet).Msg("Échec de l'écriture Redis pour le graphe de Markov")
+		nubo_log.Error(ctx).Err(errSet).Msg("Échec de l'écriture Redis pour le graphe de Markov")
 	}
 }
 
@@ -135,7 +135,7 @@ func GetRelatedTagsLazy(ctx context.Context, sourceTag string) map[string]float6
 			backgroundCtx := context.Background()
 			errPrune := redis.GraphEdges.HDel(backgroundCtx, sanitizedSourceTag, targetsToPrune...)
 			if errPrune != nil {
-				logger.Log.Warn().Err(errPrune).Msg("Échec de l'élagage paresseux (Lazy Pruning) dans le Graph Cache")
+				nubo_log.Warn(ctx).Err(errPrune).Msg("Échec de l'élagage paresseux (Lazy Pruning) dans le Graph Cache")
 			}
 		}(edgesToDeleteList)
 	}
@@ -146,22 +146,22 @@ func GetRelatedTagsLazy(ctx context.Context, sourceTag string) map[string]float6
 // SeedGraphCache réalise le Cold Start (Time-Travel Ingestion) de l'écosystème sémantique
 // lors d'un déploiement ou d'une remise à zéro du cache.
 func SeedGraphCache(ctx context.Context) error {
-	logger.Log.Info().Msg("Début de l'initialisation du graphe sémantique (Graph Cache)...")
+	nubo_log.Info(ctx).Msg("Début de l'initialisation du graphe sémantique (Graph Cache)...")
 
 	// 1. Récupération de l'historique complet (Filtré : > 1 tag, trié par date croissante)
 	historicalPosts, errPg := postgres.FuncLoadPostsForGraphSeeding(ctx)
 	if errPg != nil {
-		logger.Log.Error().Err(errPg).Msg("Échec critique L3 lors du SeedGraphCache")
+		nubo_log.Error(ctx).Err(errPg).Msg("Échec critique L3 lors du SeedGraphCache")
 		return nubo_error.NewInternal()
 	}
 
-	logger.Log.Info().Int("count", len(historicalPosts)).Msg("Publications trouvées pour le rejeu temporel sémantique.")
+	nubo_log.Info(ctx).Int("count", len(historicalPosts)).Msg("Publications trouvées pour le rejeu temporel sémantique.")
 
 	// 2. Rejeu Temporel pour reconstruire fidèlement l'état d'apprentissage
 	for _, postRecord := range historicalPosts {
 		UpdateTagCooccurrences(ctx, postRecord.Hashtags, postRecord.CreatedAt.UnixMilli())
 	}
 
-	logger.Log.Info().Msg("Graphe sémantique initialisé avec succès !")
+	nubo_log.Info(ctx).Msg("Graphe sémantique initialisé avec succès !")
 	return nil
 }

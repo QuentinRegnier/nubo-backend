@@ -5,7 +5,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -46,7 +46,7 @@ func LeftComment(ctx context.Context, commentID int64, userID int64) (comment_mo
 
 			pgComment, errPg := postgres.FuncGetComment(ctx, commentID)
 			if errPg != nil {
-				logger.Log.Error().Err(errPg).Int64("comment_id", commentID).Msg("Erreur L3 lors de la vérification de sécurité d'un commentaire")
+				nubo_log.Error(ctx).Err(errPg).Int64("comment_id", commentID).Msg("Erreur L3 lors de la vérification de sécurité d'un commentaire")
 				return comment_models.CommentPayload{}, nubo_error.NewInternal()
 			}
 

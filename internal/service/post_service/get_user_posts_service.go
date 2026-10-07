@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -38,7 +38,7 @@ func GetUserPosts(ctx context.Context, input post_models.GetUserPostsInput) []po
 	// ── ÉTAPE 2 : FALLBACK ABSOLU L3 (POSTGRESQL) - CONTOURNEMENT MONGO ─────
 	postsFromPostgres, errPg := postgres.FuncLoadUserPosts(ctx, input.TargetUserID, input.Limit, input.Offset)
 	if errPg != nil {
-		logger.Log.Error().Err(errPg).Int64("target_user_id", input.TargetUserID).Msg("Échec L3 lors de la récupération de la timeline utilisateur")
+		nubo_log.Error(ctx).Err(errPg).Int64("target_user_id", input.TargetUserID).Msg("Échec L3 lors de la récupération de la timeline utilisateur")
 		return []post_models.GetPostOutput{}
 	}
 

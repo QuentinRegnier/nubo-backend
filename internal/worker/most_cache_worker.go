@@ -10,8 +10,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -77,7 +77,7 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 
 					_, errPipe := pipe.Exec(ctx)
 					if errPipe != nil {
-						logger.Log.Error().Err(errPipe).Int64("post_id", post.ID).Msg("Most Cache Worker : Échec nettoyage ZSET Trends")
+						nubo_log.Error(ctx).Err(errPipe).Int64("post_id", post.ID).Msg("Most Cache Worker : Échec nettoyage ZSET Trends")
 					}
 				}
 			}

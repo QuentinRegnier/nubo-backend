@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -19,7 +19,7 @@ import (
 // StartMediaCleanupCron lance le Garbage Collector qui détruit les médias orphelins.
 // Agit sur les brouillons expirés ou les médias rattachés à un contenu définitivement supprimé.
 func StartMediaCleanupCron(ctx context.Context) {
-	logger.Log.Info().Msg("Démarrage du Garbage Collector de Médias (Cron 1h)...")
+	nubo_log.Info(ctx).Msg("Démarrage du Garbage Collector de Médias (Cron 1h)...")
 
 	go func() {
 		ticker := time.NewTicker(variables.MediaCleanupCronInterval)
@@ -43,7 +43,7 @@ func processMediaCleanup(ctx context.Context) {
 	// non référencés et délai de grâce expiré) et supprime l'entrée.
 	orphans, errPg := postgres.FuncDeleteOrphanMedia(ctx)
 	if errPg != nil {
-		logger.Log.Error().Err(errPg).Msg("Garbage Collector Médias : Échec critique de l'identification Postgres (L3)")
+		nubo_log.Error(ctx).Err(errPg).Msg("Garbage Collector Médias : Échec critique de l'identification Postgres (L3)")
 		return
 	}
 
@@ -51,7 +51,7 @@ func processMediaCleanup(ctx context.Context) {
 		return // Rien à nettoyer ce cycle.
 	}
 
-	logger.Log.Info().Int("count", len(orphans)).Msg("Garbage Collector Médias : Médias orphelins purgés de Postgres (L3).")
+	nubo_log.Info(ctx).Int("count", len(orphans)).Msg("Garbage Collector Médias : Médias orphelins purgés de Postgres (L3).")
 
 	var idsToDelete []int64
 
@@ -65,7 +65,7 @@ func processMediaCleanup(ctx context.Context) {
 			errS3 := media_service.RemovePhysicalMedia(ctx, orphan.StoragePath)
 			if errS3 != nil {
 				// On loggue mais on continue le processus pour ne pas bloquer les autres médias
-				logger.Log.Error().
+				nubo_log.Error(ctx).
 					Err(errS3).
 					Str("storage_path", orphan.StoragePath).
 					Msg("Garbage Collector Médias : Échec de la destruction physique S3")
@@ -78,8 +78,8 @@ func processMediaCleanup(ctx context.Context) {
 
 	// ── ÉTAPE 3 : PURGE DU WARM STORAGE L2 (MONGODB) ──────────────────────────
 	if errMongo := mongo.MongoDeleteMediaByIDs(idsToDelete); errMongo != nil {
-		logger.Log.Error().Err(errMongo).Msg("Garbage Collector Médias : Échec de la purge MongoDB (L2)")
+		nubo_log.Error(ctx).Err(errMongo).Msg("Garbage Collector Médias : Échec de la purge MongoDB (L2)")
 	}
 
-	logger.Log.Info().Int("count", len(orphans)).Msg("Garbage Collector Médias : Nettoyage complet en cascade (L3, S3, L1, L2) terminé avec succès.")
+	nubo_log.Info(ctx).Int("count", len(orphans)).Msg("Garbage Collector Médias : Nettoyage complet en cascade (L3, S3, L1, L2) terminé avec succès.")
 }

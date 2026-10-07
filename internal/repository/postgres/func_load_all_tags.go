@@ -7,7 +7,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 // FuncLoadAllTags récupère tous les slugs actifs depuis la base de données.
@@ -22,7 +21,7 @@ func FuncLoadAllTags(ctx context.Context) ([]string, error) {
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres)")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres)")
 		}
 	}(rows)
 
@@ -33,7 +32,7 @@ func FuncLoadAllTags(ctx context.Context) ([]string, error) {
 		if err := rows.Scan(&slug); err == nil {
 			tags = append(tags, slug)
 		} else {
-			logger.Log.Error().Err(err).Msg("Erreur lors du scan d'un tag")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur lors du scan d'un tag")
 		}
 	}
 

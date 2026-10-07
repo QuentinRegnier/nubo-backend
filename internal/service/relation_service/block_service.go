@@ -7,8 +7,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -61,7 +61,7 @@ func ToggleBlock(ctx context.Context, callerID int64, targetID int64, requestedA
 	currentTime := time.Now().UTC()
 	errCache := cache_service.UpdateRelationState(ctx, targetID, callerID, newRelationState, domain.TimeToMillis(currentTime))
 	if errCache != nil {
-		logger.Log.Error().Err(errCache).Msg("Échec de la mise à jour du Cache L1 lors d'un ToggleBlock")
+		nubo_log.Error(ctx).Err(errCache).Msg("Échec de la mise à jour du Cache L1 lors d'un ToggleBlock")
 		return nubo_error.NewInternal()
 	}
 
@@ -89,7 +89,7 @@ func ToggleBlock(ctx context.Context, callerID int64, targetID int64, requestedA
 	// PartitionKey = targetID pour assurer l'ordre chronologique des requêtes sur le profil cible
 	errQueue := redis.EnqueueDB(ctx, relationPayload.ID, targetID, redis.EntityRelation, redisActionType, relationPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("target_id", targetID).Msg("Échec du Write-Behind pour ToggleBlock")
+		nubo_log.Error(ctx).Err(errQueue).Int64("target_id", targetID).Msg("Échec du Write-Behind pour ToggleBlock")
 		return nubo_error.NewInternal()
 	}
 

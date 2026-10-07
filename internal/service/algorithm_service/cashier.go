@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -113,7 +113,7 @@ func BuildPersonalizedFeed(ctx context.Context, options PersonalizedFeedOptions)
 	// 2. AUTO-GUÉRISON : Fallback L2 (Mongo) et L3 (Postgres) pour les vecteurs disparus de la RAM
 	missingIDs := vectorBatchResult.MissingIDs
 	if len(missingIDs) > 0 {
-		logger.Log.Info().Int("missing_count", len(missingIDs)).Msg("Cache Miss sur ContentVectors, déclenchement du Fallback L2/L3...")
+		nubo_log.Info(ctx).Int("missing_count", len(missingIDs)).Msg("Cache Miss sur ContentVectors, déclenchement du Fallback L2/L3...")
 
 		// Fallback L2 (Mongo)
 		mongoPosts, _ := mongo.MongoLoadPosts(ctx, missingIDs)

@@ -5,7 +5,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -39,7 +39,7 @@ func GetNotifications(ctx context.Context, callerID int64, input notification_mo
 	if errCacheIndex != nil || len(orderedNotificationIDs) == 0 {
 		notificationsFromMongo, errMongo := mongo.MongoLoadNotificationsPaginated(ctx, callerID, input.Limit, input.Offset)
 		if errMongo != nil {
-			logger.Log.Error().Err(errMongo).Int64("user_id", callerID).Msg("Erreur L2 lors de la récupération des notifications")
+			nubo_log.Error(ctx).Err(errMongo).Int64("user_id", callerID).Msg("Erreur L2 lors de la récupération des notifications")
 			return nil, nubo_error.NewInternal()
 		}
 
@@ -66,7 +66,7 @@ func GetNotifications(ctx context.Context, callerID int64, input notification_mo
 
 	notificationsPayloadsFromCache, errObjectCache := object_cache_service.GetNotificationsView(ctx, orderedNotificationIDs)
 	if errObjectCache != nil {
-		logger.Log.Error().Err(errObjectCache).Msg("Erreur L1 lors de la récupération MGET des objets de notifications")
+		nubo_log.Error(ctx).Err(errObjectCache).Msg("Erreur L1 lors de la récupération MGET des objets de notifications")
 		return nil, nubo_error.NewInternal()
 	}
 

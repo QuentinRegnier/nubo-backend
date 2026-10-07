@@ -10,8 +10,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -92,7 +92,7 @@ func CreateMessage(ctx context.Context, senderID int64, conversationID int64, in
 			var errPg error
 			conversationPayload, errPg = postgres.FuncGetConversation(ctx, conversationID)
 			if errPg != nil || conversationPayload.ID == 0 {
-				logger.Log.Error().Err(errPg).Int64("conv_id", conversationID).Msg("Erreur L3 : Conversation introuvable lors de CreateMessage")
+				nubo_log.Error(ctx).Err(errPg).Int64("conv_id", conversationID).Msg("Erreur L3 : Conversation introuvable lors de CreateMessage")
 				return message_models.CreateMessageOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "La conversation ciblée est introuvable.", errPg)
 			}
 
@@ -230,7 +230,7 @@ func CreateMessage(ctx context.Context, senderID int64, conversationID int64, in
 
 	errQueue := redis.EnqueueDB(ctx, newMessageID, conversationID, redis.EntityMessage, redis.ActionCreate, messagePayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("msg_id", newMessageID).Msg("Échec critique du Write-Behind pour la création d'un message")
+		nubo_log.Error(ctx).Err(errQueue).Int64("msg_id", newMessageID).Msg("Échec critique du Write-Behind pour la création d'un message")
 		return message_models.CreateMessageOutput{}, nubo_error.NewInternal()
 	}
 

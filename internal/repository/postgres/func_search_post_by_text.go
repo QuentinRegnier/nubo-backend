@@ -7,7 +7,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 // FuncSearchPostIDsByText appelle la recherche Full-Text Postgres.
@@ -22,7 +21,7 @@ func FuncSearchPostIDsByText(ctx context.Context, queryStr string, orderMode int
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur fermeture FuncSearchPostIDsByText")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur fermeture FuncSearchPostIDsByText")
 		}
 	}(rows)
 

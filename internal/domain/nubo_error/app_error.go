@@ -52,12 +52,16 @@ const (
 
 // NewInternal s'utilise quand la base de données (Postgres, Mongo) ou Redis crashe.
 // Le message public est volontairement générique. L'erreur brute est logguée.
-func NewInternal() *AppError {
+func NewInternal(errs ...error) *AppError {
+	var err error
+	if len(errs) > 0 {
+		err = errs[0]
+	}
 	return &AppError{
 		HTTPStatus: http.StatusInternalServerError,
 		Code:       CodeInternalError,
 		Message:    "Une erreur interne est survenue. Nos équipes ont été alertées.",
-		Err:        nil,
+		Err:        err,
 	}
 }
 

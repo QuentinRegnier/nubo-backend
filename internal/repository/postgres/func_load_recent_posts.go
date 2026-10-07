@@ -8,7 +8,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 func FuncLoadRecentPosts(ctx context.Context, days int) ([]post_models.PostPayload, error) {
@@ -22,7 +21,7 @@ func FuncLoadRecentPosts(ctx context.Context, days int) ([]post_models.PostPaylo
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des rows Postgres (RecentPosts)")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des rows Postgres (RecentPosts)")
 		}
 	}(rows)
 

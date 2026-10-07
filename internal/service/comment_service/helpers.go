@@ -5,7 +5,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -77,7 +77,7 @@ func fetchCommentsCascade(ctx context.Context, commentIDs []int64) map[int64]com
 			_ = object_cache_service.SetCommentInObjectCache(ctx, commentPayload) // Auto-guérison L1
 		}
 	} else if errMongo.Error() != "mongo: no documents in result" {
-		logger.Log.Warn().Err(errMongo).Msg("Avertissement L2 Mongo lors du fetchCommentsCascade")
+		nubo_log.Warn(ctx).Err(errMongo).Msg("Avertissement L2 Mongo lors du fetchCommentsCascade")
 	}
 
 	// Identification des restes
@@ -107,7 +107,7 @@ func fetchCommentsCascade(ctx context.Context, commentIDs []int64) map[int64]com
 				_ = redis.EnqueueDB(bgCtx, c.ID, c.PostID, redis.EntityComment, redis.ActionUpdate, c, redis.TargetMongo)
 			}(commentPayload)
 		} else {
-			logger.Log.Error().Err(errPg).Int64("comment_id", id).Msg("Erreur L3 Postgres lors de la récupération unitaire d'un commentaire")
+			nubo_log.Error(ctx).Err(errPg).Int64("comment_id", id).Msg("Erreur L3 Postgres lors de la récupération unitaire d'un commentaire")
 		}
 	}
 

@@ -7,7 +7,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -33,7 +33,7 @@ func SetSessionInCache(ctx context.Context, sessionPayload auth_models.SessionsP
 
 	errRedisSet := redis.Sessions.SetObject(timeoutCtx, sessionPayload.ID, sessionPayload)
 	if errRedisSet != nil {
-		logger.Log.Error().Err(errRedisSet).Int64("session_id", sessionPayload.ID).Msg("Impossible de sauvegarder l'objet Session en RAM L1")
+		nubo_log.Error(ctx).Err(errRedisSet).Int64("session_id", sessionPayload.ID).Msg("Impossible de sauvegarder l'objet Session en RAM L1")
 		return nubo_error.NewInternal()
 	}
 
@@ -43,7 +43,7 @@ func SetSessionInCache(ctx context.Context, sessionPayload auth_models.SessionsP
 
 		errRedisIndex := redis.SessionIndexes.SetPrimitive(timeoutCtx, indexCompositeKey, sessionPayload.ID)
 		if errRedisIndex != nil {
-			logger.Log.Warn().Err(errRedisIndex).Msg("Échec de la création de l'index de recherche de session Firebase")
+			nubo_log.Warn(timeoutCtx).Err(errRedisIndex).Msg("Échec de la création de l'index de recherche de session Firebase")
 		}
 	}
 
@@ -73,7 +73,7 @@ func LoadSessionFromCache(ctx context.Context, userID int64, firebaseInstallatio
 	var sessionPayload auth_models.SessionsPayload
 	errRedisGet := redis.Sessions.GetObject(timeoutCtx, resolvedSessionID, &sessionPayload)
 	if errRedisGet != nil {
-		logger.Log.Error().Err(errRedisGet).Int64("session_id", resolvedSessionID).Msg("Erreur d'infrastructure lors du chargement de l'objet Session")
+		nubo_log.Error(ctx).Err(errRedisGet).Int64("session_id", resolvedSessionID).Msg("Erreur d'infrastructure lors du chargement de l'objet Session")
 		return auth_models.SessionsPayload{}, nubo_error.NewInternal()
 	}
 
@@ -103,7 +103,7 @@ func DeleteSessionFromCache(ctx context.Context, sessionID int64, userID int64, 
 	// 3. Destruction physique de l'objet JSON contenant les tokens
 	errRedisDel := redis.Sessions.DeleteObject(timeoutCtx, sessionID)
 	if errRedisDel != nil {
-		logger.Log.Error().Err(errRedisDel).Int64("session_id", sessionID).Msg("Impossible de supprimer physiquement l'objet Session du cache L1")
+		nubo_log.Error(ctx).Err(errRedisDel).Int64("session_id", sessionID).Msg("Impossible de supprimer physiquement l'objet Session du cache L1")
 		return nubo_error.NewInternal()
 	}
 
@@ -136,7 +136,7 @@ func GetFirebaseInstallationIDsCascade(ctx context.Context, userID int64) ([]str
 
 	sessionsListFromPg, errPg := postgres.FuncLoadAllUserSessions(ctx, userID)
 	if errPg != nil {
-		logger.Log.Error().Err(errPg).Int64("user_id", userID).Msg("Erreur L3 lors de la récupération des sessions de l'utilisateur")
+		nubo_log.Error(ctx).Err(errPg).Int64("user_id", userID).Msg("Erreur L3 lors de la récupération des sessions de l'utilisateur")
 		return nil, nubo_error.NewInternal()
 	}
 
@@ -181,7 +181,7 @@ func healSessionIndexL1(userID int64, firebaseTokensList []string) {
 	// Utilisation propre de l'abstraction DDD
 	errAdd := redis.SessionIndexes.SAdd(backgroundCtx, userID, argsForRedis...)
 	if errAdd != nil {
-		logger.Log.Warn().Err(errAdd).Int64("user_id", userID).Msg("Échec de l'auto-guérison du SessionIndex en L1")
+		nubo_log.Warn(backgroundCtx).Err(errAdd).Int64("user_id", userID).Msg("Échec de l'auto-guérison du SessionIndex en L1")
 	}
 
 	_ = redis.SessionIndexes.RefreshTTL(backgroundCtx, userID)

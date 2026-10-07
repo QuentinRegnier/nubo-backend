@@ -6,7 +6,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -60,7 +60,7 @@ func LeftConversation(ctx context.Context, conversationID int64, userID int64) (
 	if !isConversationFound {
 		pgConversation, errPg := postgres.FuncGetConversation(ctx, conversationID)
 		if errPg != nil {
-			logger.Log.Error().Err(errPg).Int64("conv_id", conversationID).Msg("Erreur L3 lors de la récupération de la conversation")
+			nubo_log.Error(ctx).Err(errPg).Int64("conv_id", conversationID).Msg("Erreur L3 lors de la récupération de la conversation")
 			return conversation_models.ConversationPayload{}, nubo_error.NewInternal()
 		}
 
@@ -82,7 +82,7 @@ func LeftConversation(ctx context.Context, conversationID int64, userID int64) (
 	if !isMemberFound {
 		pgMember, errPg := postgres.FuncGetMember(ctx, conversationID, userID)
 		if errPg != nil {
-			logger.Log.Error().Err(errPg).Int64("user_id", userID).Msg("Erreur L3 lors de la récupération du membre")
+			nubo_log.Error(ctx).Err(errPg).Int64("user_id", userID).Msg("Erreur L3 lors de la récupération du membre")
 			return conversation_models.ConversationPayload{}, nubo_error.NewInternal()
 		}
 

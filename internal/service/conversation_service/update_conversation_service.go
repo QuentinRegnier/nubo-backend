@@ -10,7 +10,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -112,7 +112,7 @@ func UpdateConversation(ctx context.Context, callerID int64, conversationID int6
 
 	errQueue := redis.EnqueueDB(ctx, conversationPayload.ID, conversationPayload.ID, redis.EntityConversation, redis.ActionUpdate, conversationPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("conv_id", conversationPayload.ID).Msg("Échec du Write-Behind lors de la modification de la conversation")
+		nubo_log.Error(ctx).Err(errQueue).Int64("conv_id", conversationPayload.ID).Msg("Échec du Write-Behind lors de la modification de la conversation")
 		return conversation_models.UpdateConversationOutput{}, nubo_error.NewInternal()
 	}
 
@@ -124,7 +124,7 @@ func UpdateConversation(ctx context.Context, callerID int64, conversationID int6
 		// A. Émission Temps Réel (WebSockets)
 		errBroadcast := realtime_service.BroadcastToConversation(backgroundContext, convID, "conversation.updated", payload)
 		if errBroadcast != nil {
-			logger.Log.Error().Err(errBroadcast).Msg("Erreur d'émission WebSocket pour conversation.updated")
+			nubo_log.Error(ctx).Err(errBroadcast).Msg("Erreur d'émission WebSocket pour conversation.updated")
 		}
 
 		// B. SYNC LEDGER (Trigger d'Invalition Mutuelle Global)

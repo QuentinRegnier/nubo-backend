@@ -5,7 +5,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -52,7 +52,7 @@ func DeleteComment(ctx context.Context, input comment_models.DeleteCommentInput)
 	// de répercuter le -1 sur le CommentCount du post parent en BDD.
 	errQueue := redis.EnqueueDB(ctx, commentPayload.ID, commentPayload.PostID, redis.EntityComment, redis.ActionDelete, commentPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("comment_id", commentPayload.ID).Msg("Échec critique : Impossible d'enqueue la suppression du commentaire")
+		nubo_log.Error(ctx).Err(errQueue).Int64("comment_id", commentPayload.ID).Msg("Échec critique : Impossible d'enqueue la suppression du commentaire")
 		return nubo_error.NewInternal()
 	}
 

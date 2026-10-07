@@ -7,8 +7,8 @@ import (
 
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/messaging"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
@@ -29,19 +29,19 @@ type PushJob struct {
 // StartPushNotificationWorker initialise la connexion à l'API Google Firebase
 // et lance la boucle d'écoute sur la file Redis (Consumer).
 func StartPushNotificationWorker(ctx context.Context) {
-	logger.Log.Info().Msg("Démarrage du Worker Firebase Cloud Messaging...")
+	nubo_log.Info(ctx).Msg("Démarrage du Worker Firebase Cloud Messaging...")
 
 	// Initialisation de l'application Firebase
 	app, err := firebase.NewApp(ctx, nil)
 	if err != nil {
-		logger.Log.Fatal().Err(err).Msg("Erreur critique : Impossible d'initialiser Firebase")
+		nubo_log.Fatal(ctx).Err(err).Msg("Erreur critique : Impossible d'initialiser Firebase")
 		return
 	}
 
 	// Création du client Messaging
 	fcmClient, err = app.Messaging(ctx)
 	if err != nil {
-		logger.Log.Fatal().Err(err).Msg("Erreur critique : Impossible d'initialiser le client FCM")
+		nubo_log.Fatal(ctx).Err(err).Msg("Erreur critique : Impossible d'initialiser le client FCM")
 		return
 	}
 
@@ -63,7 +63,7 @@ func StartPushNotificationWorker(ctx context.Context) {
 					if errUnmarshal := json.Unmarshal([]byte(res[1]), &job); errUnmarshal == nil {
 						processFirebaseJob(ctx, job)
 					} else {
-						logger.Log.Warn().Err(errUnmarshal).Msg("Push Worker : Impossible de désérialiser le job FCM")
+						nubo_log.Warn(ctx).Err(errUnmarshal).Msg("Push Worker : Impossible de désérialiser le job FCM")
 					}
 				}
 			}
@@ -157,9 +157,9 @@ func processFirebaseJob(ctx context.Context, job PushJob) {
 	// ── ÉTAPE 4 : EXPÉDITION PHYSIQUE VIA L'API FIREBASE ────────────────────
 	br, errSend := fcmClient.SendEachForMulticast(ctx, message)
 	if errSend != nil {
-		logger.Log.Error().Err(errSend).Int64("user_id", job.UserID).Msg("Échec critique lors de l'envoi Firebase")
+		nubo_log.Error(ctx).Err(errSend).Int64("user_id", job.UserID).Msg("Échec critique lors de l'envoi Firebase")
 	} else if br.FailureCount > 0 {
-		logger.Log.Warn().
+		nubo_log.Warn(ctx).
 			Int("failures", br.FailureCount).
 			Int("total", len(fids)).
 			Int64("user_id", job.UserID).

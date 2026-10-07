@@ -7,7 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/sync_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
@@ -35,7 +35,7 @@ func SyncActivity(ctx context.Context, callerID int64, input sync_models.SyncAct
 
 	recentNotificationViews, errFetch := notification_service.GetNotifications(ctx, callerID, requestPayload)
 	if errFetch != nil {
-		logger.Log.Error().Err(errFetch).Int64("user_id", callerID).Msg("Erreur critique lors du Fetch L1/L2 pour le SyncActivity")
+		nubo_log.Error(ctx).Err(errFetch).Int64("user_id", callerID).Msg("Erreur critique lors du Fetch L1/L2 pour le SyncActivity")
 		return syncOutput, nubo_error.NewInternal()
 	}
 

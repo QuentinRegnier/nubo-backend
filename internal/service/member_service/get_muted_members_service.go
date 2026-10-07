@@ -7,7 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
@@ -39,7 +39,7 @@ func GetMutedMembers(ctx context.Context, callerID int64, input member_models.Ge
 	// On interroge donc directement le stockage à froid pour filtrer sur "RestrictedUntil".
 	mutedRecords, errPg := postgres.FuncLoadMutedMembersPaginated(ctx, input.ConversationID, input.Limit, input.Offset)
 	if errPg != nil {
-		logger.Log.Error().Err(errPg).Int64("conv_id", input.ConversationID).Msg("Échec L3 lors de la récupération de la liste des membres mutés")
+		nubo_log.Error(ctx).Err(errPg).Int64("conv_id", input.ConversationID).Msg("Échec L3 lors de la récupération de la liste des membres mutés")
 		return member_models.GetMutedMembersOutput{}, nubo_error.NewInternal()
 	}
 

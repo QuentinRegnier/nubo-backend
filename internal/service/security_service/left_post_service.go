@@ -5,7 +5,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -48,7 +48,7 @@ func LeftPost(ctx context.Context, postID int64, userID int64) (post_models.Post
 
 			pgPostsList, errPg := postgres.FuncLoadPosts(ctx, []int64{postID}, 1, 0)
 			if errPg != nil {
-				logger.Log.Error().Err(errPg).Int64("post_id", postID).Msg("Erreur L3 lors de la vérification de sécurité d'un post")
+				nubo_log.Error(ctx).Err(errPg).Int64("post_id", postID).Msg("Erreur L3 lors de la vérification de sécurité d'un post")
 				return post_models.PostPayload{}, nubo_error.NewInternal()
 			}
 

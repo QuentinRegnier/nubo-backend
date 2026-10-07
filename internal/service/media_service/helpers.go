@@ -8,8 +8,8 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
@@ -100,7 +100,7 @@ func GetMediaCascade(ctx context.Context, mediaID int64) (media_models.MediaPayl
 	// ── TENTATIVE L3 (POSTGRESQL COLD STORAGE) ────────────────────────────────
 	mediaFromPostgres, errPg := postgres.FuncGetMedia(ctx, mediaID)
 	if errPg != nil {
-		logger.Log.Error().Err(errPg).Int64("media_id", mediaID).Msg("Erreur L3 lors de la récupération du média en cascade")
+		nubo_log.Error(ctx).Err(errPg).Int64("media_id", mediaID).Msg("Erreur L3 lors de la récupération du média en cascade")
 		return media_models.MediaPayload{}, nubo_error.NewInternal()
 	}
 
@@ -135,7 +135,7 @@ func RemovePhysicalMedia(ctx context.Context, storagePath string) error {
 
 	err := minio.MinioClient.RemoveObject(ctx, bucketName, storagePath, miniogo.RemoveObjectOptions{})
 	if err != nil {
-		logger.Log.Error().Err(err).Str("path", storagePath).Msg("Échec de la suppression physique du fichier sur MinIO")
+		nubo_log.Error(ctx).Err(err).Str("path", storagePath).Msg("Échec de la suppression physique du fichier sur MinIO")
 		return nubo_error.NewInternal()
 	}
 

@@ -6,8 +6,8 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
 	"github.com/gin-gonic/gin"
 )
@@ -46,7 +46,7 @@ func UploadMediaHandler(c *gin.Context) {
 	defer func(file multipart.File) {
 		err := file.Close()
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture du fichier uploadé")
+			nubo_log.Error(c).Err(err).Msg("Erreur lors de la fermeture du fichier uploadé")
 		}
 	}(file)
 

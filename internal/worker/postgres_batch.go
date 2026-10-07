@@ -11,8 +11,8 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/lib/pq"
 )
@@ -107,19 +107,19 @@ func processEntityEvents(ctx context.Context, entityType redis.EntityType, event
 
 	if len(inserts) > 0 {
 		if err := bulkInsertPostgres(ctx, entityType, inserts); err != nil {
-			logger.Log.Warn().Interface("entity", entityType).Msg("Fast Path Insert échoué. Déclenchement Dichotomie...")
+			nubo_log.Warn(ctx).Interface("entity", entityType).Msg("Fast Path Insert échoué. Déclenchement Dichotomie...")
 			slowPathDichotomy(ctx, entityType, redis.ActionCreate, inserts)
 		}
 	}
 	if len(updates) > 0 {
 		if err := bulkUpdatePostgres(ctx, entityType, updates); err != nil {
-			logger.Log.Warn().Interface("entity", entityType).Msg("Fast Path Update échoué. Déclenchement Dichotomie...")
+			nubo_log.Warn(ctx).Interface("entity", entityType).Msg("Fast Path Update échoué. Déclenchement Dichotomie...")
 			slowPathDichotomy(ctx, entityType, redis.ActionUpdate, updates)
 		}
 	}
 	if len(deletes) > 0 {
 		if err := bulkDeletePostgres(ctx, entityType, deletes); err != nil {
-			logger.Log.Warn().Interface("entity", entityType).Msg("Fast Path Delete échoué. Déclenchement Dichotomie...")
+			nubo_log.Warn(ctx).Interface("entity", entityType).Msg("Fast Path Delete échoué. Déclenchement Dichotomie...")
 			slowPathDichotomy(ctx, entityType, redis.ActionDelete, deletes)
 		}
 	}
@@ -176,7 +176,7 @@ func sendToDLQ(ctx context.Context, entity redis.EntityType, action redis.Action
 	bytes, err := json.Marshal(dlqPayload)
 	if err == nil {
 		_ = redis.DLQ.LPush(ctx, PostgresDLQQueue, bytes)
-		logger.Log.Error().
+		nubo_log.Error(ctx).
 			Err(dbErr).
 			Interface("entity", entity).
 			Interface("action", action).
@@ -198,13 +198,13 @@ func bulkInsertPostgres(ctx context.Context, entity redis.EntityType, events []r
 	mapper := GetMapper(entity)
 	if mapper == nil {
 		err := errors.New("Aucun mapper Postgres défini pour l'entité")
-		logger.Log.Error().Err(err).Interface("entity", entity).Msg("Échec BulkInsert")
+		nubo_log.Error(ctx).Err(err).Interface("entity", entity).Msg("Échec BulkInsert")
 		return nubo_error.NewInternal()
 	}
 
 	tx, errTx := postgres.PostgresDB.BeginTx(ctx, nil)
 	if errTx != nil {
-		logger.Log.Error().Err(errTx).Msg("Échec démarrage transaction BulkInsert")
+		nubo_log.Error(ctx).Err(errTx).Msg("Échec démarrage transaction BulkInsert")
 		return nubo_error.NewInternal()
 	}
 
@@ -219,34 +219,34 @@ func bulkInsertPostgres(ctx context.Context, entity redis.EntityType, events []r
 
 	stmt, errStmt := tx.Prepare(copyQuery)
 	if errStmt != nil {
-		logger.Log.Error().Err(errStmt).Msg("Échec préparation statement COPY IN")
+		nubo_log.Error(ctx).Err(errStmt).Msg("Échec préparation statement COPY IN")
 		return nubo_error.NewInternal()
 	}
 	defer func(stmt *sql.Stmt) {
 		if errClose := stmt.Close(); errClose != nil {
-			logger.Log.Error().Err(errClose).Msg("Erreur fermeture statement CopyIn")
+			nubo_log.Error(ctx).Err(errClose).Msg("Erreur fermeture statement CopyIn")
 		}
 	}(stmt)
 
 	for _, e := range events {
 		row, errRow := mapper.ToRow(e.Payload)
 		if errRow != nil {
-			logger.Log.Error().Err(errRow).Int64("id", e.ID).Msg("Échec mapping ligne SQL")
+			nubo_log.Error(ctx).Err(errRow).Int64("id", e.ID).Msg("Échec mapping ligne SQL")
 			return nubo_error.NewInternal()
 		}
 		if _, errExec := stmt.Exec(row...); errExec != nil {
-			logger.Log.Error().Err(errExec).Msg("Échec exécution COPY IN")
+			nubo_log.Error(ctx).Err(errExec).Msg("Échec exécution COPY IN")
 			return nubo_error.NewInternal()
 		}
 	}
 
 	if _, errFlush := stmt.Exec(); errFlush != nil {
-		logger.Log.Error().Err(errFlush).Msg("Échec Flush COPY IN")
+		nubo_log.Error(ctx).Err(errFlush).Msg("Échec Flush COPY IN")
 		return nubo_error.NewInternal()
 	}
 
 	if errCommit := tx.Commit(); errCommit != nil {
-		logger.Log.Error().Err(errCommit).Msg("Échec Commit COPY IN")
+		nubo_log.Error(ctx).Err(errCommit).Msg("Échec Commit COPY IN")
 		return nubo_error.NewInternal()
 	}
 
@@ -258,7 +258,7 @@ func bulkInsertPostgres(ctx context.Context, entity redis.EntityType, events []r
 func handleMessageReactionUpsert(ctx context.Context, events []redis.AsyncEvent) error {
 	tx, errTx := postgres.PostgresDB.BeginTx(ctx, nil)
 	if errTx != nil {
-		logger.Log.Error().Err(errTx).Msg("Échec démarrage transaction Upsert")
+		nubo_log.Error(ctx).Err(errTx).Msg("Échec démarrage transaction Upsert")
 		return nubo_error.NewInternal()
 	}
 
@@ -270,13 +270,13 @@ func handleMessageReactionUpsert(ctx context.Context, events []redis.AsyncEvent)
 	`)
 	if errStmt != nil {
 		_ = tx.Rollback()
-		logger.Log.Error().Err(errStmt).Msg("Échec préparation statement Upsert")
+		nubo_log.Error(ctx).Err(errStmt).Msg("Échec préparation statement Upsert")
 		return nubo_error.NewInternal()
 	}
 
 	defer func(stmt *sql.Stmt) {
 		if errClose := stmt.Close(); errClose != nil {
-			logger.Log.Error().Err(errClose).Msg("Erreur fermeture statement Upsert")
+			nubo_log.Error(ctx).Err(errClose).Msg("Erreur fermeture statement Upsert")
 		}
 	}(stmt)
 
@@ -287,13 +287,13 @@ func handleMessageReactionUpsert(ctx context.Context, events []redis.AsyncEvent)
 
 		if _, errExec := stmt.Exec(r.ID, r.MessageID, r.UserID, r.Reaction, r.CreatedAt); errExec != nil {
 			_ = tx.Rollback()
-			logger.Log.Error().Err(errExec).Msg("Échec exécution de la ligne Upsert")
+			nubo_log.Error(ctx).Err(errExec).Msg("Échec exécution de la ligne Upsert")
 			return nubo_error.NewInternal()
 		}
 	}
 
 	if errCommit := tx.Commit(); errCommit != nil {
-		logger.Log.Error().Err(errCommit).Msg("Échec Commit Upsert")
+		nubo_log.Error(ctx).Err(errCommit).Msg("Échec Commit Upsert")
 		return nubo_error.NewInternal()
 	}
 	return nil
@@ -307,7 +307,7 @@ func bulkUpdatePostgres(ctx context.Context, entity redis.EntityType, events []r
 	mapper := GetMapper(entity)
 	if mapper == nil {
 		err := errors.New("Aucun mapper Postgres défini")
-		logger.Log.Error().Err(err).Interface("entity", entity).Msg("Échec BulkUpdate")
+		nubo_log.Error(ctx).Err(err).Interface("entity", entity).Msg("Échec BulkUpdate")
 		return nubo_error.NewInternal()
 	}
 
@@ -327,7 +327,7 @@ func bulkUpdatePostgres(ctx context.Context, entity redis.EntityType, events []r
 
 	tx, errTx := postgres.PostgresDB.BeginTx(ctx, nil)
 	if errTx != nil {
-		logger.Log.Error().Err(errTx).Msg("Échec démarrage transaction BulkUpdate")
+		nubo_log.Error(ctx).Err(errTx).Msg("Échec démarrage transaction BulkUpdate")
 		return nubo_error.NewInternal()
 	}
 
@@ -344,48 +344,48 @@ func bulkUpdatePostgres(ctx context.Context, entity redis.EntityType, events []r
 
 	queryCreateTable := fmt.Sprintf("CREATE TEMP TABLE %s (LIKE %s INCLUDING ALL) ON COMMIT DROP", tempTable, mapper.TableName())
 	if _, errExec := tx.ExecContext(ctx, queryCreateTable); errExec != nil {
-		logger.Log.Error().Err(errExec).Msg("Échec création table temporaire BulkUpdate")
+		nubo_log.Error(ctx).Err(errExec).Msg("Échec création table temporaire BulkUpdate")
 		return nubo_error.NewInternal()
 	}
 
 	// Remplissage de la table temporaire
 	stmt, errStmt := tx.Prepare(pq.CopyIn(tempTable, mapper.Columns()...))
 	if errStmt != nil {
-		logger.Log.Error().Err(errStmt).Msg("Échec préparation CopyIn Temp Table")
+		nubo_log.Error(ctx).Err(errStmt).Msg("Échec préparation CopyIn Temp Table")
 		return nubo_error.NewInternal()
 	}
 	defer func(stmt *sql.Stmt) {
 		if errClose := stmt.Close(); errClose != nil {
-			logger.Log.Error().Err(errClose).Msg("Erreur fermeture statement CopyIn Temp")
+			nubo_log.Error(ctx).Err(errClose).Msg("Erreur fermeture statement CopyIn Temp")
 		}
 	}(stmt)
 
 	for _, e := range dedupEvents {
 		row, errRow := mapper.ToRow(e.Payload)
 		if errRow != nil {
-			logger.Log.Error().Err(errRow).Int64("id", e.ID).Msg("Échec mapping de la ligne Temp Table")
+			nubo_log.Error(ctx).Err(errRow).Int64("id", e.ID).Msg("Échec mapping de la ligne Temp Table")
 			return nubo_error.NewInternal()
 		}
 		if _, errExec := stmt.Exec(row...); errExec != nil {
-			logger.Log.Error().Err(errExec).Msg("Échec exécution ligne CopyIn Temp Table")
+			nubo_log.Error(ctx).Err(errExec).Msg("Échec exécution ligne CopyIn Temp Table")
 			return nubo_error.NewInternal()
 		}
 	}
 
 	if _, errFlush := stmt.Exec(); errFlush != nil {
-		logger.Log.Error().Err(errFlush).Msg("Échec Flush Temp Table")
+		nubo_log.Error(ctx).Err(errFlush).Msg("Échec Flush Temp Table")
 		return nubo_error.NewInternal()
 	}
 
 	// Application des changements (Merge) de la table temporaire vers la table réelle
 	queryUpdate := mapper.BuildUpdateQuery(tempTable)
 	if _, errMerge := tx.ExecContext(ctx, queryUpdate); errMerge != nil {
-		logger.Log.Error().Err(errMerge).Msg("Échec requête MERGE UPDATE")
+		nubo_log.Error(ctx).Err(errMerge).Msg("Échec requête MERGE UPDATE")
 		return nubo_error.NewInternal()
 	}
 
 	if errCommit := tx.Commit(); errCommit != nil {
-		logger.Log.Error().Err(errCommit).Msg("Échec Commit BulkUpdate")
+		nubo_log.Error(ctx).Err(errCommit).Msg("Échec Commit BulkUpdate")
 		return nubo_error.NewInternal()
 	}
 
@@ -401,7 +401,7 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 	mapper := GetMapper(entity)
 	if mapper == nil {
 		err := errors.New("Aucun mapper Postgres défini")
-		logger.Log.Error().Err(err).Interface("entity", entity).Msg("Échec BulkDelete")
+		nubo_log.Error(ctx).Err(err).Interface("entity", entity).Msg("Échec BulkDelete")
 		return nubo_error.NewInternal()
 	}
 
@@ -409,19 +409,19 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 	if entity == redis.EntityLike {
 		tx, errTx := postgres.PostgresDB.BeginTx(ctx, nil)
 		if errTx != nil {
-			logger.Log.Error().Err(errTx).Msg("Échec démarrage transaction Like Delete")
+			nubo_log.Error(ctx).Err(errTx).Msg("Échec démarrage transaction Like Delete")
 			return nubo_error.NewInternal()
 		}
 
 		stmt, errStmt := tx.Prepare("DELETE FROM content.likes WHERE target_type = $1 AND target_id = $2 AND user_id = $3")
 		if errStmt != nil {
 			_ = tx.Rollback()
-			logger.Log.Error().Err(errStmt).Msg("Échec préparation statement Like Delete")
+			nubo_log.Error(ctx).Err(errStmt).Msg("Échec préparation statement Like Delete")
 			return nubo_error.NewInternal()
 		}
 		defer func(stmt *sql.Stmt) {
 			if errClose := stmt.Close(); errClose != nil {
-				logger.Log.Error().Err(errClose).Msg("Erreur fermeture statement Delete Likes")
+				nubo_log.Error(ctx).Err(errClose).Msg("Erreur fermeture statement Delete Likes")
 			}
 		}(stmt)
 
@@ -436,13 +436,13 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 
 			if _, errExec := stmt.Exec(targetType, targetID, userID); errExec != nil {
 				_ = tx.Rollback()
-				logger.Log.Error().Err(errExec).Msg("Échec exécution Like Delete")
+				nubo_log.Error(ctx).Err(errExec).Msg("Échec exécution Like Delete")
 				return nubo_error.NewInternal()
 			}
 		}
 
 		if errCommit := tx.Commit(); errCommit != nil {
-			logger.Log.Error().Err(errCommit).Msg("Échec Commit Like Delete")
+			nubo_log.Error(ctx).Err(errCommit).Msg("Échec Commit Like Delete")
 			return nubo_error.NewInternal()
 		}
 		return nil
@@ -452,19 +452,19 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 	if entity == redis.EntityRelation {
 		tx, errTx := postgres.PostgresDB.BeginTx(ctx, nil)
 		if errTx != nil {
-			logger.Log.Error().Err(errTx).Msg("Échec démarrage transaction Relation Delete")
+			nubo_log.Error(ctx).Err(errTx).Msg("Échec démarrage transaction Relation Delete")
 			return nubo_error.NewInternal()
 		}
 
 		stmt, errStmt := tx.Prepare("DELETE FROM auth.relations WHERE primary_id = $1 AND secondary_id = $2")
 		if errStmt != nil {
 			_ = tx.Rollback()
-			logger.Log.Error().Err(errStmt).Msg("Échec préparation statement Relation Delete")
+			nubo_log.Error(ctx).Err(errStmt).Msg("Échec préparation statement Relation Delete")
 			return nubo_error.NewInternal()
 		}
 		defer func(stmt *sql.Stmt) {
 			if errClose := stmt.Close(); errClose != nil {
-				logger.Log.Error().Err(errClose).Msg("Erreur fermeture statement Delete Relations")
+				nubo_log.Error(ctx).Err(errClose).Msg("Erreur fermeture statement Delete Relations")
 			}
 		}(stmt)
 
@@ -477,13 +477,13 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 			secondaryID := int64(r["secondary_id"].(float64))
 			if _, errExec := stmt.Exec(primaryID, secondaryID); errExec != nil {
 				_ = tx.Rollback()
-				logger.Log.Error().Err(errExec).Msg("Échec exécution Relation Delete")
+				nubo_log.Error(ctx).Err(errExec).Msg("Échec exécution Relation Delete")
 				return nubo_error.NewInternal()
 			}
 		}
 
 		if errCommit := tx.Commit(); errCommit != nil {
-			logger.Log.Error().Err(errCommit).Msg("Échec Commit Relation Delete")
+			nubo_log.Error(ctx).Err(errCommit).Msg("Échec Commit Relation Delete")
 			return nubo_error.NewInternal()
 		}
 		return nil
@@ -493,19 +493,19 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 	if entity == redis.EntityMessageReaction {
 		tx, errTx := postgres.PostgresDB.BeginTx(ctx, nil)
 		if errTx != nil {
-			logger.Log.Error().Err(errTx).Msg("Échec démarrage transaction Msg Reaction Delete")
+			nubo_log.Error(ctx).Err(errTx).Msg("Échec démarrage transaction Msg Reaction Delete")
 			return nubo_error.NewInternal()
 		}
 
 		stmt, errStmt := tx.Prepare("DELETE FROM messaging.message_reactions WHERE message_id = $1 AND user_id = $2")
 		if errStmt != nil {
 			_ = tx.Rollback()
-			logger.Log.Error().Err(errStmt).Msg("Échec préparation statement Msg Reaction Delete")
+			nubo_log.Error(ctx).Err(errStmt).Msg("Échec préparation statement Msg Reaction Delete")
 			return nubo_error.NewInternal()
 		}
 		defer func(stmt *sql.Stmt) {
 			if errClose := stmt.Close(); errClose != nil {
-				logger.Log.Error().Err(errClose).Msg("Erreur fermeture statement Delete Message Reactions")
+				nubo_log.Error(ctx).Err(errClose).Msg("Erreur fermeture statement Delete Message Reactions")
 			}
 		}(stmt)
 
@@ -516,13 +516,13 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 
 			if _, errExec := stmt.Exec(r.MessageID, r.UserID); errExec != nil {
 				_ = tx.Rollback()
-				logger.Log.Error().Err(errExec).Msg("Échec exécution Msg Reaction Delete")
+				nubo_log.Error(ctx).Err(errExec).Msg("Échec exécution Msg Reaction Delete")
 				return nubo_error.NewInternal()
 			}
 		}
 
 		if errCommit := tx.Commit(); errCommit != nil {
-			logger.Log.Error().Err(errCommit).Msg("Échec Commit Msg Reaction Delete")
+			nubo_log.Error(ctx).Err(errCommit).Msg("Échec Commit Msg Reaction Delete")
 			return nubo_error.NewInternal()
 		}
 		return nil
@@ -532,19 +532,19 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 	if entity == redis.EntitySaved {
 		tx, errTx := postgres.PostgresDB.BeginTx(ctx, nil)
 		if errTx != nil {
-			logger.Log.Error().Err(errTx).Msg("Échec démarrage transaction Saved Delete")
+			nubo_log.Error(ctx).Err(errTx).Msg("Échec démarrage transaction Saved Delete")
 			return nubo_error.NewInternal()
 		}
 
 		stmt, errStmt := tx.Prepare("DELETE FROM content.saved WHERE user_id = $1 AND post_id = $2")
 		if errStmt != nil {
 			_ = tx.Rollback()
-			logger.Log.Error().Err(errStmt).Msg("Échec préparation statement Saved Delete")
+			nubo_log.Error(ctx).Err(errStmt).Msg("Échec préparation statement Saved Delete")
 			return nubo_error.NewInternal()
 		}
 		defer func(stmt *sql.Stmt) {
 			if errClose := stmt.Close(); errClose != nil {
-				logger.Log.Error().Err(errClose).Msg("Erreur fermeture statement Delete Saved")
+				nubo_log.Error(ctx).Err(errClose).Msg("Erreur fermeture statement Delete Saved")
 			}
 		}(stmt)
 
@@ -557,13 +557,13 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 			postID := int64(s["post_id"].(float64))
 			if _, errExec := stmt.Exec(userID, postID); errExec != nil {
 				_ = tx.Rollback()
-				logger.Log.Error().Err(errExec).Msg("Échec exécution Saved Delete")
+				nubo_log.Error(ctx).Err(errExec).Msg("Échec exécution Saved Delete")
 				return nubo_error.NewInternal()
 			}
 		}
 
 		if errCommit := tx.Commit(); errCommit != nil {
-			logger.Log.Error().Err(errCommit).Msg("Échec Commit Saved Delete")
+			nubo_log.Error(ctx).Err(errCommit).Msg("Échec Commit Saved Delete")
 			return nubo_error.NewInternal()
 		}
 		return nil
@@ -581,7 +581,7 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 		// A. Soft Delete des posts (visibility = -1)
 		query = fmt.Sprintf("UPDATE %s SET visibility = -1 WHERE id = ANY($1)", mapper.TableName())
 		if _, errExec := postgres.PostgresDB.ExecContext(ctx, query, pq.Array(ids)); errExec != nil {
-			logger.Log.Error().Err(errExec).Msg("Échec Soft Delete Posts")
+			nubo_log.Error(ctx).Err(errExec).Msg("Échec Soft Delete Posts")
 			return nubo_error.NewInternal()
 		}
 
@@ -596,7 +596,7 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 		// Soft Delete du Message (visibility = false)
 		query = fmt.Sprintf("UPDATE %s SET visibility = false, updated_at = NOW() WHERE id = ANY($1)", mapper.TableName())
 		if _, errExec := postgres.PostgresDB.ExecContext(ctx, query, pq.Array(ids)); errExec != nil {
-			logger.Log.Error().Err(errExec).Msg("Échec Soft Delete Message")
+			nubo_log.Error(ctx).Err(errExec).Msg("Échec Soft Delete Message")
 			return nubo_error.NewInternal()
 		}
 
@@ -614,7 +614,7 @@ func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []r
 	}
 
 	if _, errExec := postgres.PostgresDB.ExecContext(ctx, query, pq.Array(ids)); errExec != nil {
-		logger.Log.Error().Err(errExec).Msg("Échec de la requête de Suppression/Mise à jour Finale")
+		nubo_log.Error(ctx).Err(errExec).Msg("Échec de la requête de Suppression/Mise à jour Finale")
 		return nubo_error.NewInternal()
 	}
 
@@ -643,7 +643,7 @@ func updateCountersPostgres(ctx context.Context, events []redis.AsyncEvent) {
 
 		jsonBytes, err := json.Marshal(e.Payload)
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Worker Postgres : Échec sérialisation pour compteurs")
+			nubo_log.Error(ctx).Err(err).Msg("Worker Postgres : Échec sérialisation pour compteurs")
 			continue
 		}
 
@@ -734,32 +734,32 @@ func updateCountersPostgres(ctx context.Context, events []redis.AsyncEvent) {
 	// B. Exécution vers Procédures Stockées PostgreSQL
 	for id, delta := range likeDeltas {
 		if _, err := postgres.PostgresDB.ExecContext(ctx, "SELECT content.func_increment_post_like($1, $2)", id, delta); err != nil {
-			logger.Log.Error().Err(err).Int64("post_id", id).Msg("Échec exécution fonction func_increment_post_like")
+			nubo_log.Error(ctx).Err(err).Int64("post_id", id).Msg("Échec exécution fonction func_increment_post_like")
 		}
 	}
 	for id, delta := range commentDeltas {
 		if _, err := postgres.PostgresDB.ExecContext(ctx, "SELECT content.func_increment_post_comment($1, $2)", id, delta); err != nil {
-			logger.Log.Error().Err(err).Int64("post_id", id).Msg("Échec exécution fonction func_increment_post_comment")
+			nubo_log.Error(ctx).Err(err).Int64("post_id", id).Msg("Échec exécution fonction func_increment_post_comment")
 		}
 	}
 	for id, delta := range viewDeltas {
 		if _, err := postgres.PostgresDB.ExecContext(ctx, "SELECT content.func_increment_post_view($1, $2)", id, delta); err != nil {
-			logger.Log.Error().Err(err).Int64("post_id", id).Msg("Échec exécution fonction func_increment_post_view")
+			nubo_log.Error(ctx).Err(err).Int64("post_id", id).Msg("Échec exécution fonction func_increment_post_view")
 		}
 	}
 	for id, delta := range commentLikeDeltas {
 		if _, err := postgres.PostgresDB.ExecContext(ctx, "SELECT content.func_increment_comment_metrics($1, $2)", id, delta); err != nil {
-			logger.Log.Error().Err(err).Int64("comment_id", id).Msg("Échec exécution fonction func_increment_comment_metrics")
+			nubo_log.Error(ctx).Err(err).Int64("comment_id", id).Msg("Échec exécution fonction func_increment_comment_metrics")
 		}
 	}
 	for id, delta := range reportDeltas {
 		if _, err := postgres.PostgresDB.ExecContext(ctx, "SELECT content.func_increment_post_report($1, $2)", id, delta); err != nil {
-			logger.Log.Error().Err(err).Int64("post_id", id).Msg("Échec exécution fonction func_increment_post_report")
+			nubo_log.Error(ctx).Err(err).Int64("post_id", id).Msg("Échec exécution fonction func_increment_post_report")
 		}
 	}
 	for id, sum := range telemetryDwellSum {
 		if _, err := postgres.PostgresDB.ExecContext(ctx, "SELECT content.func_increment_post_telemetry($1, $2, $3, $4)", id, sum, telemetryDwellSq[id], telemetryClicks[id]); err != nil {
-			logger.Log.Error().Err(err).Int64("post_id", id).Msg("Échec exécution fonction func_increment_post_telemetry")
+			nubo_log.Error(ctx).Err(err).Int64("post_id", id).Msg("Échec exécution fonction func_increment_post_telemetry")
 		}
 	}
 	for msgID, deltas := range messageReactionDeltas {
@@ -776,7 +776,7 @@ func updateCountersPostgres(ctx context.Context, events []redis.AsyncEvent) {
 				continue
 			}
 			if _, errExec := postgres.PostgresDB.ExecContext(ctx, "SELECT messaging.func_apply_reaction_delta($1, $2::jsonb)", msgID, string(deltasJSON)); errExec != nil {
-				logger.Log.Error().Err(errExec).Int64("message_id", msgID).Msg("Échec exécution fonction func_apply_reaction_delta")
+				nubo_log.Error(ctx).Err(errExec).Int64("message_id", msgID).Msg("Échec exécution fonction func_apply_reaction_delta")
 			}
 		}
 	}

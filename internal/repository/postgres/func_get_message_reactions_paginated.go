@@ -8,7 +8,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 // FuncGetMessageReactionsPaginated lit la liste des réactions d'un message depuis le L3
@@ -22,7 +21,7 @@ func FuncGetMessageReactionsPaginated(ctx context.Context, messageID int64, limi
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes Postgres (Reactions)")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes Postgres (Reactions)")
 		}
 	}(rows)
 

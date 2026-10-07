@@ -7,8 +7,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/saved_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
@@ -59,7 +59,7 @@ func ToggleSaved(ctx context.Context, userID int64, postID int64, requestedActio
 	// PartitionKey = userID pour que le shard gérant cet utilisateur centralise ses favoris
 	errQueue := redis.EnqueueDB(ctx, savedRecordPayload.ID, userID, redis.EntitySaved, redisActionType, savedRecordPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("post_id", postID).Msg("Échec du Write-Behind pour ToggleSaved")
+		nubo_log.Error(ctx).Err(errQueue).Int64("post_id", postID).Msg("Échec du Write-Behind pour ToggleSaved")
 		return nubo_error.NewInternal()
 	}
 

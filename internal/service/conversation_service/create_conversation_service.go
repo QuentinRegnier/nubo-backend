@@ -10,8 +10,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -104,7 +104,7 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 
 	errEnqueueConv := redis.EnqueueDB(ctx, conversationID, conversationID, redis.EntityConversation, redis.ActionCreate, conversationPayload, redis.TargetAll)
 	if errEnqueueConv != nil {
-		logger.Log.Error().Err(errEnqueueConv).Int64("conv_id", conversationID).Msg("Échec d'enregistrement asynchrone de la conversation")
+		nubo_log.Error(ctx).Err(errEnqueueConv).Int64("conv_id", conversationID).Msg("Échec d'enregistrement asynchrone de la conversation")
 		return conversation_models.CreateConversationOutput{}, nubo_error.NewInternal()
 	}
 

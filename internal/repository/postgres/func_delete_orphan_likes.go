@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 type OrphanLikeTarget struct {
@@ -25,7 +25,7 @@ func FuncDeleteOrphanLikes(ctx context.Context) ([]OrphanLikeTarget, error) {
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur fermeture rows Garbage Collector Likes")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur fermeture rows Garbage Collector Likes")
 		}
 	}(rows)
 

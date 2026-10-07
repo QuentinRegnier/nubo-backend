@@ -8,7 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/saved_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
@@ -67,12 +67,12 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 		case redis.EntityNotification:
 			c = mongo.Notifications
 		default:
-			logger.Log.Error().Interface("entity", entity).Msg("Worker Mongo : Entité non reconnue ou sans collection définie")
+			nubo_log.Error(ctx).Interface("entity", entity).Msg("Worker Mongo : Entité non reconnue ou sans collection définie")
 			continue
 		}
 
 		if c == nil {
-			logger.Log.Error().Interface("entity", entity).Msg("Worker Mongo : La collection cible est nil")
+			nubo_log.Error(ctx).Interface("entity", entity).Msg("Worker Mongo : La collection cible est nil")
 			continue
 		}
 
@@ -218,7 +218,7 @@ func flushMongo(ctx context.Context, events []redis.AsyncEvent) {
 			opts := options.BulkWrite().SetOrdered(variables.MongoBulkWriteOrdered)
 			_, err := coll.BulkWrite(ctx, models, opts)
 			if err != nil {
-				logger.Log.Error().Err(err).Str("collection", c.Name).Msg("Worker Mongo : Échec de l'opération BulkWrite")
+				nubo_log.Error(ctx).Err(err).Str("collection", c.Name).Msg("Worker Mongo : Échec de l'opération BulkWrite")
 			}
 		}
 	}
@@ -249,7 +249,7 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 
 		jsonBytes, err := json.Marshal(e.Payload)
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Worker Mongo : Erreur de désérialisation du payload des compteurs")
+			nubo_log.Error(ctx).Err(err).Msg("Worker Mongo : Erreur de désérialisation du payload des compteurs")
 			continue
 		}
 
@@ -384,17 +384,17 @@ func updateCountersMongo(ctx context.Context, events []redis.AsyncEvent) {
 	opts := options.BulkWrite().SetOrdered(variables.MongoBulkWriteOrdered)
 	if len(postModels) > 0 && mongo.Posts != nil {
 		if _, err := mongo.Posts.DB.Collection(mongo.Posts.Name).BulkWrite(ctx, postModels, opts); err != nil {
-			logger.Log.Error().Err(err).Msg("Worker Mongo : Échec BulkWrite Counters (Posts)")
+			nubo_log.Error(ctx).Err(err).Msg("Worker Mongo : Échec BulkWrite Counters (Posts)")
 		}
 	}
 	if len(commentModels) > 0 && mongo.Comments != nil {
 		if _, err := mongo.Comments.DB.Collection(mongo.Comments.Name).BulkWrite(ctx, commentModels, opts); err != nil {
-			logger.Log.Error().Err(err).Msg("Worker Mongo : Échec BulkWrite Counters (Comments)")
+			nubo_log.Error(ctx).Err(err).Msg("Worker Mongo : Échec BulkWrite Counters (Comments)")
 		}
 	}
 	if len(messageModels) > 0 && mongo.Messages != nil {
 		if _, err := mongo.Messages.DB.Collection(mongo.Messages.Name).BulkWrite(ctx, messageModels, opts); err != nil {
-			logger.Log.Error().Err(err).Msg("Worker Mongo : Échec BulkWrite Counters (Messages)")
+			nubo_log.Error(ctx).Err(err).Msg("Worker Mongo : Échec BulkWrite Counters (Messages)")
 		}
 	}
 }

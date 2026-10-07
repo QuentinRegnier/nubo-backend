@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
@@ -20,7 +20,7 @@ func AddNotificationToZSET(ctx context.Context, userID int64, notificationID int
 	errRedis := redis.NotificationsZSet.ZAddWithCap(ctx, userID, float64(timestampMs), notificationIDStr, 100)
 
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Int64("user_id", userID).Msg("Impossible d'ajouter la notification au ZSET")
+		nubo_log.Error(ctx).Err(errRedis).Int64("user_id", userID).Msg("Impossible d'ajouter la notification au ZSET")
 		return nubo_error.NewInternal()
 	}
 
@@ -32,7 +32,7 @@ func AddNotificationToZSET(ctx context.Context, userID int64, notificationID int
 func GetNotificationIDsFromZSET(ctx context.Context, userID int64, offset int64, limit int64) ([]int64, error) {
 	idStringsList, errRedis := redis.NotificationsZSet.ZRevRange(ctx, userID, offset, offset+limit-1)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Int64("user_id", userID).Msg("Erreur de récupération des IDs de notification dans le ZSET")
+		nubo_log.Error(ctx).Err(errRedis).Int64("user_id", userID).Msg("Erreur de récupération des IDs de notification dans le ZSET")
 		return nil, nubo_error.NewInternal()
 	}
 
@@ -55,7 +55,7 @@ func GetNotificationIDsFromZSET(ctx context.Context, userID int64, offset int64,
 func PurgeNotificationsZSET(ctx context.Context, userID int64) error {
 	errRedis := redis.NotificationsZSet.DeleteObject(ctx, userID)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Msg("Erreur lors de la purge du ZSET des notifications")
+		nubo_log.Error(ctx).Err(errRedis).Msg("Erreur lors de la purge du ZSET des notifications")
 		return nubo_error.NewInternal()
 	}
 	return nil
@@ -68,7 +68,7 @@ func TouchActivityTimestamp(ctx context.Context, userID int64) int64 {
 
 	errRedis := redis.NotificationActivity.SetPrimitive(ctx, userID, currentTimestampMs)
 	if errRedis != nil {
-		logger.Log.Warn().Err(errRedis).Int64("user_id", userID).Msg("Échec de la mise à jour du Timestamp d'Activité (Notification)")
+		nubo_log.Warn(ctx).Err(errRedis).Int64("user_id", userID).Msg("Échec de la mise à jour du Timestamp d'Activité (Notification)")
 	}
 
 	return currentTimestampMs

@@ -9,8 +9,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -140,11 +140,11 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 
 	// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE WRITE-BEHIND ───────────────────────
 	if errQueue := redis.EnqueueDB(ctx, communityPayload.ID, communityPayload.ID, redis.EntityConversation, redis.ActionCreate, communityPayload, redis.TargetAll); errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("conv_id", communityPayload.ID).Msg("Échec d'enqueue de la communauté")
+		nubo_log.Error(ctx).Err(errQueue).Int64("conv_id", communityPayload.ID).Msg("Échec d'enqueue de la communauté")
 	}
 
 	if errQueue := redis.EnqueueDB(ctx, ownerMemberPayload.ID, communityPayload.ID, redis.EntityMembers, redis.ActionCreate, ownerMemberPayload, redis.TargetAll); errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("member_id", ownerMemberPayload.ID).Msg("Échec d'enqueue du propriétaire de la communauté")
+		nubo_log.Error(ctx).Err(errQueue).Int64("member_id", ownerMemberPayload.ID).Msg("Échec d'enqueue du propriétaire de la communauté")
 	}
 
 	if adminCreatorPayload != nil {

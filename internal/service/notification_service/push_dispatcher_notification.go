@@ -7,8 +7,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -54,7 +54,7 @@ func DispatchNotification(ctx context.Context, targetUserID int64, actorUserID i
 	// ── ÉTAPE 4 : PERSISTANCE L2 ASYNCHRONE (MONGODB) ───────────────────────
 	errQueue := redis.EnqueueDB(ctx, notificationPayload.ID, targetUserID, redis.EntityNotification, redis.ActionCreate, notificationPayload, redis.TargetMongo)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("user_id", targetUserID).Msg("Échec de la persistance L2 d'une notification")
+		nubo_log.Error(ctx).Err(errQueue).Int64("user_id", targetUserID).Msg("Échec de la persistance L2 d'une notification")
 		return nubo_error.NewInternal()
 	}
 
@@ -72,7 +72,7 @@ func DispatchNotification(ctx context.Context, targetUserID int64, actorUserID i
 
 	userSettingsPayload, errSettings := object_cache_service.GetUserSettingsCascade(ctx, targetUserID)
 	if errSettings != nil {
-		logger.Log.Error().Err(errSettings).Int64("user_id", targetUserID).Msg("Échec de de la lecture des droits de l'utilisateur")
+		nubo_log.Error(ctx).Err(errSettings).Int64("user_id", targetUserID).Msg("Échec de de la lecture des droits de l'utilisateur")
 		return nubo_error.NewInternal() // Si on ne peut pas lire les droits, on refuse l'envoi
 	}
 
@@ -112,7 +112,7 @@ func DispatchNotification(ctx context.Context, targetUserID int64, actorUserID i
 		if jobBytes, errMarshal := json.Marshal(firebasePushJob); errMarshal == nil {
 			_ = redis.WorkerQueue.LPush(ctx, variables.WorkerQueueFirebase, jobBytes)
 		} else {
-			logger.Log.Error().Err(errMarshal).Msg("Impossible de sérialiser le Push Job FCM")
+			nubo_log.Error(ctx).Err(errMarshal).Msg("Impossible de sérialiser le Push Job FCM")
 		}
 	}
 

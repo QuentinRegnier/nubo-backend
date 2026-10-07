@@ -10,7 +10,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 )
 
 type FullInboxResult struct {
@@ -28,7 +27,7 @@ func FuncLoadConversationPaginated(ctx context.Context, userID int64, limit int6
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
 		}
 	}(rows)
 
@@ -78,7 +77,7 @@ func FuncLoadConversationPaginated(ctx context.Context, userID int64, limit int6
 
 			results = append(results, FullInboxResult{Conversation: c, Member: m})
 		} else {
-			logger.Log.Error().Err(err).Msg("Erreur de scan des lignes Postgres")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur de scan des lignes Postgres")
 		}
 	}
 	return results, nil

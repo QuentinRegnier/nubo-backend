@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -120,7 +120,7 @@ func dispatchPushNotifications(messageView message_models.MessageView, recipient
 				if jobBytes, errMarshal := json.Marshal(pushTask); errMarshal == nil {
 					_ = redis.WorkerQueue.LPush(backgroundContext, "firebase", jobBytes)
 				} else {
-					logger.Log.Warn().Err(errMarshal).Int64("user_id", recipientID).Msg("Impossible de sérialiser le Job FCM")
+					nubo_log.Warn(backgroundContext).Err(errMarshal).Int64("user_id", recipientID).Msg("Impossible de sérialiser le Job FCM")
 				}
 			}
 		}

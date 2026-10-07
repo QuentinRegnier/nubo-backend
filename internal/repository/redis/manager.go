@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 	"github.com/go-redis/redis/v8"
 	"github.com/vmihailenco/msgpack/v5"
@@ -476,7 +476,7 @@ func (c *Collection) SubscribeFlux(ctx context.Context) (<-chan []byte, context.
 	go func() {
 		defer func() {
 			if err := pubsub.Close(); err != nil {
-				logger.Log.Error().Err(err).Msg("Erreur fermeture pubsub")
+				nubo_log.Error(ctx).Err(err).Msg("Erreur fermeture pubsub")
 			}
 		}()
 		defer close(ch)

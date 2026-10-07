@@ -6,7 +6,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/telemetry_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -69,11 +69,11 @@ func ProcessSyncTelemetry(ctx context.Context, input telemetry_models.SyncTeleme
 			// 2. Délégation Write-Behind via Workers (PartitionKey = UserID pour le sharding)
 			errQueue := redis.EnqueueDB(ctx, userSettingsPayload.ID, input.UserID, redis.EntityUserSettings, redis.ActionUpdate, userSettingsPayload, redis.TargetAll)
 			if errQueue != nil {
-				logger.Log.Error().Err(errQueue).Int64("user_id", input.UserID).Msg("Échec du Write-Behind pour la sauvegarde du vecteur IA")
+				nubo_log.Error(ctx).Err(errQueue).Int64("user_id", input.UserID).Msg("Échec du Write-Behind pour la sauvegarde du vecteur IA")
 				// Non bloquant : la donnée est saine en RAM, le Worker tentera de survivre.
 			}
 		} else {
-			logger.Log.Warn().Err(errSettings).Int64("user_id", input.UserID).Msg("Impossible de charger les UserSettings pour sauvegarder le vecteur")
+			nubo_log.Warn(ctx).Err(errSettings).Int64("user_id", input.UserID).Msg("Impossible de charger les UserSettings pour sauvegarder le vecteur")
 		}
 
 	} else {
@@ -118,7 +118,7 @@ func ProcessSyncTelemetry(ctx context.Context, input telemetry_models.SyncTeleme
 		// Les Workers mettront à jour `telemetry_dwell_sum`, `view_count`, etc.
 		errTelemetryQueue := redis.EnqueueDB(ctx, telemetryEvent.PostID, input.UserID, redis.EntityTelemetry, redis.ActionCreate, telemetryEvent, redis.TargetAll)
 		if errTelemetryQueue != nil {
-			logger.Log.Error().Err(errTelemetryQueue).Int64("post_id", telemetryEvent.PostID).Msg("Échec du Write-Behind pour un événement de télémétrie")
+			nubo_log.Error(ctx).Err(errTelemetryQueue).Int64("post_id", telemetryEvent.PostID).Msg("Échec du Write-Behind pour un événement de télémétrie")
 			return syncOutput, nubo_error.NewInternal()
 		}
 	}

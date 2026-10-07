@@ -7,7 +7,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
@@ -63,7 +63,7 @@ func MarkConversationAsRead(ctx context.Context, callerID int64, conversationID 
 
 		errQueue := redis.EnqueueDB(ctx, memberPayload.ID, conversationID, redis.EntityMembers, redis.ActionUpdate, memberPayload, redis.TargetAll)
 		if errQueue != nil {
-			logger.Log.Error().Err(errQueue).Int64("user_id", callerID).Msg("Échec du Write-Behind pour la remise à zéro des non-lus")
+			nubo_log.Error(ctx).Err(errQueue).Int64("user_id", callerID).Msg("Échec du Write-Behind pour la remise à zéro des non-lus")
 			// Pas de retour d'erreur HTTP pour ne pas bloquer l'UX de l'utilisateur
 		}
 	}

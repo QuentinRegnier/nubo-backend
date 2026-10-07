@@ -6,7 +6,7 @@ import (
 	"strconv"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
@@ -65,13 +65,13 @@ func GetMessageIDsFromSpeedCache(ctx context.Context, conversationID int64, offs
 	if errRedis != nil || len(idStringsList) < int(paginationLimit) {
 
 		if errRedis != nil {
-			logger.Log.Warn().Err(errRedis).Msg("Erreur L1 lors de la lecture de l'index des messages")
+			nubo_log.Warn(ctx).Err(errRedis).Msg("Erreur L1 lors de la lecture de l'index des messages")
 		}
 
 		// FALLBACK ABSOLU L3 (Cold Storage)
 		postgresIDsList, errPg := postgres.FuncLoadMessageIDsPaginated(ctx, conversationID, offsetMessageID, paginationLimit, scrollDirection, frozenMessageID)
 		if errPg != nil {
-			logger.Log.Error().Err(errPg).Int64("conv_id", conversationID).Msg("Erreur L3 lors de la récupération paginée des messages")
+			nubo_log.Error(ctx).Err(errPg).Int64("conv_id", conversationID).Msg("Erreur L3 lors de la récupération paginée des messages")
 			return nil, nubo_error.NewInternal()
 		}
 

@@ -5,7 +5,7 @@ import (
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -45,7 +45,7 @@ func LeftMember(ctx context.Context, conversationID int64, userID int64) (member
 	if !isMemberFound {
 		pgMember, errPg := postgres.FuncGetMember(ctx, conversationID, userID)
 		if errPg != nil {
-			logger.Log.Error().Err(errPg).Int64("user_id", userID).Msg("Erreur L3 lors de la vérification de l'appartenance d'un membre")
+			nubo_log.Error(ctx).Err(errPg).Int64("user_id", userID).Msg("Erreur L3 lors de la vérification de l'appartenance d'un membre")
 			return member_models.MemberPayload{}, nubo_error.NewInternal()
 		}
 

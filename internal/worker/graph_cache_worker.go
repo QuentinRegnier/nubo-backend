@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
@@ -26,13 +26,13 @@ func handleGraphUpdate(ctx context.Context, events []redis.AsyncEvent) {
 			// Sérialisation inverse du payload générique vers le modèle Post
 			jsonBytes, errMarshal := json.Marshal(evt.Payload)
 			if errMarshal != nil {
-				logger.Log.Warn().Err(errMarshal).Msg("Graph Worker : Impossible de sérialiser le payload du post")
+				nubo_log.Warn(ctx).Err(errMarshal).Msg("Graph Worker : Impossible de sérialiser le payload du post")
 				continue
 			}
 
 			var post post_models.PostPayload
 			if errUnmarshal := json.Unmarshal(jsonBytes, &post); errUnmarshal != nil {
-				logger.Log.Warn().Err(errUnmarshal).Msg("Graph Worker : Impossible de désérialiser le payload du post")
+				nubo_log.Warn(ctx).Err(errUnmarshal).Msg("Graph Worker : Impossible de désérialiser le payload du post")
 				continue
 			}
 

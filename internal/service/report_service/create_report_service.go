@@ -7,8 +7,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/report_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
@@ -48,7 +48,7 @@ func SubmitReport(ctx context.Context, input report_models.CreateReportInput) er
 	errQueue := redis.EnqueueDB(ctx, reportPayload.ID, 0, redis.EntityReport, redis.ActionCreate, reportPayload, redis.TargetPostgres)
 
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("reporter_id", input.UserID).Msg("Échec du Write-Behind lors de la création d'un signalement")
+		nubo_log.Error(ctx).Err(errQueue).Int64("reporter_id", input.UserID).Msg("Échec du Write-Behind lors de la création d'un signalement")
 		return nubo_error.NewInternal()
 	}
 

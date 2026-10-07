@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/feed_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -21,7 +21,7 @@ import (
 // StartFeedWarmupCron orchestre l'auto-génération des flux d'actualités par lots pour les utilisateurs inactifs.
 // S'exécute à intervalles réguliers sans jamais scanner l'intégralité de la BDD (O(log(N) + M)).
 func StartFeedWarmupCron(ctx context.Context) {
-	logger.Log.Info().Msg("Démarrage du Moteur de Warm-up Algorithmique (Feed)...")
+	nubo_log.Info(ctx).Msg("Démarrage du Moteur de Warm-up Algorithmique (Feed)...")
 
 	go func() {
 		ticker := time.NewTicker(variables.FeedWarmupCronInterval)
@@ -48,7 +48,7 @@ func processScheduledWarmups(ctx context.Context) {
 		return // Personne n'est arrivé à échéance
 	}
 
-	logger.Log.Info().Int("count", len(expiredUserIDs)).Msg("Warm-up Feed : Traitement d'un lot d'utilisateurs éligibles.")
+	nubo_log.Info(ctx).Int("count", len(expiredUserIDs)).Msg("Warm-up Feed : Traitement d'un lot d'utilisateurs éligibles.")
 
 	// ── ÉTAPE 2 : ANALYSE DU NIVEAU D'INACTIVITÉ (TÉLÉMÉTRIE L1) ────────────
 	for _, idStr := range expiredUserIDs {
@@ -83,7 +83,7 @@ func processScheduledWarmups(ctx context.Context) {
 		} else {
 			// NIVEAU 3 : Mode Dormant (>= 7 jours) -> Éviction absolue
 			// Protection RAM : L'utilisateur a abandonné l'app, on libère l'espace.
-			logger.Log.Info().Int64("user_id", userID).Msg("Warm-up Feed : Utilisateur classé DORMANT. Éviction de la RAM L1 en cours.")
+			nubo_log.Info(ctx).Int64("user_id", userID).Msg("Warm-up Feed : Utilisateur classé DORMANT. Éviction de la RAM L1 en cours.")
 
 			_ = algorithm_service.DeleteUserFeedState(ctx, userID)
 			_ = redis.FeedSchedule.ZRem(ctx, "global", userID)
@@ -93,7 +93,7 @@ func processScheduledWarmups(ctx context.Context) {
 
 // executeBackgroundGeneration simule une requête API interne pour forcer la régénération algorithmique.
 func executeBackgroundGeneration(ctx context.Context, userID int64) {
-	logger.Log.Info().Int64("user_id", userID).Msg("Warm-up Feed : Pré-calcul d'un flux frais (Background).")
+	nubo_log.Info(ctx).Int64("user_id", userID).Msg("Warm-up Feed : Pré-calcul d'un flux frais (Background).")
 
 	input := feed_models.GetFeedInput{
 		UserID:        userID,
@@ -147,7 +147,7 @@ func handleSocialFanOut(ctx context.Context, events []redis.AsyncEvent) {
 				// Coupe-Circuit : Empêcher le blocage RAM pour les comptes hyper-suivis
 				followerCount := cache_service.GetFollowerCount(ctx, authorID)
 				if followerCount > variables.FanOutVIPThreshold {
-					logger.Log.Info().
+					nubo_log.Info(ctx).
 						Int64("author_id", authorID).
 						Int64("follower_count", followerCount).
 						Msg("FanOut annulé pour profil VIP (Justin Bieber Effect). Délégation au Most Cache.")
@@ -158,7 +158,7 @@ func handleSocialFanOut(ctx context.Context, events []redis.AsyncEvent) {
 			}
 
 			if errGraph != nil {
-				logger.Log.Warn().Err(errGraph).Int64("author_id", authorID).Msg("FanOut : Impossible de résoudre le graphe social.")
+				nubo_log.Warn(ctx).Err(errGraph).Int64("author_id", authorID).Msg("FanOut : Impossible de résoudre le graphe social.")
 				continue
 			}
 
@@ -182,7 +182,7 @@ func handleSocialFanOut(ctx context.Context, events []redis.AsyncEvent) {
 
 			_, errPipe := pipe.Exec(ctx)
 			if errPipe != nil {
-				logger.Log.Error().Err(errPipe).Int64("post_id", postID).Msg("Échec de l'exécution du pipeline de distribution FanOut.")
+				nubo_log.Error(ctx).Err(errPipe).Int64("post_id", postID).Msg("Échec de l'exécution du pipeline de distribution FanOut.")
 			}
 		}
 	}

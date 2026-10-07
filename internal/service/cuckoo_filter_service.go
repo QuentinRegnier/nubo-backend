@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -33,7 +33,7 @@ func HasSeen(ctx context.Context, userID int64, postID int64) bool {
 func MarkAsSeen(ctx context.Context, userID int64, postID int64) {
 	err := redis.CuckooSeen.CFAdd(ctx, userID, postID)
 	if err != nil {
-		logger.Log.Warn().
+		nubo_log.Warn(ctx).
 			Err(err).
 			Int64("user_id", userID).
 			Int64("post_id", postID).
@@ -90,7 +90,7 @@ func IsUnique(ctx context.Context, entityType redis.EntityType, fieldName string
 	// ── ÉTAPE 4 : Cold Storage L3 (PostgreSQL - Source de Vérité) ──────────
 	existsInPostgres, errPg := postgres.FuncCheckUnique(ctx, entityType, fieldName, valueToCheck)
 	if errPg != nil {
-		logger.Log.Error().Err(errPg).Str("entity", string(entityType)).Str("field", fieldName).Msg("Échec critique de la validation d'unicité L3")
+		nubo_log.Error(ctx).Err(errPg).Str("entity", string(entityType)).Str("field", fieldName).Msg("Échec critique de la validation d'unicité L3")
 		return 0 // SÉCURITÉ (Fail Closed) : Dans le doute (ex: Timeout SQL), on refuse l'inscription.
 	} else if existsInPostgres {
 		// AUTO-GUÉRISON L1 : On répare le Cuckoo Filter
@@ -109,12 +109,12 @@ func IsUnique(ctx context.Context, entityType redis.EntityType, fieldName string
 // WarmUpCuckooFilter initialise le filtre en mémoire RAM et le charge avec les données critiques de Postgres.
 func WarmUpCuckooFilter(ctx context.Context) {
 	cuckoo.InitCuckooFilter()
-	logger.Log.Info().Msg("Chargement massif des données Postgres vers le Cuckoo Filter L1...")
+	nubo_log.Info(ctx).Msg("Chargement massif des données Postgres vers le Cuckoo Filter L1...")
 
 	// Requête L3 : Récupère uniquement les Pseudos, Emails et Téléphones
 	identifiersList, err := postgres.FuncLoadAllUserIdentifiers(ctx)
 	if err != nil {
-		logger.Log.Fatal().Err(err).Msg("Erreur critique lors de l'amorçage du Cuckoo Filter depuis PostgreSQL")
+		nubo_log.Fatal(ctx).Err(err).Msg("Erreur critique lors de l'amorçage du Cuckoo Filter depuis PostgreSQL")
 	}
 
 	injectionCount := 0
@@ -131,5 +131,5 @@ func WarmUpCuckooFilter(ctx context.Context) {
 		injectionCount++
 	}
 
-	logger.Log.Info().Int("users_loaded", injectionCount).Msg("Cuckoo Filter amorcé avec succès.")
+	nubo_log.Info(ctx).Int("users_loaded", injectionCount).Msg("Cuckoo Filter amorcé avec succès.")
 }

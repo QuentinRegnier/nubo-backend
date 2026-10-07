@@ -8,7 +8,7 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
@@ -42,7 +42,7 @@ func RelationValue(ctx context.Context, targetID int64, callerID int64) int {
 	// ── ÉTAPE 3 : SOURCE DE VÉRITÉ L3 (POSTGRESQL) ──────────────────────────
 	relationStateFromPg, errPg := postgres.FuncGetRelationState(ctx, callerID, targetID)
 	if errPg != nil {
-		logger.Log.Error().Err(errPg).Int64("target_id", targetID).Int64("caller_id", callerID).Msg("Erreur L3 RelationValue")
+		nubo_log.Error(ctx).Err(errPg).Int64("target_id", targetID).Int64("caller_id", callerID).Msg("Erreur L3 RelationValue")
 		return variables.RelationStateNone // Zéro-valeur sécurisée par défaut
 	}
 
@@ -72,7 +72,7 @@ func UpdateRelationState(ctx context.Context, targetID int64, callerID int64, ne
 
 	errHSet := redis.SpeedRelations.HSet(ctx, targetID, callerIDString, newRelationState)
 	if errHSet != nil {
-		logger.Log.Error().Err(errHSet).Msg("Impossible de mettre à jour le HSET RelationValue")
+		nubo_log.Error(ctx).Err(errHSet).Msg("Impossible de mettre à jour le HSET RelationValue")
 		return nubo_error.NewInternal()
 	}
 
@@ -102,7 +102,7 @@ func GetSpeedRelationsIndex(ctx context.Context, userID int64) ([]int64, error) 
 
 	followerStringIDs, errRedis := redis.SpeedRelationsIndex.ZRevRange(ctx, zsetKey, 0, -1)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Msg("Impossible de lire l'index SpeedRelations des followers")
+		nubo_log.Error(ctx).Err(errRedis).Msg("Impossible de lire l'index SpeedRelations des followers")
 		return nil, nubo_error.NewInternal()
 	}
 
@@ -122,7 +122,7 @@ func GetSpeedFriends(ctx context.Context, userID int64) ([]int64, error) {
 
 	friendStringIDs, errRedis := redis.SpeedRelationsIndex.ZRevRange(ctx, zsetKey, 0, -1)
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Msg("Impossible de lire l'index SpeedRelations des amis")
+		nubo_log.Error(ctx).Err(errRedis).Msg("Impossible de lire l'index SpeedRelations des amis")
 		return nil, nubo_error.NewInternal()
 	}
 
@@ -156,7 +156,7 @@ func GetRelationsByDirectionPaginatedFromCache(ctx context.Context, primaryID in
 
 	targetStringsIDs, errRedis := redis.SpeedRelationsIndex.ZRevRange(ctx, targetZsetKey, int64(fetchOffset), int64(fetchOffset+fetchLimit-1))
 	if errRedis != nil {
-		logger.Log.Error().Err(errRedis).Msg("Erreur lors de la récupération paginée du SpeedRelationsIndex")
+		nubo_log.Error(ctx).Err(errRedis).Msg("Erreur lors de la récupération paginée du SpeedRelationsIndex")
 		return nil, nubo_error.NewInternal()
 	}
 

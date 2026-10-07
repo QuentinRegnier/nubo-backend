@@ -7,7 +7,6 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/lib/pq"
 )
 
@@ -44,7 +43,7 @@ func scanPosts(ctx context.Context, rows *sql.Rows) ([]post_models.PostPayload, 
 		)
 
 		if err != nil {
-			logger.Log.Error().Err(err).Msg("Erreur lors du scan d'un post (Postgres)")
+			nubo_log.Error(ctx).Err(err).Msg("Erreur lors du scan d'un post (Postgres)")
 			continue // On ignore la ligne corrompue et on passe à la suivante
 		}
 

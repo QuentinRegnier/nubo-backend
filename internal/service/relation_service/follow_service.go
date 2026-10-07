@@ -7,8 +7,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/domain"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
 	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
 	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
 	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
@@ -62,7 +62,7 @@ func ToggleFollow(ctx context.Context, callerID int64, targetID int64, requested
 	currentTime := time.Now().UTC()
 	errCache := cache_service.UpdateRelationState(ctx, targetID, callerID, newRelationState, domain.TimeToMillis(currentTime))
 	if errCache != nil {
-		logger.Log.Error().Err(errCache).Msg("Échec de la mise à jour du Cache L1 lors d'un ToggleFollow")
+		nubo_log.Error(ctx).Err(errCache).Msg("Échec de la mise à jour du Cache L1 lors d'un ToggleFollow")
 		return nubo_error.NewInternal()
 	}
 
@@ -79,7 +79,7 @@ func ToggleFollow(ctx context.Context, callerID int64, targetID int64, requested
 	// PartitionKey = targetID pour centraliser les requêtes sur le shard de la cible.
 	errQueue := redis.EnqueueDB(ctx, relationPayload.ID, targetID, redis.EntityRelation, redisActionType, relationPayload, redis.TargetAll)
 	if errQueue != nil {
-		logger.Log.Error().Err(errQueue).Int64("target_id", targetID).Msg("Échec du Write-Behind pour ToggleFollow")
+		nubo_log.Error(ctx).Err(errQueue).Int64("target_id", targetID).Msg("Échec du Write-Behind pour ToggleFollow")
 		return nubo_error.NewInternal()
 	}
 
@@ -89,7 +89,7 @@ func ToggleFollow(ctx context.Context, callerID int64, targetID int64, requested
 			backgroundCtx := context.Background()
 			errNotif := notification_service.DispatchNotification(backgroundCtx, targetID, callerID, variables.EventRelationFollowed, callerID)
 			if errNotif != nil {
-				logger.Log.Error().Err(errNotif).Msg("Échec de l'expédition de la notification pour Follow")
+				nubo_log.Error(ctx).Err(errNotif).Msg("Échec de l'expédition de la notification pour Follow")
 			}
 		}()
 	}
