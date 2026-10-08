@@ -133,7 +133,7 @@ func SuggestContacts(ctx context.Context, callerID int64, input conversation_mod
 				case 0:
 					isCommunicationAllowed = true
 				case 1:
-					isCommunicationAllowed = (relationState == 2)
+					isCommunicationAllowed = relationState == 2
 				case 2:
 					isCommunicationAllowed = false // Invitation uniquement
 				}
@@ -142,9 +142,9 @@ func SuggestContacts(ctx context.Context, callerID int64, input conversation_mod
 				case 0:
 					isCommunicationAllowed = true
 				case 1:
-					isCommunicationAllowed = (relationState >= 1)
+					isCommunicationAllowed = relationState >= 1
 				case 2:
-					isCommunicationAllowed = (relationState == 2)
+					isCommunicationAllowed = relationState == 2
 				case 3:
 					isCommunicationAllowed = false
 				}
@@ -153,18 +153,18 @@ func SuggestContacts(ctx context.Context, callerID int64, input conversation_mod
 				case 0:
 					isCommunicationAllowed = true
 				case 1:
-					isCommunicationAllowed = (relationState >= 1)
+					isCommunicationAllowed = relationState >= 1
 				case 2:
-					isCommunicationAllowed = (relationState == 2)
+					isCommunicationAllowed = relationState == 2
 				}
 			case "mention":
 				switch targetUserLite.AllowMentions {
 				case 0:
 					isCommunicationAllowed = true
 				case 1:
-					isCommunicationAllowed = (relationState >= 1)
+					isCommunicationAllowed = relationState >= 1
 				case 2:
-					isCommunicationAllowed = (relationState == 2)
+					isCommunicationAllowed = relationState == 2
 				}
 			default:
 				isCommunicationAllowed = true

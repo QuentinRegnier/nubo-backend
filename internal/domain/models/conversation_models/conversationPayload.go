@@ -3,12 +3,12 @@ package conversation_models
 import "github.com/QuentinRegnier/nubo-backend/internal/domain/models"
 
 type ConversationSettings struct {
-	JoinApprovalRequired bool  `json:"join_approval_required" bson:"join_approval_required" msgpack:"join_approval_required"`
 	WritePermission      int   `json:"write_permission" bson:"write_permission" msgpack:"write_permission"`
+	JoinWithLinkDuration int64 `json:"join_with_link_duration" bson:"join_with_link_duration" msgpack:"join_with_link_duration"`
+	JoinApprovalRequired bool  `json:"join_approval_required" bson:"join_approval_required" msgpack:"join_approval_required"`
 	SendMediaPermission  bool  `json:"send_media_permission" bson:"send_media_permission" msgpack:"send_media_permission"`
 	AddMemberPermission  bool  `json:"add_member_permission" bson:"add_member_permission" msgpack:"add_member_permission"`
 	HideSystemMessages   bool  `json:"hide_system_messages" bson:"hide_system_messages" msgpack:"hide_system_messages"`
-	JoinWithLinkDuration int64 `json:"join_with_link_duration" bson:"join_with_link_duration" msgpack:"join_with_link_duration"`
 	SendSurveyPermission bool  `json:"send_survey_permission" bson:"send_survey_permission" msgpack:"send_survey_permission"`
 }
 

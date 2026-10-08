@@ -78,13 +78,13 @@ type AsyncEvent struct {
 const (
 	QueueShards = 64
 
-	// QueueBasePrefix est le préfixe utilisé pour séparer les files par Type et Action.
+	// queueBasePrefix est le préfixe utilisé pour séparer les files par Type et Action.
 	// Format de la liste : q:{shardID}:{Type}:{Action}
-	QueueBasePrefix = "request_cache:q:"
+	queueBasePrefix = "request_cache:q:"
 
-	// StatsBasePrefix est le préfixe utilisé pour les métriques du Dashboard.
+	// statsBasePrefix est le préfixe utilisé pour les métriques du Dashboard.
 	// Format : h:stats:{shardID}
-	StatsBasePrefix = "request_cache:stats:"
+	statsBasePrefix = "request_cache:stats:"
 )
 
 // EnqueueDB : Ajout du paramètre partitionKey (int64)
@@ -115,8 +115,8 @@ func EnqueueDB(ctx context.Context, id int64, partitionKey int64, entity EntityT
 	shardID := getShardID(keyForSharding)
 
 	shardStr := strconv.Itoa(int(shardID))
-	queueKey := fmt.Sprintf("%s%s", QueueBasePrefix, shardStr) // ex: q:14
-	statsKey := StatsBasePrefix + shardStr
+	queueKey := fmt.Sprintf("%s%s", queueBasePrefix, shardStr) // ex: q:14
+	statsKey := statsBasePrefix + shardStr
 	countField := "count"
 	tsField := "ts"
 
@@ -135,8 +135,8 @@ func EnqueueDB(ctx context.Context, id int64, partitionKey int64, entity EntityT
 
 // --- OUTILS POUR LE WORKER INTELLIGENT ---
 
-// QueueStats représente une ligne du tableau de bord
-type QueueStats struct {
+// queueStats représente une ligne du tableau de bord
+type queueStats struct {
 	Type     EntityType
 	Action   ActionType
 	Count    int64
@@ -147,8 +147,8 @@ type QueueStats struct {
 // PopSmartBatchBlocking attend une donnée sans consommer de CPU, puis rafle jusqu'à batchSize éléments.
 func PopSmartBatchBlocking(ctx context.Context, shardID int, batchSize int64) ([]AsyncEvent, error) {
 	shardStr := strconv.Itoa(shardID)
-	queueKey := fmt.Sprintf("%s%s", QueueBasePrefix, shardStr) // q:14
-	statsKey := StatsBasePrefix + shardStr
+	queueKey := fmt.Sprintf("%s%s", queueBasePrefix, shardStr) // q:14
+	statsKey := statsBasePrefix + shardStr
 
 	// 1. Attente BLOQUANTE du tout premier élément (Timeout de 2s pour pouvoir écouter le ctx.Done du serveur)
 	blpopRes, err := redisgo.Rdb.BLPop(ctx, 2*time.Second, queueKey).Result()

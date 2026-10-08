@@ -14,9 +14,9 @@ import (
 // # MAINTENANCE ET NETTOYAGE DES CACHES (GARBAGE COLLECTION)
 // ############################################################################
 
-// CleanMongo effectue une purge temporelle glissante (Sliding TTL) sur le Warm Storage.
+// cleanMongo effectue une purge temporelle glissante (Sliding TTL) sur le Warm Storage.
 // Tous les documents non accédés ("last_use") depuis 30 jours sont évincés.
-func CleanMongo() {
+func cleanMongo() {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
@@ -56,8 +56,8 @@ func CleanMongo() {
 	}
 }
 
-// CleanRedis vide l'intégralité du cache L1. Utilisé uniquement en environnement de Dev ou lors d'un Hard Reset.
-func CleanRedis() {
+// cleanRedis vide l'intégralité du cache L1. Utilisé uniquement en environnement de Dev ou lors d'un Hard Reset.
+func cleanRedis() {
 	// Sécurité anti-crash unifiée via la couche d'accès
 	if !redis.IsReady() {
 		nubo_log.Warn(context.Background()).Msg("Nettoyage ignoré : Connexion Redis non initialisée (Rdb est nil).")
@@ -79,7 +79,7 @@ func CleanRedis() {
 // InitData orchestre le grand nettoyage au démarrage du serveur si le flag CLEAN_DB_ON_STARTUP est actif.
 func InitData() {
 	nubo_log.Info(context.Background()).Msg("Début de la séquence de Hard Reset : Nettoyage L1 (Redis) et L2 (Mongo)...")
-	CleanMongo()
-	CleanRedis()
+	cleanMongo()
+	cleanRedis()
 	nubo_log.Info(context.Background()).Msg("Séquence de Hard Reset terminée avec succès.")
 }

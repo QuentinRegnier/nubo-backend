@@ -40,8 +40,8 @@ func ServeWS(c *gin.Context) {
 		return // L'erreur est gérée par upgrader et renvoyée au client via HTTP
 	}
 
-	client := &Client{
-		Hub:      GlobalHub,
+	client := &client{
+		Hub:      globalHub,
 		Conn:     conn,
 		UserID:   userID,
 		DeviceID: deviceIDRaw.(string),
@@ -51,6 +51,6 @@ func ServeWS(c *gin.Context) {
 	client.Hub.Register <- client
 	_ = cache_service.MarkUserOnline(context.Background(), userID)
 
-	go client.WritePump()
-	go client.ReadPump()
+	go client.writePump()
+	go client.readPump()
 }

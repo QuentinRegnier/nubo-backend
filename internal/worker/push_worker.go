@@ -15,8 +15,8 @@ import (
 
 var fcmClient *messaging.Client
 
-// PushJob représente la structure d'une tâche de notification en attente dans Redis.
-type PushJob struct {
+// pushJob représente la structure d'une tâche de notification en attente dans Redis.
+type pushJob struct {
 	UserID    int64  `json:"user_id"`
 	EventType string `json:"event_type"`
 	Payload   any    `json:"payload"`
@@ -26,9 +26,9 @@ type PushJob struct {
 // # WORKER : FIREBASE CLOUD MESSAGING (PUSH NOTIFICATIONS)
 // ############################################################################
 
-// StartPushNotificationWorker initialise la connexion à l'API Google Firebase
+// startPushNotificationWorker initialise la connexion à l'API Google Firebase
 // et lance la boucle d'écoute sur la file Redis (Consumer).
-func StartPushNotificationWorker(ctx context.Context) {
+func startPushNotificationWorker(ctx context.Context) {
 	nubo_log.Info(ctx).Msg("Démarrage du Worker Firebase Cloud Messaging...")
 
 	// Initialisation de l'application Firebase
@@ -59,7 +59,7 @@ func StartPushNotificationWorker(ctx context.Context) {
 				}
 
 				if len(res) == 2 {
-					var job PushJob
+					var job pushJob
 					if errUnmarshal := json.Unmarshal([]byte(res[1]), &job); errUnmarshal == nil {
 						processFirebaseJob(ctx, job)
 					} else {
@@ -72,7 +72,7 @@ func StartPushNotificationWorker(ctx context.Context) {
 }
 
 // processFirebaseJob formate et expédie la notification aux serveurs d'Apple/Google.
-func processFirebaseJob(ctx context.Context, job PushJob) {
+func processFirebaseJob(ctx context.Context, job pushJob) {
 	// ── ÉTAPE 1 : RÉCUPÉRATION DES IDENTIFIANTS D'APPAREILS (FIDS) ──────────
 	// Cascade L1 -> L2 -> L3 pour récupérer tous les appareils actifs de l'utilisateur.
 	fids, errCache := cache_service.GetFirebaseInstallationIDsCascade(ctx, job.UserID)

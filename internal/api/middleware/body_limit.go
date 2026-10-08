@@ -10,10 +10,10 @@ import (
 
 const (
 	// Limite pour le texte brut / JSON (2 Mégaoctets)
-	MaxJSONSize = 2 << 20
+	maxJSONSize = 2 << 20
 
 	// Limite pour les envois de médias / Multipart (15 Mégaoctets)
-	MaxMultipartSize = 15 << 20
+	maxMultipartSize = 15 << 20
 )
 
 // MaxBodySize est la guillotine qui protège la RAM et le CPU
@@ -25,9 +25,9 @@ func MaxBodySize() gin.HandlerFunc {
 
 		// Définir la limite selon le type de requête
 		if strings.HasPrefix(contentType, "multipart/form-data") {
-			limit = MaxMultipartSize
+			limit = maxMultipartSize
 		} else {
-			limit = MaxJSONSize
+			limit = maxJSONSize
 		}
 
 		// http.MaxBytesReader bloque automatiquement la lecture si le body dépasse "limit".

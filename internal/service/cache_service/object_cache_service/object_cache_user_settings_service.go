@@ -16,8 +16,8 @@ import (
 // # SERVICE : OBJECT CACHE (PARAMÈTRES UTILISATEUR LFU)
 // ############################################################################
 
-// GetUserSettings lit uniquement depuis la RAM L1 (O(1)).
-func GetUserSettings(ctx context.Context, userID int64) (user_settings_models.UserSettingsPayload, error) {
+// getUserSettings lit uniquement depuis la RAM L1 (O(1)).
+func getUserSettings(ctx context.Context, userID int64) (user_settings_models.UserSettingsPayload, error) {
 	var userSettingsPayload user_settings_models.UserSettingsPayload
 
 	// On utilise l'ID de l'utilisateur comme clé car c'est une relation 1-to-1 stricte
@@ -43,7 +43,7 @@ func SetUserSettings(ctx context.Context, userSettingsPayload user_settings_mode
 func GetUserSettingsCascade(ctx context.Context, userID int64) (user_settings_models.UserSettingsPayload, error) {
 
 	// ── ÉTAPE 1 : TENTATIVE L1 (REDIS RAM) ──────────────────────────────────
-	cachedSettings, errL1 := GetUserSettings(ctx, userID)
+	cachedSettings, errL1 := getUserSettings(ctx, userID)
 	if errL1 == nil && cachedSettings.ID != 0 {
 		return cachedSettings, nil
 	}

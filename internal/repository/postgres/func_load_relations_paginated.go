@@ -10,8 +10,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
-// RelationSeedPayload structure temporaire pour l'amorçage
-type RelationSeedPayload struct {
+// relationSeedPayload structure temporaire pour l'amorçage
+type relationSeedPayload struct {
 	CallerID  int64
 	TargetID  int64
 	State     int
@@ -19,7 +19,7 @@ type RelationSeedPayload struct {
 }
 
 // FuncLoadRelationsPaginated appelle la fonction SQL auth.func_load_relations_paginated
-func FuncLoadRelationsPaginated(ctx context.Context, limit, offset int) ([]RelationSeedPayload, error) {
+func FuncLoadRelationsPaginated(ctx context.Context, limit, offset int) ([]relationSeedPayload, error) {
 	query := `SELECT * FROM auth.func_load_relations_paginated($1, $2)`
 	rows, err := postgres.PostgresDB.Query(query, limit, offset)
 	if err != nil {
@@ -33,9 +33,9 @@ func FuncLoadRelationsPaginated(ctx context.Context, limit, offset int) ([]Relat
 		}
 	}(rows)
 
-	var relations []RelationSeedPayload
+	var relations []relationSeedPayload
 	for rows.Next() {
-		var r RelationSeedPayload
+		var r relationSeedPayload
 		if err := rows.Scan(&r.CallerID, &r.TargetID, &r.State, &r.CreatedAt); err == nil {
 			relations = append(relations, r)
 		}

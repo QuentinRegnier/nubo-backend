@@ -15,9 +15,9 @@ import (
 // # WORKER : SAVED CLEANUP (GARBAGE COLLECTOR DES SAUVEGARDES ORPHELINES)
 // ############################################################################
 
-// StartSavedCleanupCron lance le Garbage Collector qui détruit les favoris orphelins.
+// startSavedCleanupCron lance le Garbage Collector qui détruit les favoris orphelins.
 // Un post sauvegardé devient orphelin s'il est soft-deleted ou hard-deleted par son auteur.
-func StartSavedCleanupCron(ctx context.Context) {
+func startSavedCleanupCron(ctx context.Context) {
 	nubo_log.Info(ctx).Msg("Démarrage du Garbage Collector de Favoris (Cron 6h)...")
 
 	go func() {

@@ -18,7 +18,7 @@ import (
 func GetSignedURLForClient(ctx context.Context, readerID, targetMediaID, contextPostID, contextConvID int64) (media_models.SignMediaOutput, error) {
 
 	// ── ÉTAPE 1 : RÉCUPÉRATION DU MÉDIA (CASCADE L1 -> L2 -> L3) ────────────
-	mediaPayload, errCascade := GetMediaCascade(ctx, targetMediaID)
+	mediaPayload, errCascade := getMediaCascade(ctx, targetMediaID)
 	if errCascade != nil || !mediaPayload.Visibility {
 		return media_models.SignMediaOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Média introuvable ou supprimé.", errCascade)
 	}
@@ -54,7 +54,7 @@ func GetSignedURLForClient(ctx context.Context, readerID, targetMediaID, context
 	}
 
 	// ── ÉTAPE 3 : GÉNÉRATION DU SCEAU CRYPTOGRAPHIQUE ───────────────────────
-	signedURL := GenerateWatermarkedURL(mediaPayload.StoragePath, mediaPayload.OwnerID, validatedContextID, readerID)
+	signedURL := generateWatermarkedURL(mediaPayload.StoragePath, mediaPayload.OwnerID, validatedContextID, readerID)
 
 	return media_models.SignMediaOutput{
 		MediaID: targetMediaID,

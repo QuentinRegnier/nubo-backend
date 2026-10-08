@@ -40,7 +40,11 @@ func GetSavedPostsHandler(c *gin.Context) {
 		input.Limit = 50
 	}
 
-	results := saved_service.GetSavedPosts(c.Request.Context(), userID, input.Limit, input.Offset)
+	results, err := saved_service.GetSavedPosts(c.Request.Context(), userID, input.Limit, input.Offset)
+	if err != nil {
+		nubo_error.RespondWithError(c, err)
+		return
+	}
 
 	c.JSON(http.StatusOK, results)
 }

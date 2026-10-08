@@ -89,7 +89,7 @@ func GetConversations(ctx context.Context, callerID int64, input conversation_mo
 
 		// ── ÉTAPE 4 : CALCUL DES AVATARS (DÉLÉGATION) ────────────────────────
 
-		conversationAvatars := GetConversationAvatars(ctx, conversationPayload.ID, callerID, conversationPayload.Type)
+		conversationAvatars := getConversationAvatars(ctx, conversationPayload.ID, callerID, conversationPayload.Type)
 
 		// ── ÉTAPE 5 : ASSEMBLAGE DE LA VUE DTO ───────────────────────────────
 

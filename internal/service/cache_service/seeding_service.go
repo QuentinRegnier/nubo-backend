@@ -128,8 +128,8 @@ func SeedMostCache(ctx context.Context) error {
 // # AMORÇAGE DU SPEED CACHE (Recherche & Relations & Inbox)
 // ############################################################################
 
-// SeedCommunitySpeedCache charge les communautés publiques dans la barre de recherche.
-func SeedCommunitySpeedCache(ctx context.Context) error {
+// seedCommunitySpeedCache charge les communautés publiques dans la barre de recherche.
+func seedCommunitySpeedCache(ctx context.Context) error {
 	nubo_log.Info(ctx).Msg("Amorçage SPEED Cache: Chargement des Communautés Publiques...")
 
 	activeCommunitiesFromPg, errPg := postgres.FuncLoadActiveCommunities(ctx)
@@ -164,7 +164,7 @@ func SeedSpeedCache(ctx context.Context) error {
 		}
 
 		for _, userPayload := range usersBatchFromPg {
-			_ = StoreUserLiteInSpeedCache(backgroundCtx, userPayload)
+			_ = storeUserLiteInSpeedCache(backgroundCtx, userPayload)
 		}
 
 		offsetUsers += len(usersBatchFromPg)
@@ -198,13 +198,13 @@ func SeedSpeedCache(ctx context.Context) error {
 
 	// ── 3. COMMUNAUTÉS ──────────────────────────────────────────────────────
 
-	if errComm := SeedCommunitySpeedCache(backgroundCtx); errComm != nil {
+	if errComm := seedCommunitySpeedCache(backgroundCtx); errComm != nil {
 		nubo_log.Warn(ctx).Err(errComm).Msg("Avertissement lors du seeding des communautés")
 	}
 
 	// ── 4. MESSAGERIE (INBOX & CHATS) ───────────────────────────────────────
 
-	if errMsg := SeedMessagingSpeedCache(backgroundCtx); errMsg != nil {
+	if errMsg := seedMessagingSpeedCache(backgroundCtx); errMsg != nil {
 		nubo_log.Warn(ctx).Err(errMsg).Msg("Avertissement lors du seeding de la messagerie")
 	}
 

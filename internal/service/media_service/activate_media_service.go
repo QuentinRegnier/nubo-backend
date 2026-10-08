@@ -31,7 +31,7 @@ func ActivateMediaBatch(ctx context.Context, mediaIDs []int64, ownerID int64) er
 
 		// ── ÉTAPE 1 : RÉCUPÉRATION DU MÉDIA (CASCADE) ───────────────────────
 		// GetMediaCascade (défini dans helpers.go) s'occupe du fallback L1->L2->L3
-		mediaPayload, errCascade := GetMediaCascade(ctx, mediaID)
+		mediaPayload, errCascade := getMediaCascade(ctx, mediaID)
 		if errCascade != nil {
 			return errCascade
 		}
@@ -74,7 +74,7 @@ func DeactivateMediaBatch(ctx context.Context, mediaIDs []int64, ownerID int64) 
 		}
 
 		// ── ÉTAPE 1 : RÉCUPÉRATION DU MÉDIA (CASCADE) ───────────────────────
-		mediaPayload, errCascade := GetMediaCascade(ctx, mediaID)
+		mediaPayload, errCascade := getMediaCascade(ctx, mediaID)
 		if errCascade != nil {
 			return errCascade
 		}

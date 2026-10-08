@@ -5,12 +5,12 @@ import (
 )
 
 type ConversationSettings struct {
-	JoinApprovalRequired bool  `bson:"join_approval_required" json:"join_approval_required" msgpack:"join_approval_required"`
 	WritePermission      int   `bson:"write_permission" json:"write_permission" msgpack:"write_permission"`
+	JoinWithLinkDuration int64 `json:"join_with_link_duration" bson:"join_with_link_duration" msgpack:"join_with_link_duration"`
+	JoinApprovalRequired bool  `bson:"join_approval_required" json:"join_approval_required" msgpack:"join_approval_required"`
 	SendMediaPermission  bool  `bson:"send_media_permission" json:"send_media_permission" msgpack:"send_media_permission"`
 	AddMemberPermission  bool  `bson:"add_member_permission" json:"add_member_permission" msgpack:"add_member_permission"`
 	HideSystemMessages   bool  `bson:"hide_system_messages" json:"hide_system_messages" msgpack:"hide_system_messages"`
-	JoinWithLinkDuration int64 `json:"join_with_link_duration" bson:"join_with_link_duration" msgpack:"join_with_link_duration"`
 	SendSurveyPermission bool  `json:"send_survey_permission" bson:"send_survey_permission" msgpack:"send_survey_permission"`
 }
 

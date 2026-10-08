@@ -2,7 +2,6 @@ package websocket
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
@@ -18,27 +17,16 @@ const (
 	maxMessageSize = 1024
 )
 
-// WSIncomingMessage est l'enveloppe standard pour les messages envoyés par la PWA au serveur
-type WSIncomingMessage struct {
-	EventType string          `json:"event_type"`
-	Payload   json.RawMessage `json:"payload"` // json.RawMessage permet de différer le décodage
-}
-
-// TypingPayload est la structure attendue quand event_type = "typing.started" ou "typing.stopped"
-type TypingPayload struct {
-	ConversationID int64 `json:"conversation_id"`
-}
-
-type Client struct {
-	Hub      *Hub
+type client struct {
+	Hub      *hub
 	Conn     *websocket.Conn
 	UserID   int64
 	DeviceID string // NOUVEAU : Essentiel pour cibler la bonne session Ratchet en RAM
 	Send     chan []byte
 }
 
-// ReadPump écoute les événements entrants du client (PONG et événements temps réel)
-func (c *Client) ReadPump() {
+// readPump écoute les événements entrants du client (PONG et événements temps réel)
+func (c *client) readPump() {
 	defer func() {
 		c.Hub.Unregister <- c
 		_ = c.Conn.Close()
@@ -70,12 +58,12 @@ func (c *Client) ReadPump() {
 		_ = cache_service.MarkUserOnline(context.Background(), c.UserID)
 
 		// On envoie le message brut au routeur !
-		c.Route(message)
+		c.route(message)
 	}
 }
 
 // handleTyping vérifie la sécurité et broadcast l'événement de frappe en O(1)
-func (c *Client) handleTyping(eventType string, convID int64) {
+func (c *client) handleTyping(eventType string, convID int64) {
 	ctx := context.Background()
 
 	// SÉCURITÉ ZERO-TRUST : Le client WebSocket est peut-être malveillant.
@@ -96,8 +84,8 @@ func (c *Client) handleTyping(eventType string, convID int64) {
 	_ = realtime_service.BroadcastToConversation(ctx, convID, eventType, broadcastPayload)
 }
 
-// WritePump est la seule goroutine qui écrit physiquement sur la connexion TCP
-func (c *Client) WritePump() {
+// writePump est la seule goroutine qui écrit physiquement sur la connexion TCP
+func (c *client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()

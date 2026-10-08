@@ -12,8 +12,8 @@ import (
 // # GESTION DE L'ÉTAT DU FEED (BUFFER)
 // ############################################################################
 
-// FeedData contient la graine et la liste des IDs ordonnés pour une lettre donnée (A, B ou C).
-type FeedData struct {
+// feedData contient la graine et la liste des IDs ordonnés pour une lettre donnée (A, B ou C).
+type feedData struct {
 	Seed    int64   `json:"seed" msgpack:"seed"`
 	PostIDs []int64 `json:"post_ids" msgpack:"post_ids"` // Liste finale ordonnée par la caissière
 	Fused   bool    `json:"fused" msgpack:"fused"`       // Indique si le panier a déjà fusionné avec ses voisins
@@ -24,7 +24,7 @@ type FeedData struct {
 type FeedState struct {
 	GeneratedAt time.Time           `json:"generated_at" msgpack:"generated_at"`
 	ActiveFeed  string              `json:"active_feed" msgpack:"active_feed"` // Pointeur actuel : "A", "B" ou "C"
-	Feeds       map[string]FeedData `json:"feeds" msgpack:"feeds"`
+	Feeds       map[string]feedData `json:"feeds" msgpack:"feeds"`
 }
 
 // GetUserFeedState récupère l'arborescence complète depuis Redis via le wrapper LFU.
@@ -38,8 +38,8 @@ func GetUserFeedState(ctx context.Context, userID int64) (FeedState, error) {
 	return state, nil
 }
 
-// SaveUserFeedState écrase ou met à jour l'état complet dans le Speed Cache Redis.
-func SaveUserFeedState(ctx context.Context, userID int64, state FeedState) error {
+// saveUserFeedState écrase ou met à jour l'état complet dans le Speed Cache Redis.
+func saveUserFeedState(ctx context.Context, userID int64, state FeedState) error {
 	err := redis.FeedsObject.SetObject(ctx, userID, state)
 	if err != nil {
 		return nubo_error.NewInternal()

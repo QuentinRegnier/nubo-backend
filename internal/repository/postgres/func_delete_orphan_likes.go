@@ -8,14 +8,14 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
-type OrphanLikeTarget struct {
+type orphanLikeTarget struct {
 	TargetType int
 	TargetID   int64
 }
 
 // FuncDeleteOrphanLikes appelle la fonction SQL stockée pour purger les likes orphelins
 // et récupère leurs identifiants pour répercuter le nettoyage sur le cache L2 (MongoDB).
-func FuncDeleteOrphanLikes(ctx context.Context) ([]OrphanLikeTarget, error) {
+func FuncDeleteOrphanLikes(ctx context.Context) ([]orphanLikeTarget, error) {
 	query := `SELECT target_type, target_id FROM content.func_delete_orphan_likes()`
 
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query)
@@ -29,9 +29,9 @@ func FuncDeleteOrphanLikes(ctx context.Context) ([]OrphanLikeTarget, error) {
 		}
 	}(rows)
 
-	var targets []OrphanLikeTarget
+	var targets []orphanLikeTarget
 	for rows.Next() {
-		var t OrphanLikeTarget
+		var t orphanLikeTarget
 		if err := rows.Scan(&t.TargetType, &t.TargetID); err == nil {
 			targets = append(targets, t)
 		}

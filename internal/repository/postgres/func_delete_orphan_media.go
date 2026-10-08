@@ -9,13 +9,13 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
-type OrphanMediaResult struct {
+type orphanMediaResult struct {
 	ID          int64
 	StoragePath string
 }
 
 // FuncDeleteOrphanMedia exécute la purge SQL et retourne les médias détruits.
-func FuncDeleteOrphanMedia(ctx context.Context) ([]OrphanMediaResult, error) {
+func FuncDeleteOrphanMedia(ctx context.Context) ([]orphanMediaResult, error) {
 	query := `SELECT id, storage_path FROM content.func_delete_orphan_media()`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query)
 	if err != nil {
@@ -28,9 +28,9 @@ func FuncDeleteOrphanMedia(ctx context.Context) ([]OrphanMediaResult, error) {
 		}
 	}(rows)
 
-	var results []OrphanMediaResult
+	var results []orphanMediaResult
 	for rows.Next() {
-		var r OrphanMediaResult
+		var r orphanMediaResult
 		if err := rows.Scan(&r.ID, &r.StoragePath); err == nil {
 			results = append(results, r)
 		}

@@ -57,9 +57,9 @@ func CreatePost(ctx context.Context, callerID int64, input post_models.CreatePos
 			case variables.TagPermissionEveryone:
 				isActionAllowed = true
 			case variables.TagPermissionFollowers:
-				isActionAllowed = (relationState >= 1)
+				isActionAllowed = relationState >= 1
 			case variables.TagPermissionFriends:
-				isActionAllowed = (relationState == 2)
+				isActionAllowed = relationState == 2
 			case variables.TagPermissionNobody:
 				isActionAllowed = false
 			}

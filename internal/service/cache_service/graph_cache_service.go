@@ -18,8 +18,8 @@ import (
 // # DTOs ET MODÈLES DU CACHE
 // ############################################################################
 
-// TagEdge représente la valeur binaire (MessagePack) stockée dans le HASH Redis.
-type TagEdge struct {
+// tagEdge représente la valeur binaire (MessagePack) stockée dans le HASH Redis.
+type tagEdge struct {
 	Weight    float64 `msgpack:"w"` // Poids W de l'arête sémantique
 	Timestamp int64   `msgpack:"t"` // Timestamp de la dernière occurrence en millisecondes
 }
@@ -60,7 +60,7 @@ func UpdateTagCooccurrences(ctx context.Context, tagsList []string, currentTimes
 // updateEdge exécute l'équation d'état markovienne :
 // W_nouveau = (W_ancien * e^(-λ * Δt)) * (1 - α) + α
 func updateEdge(ctx context.Context, sourceTag, targetTag string, currentTimestampMs int64) {
-	var currentEdge TagEdge
+	var currentEdge tagEdge
 
 	// 1. Lecture de l'état actuel via la Collection abstraite Redis
 	binaryData, errRedis := redis.GraphEdges.HGet(ctx, sourceTag, targetTag).Bytes()
@@ -112,7 +112,7 @@ func GetRelatedTagsLazy(ctx context.Context, sourceTag string) map[string]float6
 
 	// Évaluation à la volée de la vitalité des arêtes sémantiques
 	for targetTag, binaryData := range edgesMapJSON {
-		var currentEdge TagEdge
+		var currentEdge tagEdge
 		if errUnmarshal := msgpack.Unmarshal([]byte(binaryData), &currentEdge); errUnmarshal != nil {
 			continue
 		}

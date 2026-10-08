@@ -94,7 +94,7 @@ func ReactToMessage(ctx context.Context, callerID int64, input message_models.Re
 		}
 
 		// SYNC LEDGER : Trigger granulaire pour mettre à jour la base SQLite des clients
-		participantIDs := GetParticipantIDsForLedgerSync(backgroundCtx, messagePayload.ConversationID)
+		participantIDs := getParticipantIDsForLedgerSync(backgroundCtx, messagePayload.ConversationID)
 		_ = cache_service.RecordMessageMutation(backgroundCtx, messagePayload.ConversationID, messagePayload.ID, participantIDs)
 	}()
 

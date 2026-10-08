@@ -9,8 +9,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// PostCandidate représente un post candidat dans le pipeline de feed personnalisé.
-type PostCandidate struct {
+// postCandidate représente un post candidat dans le pipeline de feed personnalisé.
+type postCandidate struct {
 	PostID        int64
 	AuthorID      int64
 	TrendScore    float64   // S(p,t) — Le score de tendance global issu du ZSET Redis
@@ -58,10 +58,10 @@ func dotProductN(vectorA, vectorB []float32) float32 {
 // # ÉTAPE 2 : CALCUL DES SCORES D'AFFINITÉ ET DE CORRÉLATION
 // ############################################################################
 
-// ComputeSocialAffinity calcule le score d'affinité sociale A(u,p).
+// computeSocialAffinity calcule le score d'affinité sociale A(u,p).
 // Il extrait uniquement le "bloc social" des vecteurs (les 64 dernières dimensions)
 // et normalise le résultat du cosinus entre 0 et 1.
-func ComputeSocialAffinity(userVec, contentVec []float32) float64 {
+func computeSocialAffinity(userVec, contentVec []float32) float64 {
 	if len(userVec) < variables.VectorDimTotal || len(contentVec) < variables.VectorDimTotal {
 		return 0.5 // Valeur neutre si les vecteurs sont incomplets ou corrompus
 	}
@@ -81,9 +81,9 @@ func ComputeSocialAffinity(userVec, contentVec []float32) float64 {
 	return normalizedAffinity
 }
 
-// ComputePearsonEngagement calcule la corrélation de Pearson sur le bloc d'engagement.
+// computePearsonEngagement calcule la corrélation de Pearson sur le bloc d'engagement.
 // Mesure la cohérence comportementale entre ce que l'utilisateur fait, et ce que le post génère.
-func ComputePearsonEngagement(userEngBlock, contentEngBlock []float32) float64 {
+func computePearsonEngagement(userEngBlock, contentEngBlock []float32) float64 {
 	const dimension = variables.VectorDimEng // Par défaut = 8
 
 	// 1. Calcul des moyennes des deux blocs
@@ -117,9 +117,9 @@ func ComputePearsonEngagement(userEngBlock, contentEngBlock []float32) float64 {
 	return sumCovariance / denominator
 }
 
-// ComputePersonalizedScore assemble toutes les métriques pour fournir le score R(u,p).
+// computePersonalizedScore assemble toutes les métriques pour fournir le score R(u,p).
 // C'est le score final qui décidera si le post mérite d'apparaître pour cet utilisateur.
-func ComputePersonalizedScore(
+func computePersonalizedScore(
 	trendScore float64,
 	userVec, contentVec []float32,
 	authorID int64,
@@ -136,7 +136,7 @@ func ComputePersonalizedScore(
 	cosineSimilarity := float64(dotProductN(userVec, contentVec))
 
 	// ÉTAPE B : Affinité Sociale pure (A(u,p))
-	socialAffinity := ComputeSocialAffinity(userVec, contentVec)
+	socialAffinity := computeSocialAffinity(userVec, contentVec)
 
 	// ÉTAPE C : Indicateur d'amitié directe (B(u,p))
 	var friendBoost = 0.0
@@ -147,7 +147,7 @@ func ComputePersonalizedScore(
 	// ÉTAPE D : Cohérence comportementale (Pearson sur le bloc engagement)
 	startIndex := variables.VectorOffEng
 	endIndex := variables.VectorOffEng + variables.VectorDimEng
-	pearsonCorrelation := ComputePearsonEngagement(userVec[startIndex:endIndex], contentVec[startIndex:endIndex])
+	pearsonCorrelation := computePearsonEngagement(userVec[startIndex:endIndex], contentVec[startIndex:endIndex])
 
 	// ÉTAPE E : Formule Composite (La recette secrète Nubo)
 	// Base : (ρ * Cosinus) + ((1 - ρ) * Affinité Sociale) + (η * Ami) + (η_P * Pearson)
@@ -171,7 +171,7 @@ func ComputePersonalizedScore(
 // buildSimilarityMatrix construit la matrice de similarité croisée G.
 // G_{i,j} = Similarité entre le post_service I et le post_service J.
 // Elle est stockée sous forme de tableau plat (row-major) pour la performance CPU.
-func buildSimilarityMatrix(candidates []PostCandidate) ([]float32, int) {
+func buildSimilarityMatrix(candidates []postCandidate) ([]float32, int) {
 	dimensionSize := len(candidates)
 	if dimensionSize == 0 {
 		return nil, 0
@@ -207,7 +207,7 @@ func buildSimilarityMatrix(candidates []PostCandidate) ([]float32, int) {
 }
 
 // getOrBuildSimMatrix retourne la matrice depuis la RAM, ou la calcule si le cache a expiré.
-func getOrBuildSimMatrix(candidates []PostCandidate) ([]float32, int) {
+func getOrBuildSimMatrix(candidates []postCandidate) ([]float32, int) {
 	now := time.Now()
 
 	// 1. Lecture Rapide (RLock)
@@ -249,7 +249,7 @@ func getOrBuildSimMatrix(candidates []PostCandidate) ([]float32, int) {
 }
 
 // candidatesMatch vérifie en O(n) si la liste stockée en cache correspond aux candidats actuels.
-func candidatesMatch(cachedIDs []int64, candidates []PostCandidate) bool {
+func candidatesMatch(cachedIDs []int64, candidates []postCandidate) bool {
 	if len(cachedIDs) != len(candidates) {
 		return false
 	}
@@ -265,10 +265,10 @@ func candidatesMatch(cachedIDs []int64, candidates []PostCandidate) bool {
 // # ÉTAPE 4 : MOTEUR DE DIVERSITÉ MMR (Maximal Marginal Relevance)
 // ############################################################################
 
-// RunMMR sélectionne les posts en équilibrant deux forces :
+// runMMR sélectionne les posts en équilibrant deux forces :
 // 1. Pertinence (Le post est-il parfait pour l'utilisateur ?)
 // 2. Redondance (L'utilisateur vient-il de voir 5 posts identiques juste avant ?)
-func RunMMR(candidates []PostCandidate, similarityMatrix []float32, matrixDimension int, lambdaDiversity float64, requestedLimit int) []PostCandidate {
+func runMMR(candidates []postCandidate, similarityMatrix []float32, matrixDimension int, lambdaDiversity float64, requestedLimit int) []postCandidate {
 	totalCandidates := len(candidates)
 	if totalCandidates == 0 || requestedLimit <= 0 {
 		return nil
@@ -278,7 +278,7 @@ func RunMMR(candidates []PostCandidate, similarityMatrix []float32, matrixDimens
 		requestedLimit = totalCandidates
 	}
 
-	selectedCandidates := make([]PostCandidate, 0, requestedLimit)
+	selectedCandidates := make([]postCandidate, 0, requestedLimit)
 	selectedMatrixIndexes := make([]int, 0, requestedLimit)
 
 	isAvailable := make([]bool, totalCandidates)
@@ -349,9 +349,9 @@ func RunMMR(candidates []PostCandidate, similarityMatrix []float32, matrixDimens
 // # ÉTAPE 5 : INJECTION DE SÉRENDIPITÉ (ONDE DE DOPAMINE)
 // ############################################################################
 
-// InjectSerendipity remplace de manière aléatoire (mais contrôlée) certains posts
+// injectSerendipity remplace de manière aléatoire (mais contrôlée) certains posts
 // du feed généré par MMR par des posts de découverte pour casser les chambres d'écho.
-func InjectSerendipity(feed []PostCandidate, discoveryPool []int64, rng *rand.Rand, startIndex int) []PostCandidate {
+func injectSerendipity(feed []postCandidate, discoveryPool []int64, rng *rand.Rand, startIndex int) []postCandidate {
 	if len(discoveryPool) == 0 || rng == nil {
 		return feed
 	}
@@ -359,7 +359,7 @@ func InjectSerendipity(feed []PostCandidate, discoveryPool []int64, rng *rand.Ra
 	for i := range feed {
 		// 1. L'Onde de Dopamine (DopamineWave) dicte combien de contenu "sûr"
 		// l'utilisateur a besoin à cet instant précis (index).
-		affinityRequired := DopamineWave(float64(startIndex + i))
+		affinityRequired := dopamineWave(float64(startIndex + i))
 
 		// 2. La probabilité de surprise (Sérendipité) est l'inverse exact de ce besoin.
 		// Ex: Si le besoin de certitude est de 0.8 (80%), la probabilité de surprise est 20%.
@@ -370,7 +370,7 @@ func InjectSerendipity(feed []PostCandidate, discoveryPool []int64, rng *rand.Ra
 			randomPoolIndex := rng.Intn(len(discoveryPool))
 
 			// On écrase le post du MMR par un post de découverte brut
-			feed[i] = PostCandidate{
+			feed[i] = postCandidate{
 				PostID:        discoveryPool[randomPoolIndex],
 				IsSerendipity: true,
 				MatrixIdx:     -1, // Sécurité : ce post n'est pas dans la matrice calculée

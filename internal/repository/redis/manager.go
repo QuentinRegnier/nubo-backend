@@ -121,99 +121,99 @@ var (
 
 func InitCacheDatabase() {
 	// --- OBJECT Cache ---
-	Users = NewCollection("object_cache:user", variables.StandardTTL)
-	UserSettings = NewCollection("object_cache:user_settings", variables.StandardTTL)
-	Sessions = NewCollection("object_cache:session", variables.StandardTTL)
-	Posts = NewCollection("object_cache:post_service", variables.StandardTTL)
-	Comments = NewCollection("object_cache:comment", variables.StandardTTL)
-	Media = NewCollection("object_cache:media", variables.StandardTTL)
-	Messages = NewCollection("object_cache:msg", variables.StandardTTL)
-	Conversations = NewCollection("object_cache:conv", variables.StandardTTL)
-	Members = NewCollection("object_cache:member", variables.StandardTTL)
-	Relations = NewCollection("object_cache:rel", variables.StandardTTL)
-	Saved = NewCollection("object_cache:saved:zset", variables.StandardTTL)
-	PostComments = NewCollection("object:comments:zset", variables.StandardTTL)
-	UserTimeline = NewCollection("user_cache:posts:zset", variables.StandardTTL)
-	NotificationsObj = NewCollection("object_cache:notification", variables.StandardTTL)
+	Users = newCollection("object_cache:user", variables.StandardTTL)
+	UserSettings = newCollection("object_cache:user_settings", variables.StandardTTL)
+	Sessions = newCollection("object_cache:session", variables.StandardTTL)
+	Posts = newCollection("object_cache:post_service", variables.StandardTTL)
+	Comments = newCollection("object_cache:comment", variables.StandardTTL)
+	Media = newCollection("object_cache:media", variables.StandardTTL)
+	Messages = newCollection("object_cache:msg", variables.StandardTTL)
+	Conversations = newCollection("object_cache:conv", variables.StandardTTL)
+	Members = newCollection("object_cache:member", variables.StandardTTL)
+	Relations = newCollection("object_cache:rel", variables.StandardTTL)
+	Saved = newCollection("object_cache:saved:zset", variables.StandardTTL)
+	PostComments = newCollection("object:comments:zset", variables.StandardTTL)
+	UserTimeline = newCollection("user_cache:posts:zset", variables.StandardTTL)
+	NotificationsObj = newCollection("object_cache:notification", variables.StandardTTL)
 
 	// --- SPEED Cache ---
-	UsersLite = NewCollection("speed_cache:user:lite", 0)
-	UsersLex = NewCollection("speed_cache:user:search", 0)
-	CommunitiesLex = NewCollection("speed_cache:community:search", 0)
-	TagsLex = NewCollection("speed_cache:tag:search", 0)
-	ConvMeta = NewCollection("speed_cache:conversation:meta", variables.StandardTTL)
-	ConvMembers = NewCollection("speed_cache:conversation:members", variables.StandardTTL)
-	SpeedRelationsIndex = NewCollection("speed_cache:relations:index:default", 0)
-	SpeedRelations = NewCollection("speed_cache:relations:default", 0)
-	SpeedAddable = NewCollection("speed_cache:addable:default", variables.StandardTTL)
-	SpeedCommunity = NewCollection("speed_cache:community:default", variables.StandardTTL)
+	UsersLite = newCollection("speed_cache:user:lite", 0)
+	UsersLex = newCollection("speed_cache:user:search", 0)
+	CommunitiesLex = newCollection("speed_cache:community:search", 0)
+	TagsLex = newCollection("speed_cache:tag:search", 0)
+	ConvMeta = newCollection("speed_cache:conversation:meta", variables.StandardTTL)
+	ConvMembers = newCollection("speed_cache:conversation:members", variables.StandardTTL)
+	SpeedRelationsIndex = newCollection("speed_cache:relations:index:default", 0)
+	SpeedRelations = newCollection("speed_cache:relations:default", 0)
+	SpeedAddable = newCollection("speed_cache:addable:default", variables.StandardTTL)
+	SpeedCommunity = newCollection("speed_cache:community:default", variables.StandardTTL)
 
 	// --- FEED Cache ---
-	FeedsObject = NewCollection("feed:state", variables.StandardTTL)
-	FeedsMailbox = NewCollection("feed_cache:mailbox", variables.StandardTTL)
-	FeedsPersonalized = NewCollection("feed:personalized", variables.StandardTTL)
+	FeedsObject = newCollection("feed:state", variables.StandardTTL)
+	FeedsMailbox = newCollection("feed_cache:mailbox", variables.StandardTTL)
+	FeedsPersonalized = newCollection("feed:personalized", variables.StandardTTL)
 
 	// --- ALGORITHM & MOST Cache ---
-	ContentVectors = NewCollection("most_cache:vec", variables.StandardTTL)
-	RankedPosts = NewCollection("most_cache", variables.StandardTTL)
-	TagPosts = NewCollection("most_cache:idx:tag", variables.StandardTTL)
-	TrendGlobalHourly = NewCollection("trend:global:hourly", 0)
-	TrendGlobalDaily = NewCollection("trend:global:daily", 0)
-	TrendTagDaily = NewCollection("trend:tag:daily", 0)
-	TrendTagWeekly = NewCollection("trend:tag:weekly", 0)
-	HashtagLeaderboard = NewCollection("hashtag:leaderboard", 0)
+	ContentVectors = newCollection("most_cache:vec", variables.StandardTTL)
+	RankedPosts = newCollection("most_cache", variables.StandardTTL)
+	TagPosts = newCollection("most_cache:idx:tag", variables.StandardTTL)
+	TrendGlobalHourly = newCollection("trend:global:hourly", 0)
+	TrendGlobalDaily = newCollection("trend:global:daily", 0)
+	TrendTagDaily = newCollection("trend:tag:daily", 0)
+	TrendTagWeekly = newCollection("trend:tag:weekly", 0)
+	HashtagLeaderboard = newCollection("hashtag:leaderboard", 0)
 
 	// --- SYSTEM Cache ---
-	RateLimits = NewCollection("rate_limit:ip", 10*time.Second)
-	DLQ = NewCollection("dlq", 0)
-	GraphEdges = NewCollection("graph_cache:tag_edges", 0)
-	Tags = NewCollection("tags", 0)
-	HashtagCanon = NewCollection("hashtag:canon", 0)
+	RateLimits = newCollection("rate_limit:ip", 10*time.Second)
+	DLQ = newCollection("dlq", 0)
+	GraphEdges = newCollection("graph_cache:tag_edges", 0)
+	Tags = newCollection("tags", 0)
+	HashtagCanon = newCollection("hashtag:canon", 0)
 
 	// --- INDEX & IDEMPOTENCE ---
-	SessionIndexes = NewCollection("session_cache", variables.StandardTTL)
-	SessionBlacklist = NewCollection("blacklist:session", 24*time.Hour)
-	PostLikesSet = NewCollection("post:likes_set", 0)
-	CommentLikesSet = NewCollection("comment:likes_set", 0)
-	SystemStatus = NewCollection("system:status", 0)
+	SessionIndexes = newCollection("session_cache", variables.StandardTTL)
+	SessionBlacklist = newCollection("blacklist:session", 24*time.Hour)
+	PostLikesSet = newCollection("post:likes_set", 0)
+	CommentLikesSet = newCollection("comment:likes_set", 0)
+	SystemStatus = newCollection("system:status", 0)
 
 	// --- CUCKOO FILTER ---
-	CuckooSeen = NewCollection("cuckoo:seen", variables.StandardTTL)
-	CuckooSync = NewCollection("cuckoo:sync", 5*time.Second) // NOUVEAU : TTL court encapsulé !
+	CuckooSeen = newCollection("cuckoo:seen", variables.StandardTTL)
+	CuckooSync = newCollection("cuckoo:sync", 5*time.Second) // NOUVEAU : TTL court encapsulé !
 
 	// --- MESSAGING & LSH ---
-	ConvParticipants = NewCollection("conv:participants", 0)
-	UserInbox = NewCollection("inbox:user", 0)
-	MessagesIndex = NewCollection("messages:idx", 24*time.Hour)
-	LSHBuckets = NewCollection("lsh:bucket", variables.StandardTTL)
-	ConvWatermarks = NewCollection("conv:watermarks", variables.StandardTTL)
+	ConvParticipants = newCollection("conv:participants", 0)
+	UserInbox = newCollection("inbox:user", 0)
+	MessagesIndex = newCollection("messages:idx", 24*time.Hour)
+	LSHBuckets = newCollection("lsh:bucket", variables.StandardTTL)
+	ConvWatermarks = newCollection("conv:watermarks", variables.StandardTTL)
 
-	UserSyncLedger = NewCollection("sync:ledger:user", 30*24*time.Hour)
-	ConvMessageLedger = NewCollection("sync:ledger:conv_msg", 30*24*time.Hour)
+	UserSyncLedger = newCollection("sync:ledger:user", 30*24*time.Hour)
+	ConvMessageLedger = newCollection("sync:ledger:conv_msg", 30*24*time.Hour)
 
 	// --- RÉACTIONS AUX MESSAGES ---
-	MessageReactionCounts = NewCollection("msg_react_counts", variables.StandardTTL)
-	MessageUserReactions = NewCollection("msg_user_react", variables.StandardTTL)
+	MessageReactionCounts = newCollection("msg_react_counts", variables.StandardTTL)
+	MessageUserReactions = newCollection("msg_user_react", variables.StandardTTL)
 
 	// --- ACTIVITY FEED ---
-	FeedSchedule = NewCollection("feed:precompute:schedule", 0)
-	NotificationsZSet = NewCollection("notifications:user", variables.StandardTTL)
-	NotificationCursors = NewCollection("notifications:cursor", 0)
-	NotificationActivity = NewCollection("notifications:activity", 0)
-	InboxActivity = NewCollection("inbox:activity", 0)
+	FeedSchedule = newCollection("feed:precompute:schedule", 0)
+	NotificationsZSet = newCollection("notifications:user", variables.StandardTTL)
+	NotificationCursors = newCollection("notifications:cursor", 0)
+	NotificationActivity = newCollection("notifications:activity", 0)
+	InboxActivity = newCollection("inbox:activity", 0)
 
 	// --- TELEMETRY Cache ---
-	TelemetryVectors = NewCollection("telemetry:vectors", variables.StandardTTL)
-	TelemetryTags = NewCollection("telemetry:tags", variables.StandardTTL)
-	TelemetryTimestamps = NewCollection("telemetry:timestamps", variables.StandardTTL)
+	TelemetryVectors = newCollection("telemetry:vectors", variables.StandardTTL)
+	TelemetryTags = newCollection("telemetry:tags", variables.StandardTTL)
+	TelemetryTimestamps = newCollection("telemetry:timestamps", variables.StandardTTL)
 
 	// --- WEBSOCKET Cache ---
-	Presence = NewCollection("presence:user", 60*time.Second)
+	Presence = newCollection("presence:user", 60*time.Second)
 
 	// --- PUB/SUB CHANNELS & WORKER QUEUES ---
-	ChannelUser = NewCollection("channel:user", 0)
-	ChannelCommunity = NewCollection("channel:community", 0)
-	WorkerQueue = NewCollection("worker:queue", 0)
+	ChannelUser = newCollection("channel:user", 0)
+	ChannelCommunity = newCollection("channel:community", 0)
+	WorkerQueue = newCollection("worker:queue", 0)
 }
 
 // ============================================================================
@@ -245,7 +245,7 @@ type Collection struct {
 	DefaultTTL time.Duration // Durée de vie par défaut
 }
 
-func NewCollection(prefix string, ttl time.Duration) *Collection {
+func newCollection(prefix string, ttl time.Duration) *Collection {
 	return &Collection{
 		Prefix:     prefix,
 		Client:     redisgo.Rdb,

@@ -10,7 +10,7 @@ import (
 )
 
 func MongoCheckUnique(ctx context.Context, entity redis.EntityType, field string, value any) (bool, error) {
-	collection, err := Redis2Mongo(ctx, entity)
+	collection, err := redis2Mongo(ctx, entity)
 	if err != nil {
 		nubo_log.Error(ctx).Err(err).Str("entity", string(entity)).Msg("Échec de la résolution de la collection MongoDB depuis l'entité Redis")
 		return false, nubo_error.NewInternal() // Coupe-circuit immédiat

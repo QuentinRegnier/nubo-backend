@@ -10,15 +10,15 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
-// TimelineSeedPayload structure temporaire pour la reconstruction L1
-type TimelineSeedPayload struct {
+// timelineSeedPayload structure temporaire pour la reconstruction L1
+type timelineSeedPayload struct {
 	PostID    int64
 	UserID    int64
 	CreatedAt time.Time
 }
 
 // FuncLoadTimelineSeedPaginated appelle la fonction SQL content.func_load_timeline_seed_paginated
-func FuncLoadTimelineSeedPaginated(ctx context.Context, limit, offset int) ([]TimelineSeedPayload, error) {
+func FuncLoadTimelineSeedPaginated(ctx context.Context, limit, offset int) ([]timelineSeedPayload, error) {
 	query := `SELECT * FROM content.func_load_timeline_seed_paginated($1, $2)`
 	rows, err := postgres.PostgresDB.Query(query, limit, offset)
 	if err != nil {
@@ -32,9 +32,9 @@ func FuncLoadTimelineSeedPaginated(ctx context.Context, limit, offset int) ([]Ti
 		}
 	}(rows)
 
-	var seeds []TimelineSeedPayload
+	var seeds []timelineSeedPayload
 	for rows.Next() {
-		var s TimelineSeedPayload
+		var s timelineSeedPayload
 		if err := rows.Scan(&s.PostID, &s.UserID, &s.CreatedAt); err == nil {
 			seeds = append(seeds, s)
 		}

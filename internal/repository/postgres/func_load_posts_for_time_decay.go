@@ -11,7 +11,7 @@ import (
 	"github.com/lib/pq"
 )
 
-type TimeDecayPost struct {
+type timeDecayPost struct {
 	ID               int64
 	LikeCount        int
 	CommentCount     int
@@ -25,7 +25,7 @@ type TimeDecayPost struct {
 	ReportCount      int
 }
 
-func FuncLoadPostsForTimeDecay(ctx context.Context, minAge, maxAge string) ([]TimeDecayPost, error) {
+func FuncLoadPostsForTimeDecay(ctx context.Context, minAge, maxAge string) ([]timeDecayPost, error) {
 	query := `SELECT id, like_count, comment_count, view_count, has_media, created_at, hashtags, indirect_hashtags, visibility, priority_level, report_count FROM content.func_load_posts_for_time_decay($1::interval, $2::interval)`
 
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, minAge, maxAge)
@@ -40,9 +40,9 @@ func FuncLoadPostsForTimeDecay(ctx context.Context, minAge, maxAge string) ([]Ti
 		}
 	}(rows)
 
-	var posts []TimeDecayPost
+	var posts []timeDecayPost
 	for rows.Next() {
-		var p TimeDecayPost
+		var p timeDecayPost
 		err := rows.Scan(
 			&p.ID, &p.LikeCount, &p.CommentCount, &p.ViewCount, &p.HasMedia, &p.CreatedAt,
 			pq.Array(&p.Hashtags), pq.Array(&p.IndirectHashtags), &p.Visibility, &p.PriorityLevel, &p.ReportCount, // ✅ NOUVEAU (Scan correct)

@@ -8,38 +8,38 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
-type PostgresTarget struct {
+type postgresTarget struct {
 	Schema string
 	Table  string
 }
 
-// Redis2Postgres fait le pont entre le domaine (Redis EntityType) et le schéma physique SQL.
-func Redis2Postgres(ctx context.Context, entity redis.EntityType) (PostgresTarget, error) {
+// redis2Postgres fait le pont entre le domaine (Redis EntityType) et le schéma physique SQL.
+func redis2Postgres(ctx context.Context, entity redis.EntityType) (postgresTarget, error) {
 	switch entity {
 	case redis.EntityUser:
-		return PostgresTarget{Schema: "auth", Table: "users"}, nil
+		return postgresTarget{Schema: "auth", Table: "users"}, nil
 	case redis.EntityUserSettings:
-		return PostgresTarget{Schema: "auth", Table: "user_settings"}, nil
+		return postgresTarget{Schema: "auth", Table: "user_settings"}, nil
 	case redis.EntitySession:
-		return PostgresTarget{Schema: "auth", Table: "sessions"}, nil
+		return postgresTarget{Schema: "auth", Table: "sessions"}, nil
 	case redis.EntityRelation:
-		return PostgresTarget{Schema: "auth", Table: "relations"}, nil
+		return postgresTarget{Schema: "auth", Table: "relations"}, nil
 	case redis.EntityPost:
-		return PostgresTarget{Schema: "content", Table: "posts"}, nil
+		return postgresTarget{Schema: "content", Table: "posts"}, nil
 	case redis.EntityComment:
-		return PostgresTarget{Schema: "content", Table: "comments"}, nil
+		return postgresTarget{Schema: "content", Table: "comments"}, nil
 	case redis.EntityLike:
-		return PostgresTarget{Schema: "content", Table: "likes"}, nil
+		return postgresTarget{Schema: "content", Table: "likes"}, nil
 	case redis.EntityMedia:
-		return PostgresTarget{Schema: "content", Table: "media"}, nil
+		return postgresTarget{Schema: "content", Table: "media"}, nil
 	case redis.EntityConversation:
-		return PostgresTarget{Schema: "messaging", Table: "conversations"}, nil
+		return postgresTarget{Schema: "messaging", Table: "conversations"}, nil
 	case redis.EntityMembers:
-		return PostgresTarget{Schema: "messaging", Table: "members"}, nil
+		return postgresTarget{Schema: "messaging", Table: "members"}, nil
 	case redis.EntityMessage:
-		return PostgresTarget{Schema: "messaging", Table: "messages"}, nil
+		return postgresTarget{Schema: "messaging", Table: "messages"}, nil
 	default:
 		nubo_log.Error(ctx).Str("entity", string(entity)).Msg("Entité non supportée pour la vérification PostgreSQL")
-		return PostgresTarget{}, nubo_error.NewInternal()
+		return postgresTarget{}, nubo_error.NewInternal()
 	}
 }

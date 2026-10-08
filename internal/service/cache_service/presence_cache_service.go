@@ -69,7 +69,7 @@ func AreUsersOnline(ctx context.Context, requestedUserIDs []int64) (map[int64]bo
 	for index, cachedValue := range redisValues {
 		// val est nil si la clé n'existe pas (TTL de 90s expiré)
 		// S'il y a quelque chose (le string "1" posé par MarkUserOnline), l'utilisateur est en ligne
-		presenceResultsMap[requestedUserIDs[index]] = (cachedValue != nil)
+		presenceResultsMap[requestedUserIDs[index]] = cachedValue != nil
 	}
 
 	return presenceResultsMap, nil

@@ -10,7 +10,7 @@ import (
 )
 
 func FuncCheckUnique(ctx context.Context, entity redis.EntityType, field string, value string) (bool, error) {
-	target, err := Redis2Postgres(ctx, entity)
+	target, err := redis2Postgres(ctx, entity)
 	if err != nil {
 		nubo_log.Error(ctx).Err(err).Str("entity", string(entity)).Msg("Échec de la résolution de la table PostgreSQL depuis l'entité Redis")
 		return false, nubo_error.NewInternal() // Coupe-circuit immédiat

@@ -15,9 +15,9 @@ import (
 // # WORKER : REACTION CLEANUP (GARBAGE COLLECTOR DES RÉACTIONS)
 // ############################################################################
 
-// StartReactionCleanupCron lance le Garbage Collector qui détruit les réactions orphelines.
+// startReactionCleanupCron lance le Garbage Collector qui détruit les réactions orphelines.
 // Une réaction devient orpheline lorsque le message parent a été supprimé ou est invisible.
-func StartReactionCleanupCron(ctx context.Context) {
+func startReactionCleanupCron(ctx context.Context) {
 	nubo_log.Info(ctx).Msg("Démarrage du Garbage Collector de Réactions (Cron 6h)...")
 
 	go func() {

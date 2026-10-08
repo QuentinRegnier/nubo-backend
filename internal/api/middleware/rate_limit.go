@@ -11,7 +11,7 @@ import (
 
 const (
 	// Limite : 50 requêtes maximum
-	RateLimitMaxRequests = 50
+	rateLimitMaxRequests = 50
 )
 
 // RateLimiter empêche les attaques DDoS applicatives
@@ -36,7 +36,7 @@ func RateLimiter() gin.HandlerFunc {
 		}
 
 		// Si on dépasse la limite
-		if count > RateLimitMaxRequests {
+		if count > rateLimitMaxRequests {
 			errLimit := nubo_error.NewAppError(http.StatusTooManyRequests, "TOO_MANY_REQUESTS", "Too many requests. Please calm down.", nil)
 			nubo_error.RespondWithError(c, errLimit)
 			c.Abort()

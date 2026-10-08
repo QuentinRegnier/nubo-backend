@@ -12,14 +12,14 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// FullInboxResult est le type consolidé retournant les payloads complets depuis Mongo
-type FullInboxResult struct {
+// fullInboxResult est le type consolidé retournant les payloads complets depuis Mongo
+type fullInboxResult struct {
 	Conversation conversation_models.ConversationPayload
 	Member       member_models.MemberPayload
 }
 
 // MongoLoadConversationPaginated utilise un pipeline d'agrégation pour joindre les Membres et les Conversations et trier (L2)
-func MongoLoadConversationPaginated(userID int64, limit int64, offset int64) ([]FullInboxResult, error) {
+func MongoLoadConversationPaginated(userID int64, limit int64, offset int64) ([]fullInboxResult, error) {
 	if Members == nil || Conversations == nil {
 		return nil, nil
 	}
@@ -58,7 +58,7 @@ func MongoLoadConversationPaginated(userID int64, limit int64, offset int64) ([]
 		}
 	}(cursor, ctx)
 
-	var results []FullInboxResult
+	var results []fullInboxResult
 	for cursor.Next(ctx) {
 		var doc bson.M
 		if err := cursor.Decode(&doc); err == nil {
@@ -71,7 +71,7 @@ func MongoLoadConversationPaginated(userID int64, limit int64, offset int64) ([]
 			// Utilisation de ToStruct pour mapper proprement la BSON en Struct complète sans erreur de type
 			if errConv := pkg.ToStruct(metaDoc, &fullConv); errConv == nil {
 				if errMem := pkg.ToStruct(doc, &fullMem); errMem == nil {
-					results = append(results, FullInboxResult{
+					results = append(results, fullInboxResult{
 						Conversation: fullConv,
 						Member:       fullMem,
 					})

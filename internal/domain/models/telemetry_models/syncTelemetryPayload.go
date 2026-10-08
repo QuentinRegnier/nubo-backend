@@ -24,5 +24,5 @@ type SyncTelemetryPayload struct {
 	TopTags []string `json:"top_tags"`
 
 	// Bloc 4 : Matrice d'Engagement (Batch)
-	Telemetry []TelemetryEvent `json:"telemetry"`
+	Telemetry []telemetryEvent `json:"telemetry"`
 }

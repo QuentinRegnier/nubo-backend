@@ -10,45 +10,45 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-var generator *Node // La variable globale privée (Singleton)
+var generator *node // La variable globale privée (Singleton)
 
 // InitSnowflake : Tu l'appelles une fois au démarrage dans le main
 func InitSnowflake(nodeID int64) error {
 	var err error
-	generator, err = NewNode(nodeID)
+	generator, err = newNode(nodeID)
 	return err
 }
 
 // GenerateID : LA fameuse fonction simple que tu voulais
 func GenerateID() int64 {
-	return generator.Generate()
+	return generator.generate()
 }
 
-// Node est la structure qui génère les IDs
-type Node struct {
+// node est la structure qui génère les IDs
+type node struct {
 	mu        sync.Mutex
 	timestamp int64
 	nodeID    int64
 	step      int64
 }
 
-// NewNode crée une nouvelle instance de générateur Snowflake.
+// newNode crée une nouvelle instance de générateur Snowflake.
 // nodeID : Un identifiant unique pour ce serveur (entre 0 et 1023).
-func NewNode(nodeID int64) (*Node, error) {
+func newNode(nodeID int64) (*node, error) {
 	if nodeID < 0 || nodeID > variables.NodeMax {
 		nubo_log.Error(context.Background()).Int64("node_id", nodeID).Msg("Node ID invalide pour l'initialisation de Snowflake")
 		return nil, nubo_error.NewInternal()
 	}
 
-	return &Node{
+	return &node{
 		timestamp: 0,
 		nodeID:    nodeID,
 		step:      0,
 	}, nil
 }
 
-// Generate crée et retourne un nouvel ID unique (int64).
-func (n *Node) Generate() int64 {
+// generate crée et retourne un nouvel ID unique (int64).
+func (n *node) generate() int64 {
 	n.mu.Lock()         // Verrouille pour éviter que deux goroutines accèdent en même temps
 	defer n.mu.Unlock() // Déverrouille à la fin de la fonction
 

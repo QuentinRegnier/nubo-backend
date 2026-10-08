@@ -26,8 +26,8 @@ var bucketName string
 var secretKey string
 
 const (
-	Delta  = 15.0 // Force du tatouage (plus élevé = plus robuste mais plus visible)
-	Margin = 10.0 // Marge de sécurité pour le différentiel DCT
+	delta  = 15.0 // Force du tatouage (plus élevé = plus robuste mais plus visible)
+	margin = 10.0 // Marge de sécurité pour le différentiel DCT
 )
 
 func main() {
@@ -188,12 +188,12 @@ func injectBitInBlock(img *image.RGBA, startX, startY, bit int) {
 	u2, v2 := 5, 4
 
 	if bit == 1 {
-		if F[u1][v1] <= F[u2][v2]+Margin {
-			F[u1][v1] = F[u2][v2] + Delta
+		if F[u1][v1] <= F[u2][v2]+margin {
+			F[u1][v1] = F[u2][v2] + delta
 		}
 	} else {
-		if F[u2][v2] <= F[u1][v1]+Margin {
-			F[u2][v2] = F[u1][v1] + Delta
+		if F[u2][v2] <= F[u1][v1]+margin {
+			F[u2][v2] = F[u1][v1] + delta
 		}
 	}
 

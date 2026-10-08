@@ -8,13 +8,13 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
-type MutedMemberRecord struct {
+type mutedMemberRecord struct {
 	UserID          int64
 	RestrictedUntil int64
 }
 
 // FuncLoadMutedMembersPaginated appelle la fonction SQL pour lister les membres restreints
-func FuncLoadMutedMembersPaginated(ctx context.Context, convID int64, limit int, offset int) ([]MutedMemberRecord, error) {
+func FuncLoadMutedMembersPaginated(ctx context.Context, convID int64, limit int, offset int) ([]mutedMemberRecord, error) {
 	rows, err := postgres.PostgresDB.QueryContext(ctx, "SELECT * FROM messaging.func_load_muted_members_paginated($1, $2, $3)", convID, limit, offset)
 	if err != nil {
 		return nil, err
@@ -26,9 +26,9 @@ func FuncLoadMutedMembersPaginated(ctx context.Context, convID int64, limit int,
 		}
 	}(rows)
 
-	var records []MutedMemberRecord
+	var records []mutedMemberRecord
 	for rows.Next() {
-		var r MutedMemberRecord
+		var r mutedMemberRecord
 		if err := rows.Scan(&r.UserID, &r.RestrictedUntil); err == nil {
 			records = append(records, r)
 		}

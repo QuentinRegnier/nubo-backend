@@ -32,7 +32,7 @@ func HandlePullToRefresh(ctx context.Context, opts RefreshOptions) ([]int64, err
 		// Nouvel utilisateur ou Cache expiré : Création d'un état vierge
 		feedState = FeedState{
 			ActiveFeed: "A",
-			Feeds: map[string]FeedData{
+			Feeds: map[string]feedData{
 				"A": {Seed: rand.Int63()},
 				"B": {Seed: rand.Int63()},
 				"C": {Seed: rand.Int63()},
@@ -70,12 +70,12 @@ func HandlePullToRefresh(ctx context.Context, opts RefreshOptions) ([]int64, err
 			// Le délai est écoulé : Reset intégral et régénération complète
 			feedState.GeneratedAt = time.Now()
 			feedState.ActiveFeed = "A"
-			feedState.Feeds["A"] = FeedData{Seed: rand.Int63(), PostIDs: nil, Fused: false}
-			feedState.Feeds["B"] = FeedData{Seed: rand.Int63(), PostIDs: nil, Fused: false}
-			feedState.Feeds["C"] = FeedData{Seed: rand.Int63(), PostIDs: nil, Fused: false}
+			feedState.Feeds["A"] = feedData{Seed: rand.Int63(), PostIDs: nil, Fused: false}
+			feedState.Feeds["B"] = feedData{Seed: rand.Int63(), PostIDs: nil, Fused: false}
+			feedState.Feeds["C"] = feedData{Seed: rand.Int63(), PostIDs: nil, Fused: false}
 
 			seedsArray := [3]int64{feedState.Feeds["A"].Seed, feedState.Feeds["B"].Seed, feedState.Feeds["C"].Seed}
-			magasinierBaskets, _ := CollectCandidates(ctx, opts.UserID, seedsArray, opts.Quotas)
+			magasinierBaskets, _ := collectCandidates(ctx, opts.UserID, seedsArray, opts.Quotas)
 
 			// Extraction du panier A
 			var initialCandidateIDs []int64
@@ -87,7 +87,7 @@ func HandlePullToRefresh(ctx context.Context, opts RefreshOptions) ([]int64, err
 			opts.PersonalOpts.Seed = feedState.Feeds["A"].Seed
 			opts.PersonalOpts.StartIndex = 0
 
-			freshFeedIDs, _ := BuildPersonalizedFeed(ctx, opts.PersonalOpts)
+			freshFeedIDs, _ := buildPersonalizedFeed(ctx, opts.PersonalOpts)
 
 			// Injection dans l'état
 			updatedFeedData := feedState.Feeds["A"]
@@ -106,7 +106,7 @@ func HandlePullToRefresh(ctx context.Context, opts RefreshOptions) ([]int64, err
 			}
 		}
 
-		_ = SaveUserFeedState(ctx, opts.UserID, feedState)
+		_ = saveUserFeedState(ctx, opts.UserID, feedState)
 		opts.LastSeenIndex = 0 // On force à 0, et on laisse couler vers le bloc de Consommation Normal
 	}
 
@@ -148,7 +148,7 @@ func HandlePullToRefresh(ctx context.Context, opts RefreshOptions) ([]int64, err
 
 	} else {
 		// SCENARIO 3 (EXTENSION INFINIE) : Les paniers voisins sont vides, on doit ré-interroger Redis
-		extendedBasket, err := CollectSingleBasket(ctx, opts.UserID, activeFeedData.Seed, opts.Quotas)
+		extendedBasket, err := collectSingleBasket(ctx, opts.UserID, activeFeedData.Seed, opts.Quotas)
 		if err != nil {
 			return nil, err
 		}
@@ -166,7 +166,7 @@ func HandlePullToRefresh(ctx context.Context, opts RefreshOptions) ([]int64, err
 	opts.PersonalOpts.Seed = activeFeedData.Seed
 	opts.PersonalOpts.StartIndex = totalPostsInActiveFeed // Maintient la continuité de la Vague de Sérendipité
 
-	freshlyScoredFeedIDs, err := BuildPersonalizedFeed(ctx, opts.PersonalOpts)
+	freshlyScoredFeedIDs, err := buildPersonalizedFeed(ctx, opts.PersonalOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +174,7 @@ func HandlePullToRefresh(ctx context.Context, opts RefreshOptions) ([]int64, err
 	// On greffe les nouveaux posts au flux actif existant
 	activeFeedData.PostIDs = append(activeFeedData.PostIDs, freshlyScoredFeedIDs...)
 	feedState.Feeds[feedState.ActiveFeed] = activeFeedData
-	_ = SaveUserFeedState(ctx, opts.UserID, feedState)
+	_ = saveUserFeedState(ctx, opts.UserID, feedState)
 
 	newTotalPostsInActiveFeed := len(activeFeedData.PostIDs)
 
@@ -197,7 +197,7 @@ func HandlePullToRefresh(ctx context.Context, opts RefreshOptions) ([]int64, err
 		case "C":
 			feedState.ActiveFeed = "A"
 		}
-		_ = SaveUserFeedState(ctx, opts.UserID, feedState)
+		_ = saveUserFeedState(ctx, opts.UserID, feedState)
 
 		// On pioche instantanément le haut du nouveau panier
 		rotatedFeedIDs := feedState.Feeds[feedState.ActiveFeed].PostIDs

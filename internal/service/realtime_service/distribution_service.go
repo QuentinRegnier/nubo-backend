@@ -13,8 +13,8 @@ import (
 // # DTO ET MÉTHODES DE DISTRIBUTION TEMPS RÉEL (REDIS PUB/SUB)
 // ############################################################################
 
-// WSEvent représente la structure générique JSON envoyée aux instances clientes WebSockets.
-type WSEvent struct {
+// wsEvent représente la structure générique JSON envoyée aux instances clientes WebSockets.
+type wsEvent struct {
 	EventType string `json:"event_type"`
 	Payload   any    `json:"payload"`
 }
@@ -25,7 +25,7 @@ func DistributeToUsers(ctx context.Context, eventType string, payload any, targe
 		return nil
 	}
 
-	websocketEvent := WSEvent{
+	websocketEvent := wsEvent{
 		EventType: eventType,
 		Payload:   payload,
 	}
@@ -48,7 +48,7 @@ func DistributeToUsers(ctx context.Context, eventType string, payload any, targe
 
 // DistributeToCommunity distribue un événement global à une Room entière (Mode Twitch / Communauté).
 func DistributeToCommunity(ctx context.Context, eventType string, payload any, communityID int64) error {
-	websocketEvent := WSEvent{
+	websocketEvent := wsEvent{
 		EventType: eventType,
 		Payload:   payload,
 	}

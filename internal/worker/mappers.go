@@ -27,47 +27,47 @@ import (
 // CONTRAT D'INTERFACE : ENTITY MAPPER
 // ============================================================================
 
-// EntityMapper définit le contrat obligatoire pour transformer un événement
+// entityMapper définit le contrat obligatoire pour transformer un événement
 // générique (Payload Go) en une ligne compatible avec le moteur COPY IN de PostgreSQL (L3).
-type EntityMapper interface {
+type entityMapper interface {
 	TableName() string                        // Nom complet de la table SQL (ex: "auth.users")
 	Columns() []string                        // Liste ordonnée des colonnes ciblées
 	ToRow(data any) ([]any, error)            // Transforme le struct Go en tableau de valeurs SQL
 	BuildUpdateQuery(tempTable string) string // Génère la requête de fusion (MERGE/UPDATE)
 }
 
-// GetMapper agit comme une usine (Factory Pattern).
+// getMapper agit comme une usine (Factory Pattern).
 // Il retourne le mapper spécifique correspondant au type d'entité asynchrone traité par Redis.
-func GetMapper(entity redis.EntityType) EntityMapper {
+func getMapper(entity redis.EntityType) entityMapper {
 	switch entity {
 	case redis.EntityUser:
-		return &UserMapper{}
+		return &userMapper{}
 	case redis.EntitySession:
-		return &SessionMapper{}
+		return &sessionMapper{}
 	case redis.EntityUserSettings:
-		return &UserSettingsMapper{}
+		return &userSettingsMapper{}
 	case redis.EntityRelation:
-		return &RelationMapper{}
+		return &relationMapper{}
 	case redis.EntityPost:
-		return &PostMapper{}
+		return &postMapper{}
 	case redis.EntityComment:
-		return &CommentMapper{}
+		return &commentMapper{}
 	case redis.EntityMedia:
-		return &MediaMapper{}
+		return &mediaMapper{}
 	case redis.EntityLike:
-		return &LikeMapper{}
+		return &likeMapper{}
 	case redis.EntitySaved:
-		return &SavedMapper{}
+		return &savedMapper{}
 	case redis.EntityMessage:
-		return &MessageMapper{}
+		return &messageMapper{}
 	case redis.EntityMessageReaction:
-		return &MessageReactionMapper{}
+		return &messageReactionMapper{}
 	case redis.EntityConversation:
-		return &ConversationMapper{}
+		return &conversationMapper{}
 	case redis.EntityMembers:
-		return &MemberMapper{}
+		return &memberMapper{}
 	case redis.EntityReport:
-		return &ReportMapper{}
+		return &reportMapper{}
 	default:
 		return nil
 	}
@@ -80,11 +80,11 @@ func GetMapper(entity redis.EntityType) EntityMapper {
 // ============================================================================
 // MAPPER : UTILISATEURS (auth.users)
 // ============================================================================
-type UserMapper struct{}
+type userMapper struct{}
 
-func (m *UserMapper) TableName() string { return "auth.users" }
+func (m *userMapper) TableName() string { return "auth.users" }
 
-func (m *UserMapper) Columns() []string {
+func (m *userMapper) Columns() []string {
 	return []string{
 		"id", "username", "email", "email_verified", "phone", "phone_verified",
 		"password_hash", "first_name", "last_name", "birthdate", "sex", "bio",
@@ -94,7 +94,7 @@ func (m *UserMapper) Columns() []string {
 	}
 }
 
-func (m *UserMapper) ToRow(data any) ([]any, error) {
+func (m *userMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -164,18 +164,18 @@ func (m *UserMapper) ToRow(data any) ([]any, error) {
 	}, nil
 }
 
-func (m *UserMapper) BuildUpdateQuery(tempTable string) string {
+func (m *userMapper) BuildUpdateQuery(tempTable string) string {
 	return buildGenericUpdateQuery(m.TableName(), tempTable, m.Columns())
 }
 
 // ============================================================================
 // MAPPER : PARAMÈTRES UTILISATEUR (auth.user_settings)
 // ============================================================================
-type UserSettingsMapper struct{}
+type userSettingsMapper struct{}
 
-func (m *UserSettingsMapper) TableName() string { return "auth.user_settings" }
+func (m *userSettingsMapper) TableName() string { return "auth.user_settings" }
 
-func (m *UserSettingsMapper) Columns() []string {
+func (m *userSettingsMapper) Columns() []string {
 	return []string{
 		"id", "user_id", "privacy", "notifications", "display_and_content",
 		"telemetry_vector", "telemetry_tags", "telemetry_timestamp",
@@ -183,7 +183,7 @@ func (m *UserSettingsMapper) Columns() []string {
 	}
 }
 
-func (m *UserSettingsMapper) ToRow(data any) ([]any, error) {
+func (m *userSettingsMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -225,18 +225,18 @@ func (m *UserSettingsMapper) ToRow(data any) ([]any, error) {
 	}, nil
 }
 
-func (m *UserSettingsMapper) BuildUpdateQuery(tempTable string) string {
+func (m *userSettingsMapper) BuildUpdateQuery(tempTable string) string {
 	return buildGenericUpdateQuery(m.TableName(), tempTable, m.Columns())
 }
 
 // ============================================================================
 // MAPPER : SESSIONS D'APPAREILS (auth.sessions)
 // ============================================================================
-type SessionMapper struct{}
+type sessionMapper struct{}
 
-func (m *SessionMapper) TableName() string { return "auth.sessions" }
+func (m *sessionMapper) TableName() string { return "auth.sessions" }
 
-func (m *SessionMapper) Columns() []string {
+func (m *sessionMapper) Columns() []string {
 	return []string{
 		"id", "user_id", "master_token", "firebase_installation_id", "device_info",
 		"ip_history", "current_secret", "last_secret", "last_jwt",
@@ -244,7 +244,7 @@ func (m *SessionMapper) Columns() []string {
 	}
 }
 
-func (m *SessionMapper) ToRow(data any) ([]any, error) {
+func (m *sessionMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -294,22 +294,22 @@ func (m *SessionMapper) ToRow(data any) ([]any, error) {
 	}, nil
 }
 
-func (m *SessionMapper) BuildUpdateQuery(tempTable string) string {
+func (m *sessionMapper) BuildUpdateQuery(tempTable string) string {
 	return buildGenericUpdateQuery(m.TableName(), tempTable, m.Columns())
 }
 
 // ============================================================================
 // MAPPER : RELATIONS SOCIALES (auth.relations)
 // ============================================================================
-type RelationMapper struct{}
+type relationMapper struct{}
 
-func (m *RelationMapper) TableName() string { return "auth.relations" }
+func (m *relationMapper) TableName() string { return "auth.relations" }
 
-func (m *RelationMapper) Columns() []string {
+func (m *relationMapper) Columns() []string {
 	return []string{"id", "primary_id", "secondary_id", "state", "created_at", "updated_at"}
 }
 
-func (m *RelationMapper) ToRow(data any) ([]any, error) {
+func (m *relationMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -327,7 +327,7 @@ func (m *RelationMapper) ToRow(data any) ([]any, error) {
 	return []any{r.ID, r.PrimaryID, r.SecondaryID, r.State, r.CreatedAt, r.UpdatedAt}, nil
 }
 
-func (m *RelationMapper) BuildUpdateQuery(tempTable string) string {
+func (m *relationMapper) BuildUpdateQuery(tempTable string) string {
 	// Spécificité : L'Update se fait sur la clé composite (primary_id, secondary_id)
 	return fmt.Sprintf(
 		"UPDATE %s SET state = %s.state, updated_at = %s.updated_at FROM %s WHERE %s.primary_id = %s.primary_id AND %s.secondary_id = %s.secondary_id",
@@ -342,11 +342,11 @@ func (m *RelationMapper) BuildUpdateQuery(tempTable string) string {
 // ============================================================================
 // MAPPER : PUBLICATIONS (content.posts)
 // ============================================================================
-type PostMapper struct{}
+type postMapper struct{}
 
-func (m *PostMapper) TableName() string { return "content.posts" }
+func (m *postMapper) TableName() string { return "content.posts" }
 
-func (m *PostMapper) Columns() []string {
+func (m *postMapper) Columns() []string {
 	return []string{
 		"id", "user_id", "content", "hashtags", "identifiers", "media_ids",
 		"visibility", "priority_level", "location", "like_count",
@@ -356,7 +356,7 @@ func (m *PostMapper) Columns() []string {
 	}
 }
 
-func (m *PostMapper) ToRow(data any) ([]any, error) {
+func (m *postMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -395,22 +395,22 @@ func (m *PostMapper) ToRow(data any) ([]any, error) {
 	}, nil
 }
 
-func (m *PostMapper) BuildUpdateQuery(tempTable string) string {
+func (m *postMapper) BuildUpdateQuery(tempTable string) string {
 	return buildGenericUpdateQuery(m.TableName(), tempTable, m.Columns())
 }
 
 // ============================================================================
 // MAPPER : MÉDIAS (content.media)
 // ============================================================================
-type MediaMapper struct{}
+type mediaMapper struct{}
 
-func (m *MediaMapper) TableName() string { return "content.media" }
+func (m *mediaMapper) TableName() string { return "content.media" }
 
-func (m *MediaMapper) Columns() []string {
+func (m *mediaMapper) Columns() []string {
 	return []string{"id", "owner_id", "storage_path", "visibility", "created_at", "updated_at"}
 }
 
-func (m *MediaMapper) ToRow(data any) ([]any, error) {
+func (m *mediaMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -436,22 +436,22 @@ func (m *MediaMapper) ToRow(data any) ([]any, error) {
 	}, nil
 }
 
-func (m *MediaMapper) BuildUpdateQuery(tempTable string) string {
+func (m *mediaMapper) BuildUpdateQuery(tempTable string) string {
 	return buildGenericUpdateQuery(m.TableName(), tempTable, m.Columns())
 }
 
 // ============================================================================
 // MAPPER : COMMENTAIRES (content.comments)
 // ============================================================================
-type CommentMapper struct{}
+type commentMapper struct{}
 
-func (m *CommentMapper) TableName() string { return "content.comments" }
+func (m *commentMapper) TableName() string { return "content.comments" }
 
-func (m *CommentMapper) Columns() []string {
+func (m *commentMapper) Columns() []string {
 	return []string{"id", "post_id", "user_id", "content", "visibility", "like_count", "score", "created_at", "updated_at"}
 }
 
-func (m *CommentMapper) ToRow(data any) ([]any, error) {
+func (m *commentMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -469,17 +469,17 @@ func (m *CommentMapper) ToRow(data any) ([]any, error) {
 	return []any{c.ID, c.PostID, c.UserID, c.Content, c.Visibility, c.LikeCount, c.Score, c.CreatedAt, c.UpdatedAt}, nil
 }
 
-func (m *CommentMapper) BuildUpdateQuery(t string) string {
+func (m *commentMapper) BuildUpdateQuery(t string) string {
 	return buildGenericUpdateQuery(m.TableName(), t, m.Columns())
 }
 
 // ============================================================================
 // MAPPER : LIKES (content.likes)
 // ============================================================================
-type LikeMapper struct{}
+type likeMapper struct{}
 
-// LikeWorkerPayload définit la structure allégée attendue par le Worker pour l'entité Like.
-type LikeWorkerPayload struct {
+// likeWorkerPayload définit la structure allégée attendue par le Worker pour l'entité Like.
+type likeWorkerPayload struct {
 	ID         int64  `json:"id"`
 	TargetType int    `json:"target_type"`
 	TargetID   int64  `json:"target_id"`
@@ -487,13 +487,13 @@ type LikeWorkerPayload struct {
 	CreatedAt  string `json:"created_at"`
 }
 
-func (m *LikeMapper) TableName() string { return "content.likes" }
+func (m *likeMapper) TableName() string { return "content.likes" }
 
-func (m *LikeMapper) Columns() []string {
+func (m *likeMapper) Columns() []string {
 	return []string{"id", "target_type", "target_id", "user_id", "created_at"}
 }
 
-func (m *LikeMapper) ToRow(data any) ([]any, error) {
+func (m *likeMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -501,7 +501,7 @@ func (m *LikeMapper) ToRow(data any) ([]any, error) {
 		return nil, nubo_error.NewInternal()
 	}
 
-	var l LikeWorkerPayload
+	var l likeWorkerPayload
 	if err := json.Unmarshal(jsonBytes, &l); err != nil {
 		nubo_log.Error(context.Background()).Err(err).Msg("LikeMapper : Échec de la désérialisation")
 		return nil, nubo_error.NewInternal()
@@ -511,22 +511,22 @@ func (m *LikeMapper) ToRow(data any) ([]any, error) {
 	return []any{l.ID, l.TargetType, l.TargetID, l.UserID, l.CreatedAt}, nil
 }
 
-func (m *LikeMapper) BuildUpdateQuery(_ string) string {
+func (m *likeMapper) BuildUpdateQuery(_ string) string {
 	return "" // Pas de mise à jour pour un Like (Insert ou Delete uniquement)
 }
 
 // ============================================================================
 // MAPPER : FAVORIS (content.saved)
 // ============================================================================
-type SavedMapper struct{}
+type savedMapper struct{}
 
-func (m *SavedMapper) TableName() string { return "content.saved" }
+func (m *savedMapper) TableName() string { return "content.saved" }
 
-func (m *SavedMapper) Columns() []string {
+func (m *savedMapper) Columns() []string {
 	return []string{"id", "user_id", "post_id", "created_at"}
 }
 
-func (m *SavedMapper) ToRow(data any) ([]any, error) {
+func (m *savedMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -544,7 +544,7 @@ func (m *SavedMapper) ToRow(data any) ([]any, error) {
 	return []any{s.ID, s.UserID, s.PostID, s.CreatedAt}, nil
 }
 
-func (m *SavedMapper) BuildUpdateQuery(_ string) string {
+func (m *savedMapper) BuildUpdateQuery(_ string) string {
 	return "" // Pas de mise à jour pour un Favori (Insert ou Delete uniquement)
 }
 
@@ -555,15 +555,15 @@ func (m *SavedMapper) BuildUpdateQuery(_ string) string {
 // ============================================================================
 // MAPPER : MESSAGES (messaging.messages)
 // ============================================================================
-type MessageMapper struct{}
+type messageMapper struct{}
 
-func (m *MessageMapper) TableName() string { return "messaging.messages" }
+func (m *messageMapper) TableName() string { return "messaging.messages" }
 
-func (m *MessageMapper) Columns() []string {
+func (m *messageMapper) Columns() []string {
 	return []string{"id", "conversation_id", "sender_id", "message_type", "visibility", "content", "attachments", "created_at", "updated_at"}
 }
 
-func (m *MessageMapper) ToRow(data any) ([]any, error) {
+func (m *messageMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -596,22 +596,22 @@ func (m *MessageMapper) ToRow(data any) ([]any, error) {
 	}, nil
 }
 
-func (m *MessageMapper) BuildUpdateQuery(tempTable string) string {
+func (m *messageMapper) BuildUpdateQuery(tempTable string) string {
 	return buildGenericUpdateQuery(m.TableName(), tempTable, m.Columns())
 }
 
 // ============================================================================
 // MAPPER : RÉACTIONS AUX MESSAGES (messaging.message_reactions)
 // ============================================================================
-type MessageReactionMapper struct{}
+type messageReactionMapper struct{}
 
-func (m *MessageReactionMapper) TableName() string { return "messaging.message_reactions" }
+func (m *messageReactionMapper) TableName() string { return "messaging.message_reactions" }
 
-func (m *MessageReactionMapper) Columns() []string {
+func (m *messageReactionMapper) Columns() []string {
 	return []string{"id", "message_id", "user_id", "reaction", "created_at"}
 }
 
-func (m *MessageReactionMapper) ToRow(data any) ([]any, error) {
+func (m *messageReactionMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -629,7 +629,7 @@ func (m *MessageReactionMapper) ToRow(data any) ([]any, error) {
 	return []any{r.ID, r.MessageID, r.UserID, r.Reaction, r.CreatedAt}, nil
 }
 
-func (m *MessageReactionMapper) BuildUpdateQuery(_ string) string {
+func (m *messageReactionMapper) BuildUpdateQuery(_ string) string {
 	// L'Update des réactions est géré via un UPSERT explicite dans postgres_batch.go
 	return ""
 }
@@ -637,15 +637,15 @@ func (m *MessageReactionMapper) BuildUpdateQuery(_ string) string {
 // ============================================================================
 // MAPPER : CONVERSATIONS (messaging.conversations)
 // ============================================================================
-type ConversationMapper struct{}
+type conversationMapper struct{}
 
-func (m *ConversationMapper) TableName() string { return "messaging.conversations" }
+func (m *conversationMapper) TableName() string { return "messaging.conversations" }
 
-func (m *ConversationMapper) Columns() []string {
+func (m *conversationMapper) Columns() []string {
 	return []string{"id", "type", "title", "description", "avatar_id", "last_message_id", "state", "settings", "external_link", "created_at", "updated_at"}
 }
 
-func (m *ConversationMapper) ToRow(data any) ([]any, error) {
+func (m *conversationMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -690,18 +690,18 @@ func (m *ConversationMapper) ToRow(data any) ([]any, error) {
 	return []any{c.ID, c.Type, titleDB, descDB, avatarDB, lastMsgDB, c.State, settingsDB, linkDB, c.CreatedAt, c.UpdatedAt}, nil
 }
 
-func (m *ConversationMapper) BuildUpdateQuery(t string) string {
+func (m *conversationMapper) BuildUpdateQuery(t string) string {
 	return buildGenericUpdateQuery(m.TableName(), t, m.Columns())
 }
 
 // ============================================================================
 // MAPPER : MEMBRES (messaging.members)
 // ============================================================================
-type MemberMapper struct{}
+type memberMapper struct{}
 
-func (m *MemberMapper) TableName() string { return "messaging.members" }
+func (m *memberMapper) TableName() string { return "messaging.members" }
 
-func (m *MemberMapper) Columns() []string {
+func (m *memberMapper) Columns() []string {
 	return []string{
 		"id", "conversation_id", "user_id", "role", "settings",
 		"joined_at", "unread_count", "frozen_message_id",
@@ -709,7 +709,7 @@ func (m *MemberMapper) Columns() []string {
 	}
 }
 
-func (m *MemberMapper) ToRow(data any) ([]any, error) {
+func (m *memberMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -753,7 +753,7 @@ func (m *MemberMapper) ToRow(data any) ([]any, error) {
 	}, nil
 }
 
-func (m *MemberMapper) BuildUpdateQuery(t string) string {
+func (m *memberMapper) BuildUpdateQuery(t string) string {
 	return buildGenericUpdateQuery(m.TableName(), t, m.Columns())
 }
 
@@ -764,18 +764,18 @@ func (m *MemberMapper) BuildUpdateQuery(t string) string {
 // ============================================================================
 // MAPPER : SIGNALEMENTS (moderation.reports)
 // ============================================================================
-type ReportMapper struct{}
+type reportMapper struct{}
 
-func (m *ReportMapper) TableName() string { return "moderation.reports" }
+func (m *reportMapper) TableName() string { return "moderation.reports" }
 
-func (m *ReportMapper) Columns() []string {
+func (m *reportMapper) Columns() []string {
 	return []string{
 		"id", "reporter_id", "target_type", "target_ids", "category",
 		"reason", "rationale", "state", "importance", "created_at", "updated_at",
 	}
 }
 
-func (m *ReportMapper) ToRow(data any) ([]any, error) {
+func (m *reportMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -807,7 +807,7 @@ func (m *ReportMapper) ToRow(data any) ([]any, error) {
 	}, nil
 }
 
-func (m *ReportMapper) BuildUpdateQuery(tempTable string) string {
+func (m *reportMapper) BuildUpdateQuery(tempTable string) string {
 	return buildGenericUpdateQuery(m.TableName(), tempTable, m.Columns())
 }
 

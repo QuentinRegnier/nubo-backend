@@ -301,7 +301,7 @@ func AddMemberToSpeedCache(ctx context.Context, memberPayload lite_models.Member
 	compositeMemberKey := fmt.Sprintf("%d:%d", memberPayload.ConversationID, memberPayload.UserID)
 
 	if memberPayload.Role >= 0 {
-		UpdateCommunityMemberCountInSpeedCache(ctx, memberPayload.ConversationID, 1)
+		updateCommunityMemberCountInSpeedCache(ctx, memberPayload.ConversationID, 1)
 	}
 
 	errSet := redis.ConvMembers.SetObject(ctx, compositeMemberKey, memberPayload)
@@ -319,7 +319,7 @@ func RemoveMemberFromSpeedCache(ctx context.Context, conversationID int64, userI
 
 	var oldMemberPayload lite_models.MemberLiteRequest
 	if errGet := redis.ConvMembers.GetObject(ctx, compositeMemberKey, &oldMemberPayload); errGet == nil && oldMemberPayload.Role >= 0 {
-		UpdateCommunityMemberCountInSpeedCache(ctx, conversationID, -1)
+		updateCommunityMemberCountInSpeedCache(ctx, conversationID, -1)
 	}
 
 	_ = redis.ConvParticipants.SRem(ctx, conversationID, userID)
@@ -416,8 +416,8 @@ func RehydrateConversationItemInSpeedCache(ctx context.Context, fullConversation
 // # AMORÇAGE (SEEDING) MESSAGERIE
 // ############################################################################
 
-// SeedMessagingSpeedCache reconstruit l'intégralité du cache Inbox et Conversations depuis Postgres.
-func SeedMessagingSpeedCache(ctx context.Context) error {
+// seedMessagingSpeedCache reconstruit l'intégralité du cache Inbox et Conversations depuis Postgres.
+func seedMessagingSpeedCache(ctx context.Context) error {
 	nubo_log.Info(ctx).Msg("Amorçage SPEED Cache: Chargement de la messagerie (Conversations et Inboxes)...")
 
 	activeConversationsList, errPgConv := postgres.FuncLoadActiveConversations(ctx)
@@ -527,9 +527,9 @@ func UpdateMemberSpeedCache(ctx context.Context, memberPayload lite_models.Membe
 	isActive := memberPayload.Role >= 0
 
 	if isActive && !wasActive {
-		UpdateCommunityMemberCountInSpeedCache(ctx, memberPayload.ConversationID, 1)
+		updateCommunityMemberCountInSpeedCache(ctx, memberPayload.ConversationID, 1)
 	} else if !isActive && wasActive {
-		UpdateCommunityMemberCountInSpeedCache(ctx, memberPayload.ConversationID, -1)
+		updateCommunityMemberCountInSpeedCache(ctx, memberPayload.ConversationID, -1)
 	}
 
 	errSet := redis.ConvMembers.SetObject(ctx, compositeMemberKey, memberPayload)

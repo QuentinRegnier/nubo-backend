@@ -21,35 +21,35 @@ func StartBackgroundWorkers(ctx context.Context) {
 	// ── ÉTAPE 1 : LANCEMENT DES MOTEURS ALGORITHMIQUES (CRONS) ──────────────
 
 	// Moteur de Time-Decay : Recalcule la chute du score viral au fil du temps
-	StartScoreUpdaterCron(ctx)
+	startScoreUpdaterCron(ctx)
 
 	// Moteur d'Émergence : Fusionne les hashtags similaires (Fautes de frappe)
-	StartHashtagCanonCron(ctx)
+	startHashtagCanonCron(ctx)
 
 	// Moteur de Tendances : Calcule le classement mondial des hashtags
-	StartHashtagTrendCron(ctx)
+	startHashtagTrendCron(ctx)
 
 	// Moteur de Warm-up : Régénère en silence les flux des utilisateurs inactifs
-	StartFeedWarmupCron(ctx)
+	startFeedWarmupCron(ctx)
 
 	// ── ÉTAPE 2 : LANCEMENT DES GARBAGE COLLECTORS (PURGES L3->L2) ──────────
 
 	// Détruit les fichiers physiques et logs des médias orphelins
-	StartMediaCleanupCron(ctx)
+	startMediaCleanupCron(ctx)
 
 	// Nettoie les Likes qui pointent vers des posts supprimés
-	StartLikeCleanupCron(ctx)
+	startLikeCleanupCron(ctx)
 
 	// Nettoie les Réactions (Emoji) sur les messages supprimés
-	StartReactionCleanupCron(ctx)
+	startReactionCleanupCron(ctx)
 
 	// Supprime les sauvegardes de posts qui n'existent plus
-	StartSavedCleanupCron(ctx)
+	startSavedCleanupCron(ctx)
 
 	// ── ÉTAPE 3 : LANCEMENT DES CANAUX EXTERNES ─────────────────────────────
 
 	// Initialise Firebase Cloud Messaging et consomme les requêtes de Push
-	StartPushNotificationWorker(ctx)
+	startPushNotificationWorker(ctx)
 
 	// ── ÉTAPE 4 : DÉPLOIEMENT DU WORKER POOL (SHARDING) ─────────────────────
 	// L'infrastructure asynchrone repose sur 64 Shards Redis pour annuler

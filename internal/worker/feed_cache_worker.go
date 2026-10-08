@@ -18,9 +18,9 @@ import (
 // # WORKER : FEED WARM-UP & SOCIAL FAN-OUT
 // ############################################################################
 
-// StartFeedWarmupCron orchestre l'auto-génération des flux d'actualités par lots pour les utilisateurs inactifs.
+// startFeedWarmupCron orchestre l'auto-génération des flux d'actualités par lots pour les utilisateurs inactifs.
 // S'exécute à intervalles réguliers sans jamais scanner l'intégralité de la BDD (O(log(N) + M)).
-func StartFeedWarmupCron(ctx context.Context) {
+func startFeedWarmupCron(ctx context.Context) {
 	nubo_log.Info(ctx).Msg("Démarrage du Moteur de Warm-up Algorithmique (Feed)...")
 
 	go func() {

@@ -12,12 +12,12 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
-type FullInboxResult struct {
+type fullInboxResult struct {
 	Conversation conversation_models.ConversationPayload
 	Member       member_models.MemberPayload
 }
 
-func FuncLoadConversationPaginated(ctx context.Context, userID int64, limit int64, offset int64) ([]FullInboxResult, error) {
+func FuncLoadConversationPaginated(ctx context.Context, userID int64, limit int64, offset int64) ([]fullInboxResult, error) {
 	query := `SELECT conv_id, conv_type, conv_title, conv_description, conv_avatar_id, conv_last_msg_id, conv_state, conv_settings, external_link, conv_created, conv_updated, mem_id, mem_conv_id, mem_user_id, mem_role, mem_settings, mem_joined, mem_unread, mem_frozen_id, mem_last_read_message_id, mem_created, mem_updated FROM messaging.func_load_conversation_paginated($1, $2, $3)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, userID, limit, offset)
 	if err != nil {
@@ -31,7 +31,7 @@ func FuncLoadConversationPaginated(ctx context.Context, userID int64, limit int6
 		}
 	}(rows)
 
-	var results []FullInboxResult
+	var results []fullInboxResult
 	for rows.Next() {
 		var c conversation_models.ConversationPayload
 		var m member_models.MemberPayload
@@ -75,7 +75,7 @@ func FuncLoadConversationPaginated(ctx context.Context, userID int64, limit int6
 				_ = json.Unmarshal([]byte(memSettingsRaw.String), &m.Settings)
 			}
 
-			results = append(results, FullInboxResult{Conversation: c, Member: m})
+			results = append(results, fullInboxResult{Conversation: c, Member: m})
 		} else {
 			nubo_log.Error(ctx).Err(err).Msg("Erreur de scan des lignes Postgres")
 		}

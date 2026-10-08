@@ -16,13 +16,13 @@ import (
 // # SECTION 1 : CONFIGURATION DES QUOTAS ET ORIGINES
 // ############################################################################
 
-// CandidateOrigin définit la provenance d'un post dans le panier pour l'A/B testing et les métriques.
-type CandidateOrigin string
+// candidateOrigin définit la provenance d'un post dans le panier pour l'A/B testing et les métriques.
+type candidateOrigin string
 
 const (
-	OriginSocial CandidateOrigin = "SOCIAL" // Issu des abonnements ou amis
-	OriginTag    CandidateOrigin = "TAG"    // Issu des préférences thématiques de l'utilisateur
-	OriginGlobal CandidateOrigin = "GLOBAL" // Issu des tendances pures (Sérendipité / Découverte)
+	originSocial candidateOrigin = "SOCIAL" // Issu des abonnements ou amis
+	originTag    candidateOrigin = "TAG"    // Issu des préférences thématiques de l'utilisateur
+	originGlobal candidateOrigin = "GLOBAL" // Issu des tendances pures (Sérendipité / Découverte)
 )
 
 // Quotas définit les règles de répartition et la taille cible du panier de candidats bruts.
@@ -33,8 +33,8 @@ type Quotas struct {
 	GlobalRatio   float64 // Proportion de posts issus des tendances globales (ex: 0.2)
 }
 
-// Validate s'assure de l'exactitude mathématique et de la cohérence des quotas injectés.
-func (quotas *Quotas) Validate() error {
+// validate s'assure de l'exactitude mathématique et de la cohérence des quotas injectés.
+func (quotas *Quotas) validate() error {
 	if quotas.MaxCandidates <= 0 {
 		return nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Le nombre maximum de candidats doit être strictement positif.", nil)
 	}
@@ -52,9 +52,9 @@ func (quotas *Quotas) Validate() error {
 	return nil
 }
 
-// GetQuotaSizes convertit les ratios en tailles absolues d'IDs à collecter.
+// getQuotaSizes convertit les ratios en tailles absolues d'IDs à collecter.
 // Sécurise le calcul pour éviter toute perte ou surplus d'unité lié aux arrondis de flottants.
-func (quotas *Quotas) GetQuotaSizes() (socialSize, tagSize, globalSize int) {
+func (quotas *Quotas) getQuotaSizes() (socialSize, tagSize, globalSize int) {
 	socialSize = int(math.Round(float64(quotas.MaxCandidates) * quotas.SocialRatio))
 	tagSize = int(math.Round(float64(quotas.MaxCandidates) * quotas.TagRatio))
 
@@ -67,38 +67,38 @@ func (quotas *Quotas) GetQuotaSizes() (socialSize, tagSize, globalSize int) {
 // # SECTION 2 : LE PANIER DE CANDIDATS (BASKET)
 // ############################################################################
 
-// BasketItem représente un post dans le panier avant son passage en "caisse" (MMR).
-type BasketItem struct {
+// basketItem représente un post dans le panier avant son passage en "caisse" (MMR).
+type basketItem struct {
 	PostID int64
-	Origin CandidateOrigin
+	Origin candidateOrigin
 }
 
-// BasketPersonality est l'ADN du feed, dicté exclusivement par sa Seed
-type BasketPersonality struct {
+// basketPersonality est l'ADN du feed, dicté exclusivement par sa Seed
+type basketPersonality struct {
 	TagVariance         float64 // Modifie le quota global vs tags (Ex: ±15%)
 	ExplorationExponent float64 // Si < 1 : Aventureux (lisse les poids). Si > 1 : Conservateur (accentue le top)
 	RankSkew            float64 // Plus c'est élevé, plus l'aléatoire favorise les index proches de 0 (le Top)
 	FreshnessBias       float64 // 0.0 à 1.0. Détermine la probabilité de piocher dans le Hourly plutôt que le Daily
 }
 
-// CandidateBasket représente UN seul panier avec son ADN
-type CandidateBasket struct {
+// candidateBasket représente UN seul panier avec son ADN
+type candidateBasket struct {
 	mutex            sync.RWMutex
 	UniquePostIDsMap map[int64]struct{} // Set pour dédoublonnage en O(1)
-	Items            []BasketItem
+	Items            []basketItem
 	Capacity         int
 	IsFull           bool
 
 	Seed        int64
 	RandomGen   *rand.Rand
-	Personality BasketPersonality
+	Personality basketPersonality
 }
 
-// NewCandidateBasket initialise un panier et forge sa personnalité de manière déterministe
-func NewCandidateBasket(capacity int, seed int64) *CandidateBasket {
+// newCandidateBasket initialise un panier et forge sa personnalité de manière déterministe
+func newCandidateBasket(capacity int, seed int64) *candidateBasket {
 	randomGen := rand.New(rand.NewSource(seed))
 
-	personality := BasketPersonality{
+	personality := basketPersonality{
 		// Variance de -15% à +15% sur les quotas
 		TagVariance: (randomGen.Float64() * 0.30) - 0.15,
 		// Exposant de 0.5 (très explorateur) à 2.0 (très conservateur)
@@ -109,9 +109,9 @@ func NewCandidateBasket(capacity int, seed int64) *CandidateBasket {
 		FreshnessBias: randomGen.Float64(),
 	}
 
-	return &CandidateBasket{
+	return &candidateBasket{
 		UniquePostIDsMap: make(map[int64]struct{}, capacity),
-		Items:            make([]BasketItem, 0, capacity),
+		Items:            make([]basketItem, 0, capacity),
 		Capacity:         capacity,
 		IsFull:           false,
 		Seed:             seed,
@@ -121,7 +121,7 @@ func NewCandidateBasket(capacity int, seed int64) *CandidateBasket {
 }
 
 // Add tente d'insérer un post dans le panier (Dédoublonnage O(1) + Cuckoo Filter)
-func (basket *CandidateBasket) Add(ctx context.Context, userID int64, postID int64, origin CandidateOrigin) bool {
+func (basket *candidateBasket) Add(ctx context.Context, userID int64, postID int64, origin candidateOrigin) bool {
 	basket.mutex.Lock()
 	defer basket.mutex.Unlock()
 
@@ -135,7 +135,7 @@ func (basket *CandidateBasket) Add(ctx context.Context, userID int64, postID int
 			return false
 		}
 
-		basket.Items = append(basket.Items, BasketItem{PostID: postID, Origin: origin})
+		basket.Items = append(basket.Items, basketItem{PostID: postID, Origin: origin})
 		basket.UniquePostIDsMap[postID] = struct{}{}
 
 		if len(basket.Items) >= basket.Capacity {
@@ -146,16 +146,16 @@ func (basket *CandidateBasket) Add(ctx context.Context, userID int64, postID int
 	return false
 }
 
-// Size retourne la taille actuelle du panier de manière thread-safe
-func (basket *CandidateBasket) Size() int {
+// size retourne la taille actuelle du panier de manière thread-safe
+func (basket *candidateBasket) size() int {
 	basket.mutex.RLock()
 	defer basket.mutex.RUnlock()
 	return len(basket.Items)
 }
 
-// FetchDeterministicallyFromZSET utilise la personnalité du panier (Seed + Skew) pour extraire
+// fetchDeterministicallyFromZSET utilise la personnalité du panier (Seed + Skew) pour extraire
 // des posts de manière pseudo-aléatoire mais 100% déterministe, favorisant le haut du classement.
-func (basket *CandidateBasket) FetchDeterministicallyFromZSET(ctx context.Context, userID int64, zsetKey string, targetCount int, origin CandidateOrigin) int {
+func (basket *candidateBasket) fetchDeterministicallyFromZSET(ctx context.Context, userID int64, zsetKey string, targetCount int, origin candidateOrigin) int {
 	if targetCount <= 0 {
 		return 0
 	}
@@ -223,25 +223,25 @@ func (basket *CandidateBasket) FetchDeterministicallyFromZSET(ctx context.Contex
 // # SECTION 3 : LE CHARIOT (Gestionnaire des Feeds Parallèles)
 // ############################################################################
 
-// FeedBaskets orchestre la création simultanée des Feeds A, B et C
-type FeedBaskets struct {
-	FeedA *CandidateBasket
-	FeedB *CandidateBasket
-	FeedC *CandidateBasket
+// feedBaskets orchestre la création simultanée des Feeds A, B et C
+type feedBaskets struct {
+	FeedA *candidateBasket
+	FeedB *candidateBasket
+	FeedC *candidateBasket
 }
 
-// NewFeedBaskets crée le chariot avec les 3 graines générées pour la session
-func NewFeedBaskets(capacity int, seedA, seedB, seedC int64) *FeedBaskets {
-	return &FeedBaskets{
-		FeedA: NewCandidateBasket(capacity, seedA),
-		FeedB: NewCandidateBasket(capacity, seedB),
-		FeedC: NewCandidateBasket(capacity, seedC),
+// newFeedBaskets crée le chariot avec les 3 graines générées pour la session
+func newFeedBaskets(capacity int, seedA, seedB, seedC int64) *feedBaskets {
+	return &feedBaskets{
+		FeedA: newCandidateBasket(capacity, seedA),
+		FeedB: newCandidateBasket(capacity, seedB),
+		FeedC: newCandidateBasket(capacity, seedC),
 	}
 }
 
-// LoadSocialMailbox lit le ZSET préparé par le Worker asynchrone et injecte TOUS les posts
+// loadSocialMailbox lit le ZSET préparé par le Worker asynchrone et injecte TOUS les posts
 // des abonnements/amis dans les 3 paniers sans distinction (Valeurs sûres).
-func (feedBaskets *FeedBaskets) LoadSocialMailbox(ctx context.Context, userID int64) error {
+func (feedBaskets *feedBaskets) loadSocialMailbox(ctx context.Context, userID int64) error {
 	mailboxKey := redis.FeedsMailbox.Key(userID)
 
 	idStrings, err := redis.ZRevRange(ctx, mailboxKey, 0, -1)
@@ -252,9 +252,9 @@ func (feedBaskets *FeedBaskets) LoadSocialMailbox(ctx context.Context, userID in
 
 	for _, idStr := range idStrings {
 		if postID, err := strconv.ParseInt(idStr, 10, 64); err == nil {
-			feedBaskets.FeedA.Add(ctx, userID, postID, OriginSocial)
-			feedBaskets.FeedB.Add(ctx, userID, postID, OriginSocial)
-			feedBaskets.FeedC.Add(ctx, userID, postID, OriginSocial)
+			feedBaskets.FeedA.Add(ctx, userID, postID, originSocial)
+			feedBaskets.FeedB.Add(ctx, userID, postID, originSocial)
+			feedBaskets.FeedC.Add(ctx, userID, postID, originSocial)
 		}
 	}
 

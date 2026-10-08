@@ -38,8 +38,8 @@ func StoreCommunityLiteInSpeedCache(ctx context.Context, communityLitePayload li
 	return nil
 }
 
-// UpdateCommunityMemberCountInSpeedCache met à jour le compteur de membres en RAM (O(1)).
-func UpdateCommunityMemberCountInSpeedCache(ctx context.Context, communityID int64, delta int) {
+// updateCommunityMemberCountInSpeedCache met à jour le compteur de membres en RAM (O(1)).
+func updateCommunityMemberCountInSpeedCache(ctx context.Context, communityID int64, delta int) {
 	if delta == 0 {
 		return
 	}

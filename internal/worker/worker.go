@@ -18,25 +18,25 @@ import (
 // ============================================================================
 var (
 	// Limite dynamique du nombre d'événements traités en un seul cycle
-	MaxBatchSize int64 = 5000
+	maxBatchSize int64 = 5000
 
 	// Backoff Minimum (Période d'hyperactivité : vitesse de scrutation max)
-	MinBackoff = 50 * time.Millisecond
+	minBackoff = 50 * time.Millisecond
 
 	// Backoff Maximum (Sommeil profond : pour économiser le CPU si la file est vide)
-	MaxBackoff = 1 * time.Second
+	maxBackoff = 1 * time.Second
 )
 
 // init surcharge les variables par défaut si elles sont définies dans le .env
 func init() {
 	if val, err := strconv.ParseInt(os.Getenv("WORKER_MAX_BATCH_SIZE"), 10, 64); err == nil && val > 0 {
-		MaxBatchSize = val
+		maxBatchSize = val
 	}
 	if val, err := strconv.Atoi(os.Getenv("WORKER_MIN_BACKOFF_MS")); err == nil && val > 0 {
-		MinBackoff = time.Duration(val) * time.Millisecond
+		minBackoff = time.Duration(val) * time.Millisecond
 	}
 	if val, err := strconv.Atoi(os.Getenv("WORKER_MAX_BACKOFF_MS")); err == nil && val > 0 {
-		MaxBackoff = time.Duration(val) * time.Millisecond
+		maxBackoff = time.Duration(val) * time.Millisecond
 	}
 }
 
@@ -47,7 +47,7 @@ func init() {
 // runWorker est la boucle infinie exécutée par chaque Shard.
 // Elle consomme les événements Redis et applique un backoff exponentiel en cas d'inactivité.
 func runWorker(ctx context.Context, shardID int) {
-	currentBackoff := MinBackoff
+	currentBackoff := minBackoff
 
 	for {
 		// ── ÉTAPE 1 : ÉCOUTE DU SIGNAL D'ARRÊT GRACIEUX ─────────────────────
@@ -61,7 +61,7 @@ func runWorker(ctx context.Context, shardID int) {
 		// ── ÉTAPE 2 : DÉPILEMENT BLOQUANT (BLMPOP) ──────────────────────────
 		// Le worker se met en pause (0 CPU) jusqu'à ce qu'un événement arrive
 		// ou que le timeout de Redis soit atteint.
-		events, err := redis.PopSmartBatchBlocking(ctx, shardID, MaxBatchSize)
+		events, err := redis.PopSmartBatchBlocking(ctx, shardID, maxBatchSize)
 		if err != nil {
 			nubo_log.Error(ctx).Err(err).Int("shard_id", shardID).Msg("Worker Redis : Échec critique lors du dépilement (BLMPOP)")
 			time.Sleep(1 * time.Second) // Temporisation de sécurité en cas de crash réseau
@@ -73,13 +73,13 @@ func runWorker(ctx context.Context, shardID int) {
 			processBatch(ctx, events)
 
 			// RESET DU SOMMEIL : on a trouvé du travail, on repasse en hyperactivité !
-			currentBackoff = MinBackoff
+			currentBackoff = minBackoff
 		} else {
 			// SLEEP : la file était vide (malgré le blocage initial), on s'endort doucement.
 			time.Sleep(currentBackoff)
 			currentBackoff *= 2
-			if currentBackoff > MaxBackoff {
-				currentBackoff = MaxBackoff
+			if currentBackoff > maxBackoff {
+				currentBackoff = maxBackoff
 			}
 		}
 	}

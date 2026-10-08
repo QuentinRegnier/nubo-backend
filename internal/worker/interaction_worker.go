@@ -10,8 +10,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// Interaction représente un micro-événement de la messagerie (Réaction ou Non-lu).
-type Interaction struct {
+// interaction représente un micro-événement de la messagerie (Réaction ou Non-lu).
+type interaction struct {
 	ActorID   int64
 	TargetID  int64
 	Type      string
@@ -21,7 +21,7 @@ type Interaction struct {
 }
 
 // Canal asynchrone bufferisé global pour absorber les pics de charge (Backpressure)
-var interactionChan = make(chan Interaction, variables.InteractionBufferSize)
+var interactionChan = make(chan interaction, variables.InteractionBufferSize)
 
 // init lance automatiquement la goroutine de vidage (Flusher) au démarrage du package.
 func init() {
@@ -36,7 +36,7 @@ func init() {
 // de message non lu pour un utilisateur spécifique dans une conversation.
 func RegisterUnread(convID int64, userID int64) {
 	select {
-	case interactionChan <- Interaction{
+	case interactionChan <- interaction{
 		ActorID:   userID, // Le destinataire qui reçoit l'Unread
 		TargetID:  convID, // La conversation concernée
 		Type:      "unread",
@@ -54,7 +54,7 @@ func RegisterUnread(convID int64, userID int64) {
 // de compteur de réaction sur un message.
 func RegisterMessageReaction(msgID int64, emoji string, delta int) {
 	select {
-	case interactionChan <- Interaction{
+	case interactionChan <- interaction{
 		TargetID:  msgID,
 		Type:      "msg_reaction",
 		Emoji:     emoji,
@@ -73,24 +73,23 @@ func flushInteractionsPeriodically() {
 	defer ticker.Stop()
 
 	ctx := context.Background()
-	batch := make([]Interaction, 0, variables.InteractionBatchThreshold)
+	batch := make([]interaction, 0, variables.InteractionBatchThreshold)
 
 	for {
 		select {
-		case interaction := <-interactionChan:
-			batch = append(batch, interaction)
+		case inter := <-interactionChan:
+			batch = append(batch, inter)
 
-			// Vidage immédiat en cas de viralité extrême (Atteinte du Threshold)
+			// Vidage immédiat en cas de viralité extrême (atteinte du threshold)
 			if len(batch) >= variables.InteractionBatchThreshold {
 				processCacheUpdates(ctx, batch)
-				batch = make([]Interaction, 0, variables.InteractionBatchThreshold)
+				batch = make([]interaction, 0, variables.InteractionBatchThreshold)
 			}
 
 		case <-ticker.C:
-			// Vidage chronologique régulier (Toutes les X secondes)
 			if len(batch) > 0 {
 				processCacheUpdates(ctx, batch)
-				batch = make([]Interaction, 0, variables.InteractionBatchThreshold)
+				batch = make([]interaction, 0, variables.InteractionBatchThreshold)
 			}
 		}
 	}
@@ -98,7 +97,7 @@ func flushInteractionsPeriodically() {
 
 // processCacheUpdates agrège mathématiquement les paquets de compteurs en RAM
 // avant de les formater et de les expédier vers les bases de données via le Write-Behind.
-func processCacheUpdates(ctx context.Context, batch []Interaction) {
+func processCacheUpdates(ctx context.Context, batch []interaction) {
 
 	// ── ÉTAPE 1 : AGRÉGATION MATHÉMATIQUE EN RAM (RÉDUCTION DES I/O) ────────
 	unreadsToAdd := make(map[string]int)             // Clé composée: "convID:userID"

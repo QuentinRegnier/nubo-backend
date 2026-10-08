@@ -9,54 +9,54 @@ import (
 	"github.com/go-redis/redis/v8"
 )
 
-// BroadcastMessage est l'enveloppe interne pour transférer l'écoute Redis vers la boucle locale
-type BroadcastMessage struct {
+// broadcastMessage est l'enveloppe interne pour transférer l'écoute Redis vers la boucle locale
+type broadcastMessage struct {
 	ChannelType string // "user" ou "community"
 	TargetID    int64
 	Payload     []byte
 }
 
-type CommunitySubscription struct {
-	Client      *Client
+type communitySubscription struct {
+	Client      *client
 	CommunityID int64
 }
 
-type Hub struct {
+type hub struct {
 	// Mode "Fan-out" (Multi-Device)
-	Clients map[int64]map[*Client]bool
+	Clients map[int64]map[*client]bool
 
 	// Mode "Twitch" (Duplication RAM)
-	Communities map[int64]map[*Client]bool
+	Communities map[int64]map[*client]bool
 
-	Register           chan *Client
-	Unregister         chan *Client
-	SubscribeCommunity chan CommunitySubscription
+	Register           chan *client
+	Unregister         chan *client
+	SubscribeCommunity chan communitySubscription
 
 	// SEULE voie autorisée pour ordonner l'envoi d'un message (Anti Race-Condition)
-	BroadcastRoute chan BroadcastMessage
+	BroadcastRoute chan broadcastMessage
 
 	PubSub *redis.PubSub
 }
 
-var GlobalHub *Hub
+var globalHub *hub
 
 func InitHub() {
-	GlobalHub = &Hub{
-		Clients:            make(map[int64]map[*Client]bool),
-		Communities:        make(map[int64]map[*Client]bool),
-		Register:           make(chan *Client),
-		Unregister:         make(chan *Client),
-		SubscribeCommunity: make(chan CommunitySubscription),
-		BroadcastRoute:     make(chan BroadcastMessage, 2048), // Buffer haute capacité
+	globalHub = &hub{
+		Clients:            make(map[int64]map[*client]bool),
+		Communities:        make(map[int64]map[*client]bool),
+		Register:           make(chan *client),
+		Unregister:         make(chan *client),
+		SubscribeCommunity: make(chan communitySubscription),
+		BroadcastRoute:     make(chan broadcastMessage, 2048), // Buffer haute capacité
 		PubSub:             redisgo.Rdb.Subscribe(context.Background()),
 	}
 
-	go GlobalHub.Run()
-	go GlobalHub.ListenRedis()
+	go globalHub.run()
+	go globalHub.listenRedis()
 }
 
-// ListenRedis capte les événements du réseau global et les pousse dans le sas d'attente
-func (h *Hub) ListenRedis() {
+// listenRedis capte les événements du réseau global et les pousse dans le sas d'attente
+func (h *hub) listenRedis() {
 	ch := h.PubSub.Channel()
 	for msg := range ch {
 		parts := strings.Split(msg.Channel, ":")
@@ -68,7 +68,7 @@ func (h *Hub) ListenRedis() {
 		var targetID int64
 		_, _ = fmt.Sscanf(parts[2], "%d", &targetID)
 
-		h.BroadcastRoute <- BroadcastMessage{
+		h.BroadcastRoute <- broadcastMessage{
 			ChannelType: channelType,
 			TargetID:    targetID,
 			Payload:     []byte(msg.Payload),
@@ -76,29 +76,28 @@ func (h *Hub) ListenRedis() {
 	}
 }
 
-// Run est l'unique boucle autorisée à muter les maps et écrire dans client.Send
-func (h *Hub) Run() {
+// run est l'unique boucle autorisée à muter les maps et écrire dans client.Send
+func (h *hub) run() {
 	for {
 		select {
-		case client := <-h.Register:
-			if _, ok := h.Clients[client.UserID]; !ok {
-				h.Clients[client.UserID] = make(map[*Client]bool)
+		case c := <-h.Register:
+			if _, ok := h.Clients[c.UserID]; !ok {
+				h.Clients[c.UserID] = make(map[*client]bool)
 				// Abonnement dynamique au cluster
-				channel := fmt.Sprintf("channel:user:%d", client.UserID)
+				channel := fmt.Sprintf("channel:user:%d", c.UserID)
 				_ = h.PubSub.Subscribe(context.Background(), channel)
 			}
-			h.Clients[client.UserID][client] = true
-
-		case client := <-h.Unregister:
-			if connections, ok := h.Clients[client.UserID]; ok {
-				if _, ok := connections[client]; ok {
-					delete(connections, client)
-					close(client.Send)
+			h.Clients[c.UserID][c] = true
+		case c := <-h.Unregister:
+			if connections, ok := h.Clients[c.UserID]; ok {
+				if _, ok := connections[c]; ok {
+					delete(connections, c)
+					close(c.Send)
 
 					if len(connections) == 0 {
-						delete(h.Clients, client.UserID)
+						delete(h.Clients, c.UserID)
 						// Désabonnement réseau pour économiser le CPU Redis
-						channel := fmt.Sprintf("channel:user:%d", client.UserID)
+						channel := fmt.Sprintf("channel:user:%d", c.UserID)
 						_ = h.PubSub.Unsubscribe(context.Background(), channel)
 					}
 				}
@@ -106,7 +105,7 @@ func (h *Hub) Run() {
 
 		case sub := <-h.SubscribeCommunity:
 			if _, ok := h.Communities[sub.CommunityID]; !ok {
-				h.Communities[sub.CommunityID] = make(map[*Client]bool)
+				h.Communities[sub.CommunityID] = make(map[*client]bool)
 				channel := fmt.Sprintf("channel:community:%d", sub.CommunityID)
 				_ = h.PubSub.Subscribe(context.Background(), channel)
 			}

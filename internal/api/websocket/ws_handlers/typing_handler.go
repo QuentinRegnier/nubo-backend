@@ -10,12 +10,12 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
 )
 
-type TypingPayload struct {
+type typingPayload struct {
 	ConversationID int64 `json:"conversation_id" binding:"required"` // J'ai ajouté le binding required ici pour que la validation fonctionne
 }
 
 func HandleTyping(ctx context.Context, callerID int64, rawPayload []byte, isTyping bool) error {
-	var input TypingPayload
+	var input typingPayload
 	if err := json.Unmarshal(rawPayload, &input); err != nil {
 		return nubo_error.NewBadRequest("INVALID_PAYLOAD", "Payload invalide.", err)
 	}

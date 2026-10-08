@@ -11,8 +11,8 @@ import (
 	"github.com/lib/pq"
 )
 
-// GraphSeedPayload est une structure ultra-légère dédiée à l'initialisation de la mémoire
-type GraphSeedPayload struct {
+// graphSeedPayload est une structure ultra-légère dédiée à l'initialisation de la mémoire
+type graphSeedPayload struct {
 	ID               int64
 	Hashtags         []string
 	IndirectHashtags []string // ✅ NOUVEAU
@@ -20,7 +20,7 @@ type GraphSeedPayload struct {
 }
 
 // FuncLoadPostsForGraphSeeding ramène l'historique sémantique complet trié du plus vieux au plus récent
-func FuncLoadPostsForGraphSeeding(ctx context.Context) ([]GraphSeedPayload, error) {
+func FuncLoadPostsForGraphSeeding(ctx context.Context) ([]graphSeedPayload, error) {
 	query := `SELECT id, hashtags, indirect_hashtags, created_at FROM content.func_load_posts_for_graph_seeding()`
 
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query)
@@ -34,9 +34,9 @@ func FuncLoadPostsForGraphSeeding(ctx context.Context) ([]GraphSeedPayload, erro
 		}
 	}(rows)
 
-	var seeds []GraphSeedPayload
+	var seeds []graphSeedPayload
 	for rows.Next() {
-		var p GraphSeedPayload
+		var p graphSeedPayload
 		if err := rows.Scan(&p.ID, pq.Array(&p.Hashtags), pq.Array(&p.IndirectHashtags), &p.CreatedAt); err == nil { // ✅ NOUVEAU (Scan correct)
 			seeds = append(seeds, p)
 		}

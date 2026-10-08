@@ -132,7 +132,7 @@ func GetUserConversationsPaginated(ctx context.Context, callerID int64, input co
 	callerIDString := strconv.FormatInt(callerID, 10)
 
 	for _, item := range rawInboxItems {
-		conversationAvatars := GetConversationAvatars(ctx, item.Conversation.ID, callerID, item.Conversation.Type)
+		conversationAvatars := getConversationAvatars(ctx, item.Conversation.ID, callerID, item.Conversation.Type)
 
 		displayTitle := item.Conversation.Title
 		isUserOnline := false

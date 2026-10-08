@@ -11,10 +11,10 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// ScoreJob contient les métriques pré-calculées par la base de données.
+// scoreJob contient les métriques pré-calculées par la base de données.
 // Ce format plat évite le problème de requêtes "N+1" et supprime le besoin d'hydrater
 // des objets complets uniquement pour mettre à jour un score mathématique.
-type ScoreJob struct {
+type scoreJob struct {
 	PostID           int64
 	LikeCount        int
 	CommentCount     int
@@ -32,11 +32,11 @@ type ScoreJob struct {
 // # WORKER : TIME-DECAY ENGINE (MOTEUR DE DÉCLIN TEMPOREL)
 // ############################################################################
 
-// StartScoreUpdaterCron initialise le Worker Pool basé sur le nombre de threads du CPU
+// startScoreUpdaterCron initialise le Worker Pool basé sur le nombre de threads du CPU
 // et lance les planificateurs (Tickers) étagés pour actualiser le score algorithmique des posts.
-func StartScoreUpdaterCron(ctx context.Context) {
+func startScoreUpdaterCron(ctx context.Context) {
 	// ── ÉTAPE 1 : INITIALISATION DE LA FILE D'ATTENTE (BUFFER) ──────────────
-	jobs := make(chan ScoreJob, variables.TimeDecayJobBuffer)
+	jobs := make(chan scoreJob, variables.TimeDecayJobBuffer)
 
 	// Détermination de la limite de concurrence matérielle stricte (Ex: 8 cœurs = 8 workers)
 	numWorkers := runtime.GOMAXPROCS(0)
@@ -86,7 +86,7 @@ func StartScoreUpdaterCron(ctx context.Context) {
 }
 
 // runTierCron exécute la récupération des métriques sur une tranche d'âge précise.
-func runTierCron(ctx context.Context, jobs chan<- ScoreJob, interval time.Duration, minAge, maxAge string) {
+func runTierCron(ctx context.Context, jobs chan<- scoreJob, interval time.Duration, minAge, maxAge string) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -113,7 +113,7 @@ func runTierCron(ctx context.Context, jobs chan<- ScoreJob, interval time.Durati
 
 			// ── ENVOI AUX WORKERS POUR CALCUL EN RAM ────────────────────────
 			for _, p := range posts {
-				jobs <- ScoreJob{
+				jobs <- scoreJob{
 					PostID:           p.ID,
 					LikeCount:        p.LikeCount,
 					CommentCount:     p.CommentCount,

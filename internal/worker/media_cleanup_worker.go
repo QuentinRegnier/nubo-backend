@@ -16,9 +16,9 @@ import (
 // # WORKER : MEDIA CLEANUP (GARBAGE COLLECTOR DES MÉDIAS S3/BDD)
 // ############################################################################
 
-// StartMediaCleanupCron lance le Garbage Collector qui détruit les médias orphelins.
+// startMediaCleanupCron lance le Garbage Collector qui détruit les médias orphelins.
 // Agit sur les brouillons expirés ou les médias rattachés à un contenu définitivement supprimé.
-func StartMediaCleanupCron(ctx context.Context) {
+func startMediaCleanupCron(ctx context.Context) {
 	nubo_log.Info(ctx).Msg("Démarrage du Garbage Collector de Médias (Cron 1h)...")
 
 	go func() {

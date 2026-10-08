@@ -25,9 +25,9 @@ type pushJob struct {
 // # SERVICE INTERNE : ENTONNOIR DÉCISIONNEL POUR LES NOTIFICATIONS PUSH
 // ############################################################################
 
-// ShouldSendPush évalue si un utilisateur spécifique doit recevoir une notification Push
+// shouldSendPush évalue si un utilisateur spécifique doit recevoir une notification Push
 // selon une matrice de présence et de confidentialité résolue en O(1) en RAM.
-func ShouldSendPush(ctx context.Context, conversationID int64, targetUserID int64, isUserMentioned bool, messageType int) bool {
+func shouldSendPush(ctx context.Context, conversationID int64, targetUserID int64, isUserMentioned bool, messageType int) bool {
 
 	// ── FILTRE 1 : PRÉSENCE EN LIGNE (O(1)) ─────────────────────────────────
 	if cache_service.IsUserOnline(ctx, targetUserID) {
@@ -103,7 +103,7 @@ func dispatchPushNotifications(messageView message_models.MessageView, recipient
 
 			isUserExplicitlyMentioned := pkg.Exists(mentionedUserIDs, recipientID)
 
-			if ShouldSendPush(backgroundContext, messageView.ConversationID, recipientID, isUserExplicitlyMentioned, messageView.MessageType) {
+			if shouldSendPush(backgroundContext, messageView.ConversationID, recipientID, isUserExplicitlyMentioned, messageView.MessageType) {
 
 				eventType := "message.new"
 				if isUserExplicitlyMentioned {

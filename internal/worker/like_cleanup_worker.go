@@ -15,9 +15,9 @@ import (
 // # WORKER : LIKE CLEANUP (GARBAGE COLLECTOR DES LIKES ORPHELINS)
 // ############################################################################
 
-// StartLikeCleanupCron lance le Garbage Collector qui détruit les likes orphelins.
+// startLikeCleanupCron lance le Garbage Collector qui détruit les likes orphelins.
 // Un like devient orphelin lorsque la publication (Post) ou le Commentaire qu'il ciblait a été supprimé.
-func StartLikeCleanupCron(ctx context.Context) {
+func startLikeCleanupCron(ctx context.Context) {
 	nubo_log.Info(ctx).Msg("Démarrage du Garbage Collector de Likes (Cron 6h)...")
 
 	go func() {

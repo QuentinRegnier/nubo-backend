@@ -15,25 +15,25 @@ import (
 // # LE MAGASINIER : COLLECTE ET EXPANSION SÉMANTIQUE
 // ############################################################################
 
-// CollectCandidates construit les 3 paniers (A, B, C) avec leurs ADN respectifs.
-func CollectCandidates(ctx context.Context, userID int64, seeds [3]int64, quotas Quotas) (*FeedBaskets, error) {
-	if err := quotas.Validate(); err != nil {
+// collectCandidates construit les 3 paniers (A, B, C) avec leurs ADN respectifs.
+func collectCandidates(ctx context.Context, userID int64, seeds [3]int64, quotas Quotas) (*feedBaskets, error) {
+	if err := quotas.validate(); err != nil {
 		return nil, err // Utilise l'AppError générée par la validation
 	}
 
-	baskets := NewFeedBaskets(quotas.MaxCandidates, seeds[0], seeds[1], seeds[2])
+	baskets := newFeedBaskets(quotas.MaxCandidates, seeds[0], seeds[1], seeds[2])
 
 	// ─────────────────────────────────────────────────────────────────────────────
 	// ÉTAPE 1 : Le Socle Social (Boîte aux lettres)
 	// ─────────────────────────────────────────────────────────────────────────────
-	_ = baskets.LoadSocialMailbox(ctx, userID)
+	_ = baskets.loadSocialMailbox(ctx, userID)
 
 	// ─────────────────────────────────────────────────────────────────────────────
 	// ÉTAPE 2 : Fusion Télémétrie / Graph 1-Hop / Leaderboard Mondial
 	// ─────────────────────────────────────────────────────────────────────────────
 	semanticTagCloud := buildTagCloud(ctx, userID)
 
-	// ─────────────────────────────────────────────────────────────────────────────
+	// ──────────────────────────────────────────────────────────────────────────────
 	// ÉTAPE 3 : Remplissage Déterministe des 3 Paniers
 	// ─────────────────────────────────────────────────────────────────────────────
 	fillBasket(ctx, userID, baskets.FeedA, quotas, semanticTagCloud)
@@ -43,17 +43,17 @@ func CollectCandidates(ctx context.Context, userID int64, seeds [3]int64, quotas
 	return baskets, nil
 }
 
-// CollectSingleBasket construit un unique panier avec son ADN strict (Cas d'Extension).
+// collectSingleBasket construit un unique panier avec son ADN strict (Cas d'Extension).
 // Utilise la Seed du flux actif pour garantir la continuité de l'identité algorithmique.
-func CollectSingleBasket(ctx context.Context, userID int64, activeSeed int64, quotas Quotas) (*CandidateBasket, error) {
-	if err := quotas.Validate(); err != nil {
+func collectSingleBasket(ctx context.Context, userID int64, activeSeed int64, quotas Quotas) (*candidateBasket, error) {
+	if err := quotas.validate(); err != nil {
 		return nil, err
 	}
 
 	// Astuce d'orchestration : On utilise la mécanique FeedBaskets pour charger
 	// la boîte aux lettres, mais on ne garde et ne remplit que le panier A.
-	baskets := NewFeedBaskets(quotas.MaxCandidates, activeSeed, activeSeed, activeSeed)
-	_ = baskets.LoadSocialMailbox(ctx, userID)
+	baskets := newFeedBaskets(quotas.MaxCandidates, activeSeed, activeSeed, activeSeed)
+	_ = baskets.loadSocialMailbox(ctx, userID)
 
 	singleBasket := baskets.FeedA
 	semanticTagCloud := buildTagCloud(ctx, userID)
@@ -159,7 +159,7 @@ func buildTagCloud(ctx context.Context, userID int64) map[string]float64 {
 // ############################################################################
 
 // fillBasket remplit un panier spécifique en respectant les quotas et en appliquant l'expansion dynamique.
-func fillBasket(ctx context.Context, userID int64, basket *CandidateBasket, quotas Quotas, initialTagCloud map[string]float64) {
+func fillBasket(ctx context.Context, userID int64, basket *candidateBasket, quotas Quotas, initialTagCloud map[string]float64) {
 	globalTargetQuota := int(float64(quotas.MaxCandidates) * quotas.GlobalRatio)
 	tagTargetQuota := int(float64(quotas.MaxCandidates) * quotas.TagRatio)
 
@@ -169,7 +169,7 @@ func fillBasket(ctx context.Context, userID int64, basket *CandidateBasket, quot
 	currentDateStr := time.Now().UTC().Format("20060102")
 	globalTrendKey := fmt.Sprintf(variables.RedisKeyTrendGlobalDaily, currentDateStr)
 
-	successfullyAddedGlobally := basket.FetchDeterministicallyFromZSET(ctx, userID, globalTrendKey, globalTargetQuota, OriginGlobal)
+	successfullyAddedGlobally := basket.fetchDeterministicallyFromZSET(ctx, userID, globalTrendKey, globalTargetQuota, originGlobal)
 
 	// Gestion du déficit : si on a épuisé le ZSET global (très rare), on reporte la charge sur les tags
 	if successfullyAddedGlobally < globalTargetQuota {
@@ -211,7 +211,7 @@ func fillBasket(ctx context.Context, userID int64, basket *CandidateBasket, quot
 			}
 
 			tagRedisKey := fmt.Sprintf(variables.RedisKeyTrendTagDaily, tag, currentDateStr)
-			addedCount := basket.FetchDeterministicallyFromZSET(ctx, userID, tagRedisKey, targetForThisTag, OriginTag)
+			addedCount := basket.fetchDeterministicallyFromZSET(ctx, userID, tagRedisKey, targetForThisTag, originTag)
 
 			successfullyAddedFromTags += addedCount
 		}
@@ -251,6 +251,6 @@ func fillBasket(ctx context.Context, userID int64, basket *CandidateBasket, quot
 	// avec du contenu Viral Mondial plutôt que de proposer du hors-sujet.
 	if successfullyAddedFromTags < tagTargetQuota {
 		deficit := tagTargetQuota - successfullyAddedFromTags
-		basket.FetchDeterministicallyFromZSET(ctx, userID, globalTrendKey, deficit, OriginGlobal)
+		basket.fetchDeterministicallyFromZSET(ctx, userID, globalTrendKey, deficit, originGlobal)
 	}
 }

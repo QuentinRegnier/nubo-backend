@@ -21,16 +21,16 @@ import (
 // CONSTANTES SPÉCIFIQUES AU BATCH POSTGRESQL
 // ============================================================================
 const (
-	PostgresDLQQueue = "postgres_errors" // File de quarantaine (Dead Letter Queue)
+	postgresDLQQueue = "postgres_errors" // File de quarantaine (Dead Letter Queue)
 )
 
 // ############################################################################
 // # WORKER BATCH : POSTGRESQL (COLD STORAGE L3 - SOURCE DE VÉRITÉ)
 // ############################################################################
 
-// GenerateCopyQuery génère dynamiquement une requête COPY IN optimisée pour PostgreSQL
+// generateCopyQuery génère dynamiquement une requête COPY IN optimisée pour PostgreSQL
 // en prenant en compte le schéma et la table.
-func GenerateCopyQuery(fullTableName string, columns []string) string {
+func generateCopyQuery(fullTableName string, columns []string) string {
 	quotedTableName := ""
 	if strings.Contains(fullTableName, ".") {
 		parts := strings.SplitN(fullTableName, ".", 2)
@@ -175,7 +175,7 @@ func sendToDLQ(ctx context.Context, entity redis.EntityType, action redis.Action
 
 	bytes, err := json.Marshal(dlqPayload)
 	if err == nil {
-		_ = redis.DLQ.LPush(ctx, PostgresDLQQueue, bytes)
+		_ = redis.DLQ.LPush(ctx, postgresDLQQueue, bytes)
 		nubo_log.Error(ctx).
 			Err(dbErr).
 			Interface("entity", entity).
@@ -195,7 +195,7 @@ func bulkInsertPostgres(ctx context.Context, entity redis.EntityType, events []r
 		return handleMessageReactionUpsert(ctx, events)
 	}
 
-	mapper := GetMapper(entity)
+	mapper := getMapper(entity)
 	if mapper == nil {
 		err := errors.New("Aucun mapper Postgres défini pour l'entité")
 		nubo_log.Error(ctx).Err(err).Interface("entity", entity).Msg("Échec BulkInsert")
@@ -215,7 +215,7 @@ func bulkInsertPostgres(ctx context.Context, entity redis.EntityType, events []r
 		}
 	}()
 
-	copyQuery := GenerateCopyQuery(mapper.TableName(), mapper.Columns())
+	copyQuery := generateCopyQuery(mapper.TableName(), mapper.Columns())
 
 	stmt, errStmt := tx.Prepare(copyQuery)
 	if errStmt != nil {
@@ -304,7 +304,7 @@ func handleMessageReactionUpsert(ctx context.Context, events []redis.AsyncEvent)
 // ============================================================================
 
 func bulkUpdatePostgres(ctx context.Context, entity redis.EntityType, events []redis.AsyncEvent) error {
-	mapper := GetMapper(entity)
+	mapper := getMapper(entity)
 	if mapper == nil {
 		err := errors.New("Aucun mapper Postgres défini")
 		nubo_log.Error(ctx).Err(err).Interface("entity", entity).Msg("Échec BulkUpdate")
@@ -398,7 +398,7 @@ func bulkUpdatePostgres(ctx context.Context, entity redis.EntityType, events []r
 // ============================================================================
 
 func bulkDeletePostgres(ctx context.Context, entity redis.EntityType, events []redis.AsyncEvent) error {
-	mapper := GetMapper(entity)
+	mapper := getMapper(entity)
 	if mapper == nil {
 		err := errors.New("Aucun mapper Postgres défini")
 		nubo_log.Error(ctx).Err(err).Interface("entity", entity).Msg("Échec BulkDelete")

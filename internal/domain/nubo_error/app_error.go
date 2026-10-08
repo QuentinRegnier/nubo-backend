@@ -21,8 +21,8 @@ func (e *AppError) Error() string {
 	return fmt.Sprintf("[%s] %s", e.Code, e.Message)
 }
 
-// Unwrap permet au moteur Go de remonter la chaîne d'erreurs (Error Wrapping).
-func (e *AppError) Unwrap() error {
+// unwrap permet au moteur Go de remonter la chaîne d'erreurs (Error Wrapping).
+func (e *AppError) unwrap() error {
 	return e.Err
 }
 

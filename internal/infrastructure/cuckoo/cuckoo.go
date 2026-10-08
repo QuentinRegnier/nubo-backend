@@ -19,8 +19,8 @@ const (
 	ActionDel     = "DEL"
 )
 
-// CuckooMessage définit le format des messages envoyés dans le Flux Redis
-type CuckooMessage struct {
+// cuckooMessage définit le format des messages envoyés dans le Flux Redis
+type cuckooMessage struct {
 	Action string // "ADD" ou "DEL"
 	Key    string // ex: "username:toto"
 }
@@ -46,7 +46,7 @@ func startCuckooSync() {
 	nubo_log.Info(context.Background()).Msg("Cuckoo Sync : écoute du flux Redis activée.")
 
 	for payload := range msgChan {
-		var msg CuckooMessage
+		var msg cuckooMessage
 		if err := json.Unmarshal(payload, &msg); err != nil {
 			nubo_log.Error(context.Background()).Err(err).Msg("Erreur décodage message Cuckoo")
 			continue
@@ -62,7 +62,7 @@ func startCuckooSync() {
 
 // BroadcastCuckooUpdate envoie un signal aux autres serveurs via Redis
 func BroadcastCuckooUpdate(action, field, value string) {
-	msg := CuckooMessage{
+	msg := cuckooMessage{
 		Action: action,
 		Key:    field + ":" + value,
 	}

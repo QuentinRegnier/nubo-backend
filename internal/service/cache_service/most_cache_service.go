@@ -130,8 +130,8 @@ func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([
 	return fetchAndHydrateFromCollection(ctx, redis.TagPosts, slug, offset, limit)
 }
 
-// UpdateTrendZSETs distribue le score de tendance global dans les différents rayons Redis.
-func UpdateTrendZSETs(ctx context.Context, postID int64, score float64, directTags []string, indirectTags []string, currentDate string, currentHour string, currentWeek string) error {
+// updateTrendZSETs distribue le score de tendance global dans les différents rayons Redis.
+func updateTrendZSETs(ctx context.Context, postID int64, score float64, directTags []string, indirectTags []string, currentDate string, currentHour string, currentWeek string) error {
 
 	// 1. Buckets Globaux
 	if err := redis.TrendGlobalHourly.ZAddWithCap(ctx, currentHour, score, postID, variables.TDDMaxZSET); err != nil {
@@ -205,7 +205,7 @@ func UpdateScoreWithMetrics(ctx context.Context, postID int64, likesCount int, c
 	year, isoWeek := currentTime.ISOWeek()
 	weekString := fmt.Sprintf("%d-W%02d", year, isoWeek)
 
-	_ = UpdateTrendZSETs(ctx, postID, globalScore, directTags, indirectTags, currentTime.Format("20060102"), currentTime.Format("2006010215"), weekString)
+	_ = updateTrendZSETs(ctx, postID, globalScore, directTags, indirectTags, currentTime.Format("20060102"), currentTime.Format("2006010215"), weekString)
 }
 
 // GetPostsByTagFromCache lit le ZSET Msgpack du tag, extrait les IDs et déclenche l'hydratation L1 -> L2 -> L3.

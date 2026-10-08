@@ -23,9 +23,9 @@ import (
 // # SERVICE : SPEED CACHE (PROFILS UTILISATEURS ALLÉGÉS)
 // ############################################################################
 
-// StoreUserLiteInSpeedCache sauvegarde directement un objet UserLiteRequest
+// storeUserLiteInSpeedCache sauvegarde directement un objet UserLiteRequest
 // et met à jour l'index Lexicographique pour la recherche et l'autocomplétion.
-func StoreUserLiteInSpeedCache(ctx context.Context, userLitePayload lite_models.UserLiteRequest) error {
+func storeUserLiteInSpeedCache(ctx context.Context, userLitePayload lite_models.UserLiteRequest) error {
 
 	// 1. Insertion dans l'index lexicographique ("pseudo:id")
 	lexicographicValue := fmt.Sprintf("%s:%d", strings.ToLower(userLitePayload.Username), userLitePayload.ID)

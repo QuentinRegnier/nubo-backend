@@ -31,7 +31,7 @@ func AutocompleteText(ctx context.Context, callerID int64, input search_models.A
 
 	// Erreur volontairement ignorée ici pour qu'un fail sur les utilisateurs
 	// ne fasse pas crasher la requête pour les communautés.
-	usersOutput, _ := SearchUsers(ctx, callerID, usersSearchInput)
+	usersOutput, _ := searchUsers(ctx, callerID, usersSearchInput)
 	autocompleteOutput.Users = usersOutput
 
 	// ── ÉTAPE 2 : RECHERCHE DES COMMUNAUTÉS (CACHE L1) ──────────────────────
@@ -41,7 +41,7 @@ func AutocompleteText(ctx context.Context, callerID int64, input search_models.A
 		Limit:  searchLimit,
 	}
 
-	communitiesOutput, _ := SearchCommunities(ctx, callerID, communitiesSearchInput)
+	communitiesOutput, _ := searchCommunities(ctx, callerID, communitiesSearchInput)
 	autocompleteOutput.Communities = communitiesOutput
 
 	// Note Architecturale : Pas de recherche de tags/posts ici car la timeline

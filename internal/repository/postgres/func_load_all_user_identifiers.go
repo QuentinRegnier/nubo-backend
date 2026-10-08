@@ -9,13 +9,13 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
-type UserIdentifiers struct {
+type userIdentifiers struct {
 	Username *string
 	Email    *string
 	Phone    *string
 }
 
-func FuncLoadAllUserIdentifiers(ctx context.Context) ([]UserIdentifiers, error) {
+func FuncLoadAllUserIdentifiers(ctx context.Context) ([]userIdentifiers, error) {
 	query := `SELECT username, email, phone FROM auth.func_load_all_user_identifiers()`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query)
 	if err != nil {
@@ -28,9 +28,9 @@ func FuncLoadAllUserIdentifiers(ctx context.Context) ([]UserIdentifiers, error) 
 		}
 	}(rows)
 
-	var results []UserIdentifiers
+	var results []userIdentifiers
 	for rows.Next() {
-		var idents UserIdentifiers
+		var idents userIdentifiers
 		if err := rows.Scan(&idents.Username, &idents.Email, &idents.Phone); err == nil {
 			results = append(results, idents)
 		}

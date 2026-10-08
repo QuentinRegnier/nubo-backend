@@ -8,8 +8,8 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
 )
 
-// Redis2Mongo fait le pont entre le domaine (Redis EntityType) et les collections MongoDB.
-func Redis2Mongo(ctx context.Context, entity redis.EntityType) (*Collection, error) {
+// redis2Mongo fait le pont entre le domaine (Redis EntityType) et les collections MongoDB.
+func redis2Mongo(ctx context.Context, entity redis.EntityType) (*Collection, error) {
 	switch entity {
 	case redis.EntityUser:
 		return Users, nil

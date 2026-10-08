@@ -15,22 +15,22 @@ import (
 // # PILIER 3 : APPROXIMATION PAR LOCALITÉ (LSH)
 // ############################################################################
 
-// LSHEngine encapsule la matrice de projection aléatoire P ∈ R^{b×N}
-type LSHEngine struct {
+// lshEngine encapsule la matrice de projection aléatoire P ∈ R^{b×N}
+type lshEngine struct {
 	projectionMatrix []float32
 	hashBits         int // Par défaut : 32
 	vectorDimension  int // Par défaut : 224
 }
 
-// DefaultLSHEngine est l'instance singleton partagée par tous les workers Go.
-var DefaultLSHEngine *LSHEngine
+// defaultLSHEngine est l'instance singleton partagée par tous les workers Go.
+var defaultLSHEngine *lshEngine
 
 func init() {
-	DefaultLSHEngine = NewLSHEngine(variables.TDDLSHSeed)
+	defaultLSHEngine = newLSHEngine(variables.TDDLSHSeed)
 }
 
-// NewLSHEngine crée un LSHEngine avec une matrice de projection aléatoire.
-func NewLSHEngine(seed int64) *LSHEngine {
+// newLSHEngine crée un LSHEngine avec une matrice de projection aléatoire.
+func newLSHEngine(seed int64) *lshEngine {
 	bitsCount := variables.TDDLSHBits
 	dimensionSize := variables.VectorDimTotal
 
@@ -42,7 +42,7 @@ func NewLSHEngine(seed int64) *LSHEngine {
 		generatedMatrix[i] = float32(randomGen.NormFloat64())
 	}
 
-	return &LSHEngine{
+	return &lshEngine{
 		projectionMatrix: generatedMatrix,
 		hashBits:         bitsCount,
 		vectorDimension:  dimensionSize,
@@ -53,8 +53,8 @@ func NewLSHEngine(seed int64) *LSHEngine {
 // # CALCUL DU HASH ET OPÉRATIONS LSH
 // ############################################################################
 
-// ComputeHash calcule le hash LSH d'un vecteur v ∈ R^N.
-func (engine *LSHEngine) ComputeHash(vector []float32) uint32 {
+// computeHash calcule le hash LSH d'un vecteur v ∈ R^N.
+func (engine *lshEngine) computeHash(vector []float32) uint32 {
 	if len(vector) < engine.vectorDimension {
 		return 0
 	}
@@ -79,8 +79,8 @@ func (engine *LSHEngine) ComputeHash(vector []float32) uint32 {
 	return computedHash
 }
 
-// NeighborHashes retourne les hashes voisins à distance de Hamming ≤ 1.
-func (engine *LSHEngine) NeighborHashes(targetHash uint32) []uint32 {
+// neighborHashes retourne les hashes voisins à distance de Hamming ≤ 1.
+func (engine *lshEngine) neighborHashes(targetHash uint32) []uint32 {
 	neighborList := make([]uint32, 0, engine.hashBits+1)
 	neighborList = append(neighborList, targetHash) // Bucket exact
 
@@ -95,8 +95,8 @@ func (engine *LSHEngine) NeighborHashes(targetHash uint32) []uint32 {
 // # INTERACTIONS REDIS (GESTION DES BUCKETS LSH)
 // ############################################################################
 
-// StoreLSHBucket enregistre un post dans son bucket LSH Redis.
-func StoreLSHBucket(ctx context.Context, postID int64, hashValue uint32) error {
+// storeLSHBucket enregistre un post dans son bucket LSH Redis.
+func storeLSHBucket(ctx context.Context, postID int64, hashValue uint32) error {
 	memberIDString := strconv.FormatInt(postID, 10)
 
 	if err := redis.LSHBuckets.SAdd(ctx, hashValue, memberIDString); err != nil {
@@ -107,9 +107,9 @@ func StoreLSHBucket(ctx context.Context, postID int64, hashValue uint32) error {
 	return nil
 }
 
-// GetLSHCandidateIDs récupère l'ensemble des IDs présents dans les buckets voisins.
-func GetLSHCandidateIDs(ctx context.Context, targetHash uint32) (map[int64]bool, error) {
-	neighborHashes := DefaultLSHEngine.NeighborHashes(targetHash)
+// getLSHCandidateIDs récupère l'ensemble des IDs présents dans les buckets voisins.
+func getLSHCandidateIDs(ctx context.Context, targetHash uint32) (map[int64]bool, error) {
+	neighborHashes := defaultLSHEngine.neighborHashes(targetHash)
 	candidateSet := make(map[int64]bool, 200)
 
 	for _, hashValue := range neighborHashes {
@@ -129,17 +129,17 @@ func GetLSHCandidateIDs(ctx context.Context, targetHash uint32) (map[int64]bool,
 	return candidateSet, nil
 }
 
-// RemoveLSHBucket retire un post de son bucket LSH.
-func RemoveLSHBucket(ctx context.Context, postID int64, hashValue uint32) error {
+// removeLSHBucket retire un post de son bucket LSH.
+func removeLSHBucket(ctx context.Context, postID int64, hashValue uint32) error {
 	return redis.LSHBuckets.SRem(ctx, hashValue, strconv.FormatInt(postID, 10))
 }
 
 // PurgePostVectors supprime le vecteur d'engagement du post et le retire de son bucket LSH.
 func PurgePostVectors(ctx context.Context, postID int64) error {
-	var payload ContentVectorPayload
+	var payload contentVectorPayload
 
 	if err := redis.ContentVectors.GetObject(ctx, postID, &payload); err == nil {
-		_ = RemoveLSHBucket(ctx, postID, payload.LSHHash)
+		_ = removeLSHBucket(ctx, postID, payload.LSHHash)
 	}
 
 	return redis.ContentVectors.DeleteObject(ctx, postID)

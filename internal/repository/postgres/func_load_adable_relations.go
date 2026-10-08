@@ -9,13 +9,13 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
-type RelationAddable struct {
+type relationAddable struct {
 	TargetID int64
 	State    int
 }
 
 // FuncLoadAddableRelations appelle la fonction SQL pure pour récupérer les abonnements et amis.
-func FuncLoadAddableRelations(ctx context.Context, callerID int64) ([]RelationAddable, error) {
+func FuncLoadAddableRelations(ctx context.Context, callerID int64) ([]relationAddable, error) {
 	// Appel strict de la fonction déclarée dans schema.sql
 	query := `SELECT target_id, state FROM auth.func_load_addable_relations($1)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, callerID)
@@ -29,9 +29,9 @@ func FuncLoadAddableRelations(ctx context.Context, callerID int64) ([]RelationAd
 		}
 	}(rows)
 
-	var relations []RelationAddable
+	var relations []relationAddable
 	for rows.Next() {
-		var r RelationAddable
+		var r relationAddable
 		if err := rows.Scan(&r.TargetID, &r.State); err == nil {
 			relations = append(relations, r)
 		}

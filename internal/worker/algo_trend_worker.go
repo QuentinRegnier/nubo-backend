@@ -17,9 +17,9 @@ import (
 // # WORKER : HASHTAG TRENDS (ÉVALUATION DES TENDANCES MONDIALES)
 // ############################################################################
 
-// StartHashtagTrendCron lance l'évaluation des tendances mondiales de hashtags (TDD §3.3).
+// startHashtagTrendCron lance l'évaluation des tendances mondiales de hashtags (TDD §3.3).
 // Il tourne à intervalle régulier pour maintenir le Top 100 des tags sans saturer le CPU.
-func StartHashtagTrendCron(ctx context.Context) {
+func startHashtagTrendCron(ctx context.Context) {
 	nubo_log.Info(ctx).Msg("Démarrage du Moteur de Tendances Hashtags...")
 
 	go func() {

@@ -16,9 +16,9 @@ import (
 // # SERVICE : RECHERCHE DE COMMUNAUTÉS
 // ############################################################################
 
-// SearchCommunities orchestre la recherche ultrarapide de communautés publiques
+// searchCommunities orchestre la recherche ultrarapide de communautés publiques
 // via le Speed Cache (O(log(N))) et génère les URL signées pour les avatars.
-func SearchCommunities(ctx context.Context, callerID int64, input search_models.CommunitySearchInput) (search_models.CommunitySearchOutput, error) {
+func searchCommunities(ctx context.Context, callerID int64, input search_models.CommunitySearchInput) (search_models.CommunitySearchOutput, error) {
 
 	// ── ÉTAPE 1 : RÉSOLUTION DE L'INDEX DANS LE SPEED CACHE (L1) ────────────
 

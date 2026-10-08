@@ -16,9 +16,9 @@ import (
 // # WORKER : HASHTAG CANON (RÉSOLUTION DES FAUTES DE FRAPPE & ALIASING)
 // ############################################################################
 
-// StartHashtagCanonCron lance un worker qui calcule les similarités (Levenshtein)
+// startHashtagCanonCron lance un worker qui calcule les similarités (Levenshtein)
 // entre les tags communautaires toutes les 24h pour absorber les fautes de frappe.
-func StartHashtagCanonCron(ctx context.Context) {
+func startHashtagCanonCron(ctx context.Context) {
 	nubo_log.Info(ctx).Msg("Démarrage du Canoniseur de Hashtags (Cron 24h)...")
 
 	go func() {
@@ -70,7 +70,7 @@ func processHashtagCanonicalization(ctx context.Context) {
 			}
 
 			// Calcul de la distance d'édition (Levenshtein) normalisée
-			distNorm := NormalizedLevenshtein(t1, t2)
+			distNorm := normalizedLevenshtein(t1, t2)
 
 			// Critère strict : Distance <= 15% ET même racine morphologique (Stemming)
 			if distNorm <= variables.HashtagCanonMaxDistance && service.StemHashtag(t1) == service.StemHashtag(t2) {
@@ -105,10 +105,10 @@ func processHashtagCanonicalization(ctx context.Context) {
 // MOTEUR MATHÉMATIQUE DE DISTANCE D'ÉDITION
 // ============================================================================
 
-// NormalizedLevenshtein calcule la distance de Levenshtein normalisée.
+// normalizedLevenshtein calcule la distance de Levenshtein normalisée.
 // TDD §3.3 — Formule: d_Lev(h_i, h_j) = Lev(h_i, h_j) / max(|h_i|, |h_j|)
 // Retourne une valeur dans [0.0, 1.0]: 0.0 = chaînes identiques, 1.0 = totalement différentes.
-func NormalizedLevenshtein(a, b string) float64 {
+func normalizedLevenshtein(a, b string) float64 {
 	ra, rb := []rune(a), []rune(b)
 	la, lb := len(ra), len(rb)
 

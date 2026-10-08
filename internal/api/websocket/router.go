@@ -16,9 +16,9 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/variables"
 )
 
-// Route intercepte le message brut, l'oriente et gère la réponse avec un bouclier Zero-Trust.
-func (c *Client) Route(message []byte) {
-	var req WSRequest
+// route intercepte le message brut, l'oriente et gère la réponse avec un bouclier Zero-Trust.
+func (c *client) route(message []byte) {
+	var req wsRequest
 	if err := json.Unmarshal(message, &req); err != nil {
 		nubo_log.Error(context.Background()).Err(err).Msg("WS Route Error: Payload illisible")
 		return
@@ -33,12 +33,12 @@ func (c *Client) Route(message []byte) {
 	// 1. Anti-Rejeu (Timestamp)
 	tsInt, err := strconv.ParseInt(req.Timestamp, 10, 64)
 	if err != nil {
-		c.SendError(req.RequestID, "Timestamp invalide")
+		c.sendError(req.RequestID, "Timestamp invalide")
 		return
 	}
 	now := time.Now().Unix()
 	if math.Abs(float64(now-tsInt)) > variables.ToleranceTimeSeconds {
-		c.SendError(req.RequestID, "Trame expirée (Anti-Rejeu)")
+		c.sendError(req.RequestID, "Trame expirée (Anti-Rejeu)")
 		return
 	}
 
@@ -46,7 +46,7 @@ func (c *Client) Route(message []byte) {
 	// Cela permet de supporter la rotation de clé HTTP sans couper le WebSocket !
 	session, err := cache_service.LoadSessionFromCache(ctx, c.UserID, c.DeviceID, "")
 	if err != nil || session.ID == 0 {
-		c.SendError(req.RequestID, "Session invalide ou expirée")
+		c.sendError(req.RequestID, "Session invalide ou expirée")
 		return
 	}
 
@@ -61,7 +61,7 @@ func (c *Client) Route(message []byte) {
 	}
 
 	if !isValid {
-		c.SendError(req.RequestID, "Signature HMAC invalide")
+		c.sendError(req.RequestID, "Signature HMAC invalide")
 		return
 	}
 	// =========================================================================
@@ -109,27 +109,27 @@ func (c *Client) Route(message []byte) {
 		routeErr = ws_handlers.HandleUnreactMessage(ctx, c.UserID, req.Payload)
 
 	default:
-		c.SendError(req.RequestID, "Action non reconnue")
+		c.sendError(req.RequestID, "Action non reconnue")
 		return
 	}
 
 	// Gestion de la réponse à renvoyer au client
 	if routeErr != nil {
-		c.SendError(req.RequestID, routeErr.Error())
+		c.sendError(req.RequestID, routeErr.Error())
 	} else {
-		c.SendSuccess(req.RequestID, resData)
+		c.sendSuccess(req.RequestID, resData)
 	}
 }
 
 // Helpers pour standardiser les retours
-func (c *Client) SendSuccess(reqID string, data any) {
-	resp := WSResponse{EventType: "response", RequestID: reqID, Status: "success", Data: data}
+func (c *client) sendSuccess(reqID string, data any) {
+	resp := wsResponse{EventType: "response", RequestID: reqID, Status: "success", Data: data}
 	b, _ := json.Marshal(resp)
 	c.Send <- b
 }
 
-func (c *Client) SendError(reqID string, errStr string) {
-	resp := WSResponse{EventType: "response", RequestID: reqID, Status: "error", Error: errStr}
+func (c *client) sendError(reqID string, errStr string) {
+	resp := wsResponse{EventType: "response", RequestID: reqID, Status: "error", Error: errStr}
 	b, _ := json.Marshal(resp)
 	c.Send <- b
 }

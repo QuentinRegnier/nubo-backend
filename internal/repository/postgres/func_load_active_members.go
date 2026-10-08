@@ -13,13 +13,13 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
-type ActiveMemberResult struct {
+type activeMemberResult struct {
 	Member        lite_models.MemberLiteRequest
 	LastMessageID sql.NullInt64
 }
 
 // FuncLoadActiveMembers récupère les membres pour le Seeding de l'Inbox
-func FuncLoadActiveMembers(ctx context.Context) ([]ActiveMemberResult, error) {
+func FuncLoadActiveMembers(ctx context.Context) ([]activeMemberResult, error) {
 	query := `SELECT conversation_id, user_id, role, settings, unread_count, frozen_message_id, last_read_message_id, last_message_id, joined_at FROM messaging.func_load_active_members()`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query)
 	if err != nil {
@@ -32,7 +32,7 @@ func FuncLoadActiveMembers(ctx context.Context) ([]ActiveMemberResult, error) {
 		}
 	}(rows)
 
-	var results []ActiveMemberResult
+	var results []activeMemberResult
 	for rows.Next() {
 		var cid, uid int64
 		var role, unreadCount int
@@ -71,7 +71,7 @@ func FuncLoadActiveMembers(ctx context.Context) ([]ActiveMemberResult, error) {
 				mem.LastReadMessageID = lastReadMessageID.Int64
 			}
 
-			results = append(results, ActiveMemberResult{Member: mem, LastMessageID: lastMsgID})
+			results = append(results, activeMemberResult{Member: mem, LastMessageID: lastMsgID})
 		}
 	}
 	return results, nil

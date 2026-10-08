@@ -16,9 +16,9 @@ import (
 // # SERVICE : RECHERCHE D'UTILISATEURS (COMPTES)
 // ############################################################################
 
-// SearchUsers orchestre la recherche ultrarapide via le Speed Cache Redis (ZSET Lex)
+// searchUsers orchestre la recherche ultrarapide via le Speed Cache Redis (ZSET Lex)
 // et déclenche l'hydratation des avatars à la volée.
-func SearchUsers(ctx context.Context, callerID int64, input search_models.UserSearchInput) (search_models.UserSearchOutput, error) {
+func searchUsers(ctx context.Context, callerID int64, input search_models.UserSearchInput) (search_models.UserSearchOutput, error) {
 
 	// ── ÉTAPE 1 : RECHERCHE L1 EN RAM (O(log N)) ────────────────────────────
 

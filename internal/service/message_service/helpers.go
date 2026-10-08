@@ -11,9 +11,9 @@ import (
 // # UTILITAIRES : RÉCUPÉRATION ET SYNCHRONISATION
 // ############################################################################
 
-// GetParticipantIDsForLedgerSync récupère les identifiants actifs de la conversation
+// getParticipantIDsForLedgerSync récupère les identifiants actifs de la conversation
 // en O(1) depuis la RAM pour déclencher le Sync Ledger des clients connectés.
-func GetParticipantIDsForLedgerSync(ctx context.Context, conversationID int64) []int64 {
+func getParticipantIDsForLedgerSync(ctx context.Context, conversationID int64) []int64 {
 	participantsStringList, err := redis.ConvParticipants.SMembers(ctx, conversationID)
 	if err != nil || len(participantsStringList) == 0 {
 		return nil

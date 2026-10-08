@@ -6,11 +6,11 @@ import "math"
 // # LA VAGUE DE DOPAMINE (Gradient Modulé Mathématiquement)
 // ############################################################################
 
-// DopamineWave modélise le gradient de dopamine.
+// dopamineWave modélise le gradient de dopamine.
 // Retourne l'affinité/qualité requise à l'index x (comprise entre 0.01 et 1.0).
 // - Proche de 1 : Le système exige un "Banger" très pertinent.
 // - Proche de 0 : Le système favorise l'exploration, l'aléatoire et la sérendipité.
-func DopamineWave(indexScroll float64) float64 {
+func dopamineWave(indexScroll float64) float64 {
 	if indexScroll < 0 {
 		return 0.0
 	}

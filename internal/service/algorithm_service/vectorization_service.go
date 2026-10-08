@@ -16,8 +16,8 @@ import (
 // # PILIER 3 : VECTORISATION DU CONTENU CÔTÉ SERVEUR
 // ############################################################################
 
-// ContentVectorPayload est la structure sérialisée dans Redis sous content:vec:{post_id}.
-type ContentVectorPayload struct {
+// contentVectorPayload est la structure sérialisée dans Redis sous content:vec:{post_id}.
+type contentVectorPayload struct {
 	Vector        []float32 `json:"v"`         // ĉ_p ∈ R^224 (normalisé L2)
 	LSHHash       uint32    `json:"lsh"`       // Hash LSH pré-calculé pour le bucket
 	AuthorID      int64     `json:"author_id"` // Pour le calcul de B(u,p)
@@ -38,9 +38,9 @@ type ContentVectorOptions struct {
 func StoreContentVector(ctx context.Context, post post_models.PostPayload) {
 	fullVector := ComputeContentVectorFull(post, nil)
 
-	payload := ContentVectorPayload{
+	payload := contentVectorPayload{
 		Vector:        fullVector,
-		LSHHash:       DefaultLSHEngine.ComputeHash(fullVector),
+		LSHHash:       defaultLSHEngine.computeHash(fullVector),
 		AuthorID:      post.UserID,
 		PriorityLevel: post.PriorityLevel,
 	}
@@ -50,14 +50,14 @@ func StoreContentVector(ctx context.Context, post post_models.PostPayload) {
 		return
 	}
 
-	if err := StoreLSHBucket(ctx, post.ID, payload.LSHHash); err != nil {
+	if err := storeLSHBucket(ctx, post.ID, payload.LSHHash); err != nil {
 		nubo_log.Error(ctx).Err(err).Int64("post_id", post.ID).Msg("Échec mise à jour Redis LSH bucket")
 	}
 }
 
 // UpdatePostEngagementVector met à jour de manière asynchrone le bloc engagement.
 func UpdatePostEngagementVector(ctx context.Context, post post_models.PostPayload) {
-	var payload ContentVectorPayload
+	var payload contentVectorPayload
 
 	// 1. TENTATIVE L1 : Récupération du vecteur actuel
 	if err := redis.ContentVectors.GetObject(ctx, post.ID, &payload); err != nil || len(payload.Vector) != variables.VectorDimTotal {
@@ -75,10 +75,10 @@ func UpdatePostEngagementVector(ctx context.Context, post post_models.PostPayloa
 	computeEngagementBlock(post, engagementBlock)
 
 	// 3. Re-normalisation L2 après modification du bloc
-	NormalizeL2(payload.Vector)
+	normalizeL2(payload.Vector)
 
 	// 4. Mise à jour du hash LSH après re-normalisation
-	payload.LSHHash = DefaultLSHEngine.ComputeHash(payload.Vector)
+	payload.LSHHash = defaultLSHEngine.computeHash(payload.Vector)
 
 	// 5. Sauvegarde atomique L1
 	if err := redis.ContentVectors.SetObject(ctx, post.ID, payload); err != nil {
@@ -116,7 +116,7 @@ func ComputeContentVectorFull(post post_models.PostPayload, options *ContentVect
 	}
 
 	// Normalisation L2 finale pour garantir <ĉ_p, û> ≡ cos(c_p, u)
-	NormalizeL2(fullVector)
+	normalizeL2(fullVector)
 
 	return fullVector
 }
@@ -201,8 +201,8 @@ func computeSocialBlock(authorSocialEmbedding []float32, targetBlock []float32) 
 	copy(targetBlock[:dimensionSize], authorSocialEmbedding[:dimensionSize])
 }
 
-// NormalizeL2 normalise le vecteur à la norme unitaire (in-place).
-func NormalizeL2(vectorToNormalize []float32) {
+// normalizeL2 normalise le vecteur à la norme unitaire (in-place).
+func normalizeL2(vectorToNormalize []float32) {
 	var squaredNormSum float64
 	for _, value := range vectorToNormalize {
 		squaredNormSum += float64(value) * float64(value)

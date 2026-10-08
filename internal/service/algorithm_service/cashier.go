@@ -30,8 +30,8 @@ type PersonalizedFeedOptions struct {
 	StartIndex     int            // Index absolu de la Vague de Dopamine (Maintient la courbe au fil du scroll)
 }
 
-// BuildPersonalizedFeed filtre, score et ordonne le panier brut pour créer le feed final.
-func BuildPersonalizedFeed(ctx context.Context, options PersonalizedFeedOptions) ([]int64, error) {
+// buildPersonalizedFeed filtre, score et ordonne le panier brut pour créer le feed final.
+func buildPersonalizedFeed(ctx context.Context, options PersonalizedFeedOptions) ([]int64, error) {
 	feedSize := options.Limit
 	if feedSize <= 0 {
 		feedSize = variables.TDDFeedSize // K_feed = 50
@@ -86,7 +86,7 @@ func BuildPersonalizedFeed(ctx context.Context, options PersonalizedFeedOptions)
 		return nil, nubo_error.NewInternal()
 	}
 
-	allCandidates := make([]PostCandidate, 0, len(postIDs))
+	allCandidates := make([]postCandidate, 0, len(postIDs))
 
 	// 1. Traitement des hits du Cache L1 (RAM)
 	for _, id := range postIDs {
@@ -95,12 +95,12 @@ func BuildPersonalizedFeed(ctx context.Context, options PersonalizedFeedOptions)
 			continue // Sera traité par le fallback juste après
 		}
 
-		var payload ContentVectorPayload
+		var payload contentVectorPayload
 		if err := msgpack.Unmarshal(rawData, &payload); err != nil || len(payload.Vector) != variables.VectorDimTotal {
 			continue
 		}
 
-		allCandidates = append(allCandidates, PostCandidate{
+		allCandidates = append(allCandidates, postCandidate{
 			PostID:        id,
 			AuthorID:      payload.AuthorID,
 			TrendScore:    trendScoresMap[id],
@@ -122,7 +122,7 @@ func BuildPersonalizedFeed(ctx context.Context, options PersonalizedFeedOptions)
 		for _, post := range mongoPosts {
 			foundInMongo[post.ID] = true
 			if len(post.Vector) == variables.VectorDimTotal {
-				allCandidates = append(allCandidates, PostCandidate{
+				allCandidates = append(allCandidates, postCandidate{
 					PostID:        post.ID,
 					AuthorID:      post.UserID,
 					TrendScore:    trendScoresMap[post.ID],
@@ -147,7 +147,7 @@ func BuildPersonalizedFeed(ctx context.Context, options PersonalizedFeedOptions)
 			pgPosts, _ := postgres.FuncLoadPosts(ctx, stillMissingIDs, 1, 0)
 			for _, post := range pgPosts {
 				if len(post.Vector) == variables.VectorDimTotal {
-					allCandidates = append(allCandidates, PostCandidate{
+					allCandidates = append(allCandidates, postCandidate{
 						PostID:        post.ID,
 						AuthorID:      post.UserID,
 						TrendScore:    trendScoresMap[post.ID],
@@ -175,16 +175,16 @@ func BuildPersonalizedFeed(ctx context.Context, options PersonalizedFeedOptions)
 	// # ÉTAPE D : PRÉ-FILTRAGE LSH (Locality-Sensitive Hashing)
 	// ############################################################################
 
-	var filteredCandidates []PostCandidate
+	var filteredCandidates []postCandidate
 	var similarityMatrix []float32
 	var matrixDimension int
 	var isMatrixCalculatedOnTheFly bool
 
 	if options.UserConfidence > variables.TDDLSHConfidenceThreshold {
-		lshHash := DefaultLSHEngine.ComputeHash(options.UserVec)
-		lshTargetIDSet, _ := GetLSHCandidateIDs(ctx, lshHash)
+		lshHash := defaultLSHEngine.computeHash(options.UserVec)
+		lshTargetIDSet, _ := getLSHCandidateIDs(ctx, lshHash)
 
-		filtered := make([]PostCandidate, 0, len(lshTargetIDSet))
+		filtered := make([]postCandidate, 0, len(lshTargetIDSet))
 		for _, candidate := range allCandidates {
 			if lshTargetIDSet[candidate.PostID] {
 				filtered = append(filtered, candidate)
@@ -210,7 +210,7 @@ func BuildPersonalizedFeed(ctx context.Context, options PersonalizedFeedOptions)
 	// ############################################################################
 
 	for i := range filteredCandidates {
-		filteredCandidates[i].PersonalScore = ComputePersonalizedScore(
+		filteredCandidates[i].PersonalScore = computePersonalizedScore(
 			filteredCandidates[i].TrendScore,
 			options.UserVec,
 			filteredCandidates[i].ContentVec,
@@ -231,7 +231,7 @@ func BuildPersonalizedFeed(ctx context.Context, options PersonalizedFeedOptions)
 	}
 
 	// Exécution du Maximal Marginal Relevance
-	selectedCandidates := RunMMR(filteredCandidates, similarityMatrix, matrixDimension, variables.TDDLambdaMMR, feedSize)
+	selectedCandidates := runMMR(filteredCandidates, similarityMatrix, matrixDimension, variables.TDDLambdaMMR, feedSize)
 
 	// ############################################################################
 	// # ÉTAPE G : ONDE DE SÉRENDIPITÉ (DÉCOUVERTE)
@@ -244,7 +244,7 @@ func BuildPersonalizedFeed(ctx context.Context, options PersonalizedFeedOptions)
 
 	// Le générateur est ancré sur la Seed de ce panier pour garantir la stabilité de la Vague
 	deterministicRNG := rand.New(rand.NewSource(options.Seed))
-	selectedCandidates = InjectSerendipity(selectedCandidates, serendipityDiscoveryPool, deterministicRNG, options.StartIndex)
+	selectedCandidates = injectSerendipity(selectedCandidates, serendipityDiscoveryPool, deterministicRNG, options.StartIndex)
 
 	// Extraction de la liste finale d'IDs
 	finalFeedIDs := make([]int64, len(selectedCandidates))
@@ -286,7 +286,7 @@ func InvalidatePersonalizedFeedCache(ctx context.Context, userID int64, oldVecto
 	return false
 }
 
-func extractIDsFromCandidates(candidates []PostCandidate, limit int) []int64 {
+func extractIDsFromCandidates(candidates []postCandidate, limit int) []int64 {
 	if limit > len(candidates) {
 		limit = len(candidates)
 	}

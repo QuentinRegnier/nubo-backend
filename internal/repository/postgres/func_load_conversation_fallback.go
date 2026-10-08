@@ -13,12 +13,12 @@ import (
 	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
 )
 
-type InboxFallbackResult struct {
+type inboxFallbackResult struct {
 	Conversation lite_models.ConvLiteRequest
 	Member       lite_models.MemberLiteRequest
 }
 
-func FuncLoadConversationFallback(ctx context.Context, userID int64, convIDs []int64) ([]InboxFallbackResult, error) {
+func FuncLoadConversationFallback(ctx context.Context, userID int64, convIDs []int64) ([]inboxFallbackResult, error) {
 	query := `SELECT conversation_id, title, description, avatar_id, type, conversation_settings, last_message_id, role, settings, frozen_message_id, last_read_message_id, unread_count, joined_at FROM messaging.func_load_conversation_fallback($1, $2)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, userID, convIDs)
 	if err != nil {
@@ -31,7 +31,7 @@ func FuncLoadConversationFallback(ctx context.Context, userID int64, convIDs []i
 		}
 	}(rows)
 
-	var results []InboxFallbackResult
+	var results []inboxFallbackResult
 	for rows.Next() {
 		var cid int64
 		var title sql.NullString
@@ -92,7 +92,7 @@ func FuncLoadConversationFallback(ctx context.Context, userID int64, convIDs []i
 			if lastReadMsgID.Valid {
 				mem.LastReadMessageID = lastReadMsgID.Int64
 			}
-			results = append(results, InboxFallbackResult{Conversation: conv, Member: mem})
+			results = append(results, inboxFallbackResult{Conversation: conv, Member: mem})
 		}
 	}
 	return results, nil

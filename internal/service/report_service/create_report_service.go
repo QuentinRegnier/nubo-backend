@@ -25,7 +25,7 @@ func SubmitReport(ctx context.Context, input report_models.CreateReportInput) er
 
 	// ── ÉTAPE 1 : CALCUL DU SCORE D'URGENCE (O(1) EN RAM) ───────────────────
 
-	economicValueScore := CalculateEconomicImportance(ctx, input)
+	economicValueScore := calculateEconomicImportance(ctx, input)
 
 	// ── ÉTAPE 2 : CONSTRUCTION DU PAYLOAD DE SIGNALEMENT ────────────────────
 

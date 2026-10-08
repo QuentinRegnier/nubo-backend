@@ -209,7 +209,7 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 
 		} else {
 			// ── CAS B : ENVOI D'UNE INVITATION (MESSAGE TYPE 6) ─────────────
-			directConvID, errDirect := GetOrCreateDirectConversation(ctx, callerID, targetUserID)
+			directConvID, errDirect := getOrCreateDirectConversation(ctx, callerID, targetUserID)
 			if errDirect == nil {
 				inviteAttachments := map[string]any{
 					"conversation_id": conversationPayload.ID,

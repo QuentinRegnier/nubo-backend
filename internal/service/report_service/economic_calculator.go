@@ -13,9 +13,9 @@ import (
 // # UTILITAIRE : CALCULATEUR D'IMPORTANCE ÉCONOMIQUE
 // ############################################################################
 
-// CalculateEconomicImportance évalue la valeur "financière/rétention" d'une cible signalée en O(1).
+// calculateEconomicImportance évalue la valeur "financière/rétention" d'une cible signalée en O(1).
 // Plus le score est élevé, plus le signalement doit remonter en haut de la file des modérateurs.
-func CalculateEconomicImportance(ctx context.Context, input report_models.CreateReportInput) float64 {
+func calculateEconomicImportance(ctx context.Context, input report_models.CreateReportInput) float64 {
 	var totalEconomicValue = 0.0
 
 	for _, targetID := range input.TargetIDs {

@@ -30,9 +30,9 @@ import (
 // # UTILITAIRES : GESTION DES MESSAGES PRIVÉS (DIRECT MESSAGES)
 // ############################################################################
 
-// GetOrCreateDirectConversation gère la cascade L1 -> L2 -> L3 pour trouver un Message Privé (MP) existant entre deux utilisateurs,
+// getOrCreateDirectConversation gère la cascade L1 -> L2 -> L3 pour trouver un Message Privé (MP) existant entre deux utilisateurs,
 // ou déclenche sa création formelle s'il n'existe pas encore.
-func GetOrCreateDirectConversation(ctx context.Context, callerID, targetID int64) (int64, error) {
+func getOrCreateDirectConversation(ctx context.Context, callerID, targetID int64) (int64, error) {
 
 	// ── ÉTAPE 1 : TENTATIVE L1 (Speed Cache O(n)) ───────────────────────────
 	if cachedConversationID, errCache := cache_service.GetDirectConversationCache(ctx, callerID, targetID); errCache == nil && cachedConversationID > 0 {
@@ -137,17 +137,17 @@ func hydrateMember(ctx context.Context, conversationID, userID int64, isFromCold
 // # UTILITAIRES : CALCUL DES AVATARS DE CONVERSATION
 // ############################################################################
 
-// Candidate représente un profil potentiellement éligible pour être l'avatar d'une conversation de groupe.
-type Candidate struct {
+// candidate représente un profil potentiellement éligible pour être l'avatar d'une conversation de groupe.
+type candidate struct {
 	UserID   int64
 	Role     int
 	JoinedAt int64
 	Relation int
 }
 
-// GetConversationAvatars calcule les avatars à afficher pour une conversation en respectant la hiérarchie sociale
+// getConversationAvatars calcule les avatars à afficher pour une conversation en respectant la hiérarchie sociale
 // (Propriétaire d'abord, puis amis/abonnés, puis par ancienneté).
-func GetConversationAvatars(ctx context.Context, conversationID int64, callerID int64, conversationType int) []media_models.MediaView {
+func getConversationAvatars(ctx context.Context, conversationID int64, callerID int64, conversationType int) []media_models.MediaView {
 	var avatarsToDisplay []media_models.MediaView
 
 	// 1. Récupération des participants en O(1) via Set Redis
@@ -187,7 +187,7 @@ func GetConversationAvatars(ctx context.Context, conversationID int64, callerID 
 	membersValuesBatch, _ := redis.ConvMembers.MGet(ctx, memberRedisKeys...)
 
 	// B. Création de la liste des candidats et identification du propriétaire
-	var avatarCandidates []Candidate
+	var avatarCandidates []candidate
 	var ownerUserID int64
 
 	for _, rawValue := range membersValuesBatch {
@@ -206,7 +206,7 @@ func GetConversationAvatars(ctx context.Context, conversationID int64, callerID 
 				// Sur 50 membres, la boucle O(1) de L1 prendra < 1ms.
 				relationScore := cache_service.RelationValue(ctx, liteMember.UserID, callerID)
 
-				avatarCandidates = append(avatarCandidates, Candidate{
+				avatarCandidates = append(avatarCandidates, candidate{
 					UserID:   liteMember.UserID,
 					Role:     liteMember.Role,
 					JoinedAt: liteMember.JoinedAt,

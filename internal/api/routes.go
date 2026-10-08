@@ -173,6 +173,7 @@ func SetupRoutes(r *gin.Engine) {
 	secured.POST("conversation/community/members/requests/get", member_handlers.GetCommunityRequestsHandler)       //
 	secured.POST("conversation/community/members/requests/accept", member_handlers.AcceptCommunityRequestHandler)  //
 	secured.POST("conversation/community/members/requests/refusal", member_handlers.RefuseCommunityRequestHandler) //
+	secured.POST("/conversations/details", conversation_handlers.GetConversationsHandler)                          //
 	secured.PUT("/conversation/update", conversation_handlers.UpdateConversationHandler)                           //
 	secured.PATCH("/conversation/settings", member_handlers.UpdateMemberSettingsHandler)                           //
 	secured.POST("/conversations/members/mute", member_handlers.MuteMemberHandler)

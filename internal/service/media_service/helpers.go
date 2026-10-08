@@ -22,9 +22,9 @@ import (
 // # UTILITAIRES : SÉCURITÉ ET FILIGRANAGE DES URLS (WATERMARK)
 // ############################################################################
 
-// GenerateWatermarkedURL crée l'URL finale pointant vers le micro-service de tatouage.
+// generateWatermarkedURL crée l'URL finale pointant vers le micro-service de tatouage.
 // Elle est signée cryptographiquement avec HMAC pour empêcher la falsification des paramètres.
-func GenerateWatermarkedURL(mediaStoragePath string, authorID int64, contextID int64, readerID int64) string {
+func generateWatermarkedURL(mediaStoragePath string, authorID int64, contextID int64, readerID int64) string {
 	baseURL := os.Getenv("WATERMARK_API_URL")
 	secretKey := os.Getenv("WATERMARK_SECRET_KEY")
 	currentTimestamp := time.Now().Unix()
@@ -42,13 +42,13 @@ func GenerateWatermarkedURL(mediaStoragePath string, authorID int64, contextID i
 // GenerateMediaViewCascade récupère le média (L1->L2->L3) et génère le DTO final (URL signée).
 // Fonction d'assistance massivement appelée lors de l'hydratation des vues de l'API.
 func GenerateMediaViewCascade(ctx context.Context, targetMediaID, authorID, contextID, readerID int64) (media_models.MediaView, error) {
-	mediaPayload, errCascade := GetMediaCascade(ctx, targetMediaID)
+	mediaPayload, errCascade := getMediaCascade(ctx, targetMediaID)
 
 	if errCascade != nil || !mediaPayload.Visibility {
 		return media_models.MediaView{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Média introuvable ou supprimé.", errCascade)
 	}
 
-	signedURL := GenerateWatermarkedURL(mediaPayload.StoragePath, authorID, contextID, readerID)
+	signedURL := generateWatermarkedURL(mediaPayload.StoragePath, authorID, contextID, readerID)
 
 	return media_models.MediaView{
 		MediaID: targetMediaID,
@@ -81,9 +81,9 @@ func FormatMediaViewsCascade(ctx context.Context, mediaIDs []int64, authorID, co
 // # UTILITAIRES : GESTION DES MÉDIAS (CASCADE ET PHYSIQUE)
 // ############################################################################
 
-// GetMediaCascade récupère les informations d'un média avec une stratégie L1 -> L2 -> L3
+// getMediaCascade récupère les informations d'un média avec une stratégie L1 -> L2 -> L3
 // et réhydrate automatiquement les caches manquants.
-func GetMediaCascade(ctx context.Context, mediaID int64) (media_models.MediaPayload, error) {
+func getMediaCascade(ctx context.Context, mediaID int64) (media_models.MediaPayload, error) {
 
 	// ── TENTATIVE L1 (RAM OBJECT CACHE) ───────────────────────────────────────
 	if mediaPayload, errCache := object_cache_service.GetMediaFromObjectCache(ctx, mediaID); errCache == nil {
