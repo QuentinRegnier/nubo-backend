@@ -20,3 +20,9 @@ const (
 	PostVisibilitySubcriber = 1
 	PostVisibilityFriend    = 2
 )
+
+const (
+	MaxHashtagsPerPost    = 20
+	MaxIdentifiersPerPost = 10
+	MaxMediaPerPost       = 4
+)

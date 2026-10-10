@@ -56,3 +56,7 @@ const (
 	// Commentaire
 	ReportScoreCommentLikeMultiplier = 1.5
 )
+
+const (
+	MaxReportTargets = 20
+)
