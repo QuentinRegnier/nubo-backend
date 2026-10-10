@@ -144,10 +144,10 @@ func SetupRoutes(r *gin.Engine) {
 	secured.DELETE("/saved/delete", saved_handlers.UnsavePostHandler) //
 
 	// --- Reglage ---
-	secured.PUT("/settings/profile/update", user_settings_handlers.UpdateProfileHandler)               //
-	secured.PATCH("/settings/privacy/update", user_settings_handlers.UpdatePrivacyHandler)             //
-	secured.PATCH("/settings/notifications/update", user_settings_handlers.UpdateNotificationsHandler) //
-	secured.PATCH("/settings/display/update", user_settings_handlers.UpdateDisplayHandler)             //
+	secured.PUT("/settings/profile/update", user_settings_handlers.UpdateProfileHandler)             //
+	secured.PUT("/settings/privacy/update", user_settings_handlers.UpdatePrivacyHandler)             //
+	secured.PUT("/settings/notifications/update", user_settings_handlers.UpdateNotificationsHandler) //
+	secured.PUT("/settings/display/update", user_settings_handlers.UpdateDisplayHandler)             //
 
 	// --- Administration / Modération ---
 	secured.POST("/ban", BanHandler)                                            // ℹ️❌

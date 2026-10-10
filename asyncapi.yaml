@@ -1,0 +1,653 @@
+asyncapi: 3.0.0
+info:
+  title: Numan WebSocket API
+  version: 1.0.0
+  description: WebSocket API for real-time interactions and synchronization.
+servers:
+  websocket:
+    host: '{domain}'
+    protocol: ws
+    description: WebSocket endpoint requiring JWT authentication via JWTMiddleware and Firebase Installation ID.
+channels:
+  wsChannel:
+    address: /ws
+    description: Main WebSocket channel.
+    messages:
+      PingRequest:
+        $ref: '#/components/messages/PingRequest'
+      PresenceSyncRequest:
+        $ref: '#/components/messages/PresenceSyncRequest'
+      ConversationFocusRequest:
+        $ref: '#/components/messages/ConversationFocusRequest'
+      TypingStartedRequest:
+        $ref: '#/components/messages/TypingStartedRequest'
+      TypingStoppedRequest:
+        $ref: '#/components/messages/TypingStoppedRequest'
+      ConversationReadRequest:
+        $ref: '#/components/messages/ConversationReadRequest'
+      MessageCreateRequest:
+        $ref: '#/components/messages/MessageCreateRequest'
+      MessageUpdateRequest:
+        $ref: '#/components/messages/MessageUpdateRequest'
+      MessageDeleteRequest:
+        $ref: '#/components/messages/MessageDeleteRequest'
+      MessageReactRequest:
+        $ref: '#/components/messages/MessageReactRequest'
+      MessageUnreactRequest:
+        $ref: '#/components/messages/MessageUnreactRequest'
+      ActionResponse:
+        $ref: '#/components/messages/ActionResponse'
+      ActionErrorResponse:
+        $ref: '#/components/messages/ActionErrorResponse'
+      UserPresenceEvent:
+        $ref: '#/components/messages/UserPresenceEvent'
+      TypingEvent:
+        $ref: '#/components/messages/TypingEvent'
+      MessageCreatedEvent:
+        $ref: '#/components/messages/MessageCreatedEvent'
+      MessageUpdatedEvent:
+        $ref: '#/components/messages/MessageUpdatedEvent'
+      MessageDeletedEvent:
+        $ref: '#/components/messages/MessageDeletedEvent'
+      MessageReactedEvent:
+        $ref: '#/components/messages/MessageReactedEvent'
+      MessageUnreactedEvent:
+        $ref: '#/components/messages/MessageUnreactedEvent'
+
+operations:
+  receiveRequest:
+    action: receive
+    channel:
+      $ref: '#/channels/wsChannel'
+    title: Receive client messages
+    summary: Receive requests and actions sent by the client.
+    description: Actions sent by the client to the server.
+    messages:
+      - $ref: '#/channels/wsChannel/messages/PingRequest'
+      - $ref: '#/channels/wsChannel/messages/PresenceSyncRequest'
+      - $ref: '#/channels/wsChannel/messages/ConversationFocusRequest'
+      - $ref: '#/channels/wsChannel/messages/TypingStartedRequest'
+      - $ref: '#/channels/wsChannel/messages/TypingStoppedRequest'
+      - $ref: '#/channels/wsChannel/messages/ConversationReadRequest'
+      - $ref: '#/channels/wsChannel/messages/MessageCreateRequest'
+      - $ref: '#/channels/wsChannel/messages/MessageUpdateRequest'
+      - $ref: '#/channels/wsChannel/messages/MessageDeleteRequest'
+      - $ref: '#/channels/wsChannel/messages/MessageReactRequest'
+      - $ref: '#/channels/wsChannel/messages/MessageUnreactRequest'
+
+  sendResponse:
+    action: send
+    channel:
+      $ref: '#/channels/wsChannel'
+    title: Send server messages
+    summary: Send responses and events to the client.
+    description: Responses and events sent by the server to the client.
+    messages:
+      - $ref: '#/channels/wsChannel/messages/ActionResponse'
+      - $ref: '#/channels/wsChannel/messages/ActionErrorResponse'
+      - $ref: '#/channels/wsChannel/messages/UserPresenceEvent'
+      - $ref: '#/channels/wsChannel/messages/TypingEvent'
+      - $ref: '#/channels/wsChannel/messages/MessageCreatedEvent'
+      - $ref: '#/channels/wsChannel/messages/MessageUpdatedEvent'
+      - $ref: '#/channels/wsChannel/messages/MessageDeletedEvent'
+      - $ref: '#/channels/wsChannel/messages/MessageReactedEvent'
+      - $ref: '#/channels/wsChannel/messages/MessageUnreactedEvent'
+
+components:
+  messages:
+    PingRequest:
+      payload:
+        $ref: '#/components/schemas/WsRequestPing'
+    PresenceSyncRequest:
+      payload:
+        $ref: '#/components/schemas/WsRequestPresenceSync'
+    ConversationFocusRequest:
+      payload:
+        $ref: '#/components/schemas/WsRequestConversationFocus'
+    TypingStartedRequest:
+      payload:
+        $ref: '#/components/schemas/WsRequestTypingStarted'
+    TypingStoppedRequest:
+      payload:
+        $ref: '#/components/schemas/WsRequestTypingStopped'
+    ConversationReadRequest:
+      payload:
+        $ref: '#/components/schemas/WsRequestConversationRead'
+    MessageCreateRequest:
+      payload:
+        $ref: '#/components/schemas/WsRequestMessageCreate'
+    MessageUpdateRequest:
+      payload:
+        $ref: '#/components/schemas/WsRequestMessageUpdate'
+    MessageDeleteRequest:
+      payload:
+        $ref: '#/components/schemas/WsRequestMessageDelete'
+    MessageReactRequest:
+      payload:
+        $ref: '#/components/schemas/WsRequestMessageReact'
+    MessageUnreactRequest:
+      payload:
+        $ref: '#/components/schemas/WsRequestMessageUnreact'
+    ActionResponse:
+      payload:
+        $ref: '#/components/schemas/WsResponseSuccess'
+    ActionErrorResponse:
+      payload:
+        $ref: '#/components/schemas/WsResponseError'
+    UserPresenceEvent:
+      payload:
+        $ref: '#/components/schemas/WsEventUserPresence'
+    TypingEvent:
+      payload:
+        $ref: '#/components/schemas/WsEventTyping'
+    MessageCreatedEvent:
+      payload:
+        $ref: '#/components/schemas/WsEventMessageCreated'
+    MessageUpdatedEvent:
+      payload:
+        $ref: '#/components/schemas/WsEventMessageUpdated'
+    MessageDeletedEvent:
+      payload:
+        $ref: '#/components/schemas/WsEventMessageDeleted'
+    MessageReactedEvent:
+      payload:
+        $ref: '#/components/schemas/WsEventMessageReacted'
+    MessageUnreactedEvent:
+      payload:
+        $ref: '#/components/schemas/WsEventMessageUnreacted'
+  schemas:
+    WsRequestPing:
+      type: object
+      required:
+      - request_id
+      - action
+      - x_signature
+      - x_timestamp
+      properties:
+        request_id:
+          type: string
+        action:
+          type: string
+          const: ping
+        payload: {}
+        x_signature:
+          type: string
+        x_timestamp:
+          type: string
+    WsRequestPresenceSync:
+      type: object
+      required:
+      - request_id
+      - action
+      - payload
+      - x_signature
+      - x_timestamp
+      properties:
+        request_id:
+          type: string
+        action:
+          type: string
+          const: presence.sync
+        payload:
+          $ref: '#/components/schemas/SyncPresenceInput'
+        x_signature:
+          type: string
+        x_timestamp:
+          type: string
+    WsRequestConversationFocus:
+      type: object
+      required:
+      - request_id
+      - action
+      - payload
+      - x_signature
+      - x_timestamp
+      properties:
+        request_id:
+          type: string
+        action:
+          type: string
+          const: conversation.focus
+        payload:
+          $ref: '#/components/schemas/FocusConversationInput'
+        x_signature:
+          type: string
+        x_timestamp:
+          type: string
+    WsRequestTypingStarted:
+      type: object
+      required:
+      - request_id
+      - action
+      - payload
+      - x_signature
+      - x_timestamp
+      properties:
+        request_id:
+          type: string
+        action:
+          type: string
+          const: typing.started
+        payload:
+          $ref: '#/components/schemas/TypingPayload'
+        x_signature:
+          type: string
+        x_timestamp:
+          type: string
+    WsRequestTypingStopped:
+      type: object
+      required:
+      - request_id
+      - action
+      - payload
+      - x_signature
+      - x_timestamp
+      properties:
+        request_id:
+          type: string
+        action:
+          type: string
+          const: typing.stopped
+        payload:
+          $ref: '#/components/schemas/TypingPayload'
+        x_signature:
+          type: string
+        x_timestamp:
+          type: string
+    WsRequestConversationRead:
+      type: object
+      required:
+      - request_id
+      - action
+      - payload
+      - x_signature
+      - x_timestamp
+      properties:
+        request_id:
+          type: string
+        action:
+          type: string
+          const: conversation.read
+        payload:
+          $ref: '#/components/schemas/ReadReceiptInput'
+        x_signature:
+          type: string
+        x_timestamp:
+          type: string
+    WsRequestMessageCreate:
+      type: object
+      required:
+      - request_id
+      - action
+      - payload
+      - x_signature
+      - x_timestamp
+      properties:
+        request_id:
+          type: string
+        action:
+          type: string
+          const: message.create
+        payload:
+          $ref: '#/components/schemas/CreateMessageInput'
+        x_signature:
+          type: string
+        x_timestamp:
+          type: string
+    WsRequestMessageUpdate:
+      type: object
+      required:
+      - request_id
+      - action
+      - payload
+      - x_signature
+      - x_timestamp
+      properties:
+        request_id:
+          type: string
+        action:
+          type: string
+          const: message.update
+        payload:
+          $ref: '#/components/schemas/UpdateMessageInput'
+        x_signature:
+          type: string
+        x_timestamp:
+          type: string
+    WsRequestMessageDelete:
+      type: object
+      required:
+      - request_id
+      - action
+      - payload
+      - x_signature
+      - x_timestamp
+      properties:
+        request_id:
+          type: string
+        action:
+          type: string
+          const: message.delete
+        payload:
+          $ref: '#/components/schemas/DeleteMessageInput'
+        x_signature:
+          type: string
+        x_timestamp:
+          type: string
+    WsRequestMessageReact:
+      type: object
+      required:
+      - request_id
+      - action
+      - payload
+      - x_signature
+      - x_timestamp
+      properties:
+        request_id:
+          type: string
+        action:
+          type: string
+          const: message.react
+        payload:
+          $ref: '#/components/schemas/ReactMessageInput'
+        x_signature:
+          type: string
+        x_timestamp:
+          type: string
+    WsRequestMessageUnreact:
+      type: object
+      required:
+      - request_id
+      - action
+      - payload
+      - x_signature
+      - x_timestamp
+      properties:
+        request_id:
+          type: string
+        action:
+          type: string
+          const: message.unreact
+        payload:
+          $ref: '#/components/schemas/UnreactMessageInput'
+        x_signature:
+          type: string
+        x_timestamp:
+          type: string
+    WsResponseSuccess:
+      type: object
+      required:
+      - event_type
+      - request_id
+      - status
+      properties:
+        event_type:
+          type: string
+          const: response
+        request_id:
+          type: string
+        status:
+          type: string
+          const: success
+        data: {}
+    WsResponseError:
+      type: object
+      required:
+      - event_type
+      - request_id
+      - status
+      - numan_error
+      properties:
+        event_type:
+          type: string
+          const: response
+        request_id:
+          type: string
+        status:
+          type: string
+          const: error
+        numan_error:
+          type: string
+    WsEventUserPresence:
+      type: object
+      required:
+      - event_type
+      - payload
+      properties:
+        event_type:
+          type: string
+          const: user.presence
+        payload:
+          type: object
+          required:
+          - conversation_id
+          - user_id
+          - is_online
+          properties:
+            conversation_id:
+              type: integer
+            user_id:
+              type: integer
+            is_online:
+              type: boolean
+    WsEventTyping:
+      type: object
+      required:
+      - event_type
+      - payload
+      properties:
+        event_type:
+          type: string
+          enum:
+          - typing.started
+          - typing.stopped
+        payload:
+          type: object
+          required:
+          - conversation_id
+          - user_id
+          properties:
+            conversation_id:
+              type: integer
+            user_id:
+              type: integer
+    WsEventMessageCreated:
+      type: object
+      required:
+      - event_type
+      - payload
+      properties:
+        event_type:
+          type: string
+          const: message.created
+        payload:
+          $ref: '#/components/schemas/MessageView'
+    WsEventMessageUpdated:
+      type: object
+      required:
+      - event_type
+      - payload
+      properties:
+        event_type:
+          type: string
+          const: message.updated
+        payload:
+          $ref: '#/components/schemas/MessagePayload'
+    WsEventMessageDeleted:
+      type: object
+      required:
+      - event_type
+      - payload
+      properties:
+        event_type:
+          type: string
+          const: message.deleted
+        payload:
+          $ref: '#/components/schemas/MessagePayload'
+    WsEventMessageReacted:
+      type: object
+      required:
+      - event_type
+      - payload
+      properties:
+        event_type:
+          type: string
+          const: message.reacted
+        payload:
+          $ref: '#/components/schemas/MessageView'
+    WsEventMessageUnreacted:
+      type: object
+      required:
+      - event_type
+      - payload
+      properties:
+        event_type:
+          type: string
+          const: message.unreacted
+        payload:
+          $ref: '#/components/schemas/MessageView'
+    SyncPresenceInput:
+      type: object
+      required:
+      - user_ids
+      properties:
+        user_ids:
+          type: array
+          items:
+            type: integer
+          maxItems: 50
+    FocusConversationInput:
+      type: object
+      required:
+      - conversation_id
+      properties:
+        conversation_id:
+          type: integer
+        active:
+          type: boolean
+    TypingPayload:
+      type: object
+      required:
+      - conversation_id
+      properties:
+        conversation_id:
+          type: integer
+    ReadReceiptInput:
+      type: object
+      required:
+      - conversation_id
+      properties:
+        conversation_id:
+          type: integer
+    CreateMessageInput:
+      type: object
+      required:
+      - conversation_id
+      - message_type
+      properties:
+        conversation_id:
+          type: integer
+        message_type:
+          type: integer
+          minimum: 0
+          maximum: 9
+        content:
+          type: string
+          maxLength: 2200
+        attachments:
+          type: object
+          additionalProperties: true
+        thread_parent_id:
+          type: integer
+    UpdateMessageInput:
+      type: object
+      required:
+      - message_id
+      - content
+      properties:
+        message_id:
+          type: integer
+        content:
+          type: string
+          maxLength: 2200
+    DeleteMessageInput:
+      type: object
+      required:
+      - message_id
+      properties:
+        message_id:
+          type: integer
+    ReactMessageInput:
+      type: object
+      required:
+      - message_id
+      - reaction
+      properties:
+        message_id:
+          type: integer
+        reaction:
+          type: string
+          minLength: 1
+          maxLength: 30
+    UnreactMessageInput:
+      type: object
+      required:
+      - message_id
+      properties:
+        message_id:
+          type: integer
+    MessagePayload:
+      type: object
+      required:
+      - id
+      - conversation_id
+      - sender_id
+      - message_type
+      - visibility
+      - content
+      - attachments
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: integer
+        conversation_id:
+          type: integer
+        sender_id:
+          type: integer
+        message_type:
+          type: integer
+        visibility:
+          type: boolean
+        content:
+          type: string
+        attachments:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: integer
+        updated_at:
+          type: integer
+    MessageView:
+      allOf:
+      - $ref: '#/components/schemas/MessagePayload'
+      - type: object
+        required:
+        - sender_username
+        - sender_avatar
+        - reaction_counts
+        - user_reaction
+        properties:
+          sender_username:
+            type: string
+          sender_avatar:
+            type: object
+            additionalProperties: true
+          sender_avatar_community_id:
+            type: integer
+          reaction_counts:
+            type: object
+            additionalProperties:
+              type: integer
+          user_reaction:
+            type: string

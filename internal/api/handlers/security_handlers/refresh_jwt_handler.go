@@ -92,13 +92,17 @@ import (
 // @Failure      500  {object} numan_error.PublicErrorResponse "Internal Server Error"
 // @Router       /refresh/jwt [post]
 func RefreshJWT(c *gin.Context) {
+
+	// ── ÉTAPE 1 : LECTURE DU CORPS DE REQUÊTE ──────────────────────────────
+
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		numan_error.RespondWithError(c, numan_error.NewBadRequest("READ_BODY_ERROR", "Erreur lecture body.", err))
 		return
 	}
 
-	// 2. Récupération des Headers
+	// ── ÉTAPE 2 : EXTRACTION DES EN-TÊTES DE SÉCURITÉ ──────────────────────
+
 	authHeader := c.GetHeader("Authorization")
 	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
 		authHeader = authHeader[7:]
@@ -112,7 +116,9 @@ func RefreshJWT(c *gin.Context) {
 		return
 	}
 
-	// 3. EXTRACTION DES DONNÉES DU JWT
+	// ── ÉTAPE 3 : EXTRACTION DES DONNÉES DU JWT (MODE DÉGRADÉ) ─────────────
+
+	// Parsing "Unverified" : on utilise l'ancien JWT uniquement comme transport de claims
 	token, _, err := new(jwt.Parser).ParseUnverified(authHeader, jwt.MapClaims{})
 	if err != nil {
 		numan_error.RespondWithError(c, numan_error.NewBadRequest("INVALID_JWT", "Token illisible.", err))
@@ -130,6 +136,7 @@ func RefreshJWT(c *gin.Context) {
 		numan_error.RespondWithError(c, numan_error.NewBadRequest("MISSING_SUBJECT", "UserID manquant dans le token.", err))
 		return
 	}
+
 	userID, err := pkg.ParseInt64Strict(sub)
 	if err != nil {
 		numan_error.RespondWithError(c, numan_error.NewBadRequest("INVALID_SUBJECT", "Format UserID invalide.", err))
@@ -142,7 +149,8 @@ func RefreshJWT(c *gin.Context) {
 		return
 	}
 
-	// 4. Vérification HMAC
+	// ── ÉTAPE 4 : VÉRIFICATION CRYPTOGRAPHIQUE (HMAC) ──────────────────────
+
 	contentToSign := security.GetBodyToSign(c.Request, bodyBytes)
 	stringToSign := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, clientTs, contentToSign)
 
@@ -151,7 +159,8 @@ func RefreshJWT(c *gin.Context) {
 		return
 	}
 
-	// 5. Génération Nouveau JWT
+	// ── ÉTAPE 5 : GÉNÉRATION DU NOUVEAU JWT ET ROTATION DU RATCHET ─────────
+
 	newJWT, err := pkg.GenerateToken(userID, firebaseInstallationID, variables.JWTExpirationSeconds)
 	if err != nil {
 		numan_log.Error(c).Err(err).Msg("Échec de la génération du JWT")
@@ -159,14 +168,15 @@ func RefreshJWT(c *gin.Context) {
 		return
 	}
 
-	// 6. Rotation du Ratchet & Mise à jour Session
+	// RotateRatchet effectue l'avancement mathématique de la clé de session et gère la persistance
 	if err := security.RotateRatchet(c, userID, firebaseInstallationID, clientSecret, authHeader); err != nil {
 		numan_log.Error(c).Err(err).Msg("Échec de la rotation cryptographique (RotateRatchet)")
 		numan_error.RespondWithError(c, numan_error.NewInternal())
 		return
 	}
 
-	// 7. PRÉPARATION DE LA RÉPONSE SIGNÉE
+	// ── ÉTAPE 6 : CONSTRUCTION ET SIGNATURE DE LA RÉPONSE ──────────────────
+
 	respData := security_models.RefreshJWTResponse{
 		Token:   newJWT,
 		Message: "Renouvellement OK",
@@ -182,6 +192,7 @@ func RefreshJWT(c *gin.Context) {
 	respTs := fmt.Sprintf("%d", time.Now().Unix())
 	stringToSignResp := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, respTs, string(respBytes))
 
+	// La réponse est signée avec le secret fourni par le client pour prouver l'authenticité du serveur
 	h := hmac.New(sha256.New, []byte(clientSecret))
 	h.Write([]byte(stringToSignResp))
 	respSig := hex.EncodeToString(h.Sum(nil))

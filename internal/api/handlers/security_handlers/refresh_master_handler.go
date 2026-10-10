@@ -106,6 +106,9 @@ import (
 // @Failure      500  {object} numan_error.PublicErrorResponse "Internal Server Error"
 // @Router       /refresh/master [post]
 func RefreshMaster(c *gin.Context) {
+
+	// ── ÉTAPE 1 : LECTURE ET VALIDATION DE LA REQUÊTE ──────────────────────
+
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		numan_error.RespondWithError(c, numan_error.NewBadRequest("READ_BODY_ERROR", "Erreur de lecture du body.", err))
@@ -128,6 +131,8 @@ func RefreshMaster(c *gin.Context) {
 		return
 	}
 
+	// ── ÉTAPE 2 : EXTRACTION DES EN-TÊTES DE SÉCURITÉ ──────────────────────
+
 	authHeader := c.GetHeader("Authorization")
 	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
 		authHeader = authHeader[7:]
@@ -143,14 +148,18 @@ func RefreshMaster(c *gin.Context) {
 		return
 	}
 
+	// ── ÉTAPE 3 : RECHERCHE DE SESSION EN CASCADE (L1 -> L2 -> L3) ─────────
+
 	var sessionRaw auth_models.SessionsPayload
 	var sessionFound bool
 
+	// Tentative L1 (Object Cache RAM)
 	if s, err := cache_service.LoadSessionFromCache(c, input.UserID, "", input.MasterToken); err == nil && s.ID != 0 {
 		sessionRaw = s
 		sessionFound = true
 	}
 
+	// Tentative L2 (MongoDB - Warm Storage) avec auto-guérison L1
 	if !sessionFound {
 		if s, err := mongo.MongoLoadSession(c, input.UserID, "", input.MasterToken, ""); err == nil && s.ID != 0 {
 			sessionRaw = s
@@ -159,6 +168,7 @@ func RefreshMaster(c *gin.Context) {
 		}
 	}
 
+	// Tentative L3 (PostgreSQL - Cold Storage) avec auto-guérison L1 & L2
 	if !sessionFound {
 		s, err := postgres.FuncLoadSession(c, -1, input.UserID, "", input.MasterToken)
 		if err == nil && s.ID != 0 {
@@ -174,6 +184,8 @@ func RefreshMaster(c *gin.Context) {
 		return
 	}
 
+	// ── ÉTAPE 4 : VÉRIFICATION CRYPTOGRAPHIQUE (HMAC) ──────────────────────
+
 	contentToSign := security.GetBodyToSign(c.Request, bodyBytes)
 	stringToSign := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, clientTs, contentToSign)
 
@@ -181,6 +193,8 @@ func RefreshMaster(c *gin.Context) {
 		numan_error.RespondWithError(c, numan_error.NewForbidden("INVALID_HMAC", "Signature HMAC invalide (Master Check).", nil))
 		return
 	}
+
+	// ── ÉTAPE 5 : GÉNÉRATION DES NOUVEAUX JETONS & ROTATION ────────────────
 
 	newMasterToken, err := pkg.GenerateToken(input.UserID, sessionRaw.FirebaseInstallationID, variables.MasterTokenExpirationSeconds)
 	if err != nil {
@@ -202,19 +216,25 @@ func RefreshMaster(c *gin.Context) {
 		return
 	}
 
+	// ── ÉTAPE 6 : MISE À JOUR ET PERSISTANCE DE LA SESSION ─────────────────
+
 	sessionRaw.MasterToken = newMasterToken
 	sessionRaw.LastSecret = sessionRaw.FirebaseInstallationID
 	sessionRaw.LastJWT = authHeader
 	sessionRaw.ToleranceTime = domain.TimeToMillis(time.Now().Add(time.Duration(variables.ToleranceTimeSeconds) * time.Second))
 	sessionRaw.ExpiresAt = domain.TimeToMillis(time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second))
 
+	// Persistance L1
 	if errAdd := cache_service.SetSessionInCache(c, sessionRaw); errAdd != nil {
 		numan_log.Warn(c).Err(errAdd).Msg("Warning: Echec update Session Cache L1")
 	}
 
+	// Persistance Asynchrone (Write-Behind)
 	if err := redis.EnqueueDB(c, sessionRaw.ID, 0, redis.EntitySession, redis.ActionUpdate, sessionRaw, redis.TargetAll); err != nil {
 		numan_log.Error(c).Err(err).Msg("Error enqueuing to DB")
 	}
+
+	// ── ÉTAPE 7 : CONSTRUCTION ET SIGNATURE DE LA RÉPONSE ──────────────────
 
 	respData := security_models.RefreshMasterResponse{
 		MasterToken: newMasterToken,
@@ -238,6 +258,7 @@ func RefreshMaster(c *gin.Context) {
 		string(respBytes),
 	)
 
+	// La réponse est signée avec l'ancien MasterToken pour validation côté client
 	h := hmac.New(sha256.New, []byte(input.MasterToken))
 	h.Write([]byte(stringToSignResp))
 	respSig := hex.EncodeToString(h.Sum(nil))
