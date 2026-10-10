@@ -1,13 +1,13 @@
-# ☁️ Nubo Backend - Architecture Core & Technical Documentation
+# ☁️ numan Backend - Architecture Core & Technical Documentation
 
-> **Périmètre du document** : Ce document détaille l'architecture backend, les algorithmes mathématiques et l'infrastructure de données du réseau social Nubo. Conçu en Go, ce système hybride et hautement asynchrone est taillé pour des performances extrêmes et une scalabilité massive.
+> **Périmètre du document** : Ce document détaille l'architecture backend, les algorithmes mathématiques et l'infrastructure de données du réseau social numan. Conçu en Go, ce système hybride et hautement asynchrone est taillé pour des performances extrêmes et une scalabilité massive.
 
 ---
 
 ## 📋 Table des Matières
 
 1.  **[🚀 Introduction et Philosophie Architecturale](#1--introduction-et-philosophie-architecturale)**
-    *   1.1. Présentation du projet Nubo
+    *   1.1. Présentation du projet numan
     *   1.2. Paradigme "Write-Behind" & "Edge Computing"
     *   1.3. L'Écosystème à 3 Niveaux (L1 / L2 / L3)
 2.  **[🗄️ Le Moteur de Données : Stratégies et Organisation des Caches](#)** *(À venir)*
@@ -21,11 +21,11 @@
 
 ## 1. 🚀 Introduction et Philosophie Architecturale
 
-L'architecture du backend Nubo a été pensée pour répondre à des exigences critiques de très faible latence, de haute disponibilité, et de préservation des ressources matérielles. Plutôt que d'adopter une architecture monolithique classique en requête-réponse directe vers une base SQL, le système agit comme un "cerveau" asynchrone qui délègue le calcul et absorbe les chocs de trafic.
+L'architecture du backend numan a été pensée pour répondre à des exigences critiques de très faible latence, de haute disponibilité, et de préservation des ressources matérielles. Plutôt que d'adopter une architecture monolithique classique en requête-réponse directe vers une base SQL, le système agit comme un "cerveau" asynchrone qui délègue le calcul et absorbe les chocs de trafic.
 
-### 1.1. Présentation du projet Nubo : Réseau social premium et performant
+### 1.1. Présentation du projet numan : Réseau social premium et performant
 
-Nubo se positionne comme un réseau social naturiste premium. Ce positionnement implique une expérience utilisateur (UX) parfaite, sans aucun temps de chargement perceptible. Les défis techniques inhérents à un réseau social moderne sont majeurs :
+numan se positionne comme un réseau social naturiste premium. Ce positionnement implique une expérience utilisateur (UX) parfaite, sans aucun temps de chargement perceptible. Les défis techniques inhérents à un réseau social moderne sont majeurs :
 *   **Volumétrie massive des interactions :** Les likes, commentaires, vues et partages génèrent un flux continu de données qui peut facilement saturer une base relationnelle standard.
 *   **Flux en temps réel :** Messagerie instantanée, notifications et mises à jour de flux nécessitent une infrastructure réseau (TCP/WebSockets) optimisée.
 *   **Personnalisation poussée :** Servir des flux de contenus ("Feeds") basés sur des affinités sémantiques et comportementales demande des calculs mathématiques lourds.
@@ -34,7 +34,7 @@ Pour relever ces défis, le backend (écrit en Go 1.22+) ne se comporte pas comm
 
 ### 1.2. Paradigme "Write-Behind" & "Edge Computing"
 
-Pour garantir des temps de réponse de l'ordre de la milliseconde, Nubo s'appuie sur deux concepts d'ingénierie fondamentaux :
+Pour garantir des temps de réponse de l'ordre de la milliseconde, numan s'appuie sur deux concepts d'ingénierie fondamentaux :
 
 #### A. Le calcul déporté (Edge Computing)
 Le calcul du profil comportemental de l'utilisateur (ses préférences, ses habitudes de scroll, son affinité sociale) n'est **pas** réalisé par nos serveurs.
@@ -51,7 +51,7 @@ Une base relationnelle comme PostgreSQL est excellente pour la cohérence (ACID)
 
 ### 1.3. L'Écosystème à 3 Niveaux (L1 / L2 / L3)
 
-Pour concilier la vitesse exigée par le frontend et la pérennité requise pour les données utilisateurs, Nubo déploie une stratégie de rétention hybride en trois couches (Tiers).
+Pour concilier la vitesse exigée par le frontend et la pérennité requise pour les données utilisateurs, numan déploie une stratégie de rétention hybride en trois couches (Tiers).
 
 #### Pourquoi cette architecture hybride ?
 La RAM est extrêmement rapide mais coûteuse et limitée. Le disque SSD est capacitif mais lent. Plutôt que de tout stocker en cache ou de tout lire sur disque, le système navigue intelligemment entre les couches via un **Pipeline d'Hydratation**. Lorsqu'une donnée est demandée, le système interroge L1. S'il y a un *Cache Miss*, il descend en L2. Si L2 échoue, il consulte L3. À chaque remontée, la donnée "réchauffe" les caches supérieurs (Promotion).
@@ -79,7 +79,7 @@ PostgreSQL 16 est la fondation indéboulonnable du système.
 
 ## 2. 🗄️ Le Moteur de Données : Stratégies et Organisation des Caches (Redis & Mongo)
 
-Le socle de performance de Nubo repose sur une architecture de cache hautement spécialisée. Redis n'y est pas un simple magasin clé-valeur de passage, mais un agrégat de structures de données sophistiquées divisées en sous-systèmes logiques.
+Le socle de performance de numan repose sur une architecture de cache hautement spécialisée. Redis n'y est pas un simple magasin clé-valeur de passage, mais un agrégat de structures de données sophistiquées divisées en sous-systèmes logiques.
 
 ### 2.1. OBJECT Cache (Le Stockage Principal LFU)
 
@@ -116,11 +116,11 @@ Ce cache sert à afficher la grille de publications d'un utilisateur instantané
 Gère la génération des "Timelines" des utilisateurs.
 
 *   **Structure en liste FIFO :** Utilisation des clés `LIST` dans Redis (`feed:user:<user_id>`).
-*   **Mécanique de Fan-out on Write :** Nubo utilise un modèle de "Push" asynchrone. Lorsqu'un utilisateur crée un post, l'API ne fige pas la réponse. Un travailleur de l'ombre (Worker) récupère la liste de ses abonnés et effectue un `LPUSH` massif de l'ID du post dans les feeds des abonnés actifs. La lecture du feed se résume ainsi à un simple `LRANGE` temporel ultrarapide (complexité O(1)).
+*   **Mécanique de Fan-out on Write :** numan utilise un modèle de "Push" asynchrone. Lorsqu'un utilisateur crée un post, l'API ne fige pas la réponse. Un travailleur de l'ombre (Worker) récupère la liste de ses abonnés et effectue un `LPUSH` massif de l'ID du post dans les feeds des abonnés actifs. La lecture du feed se résume ainsi à un simple `LRANGE` temporel ultrarapide (complexité O(1)).
 
 ### 2.5. REQUEST Cache (L'Entonnoir de Persistance Asynchrone)
 
-Afin d'encaisser des pics d'écriture violents ("Write-Heavy") sans perturber l'expérience utilisateur et l'intégrité de PostgreSQL, Nubo implémente une file de messagerie avancée maison.
+Afin d'encaisser des pics d'écriture violents ("Write-Heavy") sans perturber l'expérience utilisateur et l'intégrité de PostgreSQL, numan implémente une file de messagerie avancée maison.
 
 *   **Le Shard Unifié et le partitionnement (CRC32) :** Les écritures ne tapent pas directement la BDD. Elles sont envoyées sous forme de messages `AsyncEvent` vers l'une des 64 files Redis (ex: `q:14`). L'ID de l'entité (ou de son parent) est haché via CRC32 pour assigner un shard (`Partition Key`), ce qui garantit qu'un Like atterrira systématiquement dans le même shard et chronologiquement *après* le Post auquel il se rattache.
 *   **Le Worker Intelligent :** 64 workers (Goroutines) dépilent les shards de façon bloquante (via `BLPOP`). Ils récupèrent des lots massifs (Batching), puis effectuent un **Tri Topologique** en RAM pour séparer et ordonner les entités selon la hiérarchie SQL (Users d'abord, puis Posts, puis Likes, etc.). Les données sont ensuite fusionnées en tables temporaires et poussées en une seule transaction via la commande `COPY` (`pq.CopyIn`), ce qui est la méthode d'insertion SQL la plus rapide existante.
@@ -138,7 +138,7 @@ Le SPEED Cache est un modèle hybride de pointe, conçu pour des réponses à la
 
 ## 3. 🧠 Moteur de Recommandation et Profilage (TDD Mathématique)
 
-Le système de recommandation de Nubo est divisé en trois piliers interdépendants. Il a été conçu pour allier performances extrêmes et pertinence algorithmique, en évitant les biais cognitifs classiques (comme la bulle de filtre) tout en préservant l'infrastructure matérielle.
+Le système de recommandation de numan est divisé en trois piliers interdépendants. Il a été conçu pour allier performances extrêmes et pertinence algorithmique, en évitant les biais cognitifs classiques (comme la bulle de filtre) tout en préservant l'infrastructure matérielle.
 
 ### 3.1. Pilier 1 : Profilage Utilisateur (Edge Computing)
 
@@ -186,7 +186,7 @@ Ce pilier marie les tendances globales avec l'affinité individuelle de l'utilis
 
 ## 4. 🔐 Sécurité Cryptographique et Authentification
 
-La sécurité de Nubo ne repose pas sur de simples jetons porteurs (Bearer tokens) statiques. Pour prévenir le vol de session, le rejeu de requêtes (Replay Attacks) et les falsifications de données en vol (Man-in-the-Middle), l'API déploie une cryptographie dynamique inspirée des protocoles de messagerie sécurisée de bout en bout.
+La sécurité de numan ne repose pas sur de simples jetons porteurs (Bearer tokens) statiques. Pour prévenir le vol de session, le rejeu de requêtes (Replay Attacks) et les falsifications de données en vol (Man-in-the-Middle), l'API déploie une cryptographie dynamique inspirée des protocoles de messagerie sécurisée de bout en bout.
 
 ### 4.1. L'Algorithme Ratchet (Rotation des Secrets)
 
@@ -202,7 +202,7 @@ Le cœur de l'intégrité du système repose sur une rotation perpétuelle des c
 
 ### 4.2. Séparation des Privilèges (Tokens)
 
-Nubo sépare strictement l'autorisation éphémère du stockage à long terme pour limiter la surface d'attaque.
+numan sépare strictement l'autorisation éphémère du stockage à long terme pour limiter la surface d'attaque.
 
 *   **Le `JWT` (Autorisation Court Terme) :** C'est le ticket d'entrée standard pour les requêtes API.
     *   Il possède un TTL très court de $\displaystyle 900\text{ s}$ (15 minutes).
@@ -233,13 +233,13 @@ Avant même d'atteindre la couche de logique métier ou de base de données, l'A
 
 ## 5. ⚡ Réseau Temps Réel et Messagerie (WebSockets & Pub/Sub)
 
-La gestion du temps réel dans une architecture distribuée pose un défi fondamental : les API HTTP sont *stateless* (sans état), tandis que les WebSockets sont *stateful* (avec état). Pour qu'un nœud du cluster puisse envoyer un message à un utilisateur connecté sur un autre nœud, Nubo déploie une infrastructure réseau en "Autoroute" basée sur **Redis Pub/Sub** couplé à la librairie `gorilla/websocket`.
+La gestion du temps réel dans une architecture distribuée pose un défi fondamental : les API HTTP sont *stateless* (sans état), tandis que les WebSockets sont *stateful* (avec état). Pour qu'un nœud du cluster puisse envoyer un message à un utilisateur connecté sur un autre nœud, numan déploie une infrastructure réseau en "Autoroute" basée sur **Redis Pub/Sub** couplé à la librairie `gorilla/websocket`.
 
 Afin de contourner les limites de taille de payload du Pub/Sub classique et d'éviter d'engorger le bus Redis, le système implémente le motif de conception **Claim Check** : le message lourd est d'abord écrit en RAM avec un TTL court (`fluxmsg:<message_id>`), puis seul son ID de 16 caractères hexadécimaux est publié sur le canal réseau. Les nœuds abonnés captent l'ID, récupèrent le payload complet, puis le distribuent.
 
 ### 5.1. Canal PRIVATE & GROUP : Routage dynamique instantané sans registre central
 
-Dans une architecture classique, maintenir un "registre central" indiquant quel utilisateur est connecté à quel serveur (ex: `User A -> Node 3`) devient rapidement un goulot d'étranglement mortel à haute échelle. Nubo contourne ce problème par une approche de routage dynamique et agnostique.
+Dans une architecture classique, maintenir un "registre central" indiquant quel utilisateur est connecté à quel serveur (ex: `User A -> Node 3`) devient rapidement un goulot d'étranglement mortel à haute échelle. numan contourne ce problème par une approche de routage dynamique et agnostique.
 
 *   **Mécanique d'Abonnement (Subscribe) :** Dès qu'un utilisateur établit une connexion TCP/WebSocket avec n'importe quel nœud de la flotte, ce serveur s'abonne silencieusement à un canal dédié : `channel:user:<user_id>`.
 *   **Mécanique d'Émission (Publish) :** Lorsqu'Alice envoie un message privé à Bob, la requête HTTP frappe l'API. Le backend ne perd aucun cycle CPU à chercher où se trouve Bob. Il se contente de publier l'événement sur `channel:user:<bob_id>`.
@@ -273,7 +273,7 @@ Pour gérer l'infrastructure, l'administration a besoin d'une ligne d'urgence ("
 
 ## 6. 💾 Schéma Relationnel et Structuration (PostgreSQL)
 
-PostgreSQL 16 est la clé de voûte de l'architecture Nubo (Niveau 3 - L3). Bien que l'application s'appuie massivement sur des caches NoSQL pour la lecture et des files asynchrones pour l'écriture, PostgreSQL reste la **source de vérité absolue** garantissant l'intégrité relationnelle et les propriétés ACID.
+PostgreSQL 16 est la clé de voûte de l'architecture numan (Niveau 3 - L3). Bien que l'application s'appuie massivement sur des caches NoSQL pour la lecture et des files asynchrones pour l'écriture, PostgreSQL reste la **source de vérité absolue** garantissant l'intégrité relationnelle et les propriétés ACID.
 
 Pour refléter les principes du *Domain-Driven Design* (DDD) et isoler les contextes fonctionnels, la base de données ne déverse pas toutes ses tables dans le schéma `public`. Elle est rigoureusement segmentée en 5 schémas logiques distincts : `auth`, `content`, `messaging`, `moderation` et `views`.
 
@@ -421,11 +421,11 @@ Afin d'éviter de surcharger le backend Go avec de la logique ORM et des jointur
 
 ## 7. 🛠️ Stack Technique, Composants et Déploiement
 
-Le système Nubo s'appuie sur une stack logicielle de pointe et une infrastructure conteneurisée pensée pour l'élasticité et la haute disponibilité.
+Le système numan s'appuie sur une stack logicielle de pointe et une infrastructure conteneurisée pensée pour l'élasticité et la haute disponibilité.
 
 ### 7.1. Génération d'ID Distribuée : Algorithme Snowflake
 
-Pour éviter les verrous (locks) et les goulots d'étranglement inhérents à l'auto-incrémentation des bases de données relationnelles, Nubo utilise un générateur d'identifiants distribué inspiré du **Twitter Snowflake**.
+Pour éviter les verrous (locks) et les goulots d'étranglement inhérents à l'auto-incrémentation des bases de données relationnelles, numan utilise un générateur d'identifiants distribué inspiré du **Twitter Snowflake**.
 
 *   **Structure sur 64 bits (`int64`) :**
     *   **Timestamp (41 bits) :** Temps écoulé en millisecondes depuis une *Epoch* personnalisée fixée au 1er Janvier 2024 (`1704067200000`). Cela garantit ~69 ans de longévité.

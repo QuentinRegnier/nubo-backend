@@ -4,13 +4,13 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/report_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/report_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -19,19 +19,22 @@ import (
 
 // SubmitReport génère le signalement, évalue son urgence économique en RAM (O(1)),
 // et l'envoie aux workers pour persistance dans PostgreSQL.
-func SubmitReport(ctx context.Context, input report_models.CreateReportInput) error {
+func SubmitReport(ctx context.Context, callerID int64, input report_models.CreateReportInput) error {
 
 	currentTime := time.Now().UTC()
 
 	// ── ÉTAPE 1 : CALCUL DU SCORE D'URGENCE (O(1) EN RAM) ───────────────────
-
+	err := pkg.ListLimitVerif(input.TargetIDs, variables.MaxReportTargets)
+	if err != nil {
+		return err
+	}
 	economicValueScore := calculateEconomicImportance(ctx, input)
 
 	// ── ÉTAPE 2 : CONSTRUCTION DU PAYLOAD DE SIGNALEMENT ────────────────────
 
 	reportPayload := report_models.ReportPayload{
 		ID:         pkg.GenerateID(),
-		ReporterID: input.UserID,
+		ReporterID: callerID,
 		TargetType: input.TargetType,
 		TargetIDs:  input.TargetIDs,
 		Category:   input.Category,
@@ -48,8 +51,8 @@ func SubmitReport(ctx context.Context, input report_models.CreateReportInput) er
 	errQueue := redis.EnqueueDB(ctx, reportPayload.ID, 0, redis.EntityReport, redis.ActionCreate, reportPayload, redis.TargetPostgres)
 
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("reporter_id", input.UserID).Msg("Échec du Write-Behind lors de la création d'un signalement")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errQueue).Int64("reporter_id", callerID).Msg("Échec du Write-Behind lors de la création d'un signalement")
+		return numan_error.NewInternal()
 	}
 
 	return nil

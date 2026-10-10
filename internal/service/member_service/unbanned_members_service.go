@@ -3,16 +3,17 @@ package member_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -22,6 +23,9 @@ import (
 // UnbanMembers annule le bannissement d'un lot d'utilisateurs.
 // L'action les passe au statut "A Quitté" (-1), leur permettant de postuler à nouveau.
 func UnbanMembers(ctx context.Context, callerID int64, input member_models.UnbanMembersInput) (member_models.UnbanMembersOutput, error) {
+	if err := pkg.ListLimitVerifDefault(input.TargetUserIDs); err != nil {
+		return member_models.UnbanMembersOutput{}, err
+	}
 
 	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS ZERO-TRUST ────────────────────────────────
 
@@ -30,7 +34,7 @@ func UnbanMembers(ctx context.Context, callerID int64, input member_models.Unban
 		return member_models.UnbanMembersOutput{}, errSecurity
 	}
 	if callerMemberPayload.Role < variables.MemberRoleAdmin {
-		return member_models.UnbanMembersOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seuls les administrateurs peuvent débannir des utilisateurs.", nil)
+		return member_models.UnbanMembersOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Seuls les administrateurs peuvent débannir des utilisateurs.", nil)
 	}
 
 	currentTimeMs := domain.NowMillis()
@@ -73,7 +77,7 @@ func UnbanMembers(ctx context.Context, callerID int64, input member_models.Unban
 
 			errQueue := redis.EnqueueDB(ctx, targetMemberPayload.ID, targetMemberPayload.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMemberPayload, redis.TargetAll)
 			if errQueue != nil {
-				nubo_log.Error(ctx).Err(errQueue).Int64("user_id", targetUserID).Msg("Échec du Write-Behind lors du débannissement")
+				numan_log.Error(ctx).Err(errQueue).Int64("user_id", targetUserID).Msg("Échec du Write-Behind lors du débannissement")
 			}
 		}
 	}

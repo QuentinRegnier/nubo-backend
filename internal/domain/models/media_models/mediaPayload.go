@@ -1,6 +1,6 @@
 package media_models
 
-// MediaPayload représente l'entité d'un fichier média (image, vidéo) dans Nubo.
+// MediaPayload représente l'entité d'un fichier média (image, vidéo) dans numan.
 type MediaPayload struct {
 	ID          int64  `json:"id" bson:"id"`
 	OwnerID     int64  `json:"owner_id" bson:"owner_id"`

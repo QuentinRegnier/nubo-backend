@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	redisgo "github.com/QuentinRegnier/numan-backend/internal/infrastructure/redis"
 	"github.com/go-redis/redis/v8"
 )
 

@@ -13,7 +13,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
 )
 
 // CheckHMAC vérifie la signature (utilisable par Middleware et Handler)
@@ -22,7 +22,7 @@ func CheckHMAC(stringToSign string, secret string, signatureToCheck string) bool
 	h.Write([]byte(stringToSign))
 	computedSig := hex.EncodeToString(h.Sum(nil))
 
-	nubo_log.Debug(context.Background()).
+	numan_log.Debug(context.Background()).
 		Str("string_to_sign", stringToSign).
 		Str("computed_sig", computedSig).
 		Str("expected_sig", signatureToCheck).

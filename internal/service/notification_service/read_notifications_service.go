@@ -4,14 +4,14 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/notification_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -26,8 +26,8 @@ func MarkNotificationsAsRead(ctx context.Context, userID int64, input notificati
 
 	errRedis := redis.NotificationCursors.SetPrimitive(ctx, userID, input.ReadUpToID)
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Int64("user_id", userID).Msg("Impossible de sauvegarder le curseur de lecture des notifications")
-		return notification_models.ReadNotificationsOutput{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Int64("user_id", userID).Msg("Impossible de sauvegarder le curseur de lecture des notifications")
+		return notification_models.ReadNotificationsOutput{}, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : SYNCHRONISATION MULTI-APPAREILS (WEBSOCKETS) ──────────────
@@ -39,7 +39,7 @@ func MarkNotificationsAsRead(ctx context.Context, userID int64, input notificati
 
 	errBroadcast := realtime_service.DistributeToUsers(ctx, variables.NotificationRead, websocketPayload, []int64{userID})
 	if errBroadcast != nil {
-		nubo_log.Warn(ctx).Err(errBroadcast).Msg("Échec de la distribution WS pour " + variables.NotificationRead)
+		numan_log.Warn(ctx).Err(errBroadcast).Msg("Échec de la distribution WS pour " + variables.NotificationRead)
 	}
 
 	// ── ÉTAPE 3 : MARQUAGE D'ACTIVITÉ (DIRTY FLAG) ──────────────────────────

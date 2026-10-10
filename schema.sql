@@ -609,25 +609,6 @@ END;
 $$;
 
 /*
- * auth.func_get_firebase_installation_ids
- * ---------------------------
- * Retrieves all active device tokens (FCM/APNs/WebPush) for a given user.
- * Excludes expired sessions.
- */
-CREATE OR REPLACE FUNCTION auth.func_get_firebase_installation_ids(p_user_id bigint)
-RETURNS TABLE(firebase_installation_id text)
-LANGUAGE plpgsql STABLE
-AS $$
-BEGIN
-RETURN QUERY
-SELECT s.firebase_installation_id
-FROM auth.sessions s
-WHERE s.user_id = p_user_id
-  AND s.expires_at > NOW();
-END;
-$$;
-
-/*
  * auth.func_load_relations
  * ------------------------
  * Flexible loader for the social-graph edge table auth.relations.

@@ -3,12 +3,12 @@ package mongo
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
 )
 
 // MongoGetPostLikes interroge le stockage L2 pour la liste des likes.
-func MongoGetPostLikes(ctx context.Context, postID int64, limit int, offset int) ([]int64, error) {
+func MongoGetPostLikes(ctx context.Context, postID int64, limit int64, offset int64) ([]int64, error) {
 	// ⚠️ CORRECTION POLYMORPHE : On cible explicitement les Posts (0) et l'ID
 	filter := map[string]any{
 		"target_type": 0,
@@ -20,8 +20,8 @@ func MongoGetPostLikes(ctx context.Context, postID int64, limit int, offset int)
 
 	docs, err := Likes.GetPaginated(filter, sort, int64(offset), int64(limit))
 	if err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Erreur interne lors de l'exécution de l'opération")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Erreur interne lors de l'exécution de l'opération")
+		return nil, numan_error.NewInternal()
 	}
 
 	var userIDs []int64

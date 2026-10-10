@@ -3,18 +3,19 @@ package member_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -23,6 +24,11 @@ import (
 
 // GetCommunityRequests récupère les candidatures en attente d'approbation.
 func GetCommunityRequests(ctx context.Context, callerID int64, input member_models.GetCommunityRequestsInput) (member_models.GetCommunityRequestsOutput, error) {
+	var err_offset, err_limit numan_error.Error
+	input.Offset, err_offset, input.Limit, err_limit = pkg.BatchVerif(input.Offset, input.Limit)
+	if err_offset != nil || err_limit != nil {
+		return member_models.GetCommunityRequestsOutput{}, numan_error.Combine(err_offset, err_limit)
+	}
 
 	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS ZERO-TRUST ────────────────────────────────
 
@@ -32,7 +38,7 @@ func GetCommunityRequests(ctx context.Context, callerID int64, input member_mode
 	}
 
 	if callerMemberPayload.Role < variables.MemberRoleAdmin {
-		return member_models.GetCommunityRequestsOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous devez être administrateur pour consulter les demandes d'adhésion.", nil)
+		return member_models.GetCommunityRequestsOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Vous devez être administrateur pour consulter les demandes d'adhésion.", nil)
 	}
 
 	// ── ÉTAPE 2 : RÉCUPÉRATION DES MEMBRES EN ATTENTE (CASCADE L2 -> L3) ────
@@ -47,8 +53,8 @@ func GetCommunityRequests(ctx context.Context, callerID int64, input member_mode
 		// FALLBACK L3 (Cold Storage PostgreSQL)
 		membersFromPostgres, errPg := postgres.FuncLoadMembersByRolePaginated(ctx, input.ConversationID, variables.MemberRolePending, input.Limit, input.Offset)
 		if errPg != nil {
-			nubo_log.Error(ctx).Err(errPg).Int64("conv_id", input.ConversationID).Msg("Échec L3 lors de la récupération des candidatures en attente")
-			return member_models.GetCommunityRequestsOutput{}, nubo_error.NewInternal()
+			numan_log.Error(ctx).Err(errPg).Int64("conv_id", input.ConversationID).Msg("Échec L3 lors de la récupération des candidatures en attente")
+			return member_models.GetCommunityRequestsOutput{}, numan_error.NewInternal()
 		}
 
 		pendingMembersPayloads = membersFromPostgres

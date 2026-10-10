@@ -3,14 +3,14 @@ package security_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -46,8 +46,8 @@ func LeftComment(ctx context.Context, commentID int64, userID int64) (comment_mo
 
 			pgComment, errPg := postgres.FuncGetComment(ctx, commentID)
 			if errPg != nil {
-				nubo_log.Error(ctx).Err(errPg).Int64("comment_id", commentID).Msg("Erreur L3 lors de la vérification de sécurité d'un commentaire")
-				return comment_models.CommentPayload{}, nubo_error.NewInternal()
+				numan_log.Error(ctx).Err(errPg).Int64("comment_id", commentID).Msg("Erreur L3 lors de la vérification de sécurité d'un commentaire")
+				return comment_models.CommentPayload{}, numan_error.NewInternal()
 			}
 
 			if pgComment.ID != 0 {
@@ -71,11 +71,11 @@ func LeftComment(ctx context.Context, commentID int64, userID int64) (comment_mo
 
 	if !isCommentFound || commentPayload.Visibility == variables.CommentVisibilitySoftDelete {
 		// Furtivité absolue (Soft Delete)
-		return comment_models.CommentPayload{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Commentaire introuvable ou supprimé.", nil)
+		return comment_models.CommentPayload{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Commentaire introuvable ou supprimé.", nil)
 	}
 
 	if commentPayload.UserID != userID {
-		return comment_models.CommentPayload{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous n'êtes pas autorisé à réaliser cette action sur ce commentaire.", nil)
+		return comment_models.CommentPayload{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Vous n'êtes pas autorisé à réaliser cette action sur ce commentaire.", nil)
 	}
 
 	return commentPayload, nil

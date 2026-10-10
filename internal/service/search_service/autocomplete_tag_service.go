@@ -5,23 +5,22 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/search_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/search_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
 )
 
 // ############################################################################
 // # SERVICE : AUTOCOMPLÉTION DES HASHTAGS
 // ############################################################################
 
-// AutocompleteTags orchestre la recherche ultra-rapide de hashtags (O(log N))
-// et l'injection de suggestions sémantiques contextuelles.
 func AutocompleteTags(ctx context.Context, input search_models.AutocompleteTagInput) (search_models.AutocompleteTagOutput, error) {
-	searchLimit := input.Limit
-	if searchLimit == 0 {
-		searchLimit = variables.DefaultAutocompleteLimit
+	var err_offset, errLimit numan_error.Error
+	input.Offset, err_offset, input.Limit, errLimit = pkg.BatchVerif(input.Offset, input.Limit)
+	if err_offset != nil || errLimit != nil {
+		return search_models.AutocompleteTagOutput{}, numan_error.Combine(err_offset, errLimit)
 	}
 
 	sanitizedQuery := strings.ToLower(strings.TrimSpace(input.Query))
@@ -29,14 +28,13 @@ func AutocompleteTags(ctx context.Context, input search_models.AutocompleteTagIn
 	alreadySeenTagsMap := make(map[string]bool)
 
 	// ── ÉTAPE 1 : RECHERCHE LEXICOGRAPHIQUE L1 (O(log N)) ───────────────────
-
-	lexicographicTags, errRedis := cache_service.SearchTagsByPrefix(ctx, sanitizedQuery, searchLimit)
+	// ATTENTION : Il faudra mettre à jour la signature dans cache_service pour passer input.Offset
+	lexicographicTags, errRedis := cache_service.SearchTagsByPrefix(ctx, sanitizedQuery, input.Offset, input.Limit)
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Str("query", sanitizedQuery).Msg("Erreur L1 lors de la recherche lexicographique des tags")
-		return search_models.AutocompleteTagOutput{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Str("query", sanitizedQuery).Msg("Erreur L1 lors de la recherche lexicographique des tags")
+		return search_models.AutocompleteTagOutput{}, numan_error.NewInternal()
 	}
 
-	// On vérifie si la requête de l'utilisateur correspond exactement à un tag existant
 	isExactTagMatch := false
 	for _, tag := range lexicographicTags {
 		if tag == sanitizedQuery {
@@ -46,17 +44,13 @@ func AutocompleteTags(ctx context.Context, input search_models.AutocompleteTagIn
 	}
 
 	// ── ÉTAPE 2 : MAGIE SÉMANTIQUE (GRAPHE DE MARKOV) ───────────────────────
-
-	if isExactTagMatch {
-		// On force le tag exact en première position absolue pour rassurer l'utilisateur
+	// NOUVEAU : Exécuté UNIQUEMENT sur la première page (Offset == 0)
+	if isExactTagMatch && input.Offset == 0 {
 		finalTagResults = append(finalTagResults, sanitizedQuery)
 		alreadySeenTagsMap[sanitizedQuery] = true
 
-		// Interrogation du Cache Sémantique en RAM (O(1))
 		semanticallyRelatedTagsMap := cache_service.GetRelatedTagsLazy(ctx, sanitizedQuery)
 		if len(semanticallyRelatedTagsMap) > 0 {
-
-			// Structure temporaire pour trier par pertinence algorithmique
 			type tagWeightDTO struct {
 				Tag    string
 				Weight float64
@@ -67,14 +61,12 @@ func AutocompleteTags(ctx context.Context, input search_models.AutocompleteTagIn
 				relatedTagsList = append(relatedTagsList, tagWeightDTO{Tag: tag, Weight: weight})
 			}
 
-			// Tri décroissant sur la force du lien sémantique
 			sort.Slice(relatedTagsList, func(i, j int) bool {
 				return relatedTagsList[i].Weight > relatedTagsList[j].Weight
 			})
 
-			// Injection des suggestions dans les résultats finaux
 			for _, relatedItem := range relatedTagsList {
-				if int64(len(finalTagResults)) >= searchLimit {
+				if int64(len(finalTagResults)) >= input.Limit {
 					break
 				}
 				if !alreadySeenTagsMap[relatedItem.Tag] {
@@ -86,11 +78,8 @@ func AutocompleteTags(ctx context.Context, input search_models.AutocompleteTagIn
 	}
 
 	// ── ÉTAPE 3 : REMPLISSAGE FALLBACK (ALPHABÉTIQUE) ───────────────────────
-
-	// On complète avec la suite alphabétique issue de la recherche initiale
-	// si la limite maximale n'a pas été atteinte.
 	for _, tag := range lexicographicTags {
-		if int64(len(finalTagResults)) >= searchLimit {
+		if int64(len(finalTagResults)) >= input.Limit {
 			break
 		}
 		if !alreadySeenTagsMap[tag] {
@@ -100,8 +89,6 @@ func AutocompleteTags(ctx context.Context, input search_models.AutocompleteTagIn
 	}
 
 	// ── ÉTAPE 4 : ASSEMBLAGE DU JSON FINAL ──────────────────────────────────
-
-	// Protection JSON stricte : Garantir un array vide [] plutôt qu'un `null`
 	if finalTagResults == nil {
 		finalTagResults = make([]string, 0)
 	}

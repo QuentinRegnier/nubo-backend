@@ -3,24 +3,24 @@ package member_service
 import (
 	"context"
 	"fmt"
-	"strconv"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/message_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -37,7 +37,7 @@ func MuteMember(ctx context.Context, callerID int64, input member_models.MuteMem
 		return errCaller
 	}
 	if callerMemberPayload.Role < variables.MemberRoleAdmin {
-		return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seuls les administrateurs peuvent appliquer une restriction à un membre.", nil)
+		return numan_error.NewForbidden(numan_error.CodeForbidden, "Seuls les administrateurs peuvent appliquer une restriction à un membre.", nil)
 	}
 
 	targetMemberPayload, errTarget := security_service.LeftMember(ctx, input.ConversationID, input.TargetUserID)
@@ -47,7 +47,7 @@ func MuteMember(ctx context.Context, callerID int64, input member_models.MuteMem
 
 	// Un administrateur ne peut pas muter un autre administrateur ou un propriétaire.
 	if targetMemberPayload.Role >= callerMemberPayload.Role {
-		return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous ne pouvez pas restreindre un membre de rang égal ou supérieur au vôtre.", nil)
+		return numan_error.NewForbidden(numan_error.CodeForbidden, "Vous ne pouvez pas restreindre un membre de rang égal ou supérieur au vôtre.", nil)
 	}
 
 	// ── ÉTAPE 2 : LOGIQUE ALGORITHMIQUE ET CASCADE (L1 -> L2 -> L3) ─────────
@@ -69,8 +69,8 @@ func MuteMember(ctx context.Context, callerID int64, input member_models.MuteMem
 			var errPg error
 			conversationPayload, errPg = postgres.FuncGetConversation(ctx, input.ConversationID)
 			if errPg != nil {
-				nubo_log.Error(ctx).Err(errPg).Int64("conv_id", input.ConversationID).Msg("Échec de la récupération L3 de la conversation pour le Mute")
-				return nubo_error.NewInternal()
+				numan_log.Error(ctx).Err(errPg).Int64("conv_id", input.ConversationID).Msg("Échec de la récupération L3 de la conversation pour le Mute")
+				return numan_error.NewInternal()
 			}
 
 			if conversationPayload.ID != 0 {
@@ -86,13 +86,13 @@ func MuteMember(ctx context.Context, callerID int64, input member_models.MuteMem
 	}
 
 	if conversationPayload.ID == 0 {
-		return nubo_error.NewNotFound(nubo_error.CodeNotFound, "Conversation introuvable ou inactive.", nil)
+		return numan_error.NewNotFound(numan_error.CodeNotFound, "Conversation introuvable ou inactive.", nil)
 	}
 
 	// Règle métier : Si le groupe est en mode "Admins Uniquement" (WritePermission = 1),
 	// le membre standard n'a déjà pas le droit de parole, la sanction est inutile.
 	if conversationPayload.Settings.WritePermission == 1 && targetMemberPayload.Role == variables.MemberRoleNormal {
-		return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Ce membre n'a déjà pas le droit de parole en raison des permissions actuelles du groupe.", nil)
+		return numan_error.NewForbidden(numan_error.CodeForbidden, "Ce membre n'a déjà pas le droit de parole en raison des permissions actuelles du groupe.", nil)
 	}
 
 	// ── ÉTAPE 3 : APPLICATION DE LA PUNITION ────────────────────────────────
@@ -116,8 +116,8 @@ func MuteMember(ctx context.Context, callerID int64, input member_models.MuteMem
 
 	errQueue := redis.EnqueueDB(ctx, targetMemberPayload.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMemberPayload, redis.TargetAll)
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("user_id", targetMemberPayload.UserID).Msg("Échec du Write-Behind pour la restriction d'un membre")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errQueue).Int64("user_id", targetMemberPayload.UserID).Msg("Échec du Write-Behind pour la restriction d'un membre")
+		return numan_error.NewInternal()
 	}
 
 	// SYNC LEDGER (Trigger d'invalidation mutuelle)
@@ -125,12 +125,7 @@ func MuteMember(ctx context.Context, callerID int64, input member_models.MuteMem
 		bgCtx := context.Background()
 		participantsStringList, _ := redis.ConvParticipants.SMembers(bgCtx, cID)
 
-		var syncTargetIDs []int64
-		for _, pStr := range participantsStringList {
-			if id, errParse := strconv.ParseInt(pStr, 10, 64); errParse == nil {
-				syncTargetIDs = append(syncTargetIDs, id)
-			}
-		}
+		syncTargetIDs := pkg.ParseInt64List(participantsStringList)
 		_ = cache_service.RecordConversationMutation(bgCtx, cID, syncTargetIDs)
 	}(input.ConversationID)
 
@@ -143,14 +138,35 @@ func MuteMember(ctx context.Context, callerID int64, input member_models.MuteMem
 		_ = realtime_service.BroadcastToConversation(bgCtx, input.ConversationID, "member.muted", targetMemberPayload)
 
 		// B. Message Système pour historique
+		callerUserLite, errCaller := cache_service.GetUserLite(bgCtx, callerID)
+		targetUserLite, errTarget := cache_service.GetUserLite(bgCtx, input.TargetUserID)
+
+		callerUsername := "Unknown User"
+		if errCaller == nil {
+			callerUsername = callerUserLite.Username
+		}
+		targetUsername := "Unknown User"
+		if errTarget == nil {
+			targetUsername = targetUserLite.Username
+		}
+
 		systemMessageInput := message_models.CreateMessageInput{
 			ConversationID: input.ConversationID,
 			MessageType:    variables.MessageTypeSystem,
-			Content:        "Un membre a été restreint.",
+			Content:        "",
 			Attachments: map[string]any{
-				"event_type":       "member_muted",
-				"target_user_id":   input.TargetUserID,
-				"restricted_until": input.RestrictedUntil,
+				"sys_action": variables.SysActionMemberMuted,
+				"actor": map[string]any{
+					"id":       callerID,
+					"username": callerUsername,
+				},
+				"target": map[string]any{
+					"id":       input.TargetUserID,
+					"username": targetUsername,
+				},
+				"metadata": map[string]any{
+					"restricted_until": input.RestrictedUntil,
+				},
 			},
 		}
 

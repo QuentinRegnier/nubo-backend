@@ -5,10 +5,11 @@ import (
 	"math/rand"
 	"strconv"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -100,7 +101,7 @@ func storeLSHBucket(ctx context.Context, postID int64, hashValue uint32) error {
 	memberIDString := strconv.FormatInt(postID, 10)
 
 	if err := redis.LSHBuckets.SAdd(ctx, hashValue, memberIDString); err != nil {
-		return nubo_error.NewInternal()
+		return numan_error.NewInternal()
 	}
 
 	_ = redis.LSHBuckets.RefreshTTL(ctx, hashValue)
@@ -115,14 +116,12 @@ func getLSHCandidateIDs(ctx context.Context, targetHash uint32) (map[int64]bool,
 	for _, hashValue := range neighborHashes {
 		memberIDs, err := redis.LSHBuckets.SMembers(ctx, hashValue)
 		if err != nil {
-			nubo_log.Warn(ctx).Err(err).Uint32("bucket", hashValue).Msg("Lookup LSH bucket ignoré")
+			numan_log.Warn(ctx).Err(err).Uint32("bucket", hashValue).Msg("Lookup LSH bucket ignoré")
 			continue
 		}
-
-		for _, memberStr := range memberIDs {
-			if parsedID, errParse := strconv.ParseInt(memberStr, 10, 64); errParse == nil {
-				candidateSet[parsedID] = true
-			}
+		parsedIDs := pkg.ParseInt64List(memberIDs)
+		for _, parsedID := range parsedIDs {
+			candidateSet[parsedID] = true
 		}
 	}
 

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	redisgo "github.com/QuentinRegnier/numan-backend/internal/infrastructure/redis"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -104,7 +104,7 @@ func EnqueueDB(ctx context.Context, id int64, partitionKey int64, entity EntityT
 
 	bytes, err := json.Marshal(event)
 	if err != nil {
-		return nubo_error.NewInternal(err)
+		return numan_error.NewInternal(err)
 	}
 
 	// C'EST ICI QUE TOUT SE JOUE : Choix du Shard
@@ -127,22 +127,13 @@ func EnqueueDB(ctx context.Context, id int64, partitionKey int64, entity EntityT
 
 	_, err = pipe.Exec(ctx)
 	if err != nil {
-		return nubo_error.NewInternal(err)
+		return numan_error.NewInternal(err)
 	}
 
 	return nil
 }
 
 // --- OUTILS POUR LE WORKER INTELLIGENT ---
-
-// queueStats représente une ligne du tableau de bord
-type queueStats struct {
-	Type     EntityType
-	Action   ActionType
-	Count    int64
-	OldestTS int64
-	Delay    time.Duration // Calculé (Now - OldestTS)
-}
 
 // PopSmartBatchBlocking attend une donnée sans consommer de CPU, puis rafle jusqu'à batchSize éléments.
 func PopSmartBatchBlocking(ctx context.Context, shardID int, batchSize int64) ([]AsyncEvent, error) {
@@ -168,7 +159,7 @@ func PopSmartBatchBlocking(ctx context.Context, shardID int, batchSize int64) ([
 		if err == nil && len(rest) > 0 {
 			rawElements = append(rawElements, rest...)
 		} else if err != nil && !errors.Is(err, redis.Nil) {
-			nubo_log.Warn(ctx).Err(err).Str("queue_key", queueKey).Msg("Erreur LPopCount secondaire")
+			numan_log.Warn(ctx).Err(err).Str("queue_key", queueKey).Msg("Erreur LPopCount secondaire")
 		}
 	}
 
@@ -184,7 +175,7 @@ func PopSmartBatchBlocking(ctx context.Context, shardID int, batchSize int64) ([
 		if err := decoder.Decode(&evt); err == nil {
 			events = append(events, evt)
 		} else {
-			nubo_log.Error(ctx).Err(err).Msg("Erreur de décodage d'un événement de la queue asynchrone")
+			numan_log.Error(ctx).Err(err).Msg("Erreur de décodage d'un événement de la queue asynchrone")
 		}
 	}
 

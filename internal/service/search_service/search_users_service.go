@@ -3,13 +3,14 @@ package search_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/search_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/search_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
 )
 
 // ############################################################################
@@ -19,15 +20,25 @@ import (
 // searchUsers orchestre la recherche ultrarapide via le Speed Cache Redis (ZSET Lex)
 // et déclenche l'hydratation des avatars à la volée.
 func searchUsers(ctx context.Context, callerID int64, input search_models.UserSearchInput) (search_models.UserSearchOutput, error) {
+	// Typage corrigé pour correspondre à la fonction Combine()
+	var errOffset, errLimit *numan_error.AppError
+
+	// Passage du context (si attendu par ton implémentation de BatchVerif)
+	input.Offset, errOffset, input.Limit, errLimit = pkg.BatchVerif(input.Offset, input.Limit)
+	if errOffset != nil || errLimit != nil {
+		return search_models.UserSearchOutput{}, numan_error.Combine(errOffset, errLimit)
+	}
 
 	// ── ÉTAPE 1 : RECHERCHE L1 EN RAM (O(log N)) ────────────────────────────
 
 	// Aucun fallback BDD n'est prévu ici pour garantir un temps de réponse < 5ms
 	// indispensable pour l'autocomplétion pendant la frappe utilisateur.
-	liteUsersResults, errRedis := cache_service.SearchUserByPrefix(ctx, input.Prefix, input.Limit)
+
+	// AJOUT DE L'OFFSET ICI 👇
+	liteUsersResults, errRedis := cache_service.SearchUserByPrefix(ctx, input.Prefix, input.Offset, input.Limit)
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Str("prefix", input.Prefix).Msg("Erreur L1 lors de la recherche des utilisateurs par préfixe")
-		return search_models.UserSearchOutput{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Str("prefix", input.Prefix).Msg("Erreur L1 lors de la recherche des utilisateurs par préfixe")
+		return search_models.UserSearchOutput{}, numan_error.NewInternal()
 	}
 
 	// Coupe-circuit sécurisé (Protection contre le retour null)

@@ -5,8 +5,8 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // RefreshOptions encapsule les données de contexte envoyées par le client mobile/web.

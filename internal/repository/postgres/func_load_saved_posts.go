@@ -4,23 +4,23 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/saved_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/saved_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
 )
 
-func FuncLoadSavedPosts(ctx context.Context, userID int64, limit int, offset int) ([]saved_models.SavedPayload, error) {
+func FuncLoadSavedPosts(ctx context.Context, userID int64, limit int64, offset int64) ([]saved_models.SavedPayload, error) {
 	query := `SELECT id, user_id, post_id, created_at FROM content.func_load_saved_posts($1, $2, $3)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, userID, limit, offset)
 	if err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête SQL (QueryContext)")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête SQL (QueryContext)")
+		return nil, numan_error.NewInternal()
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
+			numan_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
 		}
 	}(rows)
 

@@ -3,10 +3,10 @@ package sync_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/sync_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/sync_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
 )
 
 // ############################################################################
@@ -21,8 +21,8 @@ func GetDeltas(ctx context.Context, callerID int64, input sync_models.GetDeltasI
 
 	modifiedConversationIDs, errCache := cache_service.GetModifiedConversationIDs(ctx, callerID, input.SinceMs)
 	if errCache != nil {
-		nubo_log.Error(ctx).Err(errCache).Int64("user_id", callerID).Msg("Échec L1 lors de la récupération des deltas de conversation")
-		return sync_models.GetDeltasOutput{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errCache).Int64("user_id", callerID).Msg("Échec L1 lors de la récupération des deltas de conversation")
+		return sync_models.GetDeltasOutput{}, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : PRÉVENTION JSON (SÉCURITÉ NULL) ───────────────────────────

@@ -3,9 +3,9 @@ package postgres
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 )
 
 type postgresTarget struct {
@@ -39,7 +39,7 @@ func redis2Postgres(ctx context.Context, entity redis.EntityType) (postgresTarge
 	case redis.EntityMessage:
 		return postgresTarget{Schema: "messaging", Table: "messages"}, nil
 	default:
-		nubo_log.Error(ctx).Str("entity", string(entity)).Msg("Entité non supportée pour la vérification PostgreSQL")
-		return postgresTarget{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Str("entity", string(entity)).Msg("Entité non supportée pour la vérification PostgreSQL")
+		return postgresTarget{}, numan_error.NewInternal()
 	}
 }

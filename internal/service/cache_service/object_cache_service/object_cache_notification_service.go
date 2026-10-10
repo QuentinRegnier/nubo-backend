@@ -3,11 +3,11 @@ package object_cache_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/notification_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -19,8 +19,8 @@ import (
 func SetNotificationInObjectCache(ctx context.Context, notificationPayload notification_models.NotificationPayload) error {
 	errRedis := redis.NotificationsObj.SetObject(ctx, notificationPayload.ID, notificationPayload)
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Int64("notif_id", notificationPayload.ID).Msg("Impossible de sauvegarder la notification dans l'Object Cache")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Int64("notif_id", notificationPayload.ID).Msg("Impossible de sauvegarder la notification dans l'Object Cache")
+		return numan_error.NewInternal()
 	}
 	return nil
 }
@@ -64,7 +64,7 @@ func GetNotificationsView(ctx context.Context, targetNotificationIDs []int64) ([
 				}(mongoNotification)
 			}
 		} else {
-			nubo_log.Warn(ctx).Err(errMongo).Msg("Échec L2 lors du chargement des notifications par IDs")
+			numan_log.Warn(ctx).Err(errMongo).Msg("Échec L2 lors du chargement des notifications par IDs")
 		}
 	}
 

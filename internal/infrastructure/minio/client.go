@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
@@ -15,12 +15,12 @@ var MinioClient *minio.Client
 func InitMinio() {
 	// 1. Récupération de la config depuis les variables d'environnement Docker
 	endpoint := os.Getenv("MINIO_ENDPOINT")             // ex: "minio:9000"
-	accessKeyID := os.Getenv("MINIO_ROOT_USER")         // ex: "nubo_minio_user"
-	secretAccessKey := os.Getenv("MINIO_ROOT_PASSWORD") // ex: "nubo_minio_password..."
+	accessKeyID := os.Getenv("MINIO_ROOT_USER")         // ex: "numan_minio_user"
+	secretAccessKey := os.Getenv("MINIO_ROOT_PASSWORD") // ex: "numan_minio_password..."
 
 	bucketName := os.Getenv("MINIO_BUCKET_NAME")
 	if bucketName == "" {
-		bucketName = "nubo-bucket" // Fallback
+		bucketName = "numan-bucket" // Fallback
 	}
 
 	// 2. Création du client
@@ -33,16 +33,16 @@ func InitMinio() {
 		Secure: false,
 	})
 	if err != nil {
-		nubo_log.Fatal(context.Background()).Err(err).Msg("Impossible d'initialiser le client MinIO")
+		numan_log.Fatal(context.Background()).Err(err).Msg("Impossible d'initialiser le client MinIO")
 	}
 
 	// 3. Test de connexion (Ping)
 	exists, err := MinioClient.BucketExists(context.Background(), bucketName)
 	if err != nil {
-		nubo_log.Warn(context.Background()).Err(err).Str("bucket", bucketName).Msg("Connexion MinIO établie, mais impossible de vérifier le bucket")
+		numan_log.Warn(context.Background()).Err(err).Str("bucket", bucketName).Msg("Connexion MinIO établie, mais impossible de vérifier le bucket")
 	} else if !exists {
-		nubo_log.Warn(context.Background()).Str("bucket", bucketName).Msg("Le bucket n'existe pas encore.")
+		numan_log.Warn(context.Background()).Str("bucket", bucketName).Msg("Le bucket n'existe pas encore.")
 	} else {
-		nubo_log.Info(context.Background()).Msg("Connexion MinIO réussie et bucket vérifié")
+		numan_log.Info(context.Background()).Msg("Connexion MinIO réussie et bucket vérifié")
 	}
 }

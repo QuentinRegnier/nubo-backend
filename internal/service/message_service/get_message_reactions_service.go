@@ -3,17 +3,17 @@ package message_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
 )
 
 // ############################################################################
@@ -44,8 +44,8 @@ func GetMessageReactions(ctx context.Context, callerID int64, input message_mode
 		// FALLBACK ABSOLU L3 (PostgreSQL - Cold Storage)
 		reactionsFromPostgres, errPg := postgres.FuncGetMessageReactionsPaginated(ctx, input.MessageID, input.Limit, input.Offset)
 		if errPg != nil {
-			nubo_log.Error(ctx).Err(errPg).Int64("message_id", input.MessageID).Msg("Erreur L3 lors de la récupération des réactions de message")
-			return message_models.GetMessageReactionsOutput{}, nubo_error.NewInternal()
+			numan_log.Error(ctx).Err(errPg).Int64("message_id", input.MessageID).Msg("Erreur L3 lors de la récupération des réactions de message")
+			return message_models.GetMessageReactionsOutput{}, numan_error.NewInternal()
 		}
 
 		messageReactions = reactionsFromPostgres

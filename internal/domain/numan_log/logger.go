@@ -1,9 +1,9 @@
-package nubo_log
+package numan_log
 
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg/logger"
 	"github.com/rs/zerolog"
 )
 

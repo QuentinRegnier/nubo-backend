@@ -9,14 +9,14 @@ import (
 	"os"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/minio"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 	"github.com/disintegration/imaging"
 	"github.com/gen2brain/avif"
 	"github.com/google/uuid"
@@ -38,24 +38,24 @@ func UploadMedia(fileStream io.ReadSeeker, ownerID int64, mediaID int64, isVisib
 
 	imageConfig, _, errConfig := image.DecodeConfig(fileStream)
 	if errConfig != nil {
-		return nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Le fichier fourni n'est pas une image valide ou est corrompu.", errConfig)
+		return numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Le fichier fourni n'est pas une image valide ou est corrompu.", errConfig)
 	}
 
 	if imageConfig.Width*imageConfig.Height > variables.MediaMaxPixels {
-		return nubo_error.NewBadRequest(nubo_error.CodePayloadTooLarge, "La résolution de l'image dépasse la limite maximale autorisée.", nil)
+		return numan_error.NewBadRequest(numan_error.CodePayloadTooLarge, "La résolution de l'image dépasse la limite maximale autorisée.", nil)
 	}
 
 	// Remise à zéro du curseur de lecture après l'analyse
 	if _, errSeek := fileStream.Seek(0, io.SeekStart); errSeek != nil {
-		nubo_log.Error(context.Background()).Err(errSeek).Msg("Erreur lors du reset du curseur de lecture du fichier uploadé")
-		return nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(errSeek).Msg("Erreur lors du reset du curseur de lecture du fichier uploadé")
+		return numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : DÉCODAGE, RESIZING ET ENCODAGE AVIF (CPU HEAVY) ───────────
 
 	decodedImage, _, errDecode := image.Decode(fileStream)
 	if errDecode != nil {
-		return nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Erreur lors du décodage structurel de l'image.", errDecode)
+		return numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Erreur lors du décodage structurel de l'image.", errDecode)
 	}
 
 	// Réduction homothétique si l'image est trop large
@@ -70,8 +70,8 @@ func UploadMedia(fileStream io.ReadSeeker, ownerID int64, mediaID int64, isVisib
 	}
 
 	if errEncode := avif.Encode(&avifBuffer, decodedImage, encodingOptions); errEncode != nil {
-		nubo_log.Error(context.Background()).Err(errEncode).Msg("Erreur interne lors de l'encodage AVIF de l'image")
-		return nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(errEncode).Msg("Erreur interne lors de l'encodage AVIF de l'image")
+		return numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 3 : UPLOAD SÉCURISÉ VERS OBJECT STORAGE (MINIO/S3) ────────────
@@ -81,7 +81,7 @@ func UploadMedia(fileStream io.ReadSeeker, ownerID int64, mediaID int64, isVisib
 
 	bucketName := os.Getenv("MINIO_BUCKET_NAME")
 	if bucketName == "" {
-		bucketName = "nubo-bucket"
+		bucketName = "numan-bucket"
 	}
 
 	_, errUpload := minio.MinioClient.PutObject(
@@ -96,8 +96,8 @@ func UploadMedia(fileStream io.ReadSeeker, ownerID int64, mediaID int64, isVisib
 	)
 
 	if errUpload != nil {
-		nubo_log.Error(context.Background()).Err(errUpload).Str("path", storagePath).Msg("Échec de l'upload du fichier vers l'Object Storage (MinIO/S3)")
-		return nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(errUpload).Str("path", storagePath).Msg("Échec de l'upload du fichier vers l'Object Storage (MinIO/S3)")
+		return numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 4 : CRÉATION DU MODÈLE MÉTIER ET MISE EN CACHE L1 ─────────────
@@ -115,7 +115,7 @@ func UploadMedia(fileStream io.ReadSeeker, ownerID int64, mediaID int64, isVisib
 	ctx := context.Background()
 
 	if errCache := object_cache_service.SetMediaInObjectCache(ctx, mediaPayload); errCache != nil {
-		nubo_log.Error(context.Background()).Err(errCache).Int64("media_id", mediaID).Msg("Échec de la mise en cache L1 du Média")
+		numan_log.Error(context.Background()).Err(errCache).Int64("media_id", mediaID).Msg("Échec de la mise en cache L1 du Média")
 	}
 
 	// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ET ROLLBACK ─────────
@@ -123,14 +123,14 @@ func UploadMedia(fileStream io.ReadSeeker, ownerID int64, mediaID int64, isVisib
 	errQueue := redis.EnqueueDB(ctx, mediaID, ownerID, redis.EntityMedia, redis.ActionCreate, mediaPayload, redis.TargetAll)
 
 	if errQueue != nil {
-		nubo_log.Error(context.Background()).Err(errQueue).Int64("media_id", mediaID).Msg("Impossible d'enqueue le Média, lancement du Rollback S3...")
+		numan_log.Error(context.Background()).Err(errQueue).Int64("media_id", mediaID).Msg("Impossible d'enqueue le Média, lancement du Rollback S3...")
 		// ROLLBACK : On supprime le fichier orphelin sur le S3 si la BDD n'a pas pu être notifiée
 		_ = minio.MinioClient.RemoveObject(context.Background(), bucketName, storagePath, miniogo.RemoveObjectOptions{})
 
-		return nubo_error.NewInternal()
+		return numan_error.NewInternal()
 	}
 
-	nubo_log.Info(context.Background()).
+	numan_log.Info(context.Background()).
 		Int64("media_id", mediaID).
 		Bool("visible", isVisible).
 		Int64("owner_id", ownerID).

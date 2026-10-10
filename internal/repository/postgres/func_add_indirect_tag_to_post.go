@@ -3,9 +3,9 @@ package postgres
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
 )
 
 // FuncAddIndirectTagToPost appelle directement la fonction SQL compilée (Pur DDD)
@@ -15,8 +15,8 @@ func FuncAddIndirectTagToPost(ctx context.Context, postID int64, tag string) err
 
 	_, err := postgres.PostgresDB.ExecContext(ctx, query, postID, tag)
 	if err != nil {
-		nubo_log.Error(ctx).Err(err).Int64("post_id", postID).Str("tag", tag).Msg("Échec de l'exécution de la requête SQL (ExecContext)")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Int64("post_id", postID).Str("tag", tag).Msg("Échec de l'exécution de la requête SQL (ExecContext)")
+		return numan_error.NewInternal()
 	}
 
 	return nil

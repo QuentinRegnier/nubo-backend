@@ -7,19 +7,19 @@ import (
 	"errors"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
 	"github.com/lib/pq"
 )
 
 func FuncLoadSession(ctx context.Context, ID int64, UserId int64, FirebaseInstallationID string, MasterToken string) (auth_models.SessionsPayload, error) {
 	// 1. Vérification que les champs sont non nuls
 	if ID == -1 && UserId == -1 && FirebaseInstallationID == "" && MasterToken == "" {
-		nubo_log.Error(ctx).Msg("FuncLoadSession : Champs requis manquants pour charger la session depuis Postgres")
-		return auth_models.SessionsPayload{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Msg("FuncLoadSession : Champs requis manquants pour charger la session depuis Postgres")
+		return auth_models.SessionsPayload{}, numan_error.NewInternal()
 	}
 
 	// 2. Préparation des arguments (gestion des types spéciaux)
@@ -74,8 +74,8 @@ func FuncLoadSession(ctx context.Context, ID int64, UserId int64, FirebaseInstal
 		if errors.Is(err, sql.ErrNoRows) {
 			return auth_models.SessionsPayload{}, nil
 		}
-		nubo_log.Error(ctx).Err(err).Msg("Erreur SQL inattendue lors de la vérification de l'enregistrement")
-		return auth_models.SessionsPayload{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Erreur SQL inattendue lors de la vérification de l'enregistrement")
+		return auth_models.SessionsPayload{}, numan_error.NewInternal()
 	}
 
 	// Traitement des données

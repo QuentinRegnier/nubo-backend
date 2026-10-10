@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // Structure locale privée pour casser la dépendance cyclique vers le package worker
@@ -120,7 +120,7 @@ func dispatchPushNotifications(messageView message_models.MessageView, recipient
 				if jobBytes, errMarshal := json.Marshal(pushTask); errMarshal == nil {
 					_ = redis.WorkerQueue.LPush(backgroundContext, "firebase", jobBytes)
 				} else {
-					nubo_log.Warn(backgroundContext).Err(errMarshal).Int64("user_id", recipientID).Msg("Impossible de sérialiser le Job FCM")
+					numan_log.Warn(backgroundContext).Err(errMarshal).Int64("user_id", recipientID).Msg("Impossible de sérialiser le Job FCM")
 				}
 			}
 		}

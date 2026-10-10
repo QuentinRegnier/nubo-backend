@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
 	"github.com/gin-gonic/gin"
 )
 
@@ -37,8 +37,8 @@ func MaxBodySize() gin.HandlerFunc {
 		// On tente de forcer la lecture d'un premier octet pour déclencher l'erreur immédiatement
 		// si le Content-Length envoyé par le client dépasse déjà la limite.
 		if c.Request.ContentLength > limit {
-			err := nubo_error.NewAppError(http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "Payload too large. Maximum allowed size exceeded.", nil)
-			nubo_error.RespondWithError(c, err)
+			err := numan_error.NewAppError(http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "Payload too large. Maximum allowed size exceeded.", nil)
+			numan_error.RespondWithError(c, err)
 			c.Abort()
 			return
 		}

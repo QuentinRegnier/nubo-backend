@@ -3,11 +3,11 @@ package object_cache_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -28,7 +28,7 @@ func GetPostsView(ctx context.Context, targetPostIDs []int64) ([]post_models.Pos
 	// ── ÉTAPE 1 : NIVEAU 1 (REDIS MGET ULTRA-RAPIDE) ────────────────────────
 	mgetResult, errMGet := redis.Posts.GetMany(backgroundCtx, targetPostIDs)
 	if errMGet != nil {
-		nubo_log.Warn(ctx).Err(errMGet).Msg("Erreur Redis MGET (fallback vers L2 Mongo déclenché)")
+		numan_log.Warn(ctx).Err(errMGet).Msg("Erreur Redis MGET (fallback vers L2 Mongo déclenché)")
 		mgetResult = &redis.GetManyResult{MissingIDs: targetPostIDs}
 	} else {
 		for postID, binaryData := range mgetResult.Found {
@@ -69,19 +69,19 @@ func GetPostsView(ctx context.Context, targetPostIDs []int64) ([]post_models.Pos
 				}
 			}
 		} else {
-			nubo_log.Error(ctx).Err(errMongo).Msg("Erreur Mongo Fallback (fallback total vers Postgres)")
+			numan_log.Error(ctx).Err(errMongo).Msg("Erreur Mongo Fallback (fallback total vers Postgres)")
 			stillMissingPostIDs = mgetResult.MissingIDs // Si Mongo plante, on cherchera tout dans Postgres
 		}
 	}
 
 	// ── ÉTAPE 3 : NIVEAU 3 (POSTGRESQL FALLBACK COLD STORAGE) ──────────────
 	if len(stillMissingPostIDs) > 0 {
-		nubo_log.Info(ctx).Int("missing_count", len(stillMissingPostIDs)).Msg("Postgres Fallback déclenché pour les posts")
+		numan_log.Info(ctx).Int("missing_count", len(stillMissingPostIDs)).Msg("Postgres Fallback déclenché pour les posts")
 
 		postgresPostsList, errPg := postgres.FuncLoadPosts(ctx, stillMissingPostIDs, len(stillMissingPostIDs), 0)
 
 		if errPg != nil {
-			nubo_log.Error(ctx).Err(errPg).Msg("Erreur critique Postgres Fallback lors de l'hydratation des posts")
+			numan_log.Error(ctx).Err(errPg).Msg("Erreur critique Postgres Fallback lors de l'hydratation des posts")
 		} else {
 			for _, postgresPost := range postgresPostsList {
 				temporaryPostsMap[postgresPost.ID] = postgresPost

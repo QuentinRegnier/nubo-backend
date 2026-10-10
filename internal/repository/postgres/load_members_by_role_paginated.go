@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"log"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
 )
 
 // FuncLoadMembersByRolePaginated charge les membres d'une conversation par rôle (ex: -3 pour les requêtes)

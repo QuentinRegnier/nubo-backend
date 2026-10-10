@@ -3,15 +3,16 @@ package telemetry_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/telemetry_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/telemetry_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/algorithm_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -20,7 +21,7 @@ import (
 
 // ProcessSyncTelemetry orchestre la synchronisation bidirectionnelle du vecteur
 // comportemental et l'envoi asynchrone des Analytics aux Workers.
-func ProcessSyncTelemetry(ctx context.Context, input telemetry_models.SyncTelemetryInput) (telemetry_models.SyncTelemetryOutput, error) {
+func ProcessSyncTelemetry(ctx context.Context, callerID int64, input telemetry_models.SyncTelemetryInput) (telemetry_models.SyncTelemetryOutput, error) {
 
 	syncOutput := telemetry_models.SyncTelemetryOutput{
 		NeedUpdate: false,
@@ -30,31 +31,33 @@ func ProcessSyncTelemetry(ctx context.Context, input telemetry_models.SyncTeleme
 	// ── ÉTAPE 1 : EXTRACTION DES TIMESTAMPS DE VERSIONNING ──────────────────
 
 	clientTelemetryTimestamp := input.Payload.Meta.ClientUpdatedAt
-	serverTelemetryTimestamp, _ := cache_service.GetTelemetryTimestamp(ctx, input.UserID)
+	profile, _ := cache_service.GetTelemetryProfile(ctx, callerID)
+	serverTelemetryTimestamp := profile.TimestampMs
 
 	// ── ÉTAPE 2 : RÉSOLUTION DES CONFLITS (VECTEUR ET TAGS LSH) ─────────────
 
 	if clientTelemetryTimestamp >= serverTelemetryTimestamp {
 		// -> LE CLIENT EST L'AUTORITÉ (On sauvegarde en RAM L1)
 
-		_ = cache_service.SetTelemetryTimestamp(ctx, input.UserID, clientTelemetryTimestamp)
-
 		if len(input.Payload.Vector.Values) == variables.VectorDimTotal {
-			oldVectorValues, errRedis := cache_service.GetTelemetryVector(ctx, input.UserID)
-			if errRedis == nil {
+			oldVectorValues := profile.Vector
+			if len(oldVectorValues) > 0 {
 				// Invalidation ciblée si les clusters sémantiques changent radicalement
-				algorithm_service.InvalidatePersonalizedFeedCache(ctx, input.UserID, oldVectorValues, input.Payload.Vector.Values)
+				algorithm_service.InvalidatePersonalizedFeedCache(ctx, callerID, oldVectorValues, input.Payload.Vector.Values)
 			}
-			_ = cache_service.SetTelemetryVector(ctx, input.UserID, input.Payload.Vector.Values)
 		}
 
-		if len(input.Payload.TopTags) > 0 {
-			_ = cache_service.SetTelemetryTags(ctx, input.UserID, input.Payload.TopTags)
+		newProfile := lite_models.TelemetryProfileLite{
+			Vector:          input.Payload.Vector.Values,
+			TopTags:         input.Payload.TopTags,
+			ConfidenceScore: input.Payload.Meta.ConfidenceScore,
+			TimestampMs:     clientTelemetryTimestamp,
 		}
+		_ = cache_service.SetTelemetryProfile(ctx, callerID, newProfile)
 
 		// SAUVEGARDE ASYNCHRONE DE L'ADN (EDGE-TO-CLOUD BACKUP)
 		// On charge l'objet complet `UserSettings` pour ne pas écraser la confidentialité (L1)
-		userSettingsPayload, errSettings := object_cache_service.GetUserSettingsCascade(ctx, input.UserID)
+		userSettingsPayload, errSettings := object_cache_service.GetUserSettingsCascade(ctx, callerID)
 
 		if errSettings == nil && userSettingsPayload.ID != 0 {
 			// Injection de l'ADN algorithmique sur l'objet
@@ -67,13 +70,13 @@ func ProcessSyncTelemetry(ctx context.Context, input telemetry_models.SyncTeleme
 			_ = object_cache_service.SetUserSettings(ctx, userSettingsPayload)
 
 			// 2. Délégation Write-Behind via Workers (PartitionKey = UserID pour le sharding)
-			errQueue := redis.EnqueueDB(ctx, userSettingsPayload.ID, input.UserID, redis.EntityUserSettings, redis.ActionUpdate, userSettingsPayload, redis.TargetAll)
+			errQueue := redis.EnqueueDB(ctx, userSettingsPayload.ID, callerID, redis.EntityUserSettings, redis.ActionUpdate, userSettingsPayload, redis.TargetAll)
 			if errQueue != nil {
-				nubo_log.Error(ctx).Err(errQueue).Int64("user_id", input.UserID).Msg("Échec du Write-Behind pour la sauvegarde du vecteur IA")
+				numan_log.Error(ctx).Err(errQueue).Int64("user_id", callerID).Msg("Échec du Write-Behind pour la sauvegarde du vecteur IA")
 				// Non bloquant : la donnée est saine en RAM, le Worker tentera de survivre.
 			}
 		} else {
-			nubo_log.Warn(ctx).Err(errSettings).Int64("user_id", input.UserID).Msg("Impossible de charger les UserSettings pour sauvegarder le vecteur")
+			numan_log.Warn(ctx).Err(errSettings).Int64("user_id", callerID).Msg("Impossible de charger les UserSettings pour sauvegarder le vecteur")
 		}
 
 	} else {
@@ -83,12 +86,8 @@ func ProcessSyncTelemetry(ctx context.Context, input telemetry_models.SyncTeleme
 		syncOutput.Status = "server_newer"
 		syncOutput.ServerUpdated = serverTelemetryTimestamp
 
-		if serverVectorData, errRedis := cache_service.GetTelemetryVector(ctx, input.UserID); errRedis == nil {
-			syncOutput.ServerVector = serverVectorData
-		}
-		if serverTagsData, errRedis := cache_service.GetTelemetryTags(ctx, input.UserID); errRedis == nil {
-			syncOutput.ServerTags = serverTagsData
-		}
+		syncOutput.ServerVector = profile.Vector
+		syncOutput.ServerTags = profile.TopTags
 	}
 
 	// ── ÉTAPE 3 : THUNDERING HERD PROTECTOR (RÉCEPTION ASYNCHRONE) ──────────
@@ -116,10 +115,10 @@ func ProcessSyncTelemetry(ctx context.Context, input telemetry_models.SyncTeleme
 
 		// C. Envoi à la file d'attente (Write-Behind SQL)
 		// Les Workers mettront à jour `telemetry_dwell_sum`, `view_count`, etc.
-		errTelemetryQueue := redis.EnqueueDB(ctx, telemetryEvent.PostID, input.UserID, redis.EntityTelemetry, redis.ActionCreate, telemetryEvent, redis.TargetAll)
+		errTelemetryQueue := redis.EnqueueDB(ctx, telemetryEvent.PostID, callerID, redis.EntityTelemetry, redis.ActionCreate, telemetryEvent, redis.TargetAll)
 		if errTelemetryQueue != nil {
-			nubo_log.Error(ctx).Err(errTelemetryQueue).Int64("post_id", telemetryEvent.PostID).Msg("Échec du Write-Behind pour un événement de télémétrie")
-			return syncOutput, nubo_error.NewInternal()
+			numan_log.Error(ctx).Err(errTelemetryQueue).Int64("post_id", telemetryEvent.PostID).Msg("Échec du Write-Behind pour un événement de télémétrie")
+			return syncOutput, numan_error.NewInternal()
 		}
 	}
 

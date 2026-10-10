@@ -5,15 +5,16 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
 )
 
 // ############################################################################
@@ -49,8 +50,8 @@ func DeleteMessage(ctx context.Context, callerID int64, input message_models.Del
 	// On demande une ActionUpdate avec le Visibility flag = false.
 	errQueue := redis.EnqueueDB(ctx, messagePayload.ID, messagePayload.ConversationID, redis.EntityMessage, redis.ActionUpdate, messagePayload, redis.TargetAll)
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("msg_id", messagePayload.ID).Msg("Échec du Write-Behind lors de la suppression d'un message")
-		return message_models.DeleteMessageOutput{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errQueue).Int64("msg_id", messagePayload.ID).Msg("Échec du Write-Behind lors de la suppression d'un message")
+		return message_models.DeleteMessageOutput{}, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 5 : SYNCHRONISATION TEMPS RÉEL (ASYNCHRONE) ───────────────────
@@ -60,17 +61,12 @@ func DeleteMessage(ctx context.Context, callerID int64, input message_models.Del
 
 		errBroadcast := realtime_service.BroadcastToConversation(backgroundCtx, messagePayload.ConversationID, "message.deleted", messagePayload)
 		if errBroadcast != nil {
-			nubo_log.Error(ctx).Err(errBroadcast).Msg("Échec de la diffusion WebSocket pour message.deleted")
+			numan_log.Error(ctx).Err(errBroadcast).Msg("Échec de la diffusion WebSocket pour message.deleted")
 		}
 
 		// SYNC LEDGER (Trigger granulaire pour muter le SQLite des clients hors ligne)
 		participantsStringList, _ := redis.ConvParticipants.SMembers(backgroundCtx, messagePayload.ConversationID)
-		var syncTargetIDs []int64
-		for _, participantStr := range participantsStringList {
-			if parsedID, errParse := strconv.ParseInt(participantStr, 10, 64); errParse == nil {
-				syncTargetIDs = append(syncTargetIDs, parsedID)
-			}
-		}
+		syncTargetIDs := pkg.ParseInt64List(participantsStringList)
 		_ = cache_service.RecordMessageMutation(backgroundCtx, messagePayload.ConversationID, messagePayload.ID, syncTargetIDs)
 	}()
 

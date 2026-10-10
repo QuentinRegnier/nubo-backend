@@ -3,12 +3,12 @@ package notification_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/notification_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
 )
 
 // ############################################################################
@@ -39,8 +39,8 @@ func GetNotifications(ctx context.Context, callerID int64, input notification_mo
 	if errCacheIndex != nil || len(orderedNotificationIDs) == 0 {
 		notificationsFromMongo, errMongo := mongo.MongoLoadNotificationsPaginated(ctx, callerID, input.Limit, input.Offset)
 		if errMongo != nil {
-			nubo_log.Error(ctx).Err(errMongo).Int64("user_id", callerID).Msg("Erreur L2 lors de la récupération des notifications")
-			return nil, nubo_error.NewInternal()
+			numan_log.Error(ctx).Err(errMongo).Int64("user_id", callerID).Msg("Erreur L2 lors de la récupération des notifications")
+			return nil, numan_error.NewInternal()
 		}
 
 		// AUTO-GUÉRISON L2 -> L1 (Mise en cache ZSET et Object JSON en parallèle)
@@ -66,8 +66,8 @@ func GetNotifications(ctx context.Context, callerID int64, input notification_mo
 
 	notificationsPayloadsFromCache, errObjectCache := object_cache_service.GetNotificationsView(ctx, orderedNotificationIDs)
 	if errObjectCache != nil {
-		nubo_log.Error(ctx).Err(errObjectCache).Msg("Erreur L1 lors de la récupération MGET des objets de notifications")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errObjectCache).Msg("Erreur L1 lors de la récupération MGET des objets de notifications")
+		return nil, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 4 : ASSEMBLAGE FINAL DES DTO (BOUCLE O(N)) ────────────────────

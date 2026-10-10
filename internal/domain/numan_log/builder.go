@@ -1,4 +1,4 @@
-package nubo_log
+package numan_log
 
 import (
 	"errors"

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
 	_ "github.com/lib/pq"
 )
 
@@ -34,10 +34,10 @@ func InitPostgres() {
 	var err error
 	PostgresDB, err = sql.Open("postgres", connStr)
 	if err != nil {
-		nubo_log.Fatal(context.Background()).Err(err).Msg("Erreur connexion PostgreSQL")
+		numan_log.Fatal(context.Background()).Err(err).Msg("Erreur connexion PostgreSQL")
 	}
 
 	if err := PostgresDB.Ping(); err != nil {
-		nubo_log.Fatal(context.Background()).Err(err).Msg("Ping PostgreSQL échoué")
+		numan_log.Fatal(context.Background()).Err(err).Msg("Ping PostgreSQL échoué")
 	}
 }

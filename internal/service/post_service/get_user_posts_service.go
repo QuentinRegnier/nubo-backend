@@ -3,11 +3,13 @@ package post_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
 )
 
 // ############################################################################
@@ -15,7 +17,12 @@ import (
 // ############################################################################
 
 // GetUserPosts retourne la timeline complète d'un utilisateur.
-func GetUserPosts(ctx context.Context, input post_models.GetUserPostsInput) []post_models.GetPostOutput {
+func GetUserPosts(ctx context.Context, callerID int64, input post_models.GetUserPostsInput) ([]post_models.GetPostOutput, error) {
+	var errOffset, errLimit *numan_error.AppError
+	input.Offset, errOffset, input.Limit, errLimit = pkg.BatchVerif(input.Offset, input.Limit)
+	if errOffset != nil || errLimit != nil {
+		return []post_models.GetPostOutput{}, numan_error.Combine(errOffset, errLimit)
+	}
 
 	// ── ÉTAPE 1 : TENTATIVE L1 (ZSET USER CACHE) ────────────────────────────
 	var postIDsList []int64
@@ -29,24 +36,27 @@ func GetUserPosts(ctx context.Context, input post_models.GetUserPostsInput) []po
 	// Si errCache == nil et sans force, on a tapé le cache (Même si la liste est vide grâce au marqueur).
 	if errCache == nil && !input.Force {
 		if len(postIDsList) == 0 {
-			return []post_models.GetPostOutput{} // Profil certifié vide[cite: 62]
+			// Remplacement du "nil" : On lève une erreur NotFound explicite
+			return []post_models.GetPostOutput{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Aucune publication trouvée pour cet utilisateur.", nil)
 		}
-		// On délègue tout à GetPosts qui a déjà été hydraté
-		return GetPosts(ctx, post_models.GetPostInput{UserID: input.CallerID, PostIDs: postIDsList})
+		// Capture propre de l'erreur propagée par GetPosts au lieu de forcer "nil"
+		outputs, err := GetPosts(ctx, callerID, post_models.GetPostInput{PostIDs: postIDsList})
+		return outputs, err
 	}
 
 	// ── ÉTAPE 2 : FALLBACK ABSOLU L3 (POSTGRESQL) - CONTOURNEMENT MONGO ─────
 	postsFromPostgres, errPg := postgres.FuncLoadUserPosts(ctx, input.TargetUserID, input.Limit, input.Offset)
 	if errPg != nil {
-		nubo_log.Error(ctx).Err(errPg).Int64("target_user_id", input.TargetUserID).Msg("Échec L3 lors de la récupération de la timeline utilisateur")
-		return []post_models.GetPostOutput{}
+		numan_log.Error(ctx).Err(errPg).Int64("target_user_id", input.TargetUserID).Msg("Échec L3 lors de la récupération de la timeline utilisateur")
+		return []post_models.GetPostOutput{}, numan_error.NewInternal(errPg)
 	}
 
 	// ── ÉTAPE 3 : HYDRATATION EN TEMPS RÉEL (PROTECTION & RECONSTRUCTION) ───
 	if len(postsFromPostgres) == 0 {
 		// Protection anti-fantôme même en mode force : on certifie le vide à Redis.
 		_ = cache_service.MarkUserTimelineEmpty(ctx, input.TargetUserID)
-		return []post_models.GetPostOutput{}
+		// Remplacement du "nil" : On lève une erreur NotFound explicite
+		return []post_models.GetPostOutput{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Aucune publication trouvée pour cet utilisateur.", nil)
 	}
 
 	// PURGE AVANT BATCH : On rase le ZSET pour écraser proprement un éventuel "-1" ou une liste corrompue.
@@ -64,10 +74,9 @@ func GetUserPosts(ctx context.Context, input post_models.GetUserPostsInput) []po
 	}
 
 	// ── ÉTAPE 4 : RECYCLAGE DU SERVICE PRINCIPAL (100% CACHE HIT GARANTI) ───
-	// Puisqu'on vient de pousser les objets dans l'Object Cache, GetPosts
-	// lira directement la RAM pour générer la matrice et le HMAC instantanément !
-	return GetPosts(ctx, post_models.GetPostInput{
-		UserID:  input.CallerID,
+	// Capture propre de l'erreur propagée par GetPosts au lieu de forcer "nil"
+	outputs, err := GetPosts(ctx, callerID, post_models.GetPostInput{
 		PostIDs: recoveredPostIDs,
 	})
+	return outputs, err
 }

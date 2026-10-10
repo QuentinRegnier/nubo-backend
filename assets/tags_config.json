@@ -16,9 +16,9 @@
           "priority": 100
         },
         {
-          "slug": "nubo",
-          "label": "Nubo Community",
-          "keywords": ["nubo", "welcome", "update", "news"],
+          "slug": "numan",
+          "label": "numan Community",
+          "keywords": ["numan", "welcome", "update", "news"],
           "icon": "🪐",
           "color": "#6A5ACD",
           "priority": 90

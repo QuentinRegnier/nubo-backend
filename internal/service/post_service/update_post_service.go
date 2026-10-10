@@ -3,15 +3,16 @@ package post_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/algorithm_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
 )
 
 // ############################################################################
@@ -19,20 +20,26 @@ import (
 // ############################################################################
 
 // UpdatePost gère la modification des métadonnées et du contenu d'un post en récupérant l'objet complet pour nourrir le Bulk Update des workers.
-func UpdatePost(ctx context.Context, input post_models.UpdatePostInput) error {
-
+func UpdatePost(ctx context.Context, callerID int64, input post_models.UpdatePostInput) error {
 	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS ZERO-TRUST ET RÉCUPÉRATION DE L'OBJET ────
-	postPayload, errSecurity := security_service.LeftPost(ctx, input.PostID, input.UserID)
+	postPayload, errSecurity := security_service.LeftPost(ctx, input.PostID, callerID)
 	if errSecurity != nil {
-		nubo_log.Error(ctx).Err(errSecurity).Int64("post_id", input.PostID).Int64("user_id", input.UserID).Msg("Échec de la récupération sécurisée du post")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errSecurity).Int64("post_id", input.PostID).Int64("user_id", callerID).Msg("Échec de la récupération sécurisée du post")
+		return numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : APPLICATION DES MODIFICATIONS MÉTIER ──────────────────────
-	postPayload.Content = input.Content
-	postPayload.Hashtags = input.Hashtags
-	postPayload.Identifiers = input.Identifiers
-	postPayload.Location = input.Location
+	if len(input.Hashtags) > 20 {
+		input.Hashtags = input.Hashtags[:20]
+	}
+	if len(input.Identifiers) > 10 {
+		input.Identifiers = input.Identifiers[:10]
+	}
+
+	postPayload.Content = pkg.CleanStr(input.Content)
+	postPayload.Hashtags = pkg.SliceUniqueStr(input.Hashtags)
+	postPayload.Identifiers = pkg.SliceUniqueInt64(input.Identifiers)
+	postPayload.Location = pkg.CleanStr(input.Location)
 	postPayload.Visibility = input.Visibility
 	postPayload.UpdatedAt = domain.NowMillis()
 
@@ -48,14 +55,14 @@ func UpdatePost(ctx context.Context, input post_models.UpdatePostInput) error {
 	// 1. Écrasement LFU immédiat en RAM
 	errCache := object_cache_service.SetPostInObjectCache(ctx, postPayload)
 	if errCache != nil {
-		nubo_log.Warn(ctx).Err(errCache).Int64("post_id", postPayload.ID).Msg("Échec de la mise à jour du post dans le cache L1")
+		numan_log.Warn(ctx).Err(errCache).Int64("post_id", postPayload.ID).Msg("Échec de la mise à jour du post dans le cache L1")
 	}
 
 	// 2. Envoi de l'objet COMPLET dans la file asynchrone pour que les workers BulkUpdate fonctionnent
 	errQueue := redis.EnqueueDB(ctx, postPayload.ID, 0, redis.EntityPost, redis.ActionUpdate, postPayload, redis.TargetAll)
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("post_id", postPayload.ID).Msg("Échec du Write-Behind pour la mise à jour du post")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errQueue).Int64("post_id", postPayload.ID).Msg("Échec du Write-Behind pour la mise à jour du post")
+		return numan_error.NewInternal()
 	}
 
 	return nil

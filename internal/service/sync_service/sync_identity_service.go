@@ -3,16 +3,16 @@ package sync_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/sync_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/sync_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
 )
 
 // ############################################################################
@@ -21,7 +21,7 @@ import (
 
 // SyncIdentity synchronise uniquement l'identité (Profil et Settings) pour le Cold Start de l'App.
 // Utilise le principe de Delta Sync : on ne renvoie la donnée que si elle a muté côté serveur.
-func SyncIdentity(ctx context.Context, input sync_models.SyncIdentityInput) (sync_models.SyncIdentityOutput, error) {
+func SyncIdentity(ctx context.Context, callerID int64, input sync_models.SyncIdentityInput) (sync_models.SyncIdentityOutput, error) {
 	output := sync_models.SyncIdentityOutput{
 		ProfileUpdated:  false,
 		SettingsUpdated: false,
@@ -30,22 +30,22 @@ func SyncIdentity(ctx context.Context, input sync_models.SyncIdentityInput) (syn
 	// ── ÉTAPE 1 : DELTA SYNC DU PROFIL UTILISATEUR (CASCADE L2 -> L3) ───────
 	// Note architecturale : Pas de L1 ici car le Speed Cache ne stocke pas les données privées (Email, Phone).
 
-	userPayload, errMongo := mongo.MongoLoadUser(ctx, input.UserID, "", "", "")
+	userPayload, errMongo := mongo.MongoLoadUser(ctx, callerID, "", "", "")
 	if errMongo != nil && errMongo.Error() != "mongo: no documents in result" {
-		nubo_log.Warn(ctx).Err(errMongo).Msg("Avertissement L2 Mongo lors du SyncIdentity")
+		numan_log.Warn(ctx).Err(errMongo).Msg("Avertissement L2 Mongo lors du SyncIdentity")
 	}
 
 	if userPayload.ID == 0 {
 		// FALLBACK L3 (PostgreSQL)
 		var errPg error
-		userPayload, errPg = postgres.FuncLoadUser(ctx, input.UserID, "", "", "")
+		userPayload, errPg = postgres.FuncLoadUser(ctx, callerID, "", "", "")
 		if errPg != nil {
-			return output, nubo_error.NewInternal() // 500 générique au client, log l'erreur SQL
+			return output, numan_error.NewInternal() // 500 générique au client, log l'erreur SQL
 		}
 
 		if userPayload.ID == 0 {
 			// L'utilisateur n'existe vraiment pas dans le système.
-			return output, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Profil introuvable.", nil)
+			return output, numan_error.NewNotFound(numan_error.CodeNotFound, "Profil introuvable.", nil)
 		}
 
 		// AUTO-GUÉRISON L3 -> L2 (Asynchrone via Worker)
@@ -83,7 +83,7 @@ func SyncIdentity(ctx context.Context, input sync_models.SyncIdentityInput) (syn
 
 		// HYDRATATION DE L'AVATAR (Composition par Valeur avec HMAC de sécurité)
 		if userPayload.ProfilePictureID > 0 {
-			if mediaView, errMedia := media_service.GenerateMediaViewCascade(ctx, userPayload.ProfilePictureID, userPayload.ID, 0, input.UserID); errMedia == nil {
+			if mediaView, errMedia := media_service.GenerateMediaViewCascade(ctx, userPayload.ProfilePictureID, userPayload.ID, 0, callerID); errMedia == nil {
 				output.Avatar = mediaView
 			}
 		}
@@ -91,10 +91,10 @@ func SyncIdentity(ctx context.Context, input sync_models.SyncIdentityInput) (syn
 
 	// ── ÉTAPE 2 : DELTA SYNC DES PARAMÈTRES (CASCADE COMPLÈTE EXISTANTE) ────
 
-	settingsPayload, errSettings := object_cache_service.GetUserSettingsCascade(ctx, input.UserID)
+	settingsPayload, errSettings := object_cache_service.GetUserSettingsCascade(ctx, callerID)
 	if errSettings != nil {
 		// On loggue, mais on ne fait pas crasher l'identité entière pour un échec de settings.
-		nubo_log.Warn(ctx).Err(errSettings).Msg("Impossible de récupérer les UserSettings lors du SyncIdentity")
+		numan_log.Warn(ctx).Err(errSettings).Msg("Impossible de récupérer les UserSettings lors du SyncIdentity")
 	} else if settingsPayload.ID != 0 {
 		if settingsPayload.UpdatedAt > input.SettingsUpdatedAt {
 			output.SettingsUpdated = true

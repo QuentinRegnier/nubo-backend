@@ -3,9 +3,9 @@ package notification_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/notification_models"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
 )
 
 // ############################################################################

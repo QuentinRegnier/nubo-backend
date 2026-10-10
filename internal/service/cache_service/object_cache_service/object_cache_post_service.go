@@ -3,10 +3,10 @@ package object_cache_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 )
 
 // ############################################################################
@@ -29,8 +29,8 @@ func GetPostFromObjectCache(ctx context.Context, postID int64) (post_models.Post
 func SetPostInObjectCache(ctx context.Context, postPayload post_models.PostPayload) error {
 	errRedis := redis.Posts.SetObject(ctx, postPayload.ID, postPayload)
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Int64("post_id", postPayload.ID).Msg("Impossible de sauvegarder le post dans l'Object Cache")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Int64("post_id", postPayload.ID).Msg("Impossible de sauvegarder le post dans l'Object Cache")
+		return numan_error.NewInternal()
 	}
 	return nil
 }
@@ -39,8 +39,8 @@ func SetPostInObjectCache(ctx context.Context, postPayload post_models.PostPaylo
 func DeletePostFromObjectCache(ctx context.Context, postID int64) error {
 	errRedis := redis.Posts.DeleteObject(ctx, postID)
 	if errRedis != nil {
-		nubo_log.Warn(ctx).Err(errRedis).Int64("post_id", postID).Msg("Échec de la suppression du post de l'Object Cache")
-		return nubo_error.NewInternal()
+		numan_log.Warn(ctx).Err(errRedis).Int64("post_id", postID).Msg("Échec de la suppression du post de l'Object Cache")
+		return numan_error.NewInternal()
 	}
 	return nil
 }

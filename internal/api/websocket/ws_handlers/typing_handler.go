@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
 )
 
 type typingPayload struct {
@@ -17,17 +17,17 @@ type typingPayload struct {
 func HandleTyping(ctx context.Context, callerID int64, rawPayload []byte, isTyping bool) error {
 	var input typingPayload
 	if err := json.Unmarshal(rawPayload, &input); err != nil {
-		return nubo_error.NewBadRequest("INVALID_PAYLOAD", "Payload invalide.", err)
+		return numan_error.NewBadRequest("INVALID_PAYLOAD", "Payload invalide.", err)
 	}
 
 	if err := pkg.ValidateStruct(&input); err != nil {
-		return nubo_error.NewBadRequest("VALIDATION_FAILED", "Validation échouée.", err)
+		return numan_error.NewBadRequest("VALIDATION_FAILED", "Validation échouée.", err)
 	}
 
 	// 1. SÉCURITÉ ZERO-TRUST : L1 Speed Cache
 	mem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
 	if err != nil || mem.Role < 0 {
-		return nubo_error.NewForbidden("ACCESS_DENIED", "Accès refusé.", err)
+		return numan_error.NewForbidden("ACCESS_DENIED", "Accès refusé.", err)
 	}
 
 	// 2. CHOIX DE L'ÉVÉNEMENT

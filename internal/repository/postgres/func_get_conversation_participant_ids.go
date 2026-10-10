@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
 )
 
 // FuncGetConversationParticipantIDs récupère la liste brute des IDs pour réhydrater le Speed Cache (L1)
@@ -14,12 +14,12 @@ func FuncGetConversationParticipantIDs(ctx context.Context, convID int64) ([]int
 	query := `SELECT user_id FROM messaging.func_get_conversation_participant_ids($1)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, convID)
 	if err != nil {
-		return nil, nubo_error.NewInternal(err)
+		return nil, numan_error.NewInternal(err)
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres)")
+			numan_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres)")
 		}
 	}(rows)
 

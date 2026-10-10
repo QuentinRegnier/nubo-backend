@@ -4,10 +4,10 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
 )
 
 // FuncGetMessageReactionsPaginated lit la liste des réactions d'un message depuis le L3
@@ -15,13 +15,13 @@ func FuncGetMessageReactionsPaginated(ctx context.Context, messageID int64, limi
 	query := `SELECT id, message_id, user_id, reaction, created_at FROM messaging.func_get_message_reactions_paginated($1, $2, $3)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, messageID, limit, offset)
 	if err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête SQL (QueryContext)")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête SQL (QueryContext)")
+		return nil, numan_error.NewInternal()
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes Postgres (Reactions)")
+			numan_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes Postgres (Reactions)")
 		}
 	}(rows)
 
@@ -33,8 +33,8 @@ func FuncGetMessageReactionsPaginated(ctx context.Context, messageID int64, limi
 		}
 	}
 	if err := rows.Err(); err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Erreur lors de l'itération sur les résultats SQL (rows.Err)")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Erreur lors de l'itération sur les résultats SQL (rows.Err)")
+		return nil, numan_error.NewInternal()
 	}
 	return reactions, nil
 }

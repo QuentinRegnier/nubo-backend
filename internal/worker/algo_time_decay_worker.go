@@ -5,10 +5,10 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // scoreJob contient les métriques pré-calculées par la base de données.
@@ -40,7 +40,7 @@ func startScoreUpdaterCron(ctx context.Context) {
 
 	// Détermination de la limite de concurrence matérielle stricte (Ex: 8 cœurs = 8 workers)
 	numWorkers := runtime.GOMAXPROCS(0)
-	nubo_log.Info(ctx).Int("workers_cpu", numWorkers).Msg("Démarrage du Time-Decay Engine (Calcul des scores)")
+	numan_log.Info(ctx).Int("workers_cpu", numWorkers).Msg("Démarrage du Time-Decay Engine (Calcul des scores)")
 
 	// ── ÉTAPE 2 : LANCEMENT DU POOL DE WORKERS (CONSOMMATEURS) ──────────────
 	for i := 0; i < numWorkers; i++ {
@@ -103,7 +103,7 @@ func runTierCron(ctx context.Context, jobs chan<- scoreJob, interval time.Durati
 			// structurellement incapable de garantir qu'aucun post ne manque à l'appel.
 			posts, err := postgres.FuncLoadPostsForTimeDecay(ctx, minAge, maxAge)
 			if err != nil {
-				nubo_log.Error(ctx).
+				numan_log.Error(ctx).
 					Err(err).
 					Str("min_age", minAge).
 					Str("max_age", maxAge).

@@ -27,7 +27,7 @@ const (
 const (
 	PushWorkerQueueName      = "worker:queue:firebase"
 	PushWorkerBLPopTimeout   = 2 * time.Second
-	PushWorkerDefaultTitle   = "Nubo"
+	PushWorkerDefaultTitle   = "numan"
 	PushWorkerDefaultBody    = "Nouvelle notification"
 	PushWorkerDefaultSound   = "default"
 	PushWorkerDefaultChannel = "default_channel"

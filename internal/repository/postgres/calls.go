@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
 	"github.com/lib/pq"
 )
 
@@ -43,7 +43,7 @@ func scanPosts(ctx context.Context, rows *sql.Rows) ([]post_models.PostPayload, 
 		)
 
 		if err != nil {
-			nubo_log.Error(ctx).Err(err).Msg("Erreur lors du scan d'un post (Postgres)")
+			numan_log.Error(ctx).Err(err).Msg("Erreur lors du scan d'un post (Postgres)")
 			continue // On ignore la ligne corrompue et on passe à la suivante
 		}
 
@@ -55,8 +55,8 @@ func scanPosts(ctx context.Context, rows *sql.Rows) ([]post_models.PostPayload, 
 	}
 
 	if err := rows.Err(); err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Erreur lors de l'itération sur les résultats SQL (rows.Err)")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Erreur lors de l'itération sur les résultats SQL (rows.Err)")
+		return nil, numan_error.NewInternal()
 	}
 
 	return posts, nil

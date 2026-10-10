@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 )
 
 // ############################################################################
@@ -32,15 +32,15 @@ func DistributeToUsers(ctx context.Context, eventType string, payload any, targe
 
 	serializedEvent, errMarshal := json.Marshal(websocketEvent)
 	if errMarshal != nil {
-		nubo_log.Error(ctx).Err(errMarshal).Str("event", eventType).Msg("Erreur lors de la sérialisation de l'événement WebSocket")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errMarshal).Str("event", eventType).Msg("Erreur lors de la sérialisation de l'événement WebSocket")
+		return numan_error.NewInternal()
 	}
 
 	// Appel pur du Repository Redis (Pub/Sub)
 	errRedis := redis.ChannelUser.PublishMultiple(ctx, targetUserIDs, serializedEvent)
 	if errRedis != nil {
-		nubo_log.Warn(ctx).Err(errRedis).Msg("Échec de la publication multiple sur le ChannelUser Redis")
-		return nubo_error.NewInternal()
+		numan_log.Warn(ctx).Err(errRedis).Msg("Échec de la publication multiple sur le ChannelUser Redis")
+		return numan_error.NewInternal()
 	}
 
 	return nil
@@ -55,15 +55,15 @@ func DistributeToCommunity(ctx context.Context, eventType string, payload any, c
 
 	serializedEvent, errMarshal := json.Marshal(websocketEvent)
 	if errMarshal != nil {
-		nubo_log.Error(ctx).Err(errMarshal).Str("event", eventType).Msg("Erreur lors de la sérialisation de l'événement WebSocket (Communauté)")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errMarshal).Str("event", eventType).Msg("Erreur lors de la sérialisation de l'événement WebSocket (Communauté)")
+		return numan_error.NewInternal()
 	}
 
 	// Appel pur du Repository Redis (Pub/Sub)
 	errRedis := redis.ChannelCommunity.Publish(ctx, communityID, serializedEvent)
 	if errRedis != nil {
-		nubo_log.Warn(ctx).Err(errRedis).Int64("community_id", communityID).Msg("Échec de la publication sur le ChannelCommunity Redis")
-		return nubo_error.NewInternal()
+		numan_log.Warn(ctx).Err(errRedis).Int64("community_id", communityID).Msg("Échec de la publication sur le ChannelCommunity Redis")
+		return numan_error.NewInternal()
 	}
 
 	return nil

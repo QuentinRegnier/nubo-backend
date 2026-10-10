@@ -5,9 +5,9 @@ import (
 	"runtime/debug"
 	"strconv"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
 	"github.com/gin-gonic/gin"
 )
 
@@ -42,16 +42,16 @@ func CustomRecoveryMiddleware() gin.HandlerFunc {
 				stack := debug.Stack()
 
 				// Log asynchrone et propre du crash
-				nubo_log.Error(c).
+				numan_log.Error(c).
 					Str("trace_id", traceID).
 					Interface("panic_reason", r).
 					Bytes("stack_trace", stack).
 					Msg("🔥 PANIC RECOVERED: Le serveur a empêché un crash total.")
 
 				// Retour propre au client
-				c.AbortWithStatusJSON(http.StatusInternalServerError, nubo_error.PublicErrorResponse{
+				c.AbortWithStatusJSON(http.StatusInternalServerError, numan_error.PublicErrorResponse{
 					Error:   "Erreur critique du serveur.",
-					Code:    nubo_error.CodeInternalError,
+					Code:    numan_error.CodeInternalError,
 					TraceID: traceID,
 				})
 			}

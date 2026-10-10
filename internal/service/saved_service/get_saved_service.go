@@ -3,15 +3,15 @@ package saved_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/saved_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/post_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/saved_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/post_service"
 )
 
 // ############################################################################
@@ -20,33 +20,33 @@ import (
 
 // GetSavedPosts récupère la liste paginée des favoris d'un utilisateur
 // avec la garantie d'auto-guérison en cascade L1 -> L2 -> L3.
-func GetSavedPosts(ctx context.Context, userID int64, limit int, offset int) ([]post_models.GetPostOutput, error) {
+func GetSavedPosts(ctx context.Context, callerID int64, input saved_models.GetSavedInput) ([]post_models.GetPostOutput, error) {
 	var targetPostIDs []int64
 
 	// ── ÉTAPE 1 : TENTATIVE L1 (RAM REDIS ZSET) ─────────────────────────────
 
-	cachedPostIDs, errCache := object_cache_service.GetSavedPostIDs(ctx, userID, int64(offset), int64(limit))
+	cachedPostIDs, errCache := object_cache_service.GetSavedPostIDs(ctx, callerID, input.Offset, input.Limit)
 	if errCache == nil && len(cachedPostIDs) > 0 {
 		targetPostIDs = cachedPostIDs
 	} else {
 
 		// ── ÉTAPE 2 : FALLBACK L2 (MONGODB WARM STORAGE) ────────────────────
-		savedPayloadsFromMongo, errMongo := mongo.MongoLoadSavedPosts(ctx, userID, int64(limit), int64(offset))
+		savedPayloadsFromMongo, errMongo := mongo.MongoLoadSavedPosts(ctx, callerID, input.Limit, input.Offset)
 
 		if errMongo == nil && len(savedPayloadsFromMongo) > 0 {
 			for _, savedPayload := range savedPayloadsFromMongo {
 				targetPostIDs = append(targetPostIDs, savedPayload.PostID)
 
 				// AUTO-GUÉRISON L1 (ZSET)
-				_ = object_cache_service.AddSavedToZSET(ctx, userID, savedPayload.PostID, float64(savedPayload.CreatedAt))
+				_ = object_cache_service.AddSavedToZSET(ctx, callerID, savedPayload.PostID, float64(savedPayload.CreatedAt))
 			}
 		} else {
 
 			// ── ÉTAPE 3 : FALLBACK ABSOLU L3 (POSTGRESQL COLD STORAGE) ──────
-			savedPayloadsFromPostgres, errPg := postgres.FuncLoadSavedPosts(ctx, userID, limit, offset)
+			savedPayloadsFromPostgres, errPg := postgres.FuncLoadSavedPosts(ctx, callerID, input.Limit, input.Offset)
 			if errPg != nil {
-				nubo_log.Error(ctx).Err(errPg).Int64("user_id", userID).Msg("Erreur L3 lors de la récupération des posts sauvegardés")
-				return nil, nubo_error.NewInternal()
+				numan_log.Error(ctx).Err(errPg).Int64("user_id", callerID).Msg("Erreur L3 lors de la récupération des posts sauvegardés")
+				return nil, numan_error.NewInternal()
 			}
 
 			if len(savedPayloadsFromPostgres) > 0 {
@@ -54,7 +54,7 @@ func GetSavedPosts(ctx context.Context, userID int64, limit int, offset int) ([]
 					targetPostIDs = append(targetPostIDs, savedPayload.PostID)
 
 					// AUTO-GUÉRISON L1 (Synchrone en RAM)
-					_ = object_cache_service.AddSavedToZSET(ctx, userID, savedPayload.PostID, float64(savedPayload.CreatedAt))
+					_ = object_cache_service.AddSavedToZSET(ctx, callerID, savedPayload.PostID, float64(savedPayload.CreatedAt))
 
 					// AUTO-GUÉRISON L2 (Asynchrone via Workers)
 					go func(payload saved_models.SavedPayload) {
@@ -81,11 +81,14 @@ func GetSavedPosts(ctx context.Context, userID int64, limit int, offset int) ([]
 	// - De générer les URLs S3/MinIO signées (HMAC)
 	// - D'hydrater les commentaires
 	requestInput := post_models.GetPostInput{
-		UserID:  userID,
 		PostIDs: targetPostIDs,
 	}
 
-	hydratedPostsResults := post_service.GetPosts(ctx, requestInput)
+	hydratedPostsResults, err := post_service.GetPosts(ctx, callerID, requestInput)
+	if err != nil {
+		numan_log.Error(ctx).Err(err).Int64("user_id", callerID).Msg("Erreur lors de l'hydratation des posts sauvegardés")
+		return nil, numan_error.NewInternal()
+	}
 
 	return hydratedPostsResults, nil
 }

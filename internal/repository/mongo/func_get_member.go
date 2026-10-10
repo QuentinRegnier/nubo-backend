@@ -4,11 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
 )
 
 // MongoGetMember récupère le payload complet d'un membre avec le Smart Fallback (Retard BDD)
@@ -18,12 +18,12 @@ func MongoGetMember(ctx context.Context, convID int64, userID int64) (member_mod
 	filter := map[string]any{"conversation_id": convID, "user_id": userID}
 	docs, err := Members.Get(filter, nil)
 	if err != nil || len(docs) == 0 {
-		return mem, nubo_error.NewNotFound("MEMBER_NOT_FOUND", "Membre introuvable.", err)
+		return mem, numan_error.NewNotFound("MEMBER_NOT_FOUND", "Membre introuvable.", err)
 	}
 
 	if err := pkg.ToStruct(docs[0], &mem); err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Échec de la conversion du document MongoDB en structure membre (ToStruct)")
-		return mem, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Échec de la conversion du document MongoDB en structure membre (ToStruct)")
+		return mem, numan_error.NewInternal()
 	}
 
 	// SMART RE-COUNT : Si le compteur est à 0 ou qu'on a plus de 5s de retard

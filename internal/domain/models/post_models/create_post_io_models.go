@@ -2,7 +2,7 @@ package post_models
 
 type CreatePostInput struct {
 	Content     string   `json:"content" binding:"max=2200"`
-	Hashtags    []string `json:"hashtags" binding:"max=10,dive,alphanum,max=50"`
+	Hashtags    []string `json:"hashtags" binding:"max=10,dive,alphanum,max=20"`
 	Identifiers []int64  `json:"identifiers" binding:"max=10"`
 	MediaIDs    []int64  `json:"media_ids" binding:"max=4"` // <-- NOUVEAU : Maximum 4 médias par post
 	Location    string   `json:"location" binding:"max=100"`

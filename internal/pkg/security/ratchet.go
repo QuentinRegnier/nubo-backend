@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 func DeriveNextSecret(secretCurrent, secretLast, masterToken, firebaseInstallationID string) string {
@@ -27,7 +27,7 @@ func RotateRatchet(ctx context.Context, userID int64, firebaseInstallationID str
 	// 0. BOUCLIER TOMBSTONE (O(1) en RAM)
 	idxKey := fmt.Sprintf("%d:%s", userID, firebaseInstallationID)
 	if isRevoked, _ := redis.SessionBlacklist.Exists(ctx, idxKey); isRevoked {
-		return nubo_error.NewForbidden("SESSION_REVOKED", "Session révoquée (déconnexion en cours).", nil)
+		return numan_error.NewForbidden("SESSION_REVOKED", "Session révoquée (déconnexion en cours).", nil)
 	}
 
 	// 1. CASCADE L1 -> L2 -> L3 (Recherche sécurisée)
@@ -37,14 +37,14 @@ func RotateRatchet(ctx context.Context, userID int64, firebaseInstallationID str
 		if err != nil || sessionRaw.ID == 0 {
 			sessionRaw, err = postgres.FuncLoadSession(ctx, -1, userID, firebaseInstallationID, "")
 			if err != nil || sessionRaw.ID == 0 {
-				return nubo_error.NewNotFound("SESSION_NOT_FOUND", "Session introuvable.", err)
+				return numan_error.NewNotFound("SESSION_NOT_FOUND", "Session introuvable.", err)
 			}
 		}
 	}
 
 	// 2. VÉRIFICATION DE SYNCHRONISATION
 	if sessionRaw.CurrentSecret != clientCurrentSecret {
-		return nubo_error.NewForbidden("INVALID_SECRET", "Désynchronisation de sécurité détectée.", nil)
+		return numan_error.NewForbidden("INVALID_SECRET", "Désynchronisation de sécurité détectée.", nil)
 	}
 
 	// 3. ROTATION CRYPTOGRAPHIQUE
@@ -72,7 +72,7 @@ func RotateRatchet(ctx context.Context, userID int64, firebaseInstallationID str
 // ResetRatchet génère le premier secret dérivé suite à un Hard Reset (Rotation du MasterToken)
 func ResetRatchet(newMasterToken, firebaseInstallationID string) (string, error) {
 	if newMasterToken == "" || firebaseInstallationID == "" {
-		return "", nubo_error.NewBadRequest("MISSING_PARAMS", "Paramètres manquants pour la rotation.", nil)
+		return "", numan_error.NewBadRequest("MISSING_PARAMS", "Paramètres manquants pour la rotation.", nil)
 	}
 	firstDerivedSecret := DeriveNextSecret(firebaseInstallationID, newMasterToken, newMasterToken, firebaseInstallationID)
 	return firstDerivedSecret, nil

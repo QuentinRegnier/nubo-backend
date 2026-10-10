@@ -3,10 +3,10 @@ package mongo
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
@@ -22,8 +22,8 @@ func MongoLoadComments(c context.Context, commentIDs []int64) ([]comment_models.
 	// On récupère les documents bruts
 	docs, err := Comments.GetPaginated(filter, nil, 0, int64(len(commentIDs)))
 	if err != nil {
-		nubo_log.Error(c).Err(err).Msg("Erreur interne lors de l'exécution de l'opération")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(c).Err(err).Msg("Erreur interne lors de l'exécution de l'opération")
+		return nil, numan_error.NewInternal()
 	}
 
 	// Conversion propre dans le type du domaine

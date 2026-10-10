@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 )
 
 // ############################################################################
@@ -26,8 +27,8 @@ func RecordConversationMutation(ctx context.Context, conversationID int64, parti
 	// DÉLÉGATION DDD ABSOLUE : Le Cache Service ne parle qu'à l'abstraction Collection
 	errRedis := redis.UserSyncLedger.ZAddMultiple(ctx, participantIDsList, currentTimestampMs, conversationIDString)
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Int64("conv_id", conversationID).Msg("Échec de la mutation du Ledger Conversation")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Int64("conv_id", conversationID).Msg("Échec de la mutation du Ledger Conversation")
+		return numan_error.NewInternal()
 	}
 
 	return nil
@@ -45,7 +46,7 @@ func RecordMessageMutation(ctx context.Context, conversationID int64, messageID 
 	if errRedis == nil {
 		_ = redis.ConvMessageLedger.RefreshTTL(ctx, conversationID)
 	} else {
-		nubo_log.Warn(ctx).Err(errRedis).Int64("message_id", messageID).Msg("Échec de l'insertion dans le ConvMessageLedger")
+		numan_log.Warn(ctx).Err(errRedis).Int64("message_id", messageID).Msg("Échec de l'insertion dans le ConvMessageLedger")
 	}
 
 	// 2. On "allume le gyrophare" sur la conversation parente pour tous les participants
@@ -67,16 +68,11 @@ func GetModifiedConversationIDs(ctx context.Context, userID int64, sinceTimestam
 	idStringsList, errRedis := redis.UserSyncLedger.ZRangeByScore(ctx, userID, minScoreThreshold, maxScoreThreshold, 1000)
 
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Int64("user_id", userID).Msg("Erreur lors de la lecture du UserSyncLedger")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Int64("user_id", userID).Msg("Erreur lors de la lecture du UserSyncLedger")
+		return nil, numan_error.NewInternal()
 	}
 
-	var parsedConversationIDs []int64
-	for _, idString := range idStringsList {
-		if parsedID, errParse := strconv.ParseInt(idString, 10, 64); errParse == nil {
-			parsedConversationIDs = append(parsedConversationIDs, parsedID)
-		}
-	}
+	parsedConversationIDs := pkg.ParseInt64List(idStringsList)
 
 	return parsedConversationIDs, nil
 }
@@ -91,16 +87,11 @@ func GetModifiedMessageIDs(ctx context.Context, conversationID int64, sinceTimes
 	idStringsList, errRedis := redis.ConvMessageLedger.ZRangeByScore(ctx, conversationID, minScoreThreshold, maxScoreThreshold, 1000)
 
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Int64("conv_id", conversationID).Msg("Erreur lors de la lecture du ConvMessageLedger")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Int64("conv_id", conversationID).Msg("Erreur lors de la lecture du ConvMessageLedger")
+		return nil, numan_error.NewInternal()
 	}
 
-	var parsedMessageIDs []int64
-	for _, idString := range idStringsList {
-		if parsedID, errParse := strconv.ParseInt(idString, 10, 64); errParse == nil {
-			parsedMessageIDs = append(parsedMessageIDs, parsedID)
-		}
-	}
+	parsedMessageIDs := pkg.ParseInt64List(idStringsList)
 
 	return parsedMessageIDs, nil
 }

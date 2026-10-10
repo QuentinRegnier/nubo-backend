@@ -5,22 +5,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"strconv"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/api/websocket/ws_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/api/websocket/ws_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg/security"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // route intercepte le message brut, l'oriente et gère la réponse avec un bouclier Zero-Trust.
 func (c *client) route(message []byte) {
 	var req wsRequest
 	if err := json.Unmarshal(message, &req); err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("WS Route Error: Payload illisible")
+		numan_log.Error(context.Background()).Err(err).Msg("WS Route Error: Payload illisible")
 		return
 	}
 
@@ -31,7 +31,7 @@ func (c *client) route(message []byte) {
 	// =========================================================================
 
 	// 1. Anti-Rejeu (Timestamp)
-	tsInt, err := strconv.ParseInt(req.Timestamp, 10, 64)
+	tsInt, err := pkg.ParseInt64Strict(req.Timestamp)
 	if err != nil {
 		c.sendError(req.RequestID, "Timestamp invalide")
 		return

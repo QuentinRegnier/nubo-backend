@@ -1,6 +1,6 @@
 package conversation_models
 
-import "github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
+import "github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
 
 // CommunityLiteView représente l'empreinte minimale d'une communauté pour la barre de recherche
 type CommunityLiteView struct {

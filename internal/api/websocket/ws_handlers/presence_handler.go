@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/sync_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/sync_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
 )
 
 // =========================================================================
@@ -21,14 +21,14 @@ func HandleSyncPresence(ctx context.Context, rawPayload []byte) (any, error) {
 	var input sync_models.SyncPresenceInput
 
 	if err := json.Unmarshal(rawPayload, &input); err != nil {
-		return nil, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Payload invalide.", err)
+		return nil, numan_error.NewBadRequest("INVALID_PAYLOAD", "Payload invalide.", err)
 	}
 
 	if err := pkg.ValidateStruct(&input); err != nil {
-		return nil, nubo_error.NewBadRequest("VALIDATION_FAILED", "Validation échouée.", err)
+		return nil, numan_error.NewBadRequest("VALIDATION_FAILED", "Validation échouée.", err)
 	}
 
-	presenceMap, err := cache_service.AreUsersOnline(ctx, input.UserIDs)
+	presenceMap, err := cache_service.AreUsersOnline(ctx, input)
 	if err != nil {
 		return nil, err
 	}
@@ -46,17 +46,17 @@ func HandleFocusConversation(ctx context.Context, callerID int64, rawPayload []b
 	var input sync_models.FocusConversationInput
 
 	if err := json.Unmarshal(rawPayload, &input); err != nil {
-		return nubo_error.NewBadRequest("INVALID_PAYLOAD", "Payload invalide.", err)
+		return numan_error.NewBadRequest("INVALID_PAYLOAD", "Payload invalide.", err)
 	}
 
 	if err := pkg.ValidateStruct(&input); err != nil {
-		return nubo_error.NewBadRequest("VALIDATION_FAILED", "Validation échouée.", err)
+		return numan_error.NewBadRequest("VALIDATION_FAILED", "Validation échouée.", err)
 	}
 
 	// 1. SÉCURITÉ ZERO-TRUST : On vérifie que l'utilisateur est bien membre de la conversation
 	mem, err := security_service.LeftMember(ctx, input.ConversationID, callerID)
 	if err != nil || mem.Role < 0 {
-		return nubo_error.NewForbidden("ACCESS_DENIED", "Accès refusé.", err)
+		return numan_error.NewForbidden("ACCESS_DENIED", "Accès refusé.", err)
 	}
 
 	// 2. Événement diffusé en direct aux membres de la conversation

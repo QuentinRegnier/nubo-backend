@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 	"github.com/kljensen/snowball"
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"

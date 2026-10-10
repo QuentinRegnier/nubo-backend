@@ -6,25 +6,24 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/docs"
-	"github.com/QuentinRegnier/nubo-backend/internal/api"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/middleware"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/websocket"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/logger"
-	mongogo "github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
-	"github.com/QuentinRegnier/nubo-backend/internal/worker"
+	"github.com/QuentinRegnier/numan-backend/docs"
+	"github.com/QuentinRegnier/numan-backend/internal/api"
+	"github.com/QuentinRegnier/numan-backend/internal/api/middleware"
+	"github.com/QuentinRegnier/numan-backend/internal/api/websocket"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/minio"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg/logger"
+	mongogo "github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	redisgo "github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/worker"
 	"github.com/gin-gonic/gin"
 )
 
@@ -43,7 +42,7 @@ func main() {
 	// le buffer de logs sera vidé sur le disque avant de mourir.
 	defer logger.CloseLogger()
 
-	logger.Log.Info().Msg("🚀 Démarrage de l'API Nubo V12")
+	logger.Log.Info().Msg("🚀 Démarrage de l'API numan V12")
 
 	// --- INITIALISATION SNOWFLAKE ---
 
@@ -56,7 +55,7 @@ func main() {
 	}
 
 	// 2. On convertit le string "1" en int64 1
-	nodeID, err := strconv.ParseInt(nodeIDStr, 10, 64)
+	nodeID, err := pkg.ParseInt64Strict(nodeIDStr)
 	if err != nil {
 		log.Fatalf("Erreur: NODE_ID doit être un nombre entier. Reçu: %s", nodeIDStr)
 	}
@@ -153,7 +152,7 @@ func main() {
 	docs.InitDocsRoutes(r)
 
 	// Initialiser les Index Mongo
-	_ = mongo.EnsureIndexes(context.Background(), mongo.MongoClient.Database("nubo"))
+	_ = mongo.EnsureIndexes(context.Background(), mongo.MongoClient.Database("numan"))
 
 	port := os.Getenv("PORT")
 	if port == "" {

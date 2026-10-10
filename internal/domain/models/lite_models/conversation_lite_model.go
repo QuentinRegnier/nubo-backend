@@ -1,7 +1,7 @@
 package lite_models
 
 import (
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models"
 )
 
 type ConversationSettings struct {

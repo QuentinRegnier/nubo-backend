@@ -3,14 +3,14 @@ package cache_service
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -25,14 +25,14 @@ func StoreCommunityLiteInSpeedCache(ctx context.Context, communityLitePayload li
 
 	errZAdd := redis.CommunitiesLex.ZAdd(ctx, variables.LexicographicGlobalKey, 0, lexicographicValue)
 	if errZAdd != nil {
-		nubo_log.Error(ctx).Err(errZAdd).Int64("community_id", communityLitePayload.ID).Msg("Impossible d'indexer la communauté dans le dictionnaire Lexicographique")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errZAdd).Int64("community_id", communityLitePayload.ID).Msg("Impossible d'indexer la communauté dans le dictionnaire Lexicographique")
+		return numan_error.NewInternal()
 	}
 
 	errSet := redis.SpeedCommunity.SetObject(ctx, communityLitePayload.ID, communityLitePayload)
 	if errSet != nil {
-		nubo_log.Error(ctx).Err(errSet).Int64("community_id", communityLitePayload.ID).Msg("Impossible de sauvegarder la communauté dans l'Object Cache")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errSet).Int64("community_id", communityLitePayload.ID).Msg("Impossible de sauvegarder la communauté dans l'Object Cache")
+		return numan_error.NewInternal()
 	}
 
 	return nil
@@ -56,19 +56,19 @@ func updateCommunityMemberCountInSpeedCache(ctx context.Context, communityID int
 
 		errSet := redis.SpeedCommunity.SetObject(ctx, communityLitePayload.ID, communityLitePayload)
 		if errSet != nil {
-			nubo_log.Warn(ctx).Err(errSet).Int64("community_id", communityID).Msg("Échec de la mise à jour du compteur de membres en L1")
+			numan_log.Warn(ctx).Err(errSet).Int64("community_id", communityID).Msg("Échec de la mise à jour du compteur de membres en L1")
 		}
 	}
 }
 
 // SearchCommunitiesByPrefix recherche des communautés en O(log(N)) RAM et les réhydrate.
-func SearchCommunitiesByPrefix(ctx context.Context, searchPrefix string, resultLimit int64) ([]lite_models.CommunityLiteRequest, error) {
+func SearchCommunitiesByPrefix(ctx context.Context, searchPrefix string, resultOffset, resultLimit int64) ([]lite_models.CommunityLiteRequest, error) {
 
 	// 1. Recherche ultra-rapide dans l'index lexicographique
-	lexicographicResultsList, errLex := redis.CommunitiesLex.ZRangeByLex(ctx, variables.LexicographicGlobalKey, strings.ToLower(searchPrefix), resultLimit)
+	lexicographicResultsList, errLex := redis.CommunitiesLex.ZRangeByLex(ctx, variables.LexicographicGlobalKey, strings.ToLower(searchPrefix), resultOffset, resultLimit)
 	if errLex != nil {
-		nubo_log.Error(ctx).Err(errLex).Str("prefix", searchPrefix).Msg("Erreur lors du ZRangeByLex des communautés")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errLex).Str("prefix", searchPrefix).Msg("Erreur lors du ZRangeByLex des communautés")
+		return nil, numan_error.NewInternal()
 	}
 
 	if len(lexicographicResultsList) == 0 {
@@ -81,7 +81,7 @@ func SearchCommunitiesByPrefix(ctx context.Context, searchPrefix string, resultL
 		// Le format stocké est "nom:id"
 		lexParts := strings.Split(lexResultString, ":")
 		if len(lexParts) == 2 {
-			if parsedID, errParse := strconv.ParseInt(lexParts[1], 10, 64); errParse == nil {
+			if parsedID := pkg.ParseInt64(lexParts[1]); parsedID != 0 {
 				extractedCommunityIDs = append(extractedCommunityIDs, parsedID)
 			}
 		}
@@ -90,8 +90,8 @@ func SearchCommunitiesByPrefix(ctx context.Context, searchPrefix string, resultL
 	// 3. Hydratation via MGET sur la collection SpeedCommunity
 	multiGetResult, errMGet := redis.SpeedCommunity.GetMany(ctx, extractedCommunityIDs)
 	if errMGet != nil {
-		nubo_log.Error(ctx).Err(errMGet).Msg("Erreur lors de l'hydratation massive des communautés depuis le Speed Cache")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errMGet).Msg("Erreur lors de l'hydratation massive des communautés depuis le Speed Cache")
+		return nil, numan_error.NewInternal()
 	}
 
 	var hydratedCommunitiesList []lite_models.CommunityLiteRequest

@@ -8,19 +8,19 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"strconv"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg/security"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 	"github.com/gin-gonic/gin"
 )
 
@@ -55,7 +55,7 @@ func HMACMiddleware() gin.HandlerFunc {
 		clientSig := c.GetHeader("X-Signature")
 
 		if clientTs == "" || clientSig == "" {
-			nubo_error.RespondWithError(c, nubo_error.NewUnauthorized("MISSING_HEADERS", "Headers de sécurité manquants.", nil))
+			numan_error.RespondWithError(c, numan_error.NewUnauthorized("MISSING_HEADERS", "Headers de sécurité manquants.", nil))
 			c.Abort()
 			return
 		}
@@ -64,7 +64,7 @@ func HMACMiddleware() gin.HandlerFunc {
 		firebaseInstallationIDRaw, existsDev := c.Get("firebaseInstallationID")
 
 		if !existsUID || !existsDev {
-			nubo_error.RespondWithError(c, nubo_error.NewUnauthorized("MISSING_CONTEXT", "Contexte d'authentification manquant.", nil))
+			numan_error.RespondWithError(c, numan_error.NewUnauthorized("MISSING_CONTEXT", "Contexte d'authentification manquant.", nil))
 			c.Abort()
 			return
 		}
@@ -75,14 +75,14 @@ func HMACMiddleware() gin.HandlerFunc {
 		case float64:
 			userID = int64(v)
 		case string:
-			p, err := strconv.ParseInt(v, 10, 64)
+			p, err := pkg.ParseInt64Strict(v)
 			if err == nil {
 				userID = p
 			}
 		case int64:
 			userID = v
 		default:
-			nubo_log.Error(c).Msgf("Type userID inconnu: %T", v)
+			numan_log.Error(c).Msgf("Type userID inconnu: %T", v)
 		}
 
 		firebaseInstallationID := fmt.Sprintf("%v", firebaseInstallationIDRaw)
@@ -96,14 +96,14 @@ func HMACMiddleware() gin.HandlerFunc {
 			sessionFound = true
 		} else {
 			// Optionnel : On peut logger en mode debug pour ne pas spammer la prod
-			nubo_log.Debug(c).Err(err).Int64("user_id", userID).Msg("Cache L1 Miss (Session)")
+			numan_log.Debug(c).Err(err).Int64("user_id", userID).Msg("Cache L1 Miss (Session)")
 		}
 
 		if !sessionFound {
 			// B. Essai Mongo L2
 			session, errMongo := mongo.MongoLoadSession(c, userID, firebaseInstallationID, "", "")
 			if errMongo == nil && session.ID != 0 {
-				nubo_log.Debug(c).Msg("Session trouvée dans Mongo L2, réhydratation L1...")
+				numan_log.Debug(c).Msg("Session trouvée dans Mongo L2, réhydratation L1...")
 				sessionFound = true
 				_ = cache_service.SetSessionInCache(c, session)
 			}
@@ -113,7 +113,7 @@ func HMACMiddleware() gin.HandlerFunc {
 			// C. Essai Postgres L3
 			session, errPg := postgres.FuncLoadSession(c, -1, userID, firebaseInstallationID, "")
 			if errPg == nil && session.ID != 0 {
-				nubo_log.Debug(c).Msg("Session trouvée dans Postgres L3, réhydratation massive...")
+				numan_log.Debug(c).Msg("Session trouvée dans Postgres L3, réhydratation massive...")
 				sessionFound = true
 				_ = cache_service.SetSessionInCache(c, session)
 				_ = redis.EnqueueDB(c, session.ID, 0, redis.EntitySession, redis.ActionCreate, session, redis.TargetMongo)
@@ -121,21 +121,21 @@ func HMACMiddleware() gin.HandlerFunc {
 		}
 
 		if !sessionFound {
-			nubo_error.RespondWithError(c, nubo_error.NewUnauthorized("INVALID_SESSION", "Session invalide ou expirée.", nil))
+			numan_error.RespondWithError(c, numan_error.NewUnauthorized("INVALID_SESSION", "Session invalide ou expirée.", nil))
 			c.Abort()
 			return
 		}
 
 		// 4. Anti-Rejeu (Timestamp)
-		tsInt, err := strconv.ParseInt(clientTs, 10, 64)
+		tsInt, err := pkg.ParseInt64Strict(clientTs)
 		if err != nil {
-			nubo_error.RespondWithError(c, nubo_error.NewUnauthorized("INVALID_TIMESTAMP", "Timestamp invalide.", err))
+			numan_error.RespondWithError(c, numan_error.NewUnauthorized("INVALID_TIMESTAMP", "Timestamp invalide.", err))
 			c.Abort()
 			return
 		}
 		now := time.Now().Unix()
 		if math.Abs(float64(now-tsInt)) > float64(variables.ToleranceTimeSeconds) {
-			nubo_error.RespondWithError(c, nubo_error.NewUnauthorized("REQUEST_EXPIRED", "Requête expirée.", nil))
+			numan_error.RespondWithError(c, numan_error.NewUnauthorized("REQUEST_EXPIRED", "Requête expirée.", nil))
 			c.Abort()
 			return
 		}
@@ -163,7 +163,7 @@ func HMACMiddleware() gin.HandlerFunc {
 		}
 
 		if !isValid {
-			nubo_error.RespondWithError(c, nubo_error.NewUnauthorized("INVALID_HMAC", "Signature HMAC invalide.", nil))
+			numan_error.RespondWithError(c, numan_error.NewUnauthorized("INVALID_HMAC", "Signature HMAC invalide.", nil))
 			c.Abort()
 			return
 		}
@@ -196,7 +196,7 @@ func HMACMiddleware() gin.HandlerFunc {
 
 		_, err = w.ResponseWriter.Write(responseBody)
 		if err != nil {
-			nubo_log.Error(c).Err(err).Msg("Erreur en écrivant la réponse signée HMAC")
+			numan_log.Error(c).Err(err).Msg("Erreur en écrivant la réponse signée HMAC")
 			return
 		}
 	}

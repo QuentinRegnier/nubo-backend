@@ -3,15 +3,15 @@ package relation_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/relation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -21,13 +21,13 @@ import (
 // fetchRelationsHydrated est le moteur central du domaine relationnel.
 // Il gère la pagination via le Speed Cache L1, le fallback vers PostgreSQL,
 // l'application des règles de confidentialité et l'hydratation massive (O(1)) des profils.
-func fetchRelationsHydrated(ctx context.Context, callerID int64, primaryTargetID int64, targetState int, searchDirection string, fetchLimit int, fetchOffset int) ([]relation_models.RelationUserView, error) {
+func fetchRelationsHydrated(ctx context.Context, callerID int64, primaryTargetID int64, targetState int, searchDirection string, fetchLimit int64, fetchOffset int64) ([]relation_models.RelationUserView, error) {
 
 	// ── ÉTAPE 1 : CONTRÔLE DE CONFIDENTIALITÉ (ZERO-TRUST) ──────────────────
 
 	primaryUserLite, errCache := cache_service.GetUserLite(ctx, primaryTargetID)
 	if errCache != nil {
-		return []relation_models.RelationUserView{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Nous ne trouvons pas ce profil.", nil)
+		return []relation_models.RelationUserView{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Nous ne trouvons pas ce profil.", nil)
 	}
 
 	// L'utilisateur peut toujours voir ses propres relations
@@ -53,7 +53,7 @@ func fetchRelationsHydrated(ctx context.Context, callerID int64, primaryTargetID
 		}
 
 		if !canViewConnections {
-			return []relation_models.RelationUserView{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous n'avez pas la permission de consulter cette liste.", nil)
+			return []relation_models.RelationUserView{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Vous n'avez pas la permission de consulter cette liste.", nil)
 		}
 	}
 
@@ -66,8 +66,8 @@ func fetchRelationsHydrated(ctx context.Context, callerID int64, primaryTargetID
 	if errCacheIndex != nil || len(matchedUserIDs) == 0 {
 		matchedUserIDsFromPg, errPg := postgres.FuncLoadRelationsByDirectionPaginated(ctx, primaryTargetID, targetState, searchDirection, fetchLimit, fetchOffset)
 		if errPg != nil {
-			nubo_log.Error(ctx).Err(errPg).Int64("user_id", primaryTargetID).Msg("Échec L3 lors de la récupération des relations")
-			return nil, nubo_error.NewInternal()
+			numan_log.Error(ctx).Err(errPg).Int64("user_id", primaryTargetID).Msg("Échec L3 lors de la récupération des relations")
+			return nil, numan_error.NewInternal()
 		}
 		matchedUserIDs = matchedUserIDsFromPg
 	}

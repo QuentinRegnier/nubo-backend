@@ -2,8 +2,9 @@ package search_models
 
 // AutocompleteTextInput valide le JSON entrant pour la barre de recherche.
 type AutocompleteTextInput struct {
-	Query string `json:"query" binding:"required,min=1"`
-	Limit int64  `json:"limit" binding:"omitempty,min=1,max=50"`
+	Query  string `json:"query" binding:"required,min=1"`
+	Offset int64  `form:"offset" json:"offset" binding:"required"`
+	Limit  int64  `json:"limit" binding:"omitempty,min=1,max=50"`
 }
 
 // AutocompleteTextOutput unifie les résultats lexicographiques (0 I/O base de données)

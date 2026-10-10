@@ -1,6 +1,6 @@
 package conversation_models
 
-import "github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+import "github.com/QuentinRegnier/numan-backend/internal/domain/models"
 
 // UpdateConversationInput valide les champs modifiables d'une conversation (PUT)
 type UpdateConversationInput struct {

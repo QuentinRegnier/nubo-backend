@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 	"github.com/go-playground/validator/v10"
@@ -29,8 +29,8 @@ func ValidateStruct(obj any) error {
 	if v, ok := binding.Validator.Engine().(*validator.Validate); ok {
 		return v.Struct(obj)
 	}
-	nubo_log.Error(context.Background()).Msg("Impossible de charger le validateur Gin (binding.Validator.Engine)")
-	return nubo_error.NewInternal()
+	numan_log.Error(context.Background()).Msg("Impossible de charger le validateur Gin (binding.Validator.Engine)")
+	return numan_error.NewInternal()
 }
 
 // CleanStr : Nettoyage anti-XSS et suppression des espaces superflus.
@@ -53,8 +53,8 @@ func GenerateToken(userID int64, firebaseInstallationID string, expirationSecond
 
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		nubo_log.Error(context.Background()).Msg("Variable d'environnement JWT_SECRET manquante")
-		return "", nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Msg("Variable d'environnement JWT_SECRET manquante")
+		return "", numan_error.NewInternal()
 	}
 	return token.SignedString([]byte(secret))
 }
@@ -69,8 +69,8 @@ func ToMap(in any) (map[string]any, error) {
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
-		nubo_log.Error(context.Background()).Str("kind", v.Kind().String()).Msg("ToMap attend une struct en paramètre")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Str("kind", v.Kind().String()).Msg("ToMap attend une struct en paramètre")
+		return nil, numan_error.NewInternal()
 	}
 
 	t := v.Type()
@@ -148,16 +148,16 @@ func SliceUniqueStr(slice []string) []string {
 func GetUserIDFromContext(c *gin.Context) (int64, error) {
 	val, exists := c.Get("userID")
 	if !exists {
-		return 0, nubo_error.NewForbidden("UNAUTHORIZED", "Utilisateur non identifié dans le contexte.", nil)
+		return 0, numan_error.NewForbidden("UNAUTHORIZED", "Utilisateur non identifié dans le contexte.", nil)
 	}
 
 	switch v := val.(type) {
 	case int64:
 		return v, nil
 	case string:
-		id, err := strconv.ParseInt(v, 10, 64)
+		id, err := ParseInt64Strict(v)
 		if err != nil {
-			return 0, nubo_error.NewBadRequest("INVALID_USER_ID", "Le format de l'ID utilisateur est invalide.", err)
+			return 0, numan_error.NewBadRequest("INVALID_USER_ID", "Le format de l'ID utilisateur est invalide.", err)
 		}
 		return id, nil
 	case float64:
@@ -165,8 +165,8 @@ func GetUserIDFromContext(c *gin.Context) (int64, error) {
 	case int:
 		return int64(v), nil
 	default:
-		nubo_log.Error(c).Interface("val", val).Msg("Type inattendu pour le userID extrait du contexte")
-		return 0, nubo_error.NewInternal()
+		numan_log.Error(c).Interface("val", val).Msg("Type inattendu pour le userID extrait du contexte")
+		return 0, numan_error.NewInternal()
 	}
 }
 
@@ -189,7 +189,7 @@ func ExtractMentions(content string) []int64 {
 	var ids []int64
 	for _, match := range matches {
 		if len(match) == 2 {
-			if id, err := strconv.ParseInt(match[1], 10, 64); err == nil {
+			if id, err := ParseInt64Strict(match[1]); err == nil {
 				ids = append(ids, id)
 			}
 		}
@@ -197,4 +197,39 @@ func ExtractMentions(content string) []int64 {
 
 	// Déduplication via l'utilitaire existant dans ce même package
 	return SliceUniqueInt64(ids)
+}
+
+// ParseInt64List silently converts a slice of strings to a slice of int64.
+// Malformed values are ignored. Ideal for parsing Redis ZSET/SET returns.
+func ParseInt64List(stringList []string) []int64 {
+	if len(stringList) == 0 {
+		return nil
+	}
+
+	intList := make([]int64, 0, len(stringList))
+
+	for _, str := range stringList {
+		if parsed, err := strconv.ParseInt(str, 10, 64); err == nil {
+			intList = append(intList, parsed)
+		}
+	}
+
+	return intList
+}
+
+// ParseInt64 is a shortcut to parse a single string to int64, defaulting to 0 on error.
+func ParseInt64(str string) int64 {
+	parsed, _ := strconv.ParseInt(str, 10, 64)
+	return parsed
+}
+
+// ParseInt64Strict converts a string to int64 and returns the error for strict validation.
+// It acts as a unified wrapper for strconv.ParseInt(str, 10, 64).
+func ParseInt64Strict(str string) (int64, error) {
+	return strconv.ParseInt(str, 10, 64)
+}
+
+// genericMessageResponse is a generic JSON response containing a single message.
+type genericMessageResponse struct {
+	Message string `json:"message"`
 }

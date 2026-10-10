@@ -4,25 +4,25 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/message_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -156,12 +156,7 @@ func getConversationAvatars(ctx context.Context, conversationID int64, callerID 
 		return avatarsToDisplay
 	}
 
-	var participantIDs []int64
-	for _, participantStr := range participantsStringList {
-		if parsedID, errParse := strconv.ParseInt(participantStr, 10, 64); errParse == nil {
-			participantIDs = append(participantIDs, parsedID)
-		}
-	}
+	participantIDs := pkg.ParseInt64List(participantsStringList)
 
 	// ── CAS A : Message Privé (Type 0) -> Image du correspondant ────────────
 	if conversationType == variables.ConversationTypeDirect && len(participantIDs) == 2 {
@@ -308,7 +303,7 @@ func acceptAllPendingMembers(ctx context.Context, conversationID int64, callerAd
 			if errPg == nil && len(membersFromPostgres) > 0 {
 				pendingMembersPayloads = membersFromPostgres
 			} else if errPg != nil {
-				nubo_log.Error(ctx).Err(errPg).Int64("conv_id", conversationID).Msg("Échec L3 de récupération des membres en attente d'approbation")
+				numan_log.Error(ctx).Err(errPg).Int64("conv_id", conversationID).Msg("Échec L3 de récupération des membres en attente d'approbation")
 				break
 			}
 		}
@@ -344,16 +339,36 @@ func acceptAllPendingMembers(ctx context.Context, conversationID int64, callerAd
 			// 2. PERSISTANCE BATCH (Write-Behind)
 			errQueue := redis.EnqueueDB(ctx, targetMemberPayload.ID, conversationID, redis.EntityMembers, redis.ActionUpdate, targetMemberPayload, redis.TargetAll)
 			if errQueue != nil {
-				nubo_log.Error(ctx).Err(errQueue).Int64("member_id", targetMemberPayload.ID).Msg("Échec file d'attente pour l'intégration de membre en masse")
+				numan_log.Error(ctx).Err(errQueue).Int64("member_id", targetMemberPayload.ID).Msg("Échec file d'attente pour l'intégration de membre en masse")
 			}
 
 			// 3. MESSAGES SYSTÈMES ET DIFFUSION WEBSOCKET (Mode Twitch Communauté)
 			if targetUserLite, errLite := cache_service.GetUserLite(ctx, targetMemberPayload.UserID); errLite == nil {
 
-				systemMessageContent := fmt.Sprintf("%s a rejoint le groupe", targetUserLite.Username)
+				callerUserLite, errCaller := cache_service.GetUserLite(ctx, callerAdminID)
+				callerUsername := "Unknown User"
+				if errCaller == nil {
+					callerUsername = callerUserLite.Username
+				}
+				targetUsername := "Unknown User"
+				if errLite == nil {
+					targetUsername = targetUserLite.Username
+				}
+
 				systemMessageInput := message_models.CreateMessageInput{
 					MessageType: variables.MessageTypeSystem,
-					Content:     systemMessageContent,
+					Content:     "",
+					Attachments: map[string]any{
+						"sys_action": variables.SysActionMemberJoined,
+						"actor": map[string]any{
+							"id":       callerAdminID,
+							"username": callerUsername,
+						},
+						"target": map[string]any{
+							"id":       targetMemberPayload.UserID,
+							"username": targetUsername,
+						},
+					},
 				}
 				// Expédition du message de bienvenue système
 				_, _ = message_service.CreateMessage(ctx, callerAdminID, conversationID, systemMessageInput, true)
@@ -368,5 +383,50 @@ func acceptAllPendingMembers(ctx context.Context, conversationID int64, callerAd
 				_ = realtime_service.BroadcastToConversation(ctx, conversationID, "member.joined", memberViewDto)
 			}
 		}
+	}
+}
+
+// fetchCandidates récupère les candidats bruts en L1 (Recherche ou Amis).
+func fetchCandidates(ctx context.Context, callerID int64, query string, offset int64, limit int64) []lite_models.UserLiteRequest {
+	var candidates []lite_models.UserLiteRequest
+	var errCache error
+
+	if query == "" {
+		candidates, errCache = cache_service.GetAddableUsersFromSpeedCache(ctx, callerID, limit, offset, false)
+		if errCache != nil {
+			numan_log.Warn(ctx).Err(errCache).Msg("Erreur lors de la récupération des AddableUsers en RAM")
+		}
+	} else {
+		candidates, errCache = cache_service.SearchUserByPrefix(ctx, query, offset, limit)
+		if errCache != nil {
+			numan_log.Warn(ctx).Err(errCache).Msg("Erreur lors de la recherche par préfixe en RAM")
+		}
+	}
+	return candidates
+}
+
+// isCommunicationAllowed vérifie si l'intention correspond aux paramètres de confidentialité de la cible.
+func isCommunicationAllowed(intentAction string, relationState int, targetUserLite lite_models.UserLiteRequest) bool {
+	if relationState == variables.RelationStateBlocked {
+		return false
+	}
+
+	switch intentAction {
+	case "group":
+		return targetUserLite.AddGroupPermission == 0 || (targetUserLite.AddGroupPermission == 1 && relationState == 2)
+	case "dm":
+		return targetUserLite.ConversationPermission == 0 ||
+			(targetUserLite.ConversationPermission == 1 && relationState >= 1) ||
+			(targetUserLite.ConversationPermission == 2 && relationState == 2)
+	case "tag":
+		return targetUserLite.AllowTagging == 0 ||
+			(targetUserLite.AllowTagging == 1 && relationState >= 1) ||
+			(targetUserLite.AllowTagging == 2 && relationState == 2)
+	case "mention":
+		return targetUserLite.AllowMentions == 0 ||
+			(targetUserLite.AllowMentions == 1 && relationState >= 1) ||
+			(targetUserLite.AllowMentions == 2 && relationState == 2)
+	default:
+		return true
 	}
 }

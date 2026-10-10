@@ -3,19 +3,19 @@ package message_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -29,7 +29,7 @@ func GetMessages(ctx context.Context, callerID int64, input message_models.GetMe
 
 	callerMemberPayload, errSecurity := security_service.LeftMember(ctx, input.ConversationID, callerID)
 	if errSecurity != nil || callerMemberPayload.Role < variables.MemberRoleNormal {
-		return nil, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous ne faites pas partie de cette conversation.", errSecurity)
+		return nil, numan_error.NewForbidden(numan_error.CodeForbidden, "Vous ne faites pas partie de cette conversation.", errSecurity)
 	}
 
 	// ── ÉTAPE 2 : RÉCUPÉRATION DE LA CONVERSATION (CASCADE L1 -> L2 -> L3) ──
@@ -44,11 +44,11 @@ func GetMessages(ctx context.Context, callerID int64, input message_models.GetMe
 			var errPg error
 			conversationPayload, errPg = postgres.FuncGetConversation(ctx, input.ConversationID)
 			if errPg != nil {
-				nubo_log.Error(ctx).Err(errPg).Int64("conv_id", input.ConversationID).Msg("Erreur L3 lors de la récupération de la conversation")
-				return nil, nubo_error.NewInternal()
+				numan_log.Error(ctx).Err(errPg).Int64("conv_id", input.ConversationID).Msg("Erreur L3 lors de la récupération de la conversation")
+				return nil, numan_error.NewInternal()
 			}
 			if conversationPayload.ID == 0 {
-				return nil, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Conversation introuvable.", nil)
+				return nil, numan_error.NewNotFound(numan_error.CodeNotFound, "Conversation introuvable.", nil)
 			}
 
 			// AUTO-GUÉRISON L3 -> L2 (Asynchrone via Queue)
@@ -68,8 +68,8 @@ func GetMessages(ctx context.Context, callerID int64, input message_models.GetMe
 
 	messageIDsList, errIndex := cache_service.GetMessageIDsFromSpeedCache(ctx, input.ConversationID, input.OffsetID, input.Limit, input.Direction, callerMemberPayload.FrozenMessageID)
 	if errIndex != nil {
-		nubo_log.Error(ctx).Err(errIndex).Msg("Erreur lors de la résolution de l'index des messages")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errIndex).Msg("Erreur lors de la résolution de l'index des messages")
+		return nil, numan_error.NewInternal()
 	}
 	if len(messageIDsList) == 0 {
 		return []message_models.MessageView{}, nil
@@ -79,8 +79,8 @@ func GetMessages(ctx context.Context, callerID int64, input message_models.GetMe
 
 	messagesPayloadList, errHydration := object_cache_service.GetMessagesView(ctx, messageIDsList)
 	if errHydration != nil {
-		nubo_log.Error(ctx).Err(errHydration).Msg("Erreur lors de l'hydratation massive des messages")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errHydration).Msg("Erreur lors de l'hydratation massive des messages")
+		return nil, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 5 : ASSEMBLAGE DES VUES (MÉDIAS, PSEUDOS & RÉACTIONS) ─────────

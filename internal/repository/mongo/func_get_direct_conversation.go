@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 )
@@ -15,8 +15,8 @@ import (
 // MongoGetDirectConversation interroge L2 via un pipeline d'agrégation performant.
 func MongoGetDirectConversation(ctx context.Context, user1, user2 int64) (conversation_models.ConversationPayload, error) {
 	if Members == nil || Conversations == nil {
-		nubo_log.Error(ctx).Int64("user1", user1).Int64("user2", user2).Msg("Les collections MongoDB requises (Members ou Conversations) ne sont pas initialisées")
-		return conversation_models.ConversationPayload{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Int64("user1", user1).Int64("user2", user2).Msg("Les collections MongoDB requises (Members ou Conversations) ne sont pas initialisées")
+		return conversation_models.ConversationPayload{}, numan_error.NewInternal()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -43,26 +43,26 @@ func MongoGetDirectConversation(ctx context.Context, user1, user2 int64) (conver
 	defer func(cursor *mongo.Cursor, ctx context.Context) {
 		err := cursor.Close(ctx)
 		if err != nil {
-			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture du curseur Mongo")
+			numan_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture du curseur Mongo")
 		}
 	}(cursor, ctx)
 
 	var results []bson.M
 	if err = cursor.All(ctx, &results); err != nil || len(results) == 0 {
-		return conversation_models.ConversationPayload{}, nubo_error.NewNotFound("CONV_NOT_FOUND", "Conversation privée introuvable.", err)
+		return conversation_models.ConversationPayload{}, numan_error.NewNotFound("CONV_NOT_FOUND", "Conversation privée introuvable.", err)
 	}
 
 	// CORRECTION : Assertion de type pour forcer l'interface{} en bson.M (map[string]any)
 	convMap, ok := results[0]["conv"].(bson.M)
 	if !ok {
-		nubo_log.Error(ctx).Int64("user1", user1).Int64("user2", user2).Msg("Impossible de formater le résultat MongoDB (clé 'conv') en bson.M")
-		return conversation_models.ConversationPayload{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Int64("user1", user1).Int64("user2", user2).Msg("Impossible de formater le résultat MongoDB (clé 'conv') en bson.M")
+		return conversation_models.ConversationPayload{}, numan_error.NewInternal()
 	}
 
 	var conv conversation_models.ConversationPayload
 	if err := pkg.ToStruct(convMap, &conv); err != nil {
-		nubo_log.Error(ctx).Err(err).Int64("user1", user1).Int64("user2", user2).Msg("Échec de la conversion de la map conversation en structure (ToStruct)")
-		return conversation_models.ConversationPayload{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Int64("user1", user1).Int64("user2", user2).Msg("Échec de la conversion de la map conversation en structure (ToStruct)")
+		return conversation_models.ConversationPayload{}, numan_error.NewInternal()
 	}
 
 	return conv, nil

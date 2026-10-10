@@ -3,8 +3,8 @@ package mongo
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
 )
 
 // MongoGetRelationState vérifie l'état de la relation dans le stockage à froid Mongo.
@@ -17,7 +17,7 @@ func MongoGetRelationState(ctx context.Context, callerID int64, targetID int64) 
 
 	docs, err := Relations.GetPaginated(filter, nil, 0, 1)
 	if err != nil || len(docs) == 0 {
-		return 0, nubo_error.NewNotFound("RELATION_NOT_FOUND", "Relation introuvable dans mongo", err) // L'erreur déclenchera le fallback L3
+		return 0, numan_error.NewNotFound("RELATION_NOT_FOUND", "Relation introuvable dans mongo", err) // L'erreur déclenchera le fallback L3
 	}
 
 	// Extraction robuste et défensive de l'entier "state" depuis le BSON générique
@@ -34,6 +34,6 @@ func MongoGetRelationState(ctx context.Context, callerID int64, targetID int64) 
 		return stateInt, nil
 	}
 
-	nubo_log.Error(ctx).Msg("Format de 'state' invalide détecté dans la collection relations MongoDB")
-	return 0, nubo_error.NewInternal()
+	numan_log.Error(ctx).Msg("Format de 'state' invalide détecté dans la collection relations MongoDB")
+	return 0, numan_error.NewInternal()
 }

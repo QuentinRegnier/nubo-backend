@@ -3,27 +3,26 @@ package conversation_service
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/message_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/notification_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -33,31 +32,30 @@ import (
 // AddMembersToConversation orchestre l'ajout direct de membres ou l'envoi d'invitations
 // en appliquant les matrices de confidentialité et les autorisations de groupe.
 func AddMembersToConversation(ctx context.Context, callerID int64, input conversation_models.AddMemberInput) (conversation_models.AddMemberOutput, error) {
-
-	nubo_log.Info(ctx).
+	numan_log.Info(ctx).
 		Entity("conversation", input.ConversationID).
 		Int("participants_count", len(input.ParticipantIDs)).
-		Action(nubo_log.ActionUpdate).
+		Action(numan_log.ActionUpdate).
 		Msg("Traitement d'une demande d'ajout de membres")
 
 	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS DU DEMANDEUR (CALLER) ────────────────────
 	callerMember, errSecurity := security_service.LeftMember(ctx, input.ConversationID, callerID)
 	if errSecurity != nil || callerMember.Role < variables.MemberRoleNormal {
-		return conversation_models.AddMemberOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : vous ne faites pas partie de cette conversation.", errSecurity)
+		return conversation_models.AddMemberOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Accès refusé : vous ne faites pas partie de cette conversation.", errSecurity)
 	}
 
 	// ── ÉTAPE 2 : VÉRIFICATION DE LA CONVERSATION ────────────────────────────
 	conversationPayload, errConv := object_cache_service.GetConversationFromObjectCache(ctx, input.ConversationID)
 	if errConv != nil || conversationPayload.State != variables.ConversationStateAll {
-		return conversation_models.AddMemberOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Conversation introuvable ou inactive.", errConv)
+		return conversation_models.AddMemberOutput{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Conversation introuvable ou inactive.", errConv)
 	}
 
 	if conversationPayload.Type == variables.ConversationTypeDirect {
-		return conversation_models.AddMemberOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Impossible d'ajouter des participants à un message privé individuel.", nil)
+		return conversation_models.AddMemberOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Impossible d'ajouter des participants à un message privé individuel.", nil)
 	}
 
 	if !conversationPayload.Settings.AddMemberPermission && callerMember.Role == variables.MemberRoleNormal {
-		return conversation_models.AddMemberOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seuls les administrateurs peuvent ajouter des membres à ce groupe.", nil)
+		return conversation_models.AddMemberOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Seuls les administrateurs peuvent ajouter des membres à ce groupe.", nil)
 	}
 
 	output := conversation_models.AddMemberOutput{
@@ -71,6 +69,10 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 	currentTime := time.Now().UTC()
 
 	// ── ÉTAPE 3 : FILTRAGE ET TRAITEMENT DES CANDIDATS ──────────────────────
+	if err := pkg.ListLimitVerif(input.ParticipantIDs, variables.MaxAddMemberCount); err != nil {
+		return conversation_models.AddMemberOutput{}, err
+	}
+
 	for _, targetUserID := range input.ParticipantIDs {
 		if targetUserID == callerID {
 			continue // Exclusion de l'émetteur
@@ -148,10 +150,10 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 
 			errEnqueue := redis.EnqueueDB(ctx, memberPayload.ID, conversationPayload.ID, redis.EntityMembers, redis.ActionCreate, memberPayload, redis.TargetAll)
 			if errEnqueue != nil {
-				nubo_log.Error(ctx).
+				numan_log.Error(ctx).
 					Err(errEnqueue).
 					Entity(string(redis.EntityMembers), memberPayload.ID).
-					Action(nubo_log.ActionCreate).
+					Action(numan_log.ActionCreate).
 					Int64("target_user_id", targetUserID).
 					Msg("Échec du Write-Behind lors de l'ajout d'un membre")
 			}
@@ -198,12 +200,7 @@ func AddMembersToConversation(ctx context.Context, callerID int64, input convers
 
 				// Signalement dans le registre de synchronisation
 				participantsList, _ := redis.ConvParticipants.SMembers(backgroundContext, convID)
-				var participantIDs []int64
-				for _, participantStr := range participantsList {
-					if parsedID, errParse := strconv.ParseInt(participantStr, 10, 64); errParse == nil {
-						participantIDs = append(participantIDs, parsedID)
-					}
-				}
+				participantIDs := pkg.ParseInt64List(participantsList)
 				_ = cache_service.RecordConversationMutation(backgroundContext, convID, participantIDs)
 			}(memberPayload, conversationPayload.ID, targetUserID, conversationPayload.Type, callerID)
 

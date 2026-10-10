@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"errors"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
 )
 
 // FuncGetRelationState interroge directement la fonction SQL compilée pour obtenir l'état.
@@ -20,8 +20,8 @@ func FuncGetRelationState(ctx context.Context, callerID int64, targetID int64) (
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil
 		}
-		nubo_log.Error(ctx).Err(err).Msg("Erreur SQL inattendue lors de la vérification de l'enregistrement")
-		return 0, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Erreur SQL inattendue lors de la vérification de l'enregistrement")
+		return 0, numan_error.NewInternal()
 	}
 
 	return state, nil

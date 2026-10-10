@@ -1,23 +1,23 @@
-package auth_service
+package user_settings_service
 
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/user_settings_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/cuckoo"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -26,7 +26,7 @@ import (
 
 // UpdateProfile modifie l'identité, vérifie l'unicité des champs sensibles,
 // gère le remplacement de l'avatar et envoie les mutations au Write-Behind.
-func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdateProfileInput) (auth_models.UpdateProfileOutput, error) {
+func UpdateProfile(ctx context.Context, userID int64, input user_settings_models.UpdateProfileInput) (user_settings_models.UpdateProfileOutput, error) {
 
 	// ── ÉTAPE 1 : RÉCUPÉRATION DU PROFIL ACTUEL (CASCADE L2 -> L3) ──────────
 	// Nécessaire pour préserver les champs critiques (Grade, Banni, etc.) non soumis au PUT.
@@ -36,10 +36,10 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 		var errPg error
 		userPayload, errPg = postgres.FuncLoadUser(ctx, userID, "", "", "")
 		if errPg != nil {
-			return auth_models.UpdateProfileOutput{}, nubo_error.NewInternal()
+			return user_settings_models.UpdateProfileOutput{}, numan_error.NewInternal()
 		}
 		if userPayload.ID == 0 {
-			return auth_models.UpdateProfileOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Utilisateur introuvable.", nil)
+			return user_settings_models.UpdateProfileOutput{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Utilisateur introuvable.", nil)
 		}
 	}
 
@@ -51,7 +51,7 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 
 	if input.Username != userPayload.Username {
 		if service.IsUnique(ctx, redis.EntityUser, "username", input.Username) == 0 {
-			return auth_models.UpdateProfileOutput{}, nubo_error.NewConflict(nubo_error.CodeConflict, "Ce nom d'utilisateur est déjà pris.", nil)
+			return user_settings_models.UpdateProfileOutput{}, numan_error.NewConflict(numan_error.CodeConflict, "Ce nom d'utilisateur est déjà pris.", nil)
 		}
 		oldUsername = userPayload.Username
 		newUsername = input.Username
@@ -60,7 +60,7 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 
 	if input.Email != userPayload.Email {
 		if service.IsUnique(ctx, redis.EntityUser, "email", input.Email) == 0 {
-			return auth_models.UpdateProfileOutput{}, nubo_error.NewConflict(nubo_error.CodeConflict, "Cet email est déjà utilisé par un autre compte.", nil)
+			return user_settings_models.UpdateProfileOutput{}, numan_error.NewConflict(numan_error.CodeConflict, "Cet email est déjà utilisé par un autre compte.", nil)
 		}
 		oldEmail = userPayload.Email
 		newEmail = input.Email
@@ -70,7 +70,7 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 
 	if input.Phone != userPayload.Phone {
 		if input.Phone != "" && service.IsUnique(ctx, redis.EntityUser, "phone", input.Phone) == 0 {
-			return auth_models.UpdateProfileOutput{}, nubo_error.NewConflict(nubo_error.CodeConflict, "Ce numéro de téléphone est déjà associé à un autre compte.", nil)
+			return user_settings_models.UpdateProfileOutput{}, numan_error.NewConflict(numan_error.CodeConflict, "Ce numéro de téléphone est déjà associé à un autre compte.", nil)
 		}
 		oldPhone = userPayload.Phone
 		newPhone = input.Phone
@@ -100,7 +100,7 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 		if input.ProfilePictureID > 0 {
 			if errAct := media_service.ActivateMediaBatch(ctx, []int64{input.ProfilePictureID}, userID); errAct != nil {
 				// L'avatar envoyé n'est pas valide ou n'appartient pas à cet utilisateur.
-				return auth_models.UpdateProfileOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Impossible de valider la nouvelle photo de profil.", errAct)
+				return user_settings_models.UpdateProfileOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Impossible de valider la nouvelle photo de profil.", errAct)
 			}
 		}
 		userPayload.ProfilePictureID = input.ProfilePictureID
@@ -113,7 +113,7 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 	// Récupération asynchrone/rapide des settings pour construire l'objet Lite du profil public
 	settingsPayload, _ := object_cache_service.GetUserSettingsCascade(ctx, userID)
 	if errCache := cache_service.AddUserToSpeedCache(ctx, userPayload, settingsPayload); errCache != nil {
-		nubo_log.Warn(ctx).Err(errCache).Msg("Impossible de mettre à jour l'utilisateur dans le Speed Cache L1")
+		numan_log.Warn(ctx).Err(errCache).Msg("Impossible de mettre à jour l'utilisateur dans le Speed Cache L1")
 	}
 
 	// ── ÉTAPE 6 : MISE À JOUR DU CUCKOO FILTER (Asynchrone) ─────────────────
@@ -140,10 +140,10 @@ func UpdateProfile(ctx context.Context, userID int64, input auth_models.UpdatePr
 	errQueue := redis.EnqueueDB(ctx, userPayload.ID, 0, redis.EntityUser, redis.ActionUpdate, userPayload, redis.TargetAll)
 	if errQueue != nil {
 		// Log en erreur car le worker n'a pas reçu l'ordre, mais on ne fait pas crasher la requête HTTP.
-		nubo_log.Error(ctx).Err(errQueue).Int64("user_id", userPayload.ID).Msg("Échec du Write-Behind lors de l'Update Profile")
+		numan_log.Error(ctx).Err(errQueue).Int64("user_id", userPayload.ID).Msg("Échec du Write-Behind lors de l'Update Profile")
 	}
 
-	return auth_models.UpdateProfileOutput{
+	return user_settings_models.UpdateProfileOutput{
 		ProfileUpdatedAt: userPayload.UpdatedAt,
 	}, nil
 }

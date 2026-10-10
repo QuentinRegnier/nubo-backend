@@ -1,6 +1,6 @@
 package sync_models
 
-import "github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
+import "github.com/QuentinRegnier/numan-backend/internal/domain/models/notification_models"
 
 // SyncActivityInput récupère l'état actuel du cache du téléphone de l'utilisateur.
 type SyncActivityInput struct {

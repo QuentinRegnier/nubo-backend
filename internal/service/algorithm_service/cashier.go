@@ -8,12 +8,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -83,7 +83,7 @@ func buildPersonalizedFeed(ctx context.Context, options PersonalizedFeedOptions)
 
 	vectorBatchResult, err := redis.ContentVectors.GetMany(ctx, postIDs)
 	if err != nil {
-		return nil, nubo_error.NewInternal()
+		return nil, numan_error.NewInternal()
 	}
 
 	allCandidates := make([]postCandidate, 0, len(postIDs))
@@ -113,7 +113,7 @@ func buildPersonalizedFeed(ctx context.Context, options PersonalizedFeedOptions)
 	// 2. AUTO-GUÉRISON : Fallback L2 (Mongo) et L3 (Postgres) pour les vecteurs disparus de la RAM
 	missingIDs := vectorBatchResult.MissingIDs
 	if len(missingIDs) > 0 {
-		nubo_log.Info(ctx).Int("missing_count", len(missingIDs)).Msg("Cache Miss sur ContentVectors, déclenchement du Fallback L2/L3...")
+		numan_log.Info(ctx).Int("missing_count", len(missingIDs)).Msg("Cache Miss sur ContentVectors, déclenchement du Fallback L2/L3...")
 
 		// Fallback L2 (Mongo)
 		mongoPosts, _ := mongo.MongoLoadPosts(ctx, missingIDs)

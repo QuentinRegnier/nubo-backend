@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
@@ -18,7 +18,7 @@ import (
 // startSavedCleanupCron lance le Garbage Collector qui détruit les favoris orphelins.
 // Un post sauvegardé devient orphelin s'il est soft-deleted ou hard-deleted par son auteur.
 func startSavedCleanupCron(ctx context.Context) {
-	nubo_log.Info(ctx).Msg("Démarrage du Garbage Collector de Favoris (Cron 6h)...")
+	numan_log.Info(ctx).Msg("Démarrage du Garbage Collector de Favoris (Cron 6h)...")
 
 	go func() {
 		ticker := time.NewTicker(variables.SavedCleanupCronInterval)
@@ -42,7 +42,7 @@ func processSavedCleanup(ctx context.Context) {
 	// dont le post parent n'existe plus ou est masqué (visibility < 0 ou = 2).
 	orphanPostIDs, errPg := postgres.FuncDeleteOrphanSaved(ctx)
 	if errPg != nil {
-		nubo_log.Error(ctx).Err(errPg).Msg("Garbage Collector Favoris : Échec critique de la purge PostgreSQL (L3)")
+		numan_log.Error(ctx).Err(errPg).Msg("Garbage Collector Favoris : Échec critique de la purge PostgreSQL (L3)")
 		return
 	}
 
@@ -50,7 +50,7 @@ func processSavedCleanup(ctx context.Context) {
 		return // Rien à nettoyer ce cycle
 	}
 
-	nubo_log.Info(ctx).Int("count", len(orphanPostIDs)).Msg("Garbage Collector Favoris : Purge L3 terminée. Répercussion sur le L2 en cours...")
+	numan_log.Info(ctx).Int("count", len(orphanPostIDs)).Msg("Garbage Collector Favoris : Purge L3 terminée. Répercussion sur le L2 en cours...")
 
 	// ── ÉTAPE 2 : PURGE DU WARM STORAGE L2 (MONGODB) ──────────────────────────
 	// Afin de maintenir la cohérence des données et éviter les "PostNotFound" côté client,
@@ -61,7 +61,7 @@ func processSavedCleanup(ctx context.Context) {
 		})
 
 		if errMongo != nil {
-			nubo_log.Error(ctx).Err(errMongo).Msg("Garbage Collector Favoris : Échec de la suppression sur MongoDB (L2)")
+			numan_log.Error(ctx).Err(errMongo).Msg("Garbage Collector Favoris : Échec de la suppression sur MongoDB (L2)")
 		}
 	}
 }

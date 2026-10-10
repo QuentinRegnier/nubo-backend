@@ -1,7 +1,6 @@
 package telemetry_models
 
 type SyncTelemetryInput struct {
-	UserID  int64                `json:"-"`
 	Payload SyncTelemetryPayload `json:"payload"`
 }
 

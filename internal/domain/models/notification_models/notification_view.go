@@ -1,7 +1,7 @@
 package notification_models
 
 import (
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
 )
 
 // NotificationView est le DTO envoyé au client avec les données pré-hydratées

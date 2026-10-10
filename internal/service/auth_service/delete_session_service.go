@@ -3,13 +3,13 @@ package auth_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -29,17 +29,17 @@ func RevokeSession(ctx context.Context, callerID int64, targetSessionID int64) e
 		sessionPg, errPg := postgres.FuncLoadSession(ctx, targetSessionID, callerID, "", "")
 		if errPg != nil {
 			// Erreur BDD -> On loggue en interne et on renvoie une 500 propre au client
-			return nubo_error.NewInternal()
+			return numan_error.NewInternal()
 		}
 		if sessionPg.ID == 0 {
-			return nubo_error.NewNotFound(nubo_error.CodeNotFound, "La session est introuvable ou a déjà été révoquée.", nil)
+			return numan_error.NewNotFound(numan_error.CodeNotFound, "La session est introuvable ou a déjà été révoquée.", nil)
 		}
 		sessionPayload = sessionPg
 	}
 
 	// ── ÉTAPE 2 : SÉCURITÉ ABSOLUE (Vérification de la Propriété) ──────────
 	if sessionPayload.UserID != callerID {
-		return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : vous n'êtes pas le propriétaire de cette session.", nil)
+		return numan_error.NewForbidden(numan_error.CodeForbidden, "Accès refusé : vous n'êtes pas le propriétaire de cette session.", nil)
 	}
 
 	// ── ÉTAPE 3 : PURGE DU CACHE L1 (Object + Index) ───────────────────────
@@ -55,7 +55,7 @@ func RevokeSession(ctx context.Context, callerID int64, targetSessionID int64) e
 	errQueue := redis.EnqueueDB(ctx, targetSessionID, callerID, redis.EntitySession, redis.ActionDelete, minimalPayloadForDeletion, redis.TargetAll)
 	if errQueue != nil {
 		// L'action est cruciale. Si la mise en file échoue, on retourne une erreur interne (500).
-		return nubo_error.NewInternal()
+		return numan_error.NewInternal()
 	}
 
 	return nil

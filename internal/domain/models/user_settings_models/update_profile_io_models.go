@@ -1,4 +1,4 @@
-package auth_models
+package user_settings_models
 
 // UpdateProfileInput définit les champs publics modifiables (Remplacement intégral PUT).
 type UpdateProfileInput struct {

@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
@@ -20,12 +20,12 @@ func cleanMongo() {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	recentDatabase := mongo.MongoClient.Database("nubo_recent")
+	recentDatabase := mongo.MongoClient.Database("numan_recent")
 
 	// 1. Découverte dynamique de toutes les collections
 	collectionNames, err := recentDatabase.ListCollectionNames(ctx, bson.D{})
 	if err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Échec de la découverte des collections Mongo pour la purge")
+		numan_log.Error(ctx).Err(err).Msg("Échec de la découverte des collections Mongo pour la purge")
 		return
 	}
 
@@ -43,12 +43,12 @@ func cleanMongo() {
 
 		deletionResult, errDelete := targetCollection.DeleteMany(ctx, deletionFilter)
 		if errDelete != nil {
-			nubo_log.Error(ctx).Err(errDelete).Str("collection", collectionName).Msg("Échec de la purge du cache glissant Mongo")
+			numan_log.Error(ctx).Err(errDelete).Str("collection", collectionName).Msg("Échec de la purge du cache glissant Mongo")
 			continue
 		}
 
 		if deletionResult.DeletedCount > 0 {
-			nubo_log.Info(ctx).
+			numan_log.Info(ctx).
 				Str("collection", collectionName).
 				Int64("deleted_count", deletionResult.DeletedCount).
 				Msg("Purge glissante L2 Mongo réussie")
@@ -60,7 +60,7 @@ func cleanMongo() {
 func cleanRedis() {
 	// Sécurité anti-crash unifiée via la couche d'accès
 	if !redis.IsReady() {
-		nubo_log.Warn(context.Background()).Msg("Nettoyage ignoré : Connexion Redis non initialisée (Rdb est nil).")
+		numan_log.Warn(context.Background()).Msg("Nettoyage ignoré : Connexion Redis non initialisée (Rdb est nil).")
 		return
 	}
 
@@ -69,17 +69,17 @@ func cleanRedis() {
 
 	err := redis.FlushDB(ctx)
 	if err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Échec critique du Flush Redis")
+		numan_log.Error(ctx).Err(err).Msg("Échec critique du Flush Redis")
 		return
 	}
 
-	nubo_log.Info(ctx).Msg("Cache volatil Redis (L1) vidé avec succès.")
+	numan_log.Info(ctx).Msg("Cache volatil Redis (L1) vidé avec succès.")
 }
 
 // InitData orchestre le grand nettoyage au démarrage du serveur si le flag CLEAN_DB_ON_STARTUP est actif.
 func InitData() {
-	nubo_log.Info(context.Background()).Msg("Début de la séquence de Hard Reset : Nettoyage L1 (Redis) et L2 (Mongo)...")
+	numan_log.Info(context.Background()).Msg("Début de la séquence de Hard Reset : Nettoyage L1 (Redis) et L2 (Mongo)...")
 	cleanMongo()
 	cleanRedis()
-	nubo_log.Info(context.Background()).Msg("Séquence de Hard Reset terminée avec succès.")
+	numan_log.Info(context.Background()).Msg("Séquence de Hard Reset terminée avec succès.")
 }

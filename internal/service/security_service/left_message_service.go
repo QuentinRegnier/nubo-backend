@@ -3,13 +3,13 @@ package security_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
 )
 
 // ############################################################################
@@ -45,8 +45,8 @@ func LeftMessage(ctx context.Context, messageID int64, userID int64) (message_mo
 
 			pgMessagesList, errPg := postgres.FuncLoadMessagesByIDs(ctx, []int64{messageID})
 			if errPg != nil {
-				nubo_log.Error(ctx).Err(errPg).Int64("message_id", messageID).Msg("Erreur L3 lors de la vérification de sécurité d'un message")
-				return message_models.MessagePayload{}, nubo_error.NewInternal()
+				numan_log.Error(ctx).Err(errPg).Int64("message_id", messageID).Msg("Erreur L3 lors de la vérification de sécurité d'un message")
+				return message_models.MessagePayload{}, numan_error.NewInternal()
 			}
 
 			if len(pgMessagesList) > 0 {
@@ -70,11 +70,11 @@ func LeftMessage(ctx context.Context, messageID int64, userID int64) (message_mo
 
 	if !isMessageFound || !messagePayload.Visibility {
 		// Furtivité absolue : on ne dit pas si le message existe mais est caché (Soft Delete)
-		return message_models.MessagePayload{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Message introuvable.", nil)
+		return message_models.MessagePayload{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Message introuvable.", nil)
 	}
 
 	if messagePayload.SenderID != userID {
-		return message_models.MessagePayload{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : vous n'êtes pas l'auteur de ce message.", nil)
+		return message_models.MessagePayload{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Accès refusé : vous n'êtes pas l'auteur de ce message.", nil)
 	}
 
 	return messagePayload, nil

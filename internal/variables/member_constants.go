@@ -13,7 +13,8 @@ const (
 	MemberRoleNormal          = 0  // Membre classique
 	MemberRoleAdmin           = 1  // Administrateur (Gestion des membres et messages)
 	MemberRoleOwner           = 2  // Propriétaire (Gestion intégrale et transfert)
+)
 
-	// Plafond d'épingles par utilisateur
-	MaxPinnedConversations = 3
+const (
+	MaxAddMemberCount = 100 // Nombre maximum de membres pouvant être ajoutés en une seule opération
 )

@@ -3,10 +3,10 @@ package media_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
 )
 
 // ############################################################################
@@ -15,37 +15,37 @@ import (
 
 // GetSignedURLForClient vérifie les droits d'accès en temps réel (Zero-Trust)
 // et génère l'URL HMAC pour le client mobile ou web.
-func GetSignedURLForClient(ctx context.Context, readerID, targetMediaID, contextPostID, contextConvID int64) (media_models.SignMediaOutput, error) {
+func GetSignedURLForClient(ctx context.Context, readerID int64, input media_models.SignMediaInput) (media_models.SignMediaOutput, error) {
 
 	// ── ÉTAPE 1 : RÉCUPÉRATION DU MÉDIA (CASCADE L1 -> L2 -> L3) ────────────
-	mediaPayload, errCascade := getMediaCascade(ctx, targetMediaID)
+	mediaPayload, errCascade := getMediaCascade(ctx, input.MediaID)
 	if errCascade != nil || !mediaPayload.Visibility {
-		return media_models.SignMediaOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Média introuvable ou supprimé.", errCascade)
+		return media_models.SignMediaOutput{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Média introuvable ou supprimé.", errCascade)
 	}
 
 	// ── ÉTAPE 2 : MATRICE DE SÉCURITÉ CONTEXTUELLE ──────────────────────────
 	var validatedContextID int64
 
-	if contextPostID > 0 {
+	if input.PostID > 0 {
 		// A. Cas d'une image attachée à une Publication (Post)
-		postPayload, errSecurity := security_service.LeftPost(ctx, contextPostID, readerID)
+		postPayload, errSecurity := security_service.LeftPost(ctx, input.PostID, readerID)
 		if errSecurity != nil {
 			return media_models.SignMediaOutput{}, errSecurity // Propage l'AppError (Forbidden ou NotFound)
 		}
 
 		// Anti-Usurpation : Vérifier que le média demandé appartient réellement à ce post validé
-		if !pkg.Exists(postPayload.MediaIDs, targetMediaID) {
-			return media_models.SignMediaOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Ce média n'appartient pas à cette publication.", nil)
+		if !pkg.Exists(postPayload.MediaIDs, input.MediaID) {
+			return media_models.SignMediaOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Ce média n'appartient pas à cette publication.", nil)
 		}
-		validatedContextID = contextPostID
+		validatedContextID = input.PostID
 
-	} else if contextConvID > 0 {
+	} else if input.ConversationID > 0 {
 		// B. Cas d'une image échangée dans une Messagerie Privée (Conversation)
-		memberPayload, errSecurity := security_service.LeftMember(ctx, contextConvID, readerID)
+		memberPayload, errSecurity := security_service.LeftMember(ctx, input.ConversationID, readerID)
 		if errSecurity != nil || memberPayload.Role < 0 {
-			return media_models.SignMediaOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous n'avez pas accès à cette conversation.", errSecurity)
+			return media_models.SignMediaOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Vous n'avez pas accès à cette conversation.", errSecurity)
 		}
-		validatedContextID = contextConvID
+		validatedContextID = input.ConversationID
 
 	} else {
 		// C. Cas d'un Avatar public (Ni Post, Ni Conversation)
@@ -57,7 +57,7 @@ func GetSignedURLForClient(ctx context.Context, readerID, targetMediaID, context
 	signedURL := generateWatermarkedURL(mediaPayload.StoragePath, mediaPayload.OwnerID, validatedContextID, readerID)
 
 	return media_models.SignMediaOutput{
-		MediaID: targetMediaID,
+		MediaID: input.MediaID,
 		URL:     signedURL,
 	}, nil
 }

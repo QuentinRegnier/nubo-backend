@@ -6,15 +6,15 @@ import (
 	"os"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/minio"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/minio"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg/security"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
 	miniogo "github.com/minio/minio-go/v7"
 )
 
@@ -45,7 +45,7 @@ func GenerateMediaViewCascade(ctx context.Context, targetMediaID, authorID, cont
 	mediaPayload, errCascade := getMediaCascade(ctx, targetMediaID)
 
 	if errCascade != nil || !mediaPayload.Visibility {
-		return media_models.MediaView{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Média introuvable ou supprimé.", errCascade)
+		return media_models.MediaView{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Média introuvable ou supprimé.", errCascade)
 	}
 
 	signedURL := generateWatermarkedURL(mediaPayload.StoragePath, authorID, contextID, readerID)
@@ -100,8 +100,8 @@ func getMediaCascade(ctx context.Context, mediaID int64) (media_models.MediaPayl
 	// ── TENTATIVE L3 (POSTGRESQL COLD STORAGE) ────────────────────────────────
 	mediaFromPostgres, errPg := postgres.FuncGetMedia(ctx, mediaID)
 	if errPg != nil {
-		nubo_log.Error(ctx).Err(errPg).Int64("media_id", mediaID).Msg("Erreur L3 lors de la récupération du média en cascade")
-		return media_models.MediaPayload{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errPg).Int64("media_id", mediaID).Msg("Erreur L3 lors de la récupération du média en cascade")
+		return media_models.MediaPayload{}, numan_error.NewInternal()
 	}
 
 	if mediaFromPostgres.ID != 0 {
@@ -118,7 +118,7 @@ func getMediaCascade(ctx context.Context, mediaID int64) (media_models.MediaPayl
 		return mediaFromPostgres, nil
 	}
 
-	return media_models.MediaPayload{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Média introuvable ou expiré.", nil)
+	return media_models.MediaPayload{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Média introuvable ou expiré.", nil)
 }
 
 // RemovePhysicalMedia détruit physiquement le fichier sur le stockage S3/MinIO.
@@ -130,13 +130,13 @@ func RemovePhysicalMedia(ctx context.Context, storagePath string) error {
 
 	bucketName := os.Getenv("MINIO_BUCKET_NAME")
 	if bucketName == "" {
-		bucketName = "nubo-bucket" // Fallback par défaut de l'infrastructure
+		bucketName = "numan-bucket" // Fallback par défaut de l'infrastructure
 	}
 
 	err := minio.MinioClient.RemoveObject(ctx, bucketName, storagePath, miniogo.RemoveObjectOptions{})
 	if err != nil {
-		nubo_log.Error(ctx).Err(err).Str("path", storagePath).Msg("Échec de la suppression physique du fichier sur MinIO")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Str("path", storagePath).Msg("Échec de la suppression physique du fichier sur MinIO")
+		return numan_error.NewInternal()
 	}
 
 	return nil

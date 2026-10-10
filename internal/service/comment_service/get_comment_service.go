@@ -3,16 +3,17 @@ package comment_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -22,7 +23,12 @@ import (
 // GetComments est la fonction hybride pour récupérer les commentaires.
 // Elle renvoie un tableau d'enveloppes (GetCommentOutput) pour isoler les erreurs partielles
 // sans faire crasher la liste entière.
-func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]comment_models.GetCommentOutput, error) {
+func GetComments(ctx context.Context, callerID int64, input comment_models.GetCommentsInput) ([]comment_models.GetCommentOutput, error) {
+	var err_offset, err_limit *numan_error.AppError
+	input.Offset, err_offset, input.Limit, err_limit = pkg.BatchVerif(input.Offset, input.Limit)
+	if err_offset != nil || err_limit != nil {
+		return nil, numan_error.Combine(err_offset, err_limit)
+	}
 	var finalResults []comment_models.GetCommentOutput
 
 	// ── ÉTAPE 0 : VÉRIFICATION DES DROITS D'ACCÈS AU POST PARENT ────────────
@@ -40,11 +46,11 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 			// FALLBACK ABSOLU L3 (PostgreSQL)
 			postsFromPostgres, errPg := postgres.FuncLoadPosts(ctx, []int64{input.PostID}, 1, 0)
 			if errPg != nil {
-				nubo_log.Error(ctx).Err(errPg).Int64("post_id", input.PostID).Msg("Erreur L3 lors de la vérification du post parent")
-				return nil, nubo_error.NewInternal()
+				numan_log.Error(ctx).Err(errPg).Int64("post_id", input.PostID).Msg("Erreur L3 lors de la vérification du post parent")
+				return nil, numan_error.NewInternal()
 			}
 			if len(postsFromPostgres) == 0 {
-				return nil, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Le post parent est introuvable ou a été supprimé.", nil)
+				return nil, numan_error.NewNotFound(numan_error.CodeNotFound, "Le post parent est introuvable ou a été supprimé.", nil)
 			}
 
 			postPayload = postsFromPostgres[0]
@@ -59,25 +65,30 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 	}
 
 	// ⚡ MATRICE DE VISIBILITÉ EXACTE
-	isAuthor := postPayload.UserID == input.UserID
+	isAuthor := postPayload.UserID == callerID
 	if !isAuthor {
-		relationState := cache_service.RelationValue(ctx, postPayload.UserID, input.UserID)
+		relationState := cache_service.RelationValue(ctx, postPayload.UserID, callerID)
 
 		if postPayload.Visibility == variables.PostVisibilityDeleted || relationState == variables.RelationStateBlocked {
-			return nil, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé.", nil) // Bloqué ou Soft-Delete
+			return nil, numan_error.NewForbidden(numan_error.CodeForbidden, "Accès refusé.", nil) // Bloqué ou Soft-Delete
 		}
 		if postPayload.Visibility == variables.PostVisibilitySubcriber && relationState < variables.RelationStateFollow {
-			return nil, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Les commentaires sont réservés aux abonnés de cet utilisateur.", nil)
+			return nil, numan_error.NewForbidden(numan_error.CodeForbidden, "Les commentaires sont réservés aux abonnés de cet utilisateur.", nil)
 		}
 		if postPayload.Visibility == variables.PostVisibilityFriend && relationState != variables.RelationStateFriend {
-			return nil, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Les commentaires sont réservés aux amis de cet utilisateur.", nil)
+			return nil, numan_error.NewForbidden(numan_error.CodeForbidden, "Les commentaires sont réservés aux amis de cet utilisateur.", nil)
 		}
 		if postPayload.Visibility == 3 {
-			return nil, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Ce post est privé.", nil)
+			return nil, numan_error.NewForbidden(numan_error.CodeForbidden, "Ce post est privé.", nil)
 		}
 	}
 
 	// ── ÉTAPE 1 : TENTATIVE L1 (VIP PARKING ZSET REDIS) ─────────────────────
+
+	// 🛡️ BOUCLIER DE PAGINATION
+	if input.Limit <= 0 || input.Limit > 100 {
+		input.Limit = 50
+	}
 
 	// On n'utilise le ZSET L1 que pour les premiers commentaires (Offset faible)
 	if input.Offset < variables.MaxZsetPostComment && object_cache_service.IsPostInObjectCache(ctx, input.PostID) {
@@ -96,7 +107,7 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 						Error:     "Ce commentaire est introuvable ou a été supprimé.",
 					})
 				} else {
-					finalResults = append(finalResults, hydrateCommentOutput(ctx, input.UserID, commentPayload))
+					finalResults = append(finalResults, hydrateCommentOutput(ctx, callerID, commentPayload))
 				}
 			}
 			return finalResults, nil // 🚀 RETOUR INSTANTANÉ L1
@@ -113,7 +124,7 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 			if input.Offset < variables.MaxZsetPostComment {
 				_ = object_cache_service.AddCommentToZSET(ctx, commentPayload.PostID, commentPayload.ID, float64(commentPayload.Score))
 			}
-			finalResults = append(finalResults, hydrateCommentOutput(ctx, input.UserID, commentPayload))
+			finalResults = append(finalResults, hydrateCommentOutput(ctx, callerID, commentPayload))
 		}
 		return finalResults, nil // 🚀 RETOUR RAPIDE L2
 	}
@@ -123,8 +134,8 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 	if input.Offset == 0 {
 		commentsFromPostgres, errPg := postgres.FuncLoadCommentsPaginated(ctx, input.PostID, input.Offset, input.Limit)
 		if errPg != nil {
-			nubo_log.Error(ctx).Err(errPg).Int64("post_id", input.PostID).Msg("Erreur L3 lors de la récupération des commentaires")
-			return nil, nubo_error.NewInternal()
+			numan_log.Error(ctx).Err(errPg).Int64("post_id", input.PostID).Msg("Erreur L3 lors de la récupération des commentaires")
+			return nil, numan_error.NewInternal()
 		}
 
 		for _, commentPayload := range commentsFromPostgres {
@@ -137,7 +148,7 @@ func GetComments(ctx context.Context, input comment_models.GetCommentsInput) ([]
 			}(commentPayload)
 
 			_ = object_cache_service.AddCommentToZSET(ctx, commentPayload.PostID, commentPayload.ID, float64(commentPayload.Score))
-			finalResults = append(finalResults, hydrateCommentOutput(ctx, input.UserID, commentPayload))
+			finalResults = append(finalResults, hydrateCommentOutput(ctx, callerID, commentPayload))
 		}
 		return finalResults, nil
 	}

@@ -4,10 +4,10 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
 )
 
 // FuncLoadActiveCommunities appelle la fonction SQL pour récupérer les communautés publiques
@@ -16,12 +16,12 @@ func FuncLoadActiveCommunities(ctx context.Context) ([]lite_models.CommunityLite
 
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query)
 	if err != nil {
-		return nil, nubo_error.NewInternal(err)
+		return nil, numan_error.NewInternal(err)
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres)")
+			numan_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres)")
 		}
 	}(rows)
 

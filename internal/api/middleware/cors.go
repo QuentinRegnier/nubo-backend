@@ -10,7 +10,7 @@ import (
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 1. Qui a le droit de nous appeler ?
-		// "*" = tout le monde (pour le dev). En prod, mettre "https://mon-app-nubo.com"
+		// "*" = tout le monde (pour le dev). En prod, mettre "https://mon-app-numan.com"
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 
 		// 2. Que permet-on de faire ? (Méthodes)
@@ -20,7 +20,7 @@ func CORSMiddleware() gin.HandlerFunc {
 		// Il faut lister TOUS tes headers de sécurité ici, sinon le navigateur les bloquera.
 		c.Writer.Header().Set("Access-Control-Allow-Headers",
 			"Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, "+
-				"X-Signature, X-Timestamp, X-Secret, X-Nubo-Timestamp")
+				"X-Signature, X-Timestamp, X-Secret, X-numan-Timestamp")
 
 		// 4. Quels headers le client a le droit de LIRE dans la réponse ?
 		c.Writer.Header().Set("Access-Control-Expose-Headers", "Content-Length, X-Signature, X-Timestamp")

@@ -1,6 +1,6 @@
 package member_models
 
-import "github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
+import "github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
 
 type GetCommunityRequestsInput struct {
 	ConversationID int64 `json:"conversation_id" binding:"required"`

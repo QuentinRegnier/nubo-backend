@@ -3,13 +3,13 @@ package security_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
 )
 
 // ############################################################################
@@ -48,8 +48,8 @@ func LeftPost(ctx context.Context, postID int64, userID int64) (post_models.Post
 
 			pgPostsList, errPg := postgres.FuncLoadPosts(ctx, []int64{postID}, 1, 0)
 			if errPg != nil {
-				nubo_log.Error(ctx).Err(errPg).Int64("post_id", postID).Msg("Erreur L3 lors de la vérification de sécurité d'un post")
-				return post_models.PostPayload{}, nubo_error.NewInternal()
+				numan_log.Error(ctx).Err(errPg).Int64("post_id", postID).Msg("Erreur L3 lors de la vérification de sécurité d'un post")
+				return post_models.PostPayload{}, numan_error.NewInternal()
 			}
 
 			if len(pgPostsList) > 0 {
@@ -72,11 +72,11 @@ func LeftPost(ctx context.Context, postID int64, userID int64) (post_models.Post
 	// ── ÉTAPE 4 : VÉRIFICATION DES RÈGLES DE SÉCURITÉ ───────────────────────
 
 	if !isPostFound {
-		return post_models.PostPayload{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Publication introuvable ou supprimée.", nil)
+		return post_models.PostPayload{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Publication introuvable ou supprimée.", nil)
 	}
 
 	if postPayload.UserID != userID {
-		return post_models.PostPayload{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous n'êtes pas autorisé à réaliser cette action sur cette publication.", nil)
+		return post_models.PostPayload{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Vous n'êtes pas autorisé à réaliser cette action sur cette publication.", nil)
 	}
 
 	return postPayload, nil

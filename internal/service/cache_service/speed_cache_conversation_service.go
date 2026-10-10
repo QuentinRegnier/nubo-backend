@@ -8,16 +8,17 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -41,20 +42,15 @@ func GetInboxView(ctx context.Context, userID int64, paginationLimit int64, pagi
 	// ── ÉTAPE 1 : LECTURE DU ZSET INBOX (L1) ────────────────────────────────
 	conversationIDStringsList, errRedisInbox := redis.UserInbox.ZRevRange(ctx, userID, paginationOffset, paginationOffset+paginationLimit-1)
 	if errRedisInbox != nil {
-		nubo_log.Error(ctx).Err(errRedisInbox).Int64("user_id", userID).Msg("Erreur L1 lors de la lecture du UserInbox ZSET")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedisInbox).Int64("user_id", userID).Msg("Erreur L1 lors de la lecture du UserInbox ZSET")
+		return nil, numan_error.NewInternal()
 	}
 
 	if len(conversationIDStringsList) == 0 {
 		return []InboxItemView{}, nil
 	}
 
-	var extractedConversationIDs []int64
-	for _, idString := range conversationIDStringsList {
-		if parsedID, errParse := strconv.ParseInt(idString, 10, 64); errParse == nil {
-			extractedConversationIDs = append(extractedConversationIDs, parsedID)
-		}
-	}
+	extractedConversationIDs := pkg.ParseInt64List(conversationIDStringsList)
 
 	// ── ÉTAPE 2 : MGET MASSIF SUR LES MÉTADONNÉES DE CONVERSATION (CONVMETA) ─
 	metaGetResult, errMetaGet := redis.ConvMeta.GetMany(ctx, extractedConversationIDs)
@@ -123,7 +119,7 @@ func GetInboxView(ctx context.Context, userID int64, paginationLimit int64, pagi
 	}
 
 	if len(aggregatedMissingIDs) > 0 {
-		nubo_log.Info(ctx).Int("missing_conversations", len(aggregatedMissingIDs)).Msg("Postgres Fallback déclenché pour l'Inbox (Cache Miss)")
+		numan_log.Info(ctx).Int("missing_conversations", len(aggregatedMissingIDs)).Msg("Postgres Fallback déclenché pour l'Inbox (Cache Miss)")
 
 		fallbackResultsFromPg, errPgFallback := postgres.FuncLoadConversationFallback(ctx, userID, aggregatedMissingIDs)
 		if errPgFallback == nil {
@@ -164,7 +160,7 @@ func GetInboxView(ctx context.Context, userID int64, paginationLimit int64, pagi
 				}(convLiteRequest, memberLiteRequest)
 			}
 		} else {
-			nubo_log.Error(ctx).Err(errPgFallback).Msg("Échec critique lors du Fallback Postgres pour l'Inbox")
+			numan_log.Error(ctx).Err(errPgFallback).Msg("Échec critique lors du Fallback Postgres pour l'Inbox")
 		}
 	}
 
@@ -255,7 +251,7 @@ func ProcessNewMessageInSpeedCache(ctx context.Context, messageID int64, convers
 
 	// 3. INCRÉMENTATION DES "UNREAD" ET MISE À JOUR DE L'INBOX
 	for _, participantString := range participantStringsList {
-		currentParticipantID, _ := strconv.ParseInt(participantString, 10, 64)
+		currentParticipantID := pkg.ParseInt64(participantString)
 
 		// A. Mise à jour de l'Inbox ZSET pour TOUS les participants (remonte la conv en haut)
 		_ = redis.UserInbox.ZAddWithCap(ctx, currentParticipantID, float64(messageID), conversationID, variables.MaxZsetInbox)
@@ -306,8 +302,8 @@ func AddMemberToSpeedCache(ctx context.Context, memberPayload lite_models.Member
 
 	errSet := redis.ConvMembers.SetObject(ctx, compositeMemberKey, memberPayload)
 	if errSet != nil {
-		nubo_log.Error(ctx).Err(errSet).Msg("Impossible d'ajouter le membre dans le Speed Cache")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errSet).Msg("Impossible d'ajouter le membre dans le Speed Cache")
+		return numan_error.NewInternal()
 	}
 
 	return nil
@@ -329,7 +325,7 @@ func RemoveMemberFromSpeedCache(ctx context.Context, conversationID int64, userI
 	_ = redis.InboxActivity.SetPrimitive(ctx, userID, time.Now().UnixMilli())
 
 	if errRem != nil {
-		return nubo_error.NewInternal()
+		return numan_error.NewInternal()
 	}
 
 	return nil
@@ -350,7 +346,7 @@ func ResetMemberUnreadCountInSpeedCache(ctx context.Context, conversationID int6
 
 		errSet := redis.ConvMembers.SetObject(ctx, compositeMemberKey, memberLitePayload)
 		if errSet != nil {
-			return nubo_error.NewInternal()
+			return numan_error.NewInternal()
 		}
 
 		_ = redis.InboxActivity.SetPrimitive(ctx, userID, time.Now().UnixMilli())
@@ -367,7 +363,7 @@ func ResetMemberUnreadCountInSpeedCache(ctx context.Context, conversationID int6
 func PurgeUserConversations(ctx context.Context, userID int64) error {
 	errDel := redis.UserInbox.DeleteObject(ctx, userID)
 	if errDel != nil {
-		return nubo_error.NewInternal()
+		return numan_error.NewInternal()
 	}
 	return nil
 }
@@ -418,11 +414,11 @@ func RehydrateConversationItemInSpeedCache(ctx context.Context, fullConversation
 
 // seedMessagingSpeedCache reconstruit l'intégralité du cache Inbox et Conversations depuis Postgres.
 func seedMessagingSpeedCache(ctx context.Context) error {
-	nubo_log.Info(ctx).Msg("Amorçage SPEED Cache: Chargement de la messagerie (Conversations et Inboxes)...")
+	numan_log.Info(ctx).Msg("Amorçage SPEED Cache: Chargement de la messagerie (Conversations et Inboxes)...")
 
 	activeConversationsList, errPgConv := postgres.FuncLoadActiveConversations(ctx)
 	if errPgConv != nil {
-		return nubo_error.NewInternal()
+		return numan_error.NewInternal()
 	}
 
 	for _, conversationRecord := range activeConversationsList {
@@ -441,7 +437,7 @@ func seedMessagingSpeedCache(ctx context.Context) error {
 
 	activeMembersList, errPgMem := postgres.FuncLoadActiveMembers(ctx)
 	if errPgMem != nil {
-		return nubo_error.NewInternal()
+		return numan_error.NewInternal()
 	}
 
 	for _, activeMemberRecord := range activeMembersList {
@@ -466,7 +462,7 @@ func seedMessagingSpeedCache(ctx context.Context) error {
 		}
 	}
 
-	nubo_log.Info(ctx).Int("conversations", len(activeConversationsList)).Int("membres", len(activeMembersList)).Msg("SPEED Cache Messaging initialisé avec succès.")
+	numan_log.Info(ctx).Int("conversations", len(activeConversationsList)).Int("membres", len(activeMembersList)).Msg("SPEED Cache Messaging initialisé avec succès.")
 	return nil
 }
 
@@ -477,12 +473,7 @@ func GetDirectConversationCache(ctx context.Context, userOneID int64, userTwoID 
 		return 0, errors.New("cache miss")
 	}
 
-	var candidateConversationIDs []int64
-	for _, idString := range conversationIDStringsList {
-		if parsedID, errParse := strconv.ParseInt(idString, 10, 64); errParse == nil {
-			candidateConversationIDs = append(candidateConversationIDs, parsedID)
-		}
-	}
+	candidateConversationIDs := pkg.ParseInt64List(conversationIDStringsList)
 
 	metaGetResult, errMetaGet := redis.ConvMeta.GetMany(ctx, candidateConversationIDs)
 	if errMetaGet != nil {
@@ -534,7 +525,7 @@ func UpdateMemberSpeedCache(ctx context.Context, memberPayload lite_models.Membe
 
 	errSet := redis.ConvMembers.SetObject(ctx, compositeMemberKey, memberPayload)
 	if errSet != nil {
-		return nubo_error.NewInternal()
+		return numan_error.NewInternal()
 	}
 
 	if memberPayload.Role < 0 {
@@ -551,7 +542,7 @@ func UpdateMemberSpeedCache(ctx context.Context, memberPayload lite_models.Membe
 func AddConversationToUserInbox(ctx context.Context, userID int64, conversationID int64, lastMessageID int64) error {
 	errZAdd := redis.UserInbox.ZAddWithCap(ctx, userID, float64(lastMessageID), conversationID, 100)
 	if errZAdd != nil {
-		return nubo_error.NewInternal()
+		return numan_error.NewInternal()
 	}
 	return nil
 }

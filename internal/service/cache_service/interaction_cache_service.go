@@ -3,7 +3,8 @@ package cache_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -12,10 +13,15 @@ import (
 
 // getIdempotencyCollection retourne le Set Redis L1 approprié selon le type de cible.
 func getIdempotencyCollection(targetEntityType int) *redis.Collection {
-	if targetEntityType == 1 {
+	switch targetEntityType {
+	case variables.LikeTargetTypePost: // 0
+		return redis.PostLikesSet
+	case variables.LikeTargetTypeComment: // 1
 		return redis.CommentLikesSet
+	default:
+		// Sécurité absolue : on ne retourne rien si le type est inconnu
+		return nil
 	}
-	return redis.PostLikesSet
 }
 
 // TryAddLikeIdempotency gère l'idempotence pour l'ajout de Likes de manière thread-safe (O(1)).

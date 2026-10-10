@@ -4,14 +4,14 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/like_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/like_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/notification_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -19,16 +19,16 @@ import (
 // ############################################################################
 
 // TogglePostLike agit comme un routeur asynchrone ultra-rapide (Fire and Forget).
-func TogglePostLike(ctx context.Context, input like_models.LikePostInput) error {
+func TogglePostLike(ctx context.Context, callerID int64, input like_models.LikePostInput) error {
 
 	// ── ÉTAPE 1 : IDEMPOTENCE EN RAM (O(1)) ─────────────────────────────────
 
 	if input.Action == "like" {
-		if !cache_service.TryAddLikeIdempotency(ctx, variables.LikeTargetTypePost, input.PostID, input.UserID) {
+		if !cache_service.TryAddLikeIdempotency(ctx, variables.LikeTargetTypePost, input.PostID, callerID) {
 			return nil
 		}
 	} else {
-		if !cache_service.TryRemoveLikeIdempotency(ctx, variables.LikeTargetTypePost, input.PostID, input.UserID) {
+		if !cache_service.TryRemoveLikeIdempotency(ctx, variables.LikeTargetTypePost, input.PostID, callerID) {
 			return nil
 		}
 	}
@@ -66,23 +66,23 @@ func TogglePostLike(ctx context.Context, input like_models.LikePostInput) error 
 		ID:         pkg.GenerateID(),
 		TargetType: variables.LikeTargetTypePost,
 		TargetID:   input.PostID,
-		UserID:     input.UserID,
+		UserID:     callerID,
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 
 	errQueue := redis.EnqueueDB(ctx, likeRecordPayload.ID, 0, redis.EntityLike, redisActionType, likeRecordPayload, redis.TargetAll)
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("post_id", input.PostID).Msg("Échec du Write-Behind pour TogglePostLike")
+		numan_log.Error(ctx).Err(errQueue).Int64("post_id", input.PostID).Msg("Échec du Write-Behind pour TogglePostLike")
 		return nil // Non bloquant pour l'UX
 	}
 
 	// ── ÉTAPE 4 : NOTIFICATION TEMPS RÉEL ───────────────────────────────────
 
-	if input.Action == "like" && postAuthorID != 0 && postAuthorID != input.UserID {
+	if input.Action == "like" && postAuthorID != 0 && postAuthorID != callerID {
 		go func(authorID int64) {
-			errNotif := notification_service.DispatchNotification(context.Background(), authorID, input.UserID, variables.EventPostLiked, input.PostID)
+			errNotif := notification_service.DispatchNotification(context.Background(), authorID, callerID, variables.EventPostLiked, input.PostID)
 			if errNotif != nil {
-				nubo_log.Error(ctx).Err(errNotif).Int64("post_id", input.PostID).Msg("Échec de l'envoi de la notification pour un like de post")
+				numan_log.Error(ctx).Err(errNotif).Int64("post_id", input.PostID).Msg("Échec de l'envoi de la notification pour un like de post")
 			}
 		}(postAuthorID)
 	}

@@ -4,16 +4,16 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -33,7 +33,7 @@ func MarkConversationAsRead(ctx context.Context, callerID int64, conversationID 
 	// ── ÉTAPE 2 : RÉCUPÉRATION L1 DU DERNIER MESSAGE ─────────────────────────
 	conversationPayload, errConv := object_cache_service.GetConversationFromObjectCache(ctx, conversationID)
 	if errConv != nil || conversationPayload.ID == 0 {
-		return conversation_models.ReadReceiptOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Conversation introuvable.", nil)
+		return conversation_models.ReadReceiptOutput{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Conversation introuvable.", nil)
 	}
 
 	hasChangedSomething := false
@@ -63,7 +63,7 @@ func MarkConversationAsRead(ctx context.Context, callerID int64, conversationID 
 
 		errQueue := redis.EnqueueDB(ctx, memberPayload.ID, conversationID, redis.EntityMembers, redis.ActionUpdate, memberPayload, redis.TargetAll)
 		if errQueue != nil {
-			nubo_log.Error(ctx).Err(errQueue).Int64("user_id", callerID).Msg("Échec du Write-Behind pour la remise à zéro des non-lus")
+			numan_log.Error(ctx).Err(errQueue).Int64("user_id", callerID).Msg("Échec du Write-Behind pour la remise à zéro des non-lus")
 			// Pas de retour d'erreur HTTP pour ne pas bloquer l'UX de l'utilisateur
 		}
 	}

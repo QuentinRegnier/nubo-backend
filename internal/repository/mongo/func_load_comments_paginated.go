@@ -3,10 +3,10 @@ package mongo
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
@@ -28,8 +28,8 @@ func MongoLoadCommentsPaginated(ctx context.Context, postID int64, offset int64,
 	// Appel propre de ton wrapper métier
 	docs, err := Comments.GetPaginated(filter, sortMap, offset, limit)
 	if err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Erreur interne lors de l'exécution de l'opération")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Erreur interne lors de l'exécution de l'opération")
+		return nil, numan_error.NewInternal()
 	}
 
 	var comments []comment_models.CommentPayload

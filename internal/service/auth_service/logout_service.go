@@ -3,12 +3,12 @@ package auth_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
 )
 
 // ############################################################################
@@ -38,7 +38,7 @@ func Logout(ctx context.Context, callerID int64, firebaseInstallationID string) 
 			sessionPg, errPg := postgres.FuncLoadSession(ctx, -1, callerID, firebaseInstallationID, "")
 			if errPg != nil {
 				// On loggue l'erreur interne, mais on ne la remonte pas au client.
-				nubo_log.Error(ctx).Err(errPg).Msg("Erreur lors du fallback L3 pour le Logout")
+				numan_log.Error(ctx).Err(errPg).Msg("Erreur lors du fallback L3 pour le Logout")
 				return nil
 			}
 
@@ -61,7 +61,7 @@ func Logout(ctx context.Context, callerID int64, firebaseInstallationID string) 
 	errQueue := redis.EnqueueDB(ctx, sessionPayload.ID, callerID, redis.EntitySession, redis.ActionDelete, minimalPayload, redis.TargetAll)
 	if errQueue != nil {
 		// Log en erreur car le worker n'a pas reçu l'ordre, la session risque de rester fantôme en L3.
-		nubo_log.Error(ctx).Err(errQueue).Int64("session_id", sessionPayload.ID).Msg("Échec de la mise en file d'attente du Logout")
+		numan_log.Error(ctx).Err(errQueue).Int64("session_id", sessionPayload.ID).Msg("Échec de la mise en file d'attente du Logout")
 	}
 
 	return nil

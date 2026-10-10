@@ -5,7 +5,7 @@ services:
   # --- 1. LOAD BALANCER & PROXY ---
   nginx:
     image: nginx:latest
-    container_name: nubo_nginx
+    container_name: numan_nginx
     ports:
       - "80:80"
       - "443:443"
@@ -24,7 +24,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: dev       # <--- IMPORTANT : On vise l'étape "dev" (celle avec Air)
-    container_name: nubo_api1
+    container_name: numan_api1
     volumes:
       - ./:/app         # <--- IMPORTANT : On "monte" ton code local dans le conteneur
       - /app/tmp        # On ignore le dossier temporaire de Air pour éviter les conflits
@@ -45,7 +45,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: dev       # <--- Idem ici
-    container_name: nubo_api2
+    container_name: numan_api2
     volumes:
       - ./:/app         # <--- Idem ici
       - /app/tmp
@@ -67,7 +67,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: dev
-    container_name: nubo_watermark
+    container_name: numan_watermark
     command: sh -c "go run cmd/watermark/main.go" # On lance le second main
     volumes:
       - ./:/app
@@ -83,7 +83,7 @@ services:
   # --- 3. STOCKAGE MINIO ---
   minio:
     image: minio/minio
-    container_name: nubo_minio
+    container_name: numan_minio
     command: server /data --console-address ":9001"
     expose:
       - "9000" # API S3 (Interne)
@@ -113,7 +113,7 @@ services:
       "
   redis:
     image: redis:7
-    container_name: nubo_redis
+    container_name: numan_redis
     command: redis-server --maxmemory 4gb --maxmemory-policy volatile-lfu --lfu-log-factor 10 --lfu-decay-time 120 --appendonly yes
     ports:
       - "6379:6379"
@@ -123,7 +123,7 @@ services:
 
   postgres:
     image: postgres:16
-    container_name: nubo_postgres
+    container_name: numan_postgres
     env_file:
       - .env
     ports:
@@ -134,9 +134,9 @@ services:
 
   pgadmin:
     image: dpage/pgadmin4
-    container_name: nubo_pgadmin
+    container_name: numan_pgadmin
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@nubo.com
+      PGADMIN_DEFAULT_EMAIL: admin@numan.com
       PGADMIN_DEFAULT_PASSWORD: admin
       PGADMIN_CONFIG_CONSOLE_LOG_LEVEL: 10
       PGADMIN_CONFIG_SERVER_MODE: 'False'
@@ -150,7 +150,7 @@ services:
   
   mongo:
     image: mongo:7
-    container_name: nubo_mongo
+    container_name: numan_mongo
     ports:
       - "27017:27017"
     environment:
@@ -161,7 +161,7 @@ services:
 
   mongo-express:
     image: mongo-express:latest
-    container_name: nubo_mongo_express
+    container_name: numan_mongo_express
     environment:
       ME_CONFIG_BASICAUTH_USERNAME: ${MONGO_UI_USER}
       ME_CONFIG_BASICAUTH_PASSWORD: ${MONGO_UI_PASSWORD}
@@ -175,7 +175,7 @@ services:
 
   redis-commander:
     image: ghcr.io/joeferner/redis-commander:latest  # version ARM64 compatible
-    container_name: nubo_redis_commander
+    container_name: numan_redis_commander
     environment:
       - REDIS_HOSTS=local:redis:6379
     ports:

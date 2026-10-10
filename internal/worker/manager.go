@@ -4,19 +4,19 @@ import (
 	"context"
 	"sync"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 )
 
 // ############################################################################
 // # MANAGER : CHEF D'ORCHESTRE DE L'ASYNCHRONISME
 // ############################################################################
 
-// StartBackgroundWorkers lance tous les processus asynchrones vitaux de l'API Nubo.
+// StartBackgroundWorkers lance tous les processus asynchrones vitaux de l'API numan.
 // Il déploie les planificateurs (Crons) et les pools de travailleurs (Sharding) qui
 // dépilent les files d'attente Redis H24.
 func StartBackgroundWorkers(ctx context.Context) {
-	nubo_log.Info(ctx).Msg("Démarrage du moteur de persistance et des processus asynchrones...")
+	numan_log.Info(ctx).Msg("Démarrage du moteur de persistance et des processus asynchrones...")
 
 	// ── ÉTAPE 1 : LANCEMENT DES MOTEURS ALGORITHMIQUES (CRONS) ──────────────
 
@@ -71,5 +71,5 @@ func StartBackgroundWorkers(ctx context.Context) {
 	// car le maintien en vie de l'application est géré directement par le serveur
 	// HTTP principal (Gin) dans cmd/main.go. Les workers tourneront tant que
 	// le contexte global ne recevra pas le signal d'arrêt (ctx.Done).
-	nubo_log.Info(ctx).Msg("Moteur de persistance asynchrone opérationnel. Les 64 Workers sont à l'écoute.")
+	numan_log.Info(ctx).Msg("Moteur de persistance asynchrone opérationnel. Les 64 Workers sont à l'écoute.")
 }

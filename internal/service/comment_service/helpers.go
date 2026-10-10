@@ -3,15 +3,15 @@ package comment_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
 )
 
 // ############################################################################
@@ -77,7 +77,7 @@ func fetchCommentsCascade(ctx context.Context, commentIDs []int64) map[int64]com
 			_ = object_cache_service.SetCommentInObjectCache(ctx, commentPayload) // Auto-guérison L1
 		}
 	} else if errMongo.Error() != "mongo: no documents in result" {
-		nubo_log.Warn(ctx).Err(errMongo).Msg("Avertissement L2 Mongo lors du fetchCommentsCascade")
+		numan_log.Warn(ctx).Err(errMongo).Msg("Avertissement L2 Mongo lors du fetchCommentsCascade")
 	}
 
 	// Identification des restes
@@ -107,7 +107,7 @@ func fetchCommentsCascade(ctx context.Context, commentIDs []int64) map[int64]com
 				_ = redis.EnqueueDB(bgCtx, c.ID, c.PostID, redis.EntityComment, redis.ActionUpdate, c, redis.TargetMongo)
 			}(commentPayload)
 		} else {
-			nubo_log.Error(ctx).Err(errPg).Int64("comment_id", id).Msg("Erreur L3 Postgres lors de la récupération unitaire d'un commentaire")
+			numan_log.Error(ctx).Err(errPg).Int64("comment_id", id).Msg("Erreur L3 Postgres lors de la récupération unitaire d'un commentaire")
 		}
 	}
 

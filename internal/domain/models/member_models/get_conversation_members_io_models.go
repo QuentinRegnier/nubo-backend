@@ -1,12 +1,14 @@
 package member_models
 
-// GetConversationMembersInput valide la demande du client (POST JSON)
+// GetConversationMembersInput valide la demande du client avec pagination
 type GetConversationMembersInput struct {
-	ConversationIDs []int64 `json:"conversation_ids" binding:"required,min=1,max=50"`
+	ConversationID int64 `json:"conversation_id" binding:"required"`
+	Limit          int64 `json:"limit" binding:"min=1,max=100"`
+	Offset         int64 `json:"offset" binding:"min=0"`
 }
 
-// ConversationMembersList groupe les membres par conversation pour que le front s'y retrouve facilement
-type ConversationMembersList struct {
+// GetConversationMembersOutput structure la réponse paginée
+type GetConversationMembersOutput struct {
 	ConversationID int64        `json:"conversation_id"`
 	Members        []MemberView `json:"members"`
 }

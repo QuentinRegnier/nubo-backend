@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 )
 
 // ############################################################################
@@ -35,21 +35,8 @@ func SetMemberInObjectCache(ctx context.Context, memberPayload member_models.Mem
 
 	errRedis := redis.Members.SetObject(ctx, compositeMemberKey, memberPayload)
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Int64("user_id", memberPayload.UserID).Msg("Échec de l'écriture du membre dans l'Object Cache")
-		return nubo_error.NewInternal()
-	}
-
-	return nil
-}
-
-// DeleteMemberFromObjectCache supprime un membre du cache LFU.
-func DeleteMemberFromObjectCache(ctx context.Context, conversationID int64, userID int64) error {
-	compositeMemberKey := fmt.Sprintf("%d:%d", conversationID, userID)
-
-	errRedis := redis.Members.DeleteObject(ctx, compositeMemberKey)
-	if errRedis != nil {
-		nubo_log.Warn(ctx).Err(errRedis).Msg("Échec de la suppression du membre de l'Object Cache")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Int64("user_id", memberPayload.UserID).Msg("Échec de l'écriture du membre dans l'Object Cache")
+		return numan_error.NewInternal()
 	}
 
 	return nil

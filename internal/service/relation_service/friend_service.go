@@ -4,15 +4,15 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/relation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/notification_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -20,25 +20,25 @@ import (
 // ############################################################################
 
 // ToggleFriend gère les ajouts et retraits d'amis entre utilisateurs.
-func ToggleFriend(ctx context.Context, callerID int64, targetID int64, requestedAction string) error {
+func ToggleFriend(ctx context.Context, callerID int64, input relation_models.RelationActionInput) error {
 
 	// ── ÉTAPE 1 : RÈGLE MÉTIER (AUTO-AMITIÉ INTERDITE) ──────────────────────
-	if callerID == targetID {
-		return nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Vous ne pouvez pas être ami avec vous-même.", nil)
+	if callerID == input.TargetID {
+		return numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Vous ne pouvez pas être ami avec vous-même.", nil)
 	}
 
 	// ── ÉTAPE 2 : LECTURE DE L'ÉTAT ACTUEL (O(1) RAM L1) ────────────────────
-	currentRelationState := cache_service.RelationValue(ctx, targetID, callerID)
+	currentRelationState := cache_service.RelationValue(ctx, input.TargetID, callerID)
 
 	if currentRelationState == variables.RelationStateBlocked {
-		return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Action impossible : Utilisateur bloqué.", nil)
+		return numan_error.NewForbidden(numan_error.CodeForbidden, "Action impossible : Utilisateur bloqué.", nil)
 	}
 
 	var newRelationState int
 	var redisActionType redis.ActionType
 
 	// ── ÉTAPE 3 : LOGIQUE DE TRANSITION ET IDEMPOTENCE ──────────────────────
-	if requestedAction == "friend" {
+	if input.Action == variables.ActionPromoteToFriend {
 		if currentRelationState == variables.RelationStateFriend {
 			return nil // Déjà ami, coupe-circuit.
 		}
@@ -51,7 +51,7 @@ func ToggleFriend(ctx context.Context, callerID int64, targetID int64, requested
 			redisActionType = redis.ActionUpdate // Déjà abonné, on promeut la relation.
 		}
 
-	} else if requestedAction == "unfriend" {
+	} else if input.Action == variables.ActionDemoteToFollower {
 		if currentRelationState == variables.RelationStateNone || currentRelationState == variables.RelationStateFollow {
 			return nil // N'est déjà pas/plus ami, coupe-circuit.
 		}
@@ -61,21 +61,21 @@ func ToggleFriend(ctx context.Context, callerID int64, targetID int64, requested
 		redisActionType = redis.ActionUpdate
 
 	} else {
-		return nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Action de relation non reconnue.", nil)
+		return numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Action de relation non reconnue.", nil)
 	}
 
 	// ── ÉTAPE 4 : MISE À JOUR IMMÉDIATE DU CACHE L1 ─────────────────────────
 	currentTime := time.Now().UTC()
-	errCache := cache_service.UpdateRelationState(ctx, callerID, targetID, newRelationState, domain.TimeToMillis(currentTime))
+	errCache := cache_service.UpdateRelationState(ctx, callerID, input.TargetID, newRelationState, domain.TimeToMillis(currentTime))
 	if errCache != nil {
-		nubo_log.Error(ctx).Err(errCache).Msg("Échec de la mise à jour du Cache L1 lors d'un ToggleFriend")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errCache).Msg("Échec de la mise à jour du Cache L1 lors d'un ToggleFriend")
+		return numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
 	relationPayload := relation_models.RelationPayload{
 		ID:          pkg.GenerateID(), // ID virtuel, l'update BDD se fera sur PrimaryID / SecondaryID.
-		PrimaryID:   targetID,
+		PrimaryID:   input.TargetID,
 		SecondaryID: callerID,
 		State:       newRelationState,
 		CreatedAt:   domain.TimeToMillis(currentTime),
@@ -83,19 +83,19 @@ func ToggleFriend(ctx context.Context, callerID int64, targetID int64, requested
 	}
 
 	// PartitionKey = targetID pour assurer l'ordre chronologique des requêtes.
-	errQueue := redis.EnqueueDB(ctx, relationPayload.ID, targetID, redis.EntityRelation, redisActionType, relationPayload, redis.TargetAll)
+	errQueue := redis.EnqueueDB(ctx, relationPayload.ID, input.TargetID, redis.EntityRelation, redisActionType, relationPayload, redis.TargetAll)
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("target_id", targetID).Msg("Échec du Write-Behind pour ToggleFriend")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errQueue).Int64("target_id", input.TargetID).Msg("Échec du Write-Behind pour ToggleFriend")
+		return numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 6 : DISTRIBUTION DES NOTIFICATIONS ────────────────────────────
-	if requestedAction == "friend" {
+	if input.Action == variables.ActionPromoteToFriend {
 		go func() {
 			backgroundCtx := context.Background()
-			errNotif := notification_service.DispatchNotification(backgroundCtx, targetID, callerID, variables.EventFriendshipEst, callerID)
+			errNotif := notification_service.DispatchNotification(backgroundCtx, input.TargetID, callerID, variables.EventFriendshipEst, callerID)
 			if errNotif != nil {
-				nubo_log.Error(ctx).Err(errNotif).Msg("Échec de l'expédition de la notification d'amitié")
+				numan_log.Error(ctx).Err(errNotif).Msg("Échec de l'expédition de la notification d'amitié")
 			}
 		}()
 	}

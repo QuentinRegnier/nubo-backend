@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/QuentinRegnier/nubo-backend/admin/service"
+	"github.com/QuentinRegnier/numan-backend/admin/service"
 )
 
 func main() {

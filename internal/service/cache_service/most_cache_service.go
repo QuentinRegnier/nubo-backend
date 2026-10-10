@@ -5,18 +5,18 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -51,7 +51,7 @@ func UpdatePostRecommendationScore(ctx context.Context, postPayload post_models.
 func EvaluatePostAfterLike(ctx context.Context, postPayload post_models.PostPayload) {
 	errRedis := redis.ZAddWithCap(ctx, variables.RedisKeyStrictLikes, float64(postPayload.LikeCount), postPayload.ID, variables.MaxStrictElements)
 	if errRedis != nil {
-		nubo_log.Warn(ctx).Err(errRedis).Int64("post_id", postPayload.ID).Msg("Impossible de mettre à jour le classement strict des likes")
+		numan_log.Warn(ctx).Err(errRedis).Int64("post_id", postPayload.ID).Msg("Impossible de mettre à jour le classement strict des likes")
 	}
 	UpdatePostRecommendationScore(ctx, postPayload)
 }
@@ -60,7 +60,7 @@ func EvaluatePostAfterLike(ctx context.Context, postPayload post_models.PostPayl
 func EvaluatePostAfterView(ctx context.Context, postPayload post_models.PostPayload) {
 	errRedis := redis.ZAddWithCap(ctx, variables.RedisKeyStrictViews, float64(postPayload.ViewCount), postPayload.ID, variables.MaxStrictElements)
 	if errRedis != nil {
-		nubo_log.Warn(ctx).Err(errRedis).Int64("post_id", postPayload.ID).Msg("Impossible de mettre à jour le classement strict des vues")
+		numan_log.Warn(ctx).Err(errRedis).Int64("post_id", postPayload.ID).Msg("Impossible de mettre à jour le classement strict des vues")
 	}
 	UpdatePostRecommendationScore(ctx, postPayload)
 }
@@ -119,8 +119,8 @@ func GetTagPosts(ctx context.Context, slug string, offset int64, limit int64) ([
 			// FALLBACK L3 (PostgreSQL) - Pur DDD
 			pgIDs, errPg := postgres.FuncLoadPostIDsByTagPaginated(ctx, slug, offset, limit)
 			if errPg != nil {
-				nubo_log.Error(ctx).Err(errPg).Str("slug", slug).Msg("Erreur L3 lors de la pagination des tags")
-				return []post_models.PostPayload{}, nubo_error.NewInternal()
+				numan_log.Error(ctx).Err(errPg).Str("slug", slug).Msg("Erreur L3 lors de la pagination des tags")
+				return []post_models.PostPayload{}, numan_error.NewInternal()
 			}
 			return object_cache_service.GetPostsView(ctx, pgIDs)
 		}
@@ -135,13 +135,13 @@ func updateTrendZSETs(ctx context.Context, postID int64, score float64, directTa
 
 	// 1. Buckets Globaux
 	if err := redis.TrendGlobalHourly.ZAddWithCap(ctx, currentHour, score, postID, variables.TDDMaxZSET); err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Impossible de mettre à jour la tendance horaire")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Impossible de mettre à jour la tendance horaire")
+		return numan_error.NewInternal()
 	}
 
 	if err := redis.TrendGlobalDaily.ZAddWithCap(ctx, currentDate, score, postID, variables.TDDMaxZSET); err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Impossible de mettre à jour la tendance journalière")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Impossible de mettre à jour la tendance journalière")
+		return numan_error.NewInternal()
 	}
 
 	// 2. Buckets par Tags (Sérialisation Msgpack pour le flag IsIndirect)
@@ -206,42 +206,4 @@ func UpdateScoreWithMetrics(ctx context.Context, postID int64, likesCount int, c
 	weekString := fmt.Sprintf("%d-W%02d", year, isoWeek)
 
 	_ = updateTrendZSETs(ctx, postID, globalScore, directTags, indirectTags, currentTime.Format("20060102"), currentTime.Format("2006010215"), weekString)
-}
-
-// GetPostsByTagFromCache lit le ZSET Msgpack du tag, extrait les IDs et déclenche l'hydratation L1 -> L2 -> L3.
-func GetPostsByTagFromCache(ctx context.Context, targetTag string, offset int64, limit int64) ([]post_models.PostPayload, error) {
-
-	// Interface temps réel : on vise le trend quotidien
-	currentDateString := time.Now().UTC().Format("20060102")
-
-	// PUR DDD : Combinatoire Tag + Date
-	compositeID := fmt.Sprintf("%s:%s", targetTag, currentDateString)
-
-	// Lecture de la grappe de binaires MsgPack en O(log N)
-	binaryResultsList, errRedis := redis.TrendTagDaily.ZRevRange(ctx, compositeID, offset, offset+limit-1)
-	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Str("tag", targetTag).Msg("Échec de lecture ZSET Tag Daily")
-		return nil, nubo_error.NewInternal()
-	}
-
-	if len(binaryResultsList) == 0 {
-		return []post_models.PostPayload{}, nil
-	}
-
-	var extractedPostIDs []int64
-
-	// DÉSÉRIALISATION DE LA MÉTADONNÉE MSGPACK
-	for _, binaryString := range binaryResultsList {
-		var tagItem lite_models.TagPostItem
-		if errUnmarshal := msgpack.Unmarshal([]byte(binaryString), &tagItem); errUnmarshal == nil {
-			extractedPostIDs = append(extractedPostIDs, tagItem.PostID)
-		}
-	}
-
-	if len(extractedPostIDs) == 0 {
-		return []post_models.PostPayload{}, nil
-	}
-
-	// Déclenchement de la cascade complète (Object Cache -> Mongo -> Postgres)
-	return object_cache_service.GetPostsView(ctx, extractedPostIDs)
 }

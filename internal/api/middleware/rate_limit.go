@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 	"github.com/gin-gonic/gin"
 )
 
@@ -37,8 +37,8 @@ func RateLimiter() gin.HandlerFunc {
 
 		// Si on dépasse la limite
 		if count > rateLimitMaxRequests {
-			errLimit := nubo_error.NewAppError(http.StatusTooManyRequests, "TOO_MANY_REQUESTS", "Too many requests. Please calm down.", nil)
-			nubo_error.RespondWithError(c, errLimit)
+			errLimit := numan_error.NewAppError(http.StatusTooManyRequests, "TOO_MANY_REQUESTS", "Too many requests. Please calm down.", nil)
+			numan_error.RespondWithError(c, errLimit)
 			c.Abort()
 			return
 		}

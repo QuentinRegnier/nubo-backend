@@ -4,16 +4,16 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/notification_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/notification_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // Structure locale privée pour casser la dépendance cyclique vers le package worker
@@ -54,8 +54,8 @@ func DispatchNotification(ctx context.Context, targetUserID int64, actorUserID i
 	// ── ÉTAPE 4 : PERSISTANCE L2 ASYNCHRONE (MONGODB) ───────────────────────
 	errQueue := redis.EnqueueDB(ctx, notificationPayload.ID, targetUserID, redis.EntityNotification, redis.ActionCreate, notificationPayload, redis.TargetMongo)
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("user_id", targetUserID).Msg("Échec de la persistance L2 d'une notification")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errQueue).Int64("user_id", targetUserID).Msg("Échec de la persistance L2 d'une notification")
+		return numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 5 : TEMPS RÉEL (WEBSOCKETS) ───────────────────────────────────
@@ -72,8 +72,8 @@ func DispatchNotification(ctx context.Context, targetUserID int64, actorUserID i
 
 	userSettingsPayload, errSettings := object_cache_service.GetUserSettingsCascade(ctx, targetUserID)
 	if errSettings != nil {
-		nubo_log.Error(ctx).Err(errSettings).Int64("user_id", targetUserID).Msg("Échec de de la lecture des droits de l'utilisateur")
-		return nubo_error.NewInternal() // Si on ne peut pas lire les droits, on refuse l'envoi
+		numan_log.Error(ctx).Err(errSettings).Int64("user_id", targetUserID).Msg("Échec de de la lecture des droits de l'utilisateur")
+		return numan_error.NewInternal() // Si on ne peut pas lire les droits, on refuse l'envoi
 	}
 
 	if !userSettingsPayload.Notifications.MasterPushEnabled {
@@ -112,7 +112,7 @@ func DispatchNotification(ctx context.Context, targetUserID int64, actorUserID i
 		if jobBytes, errMarshal := json.Marshal(firebasePushJob); errMarshal == nil {
 			_ = redis.WorkerQueue.LPush(ctx, variables.WorkerQueueFirebase, jobBytes)
 		} else {
-			nubo_log.Error(ctx).Err(errMarshal).Msg("Impossible de sérialiser le Push Job FCM")
+			numan_log.Error(ctx).Err(errMarshal).Msg("Impossible de sérialiser le Push Job FCM")
 		}
 	}
 

@@ -3,15 +3,15 @@ package security_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -60,8 +60,8 @@ func LeftConversation(ctx context.Context, conversationID int64, userID int64) (
 	if !isConversationFound {
 		pgConversation, errPg := postgres.FuncGetConversation(ctx, conversationID)
 		if errPg != nil {
-			nubo_log.Error(ctx).Err(errPg).Int64("conv_id", conversationID).Msg("Erreur L3 lors de la récupération de la conversation")
-			return conversation_models.ConversationPayload{}, nubo_error.NewInternal()
+			numan_log.Error(ctx).Err(errPg).Int64("conv_id", conversationID).Msg("Erreur L3 lors de la récupération de la conversation")
+			return conversation_models.ConversationPayload{}, numan_error.NewInternal()
 		}
 
 		if pgConversation.ID != 0 {
@@ -82,8 +82,8 @@ func LeftConversation(ctx context.Context, conversationID int64, userID int64) (
 	if !isMemberFound {
 		pgMember, errPg := postgres.FuncGetMember(ctx, conversationID, userID)
 		if errPg != nil {
-			nubo_log.Error(ctx).Err(errPg).Int64("user_id", userID).Msg("Erreur L3 lors de la récupération du membre")
-			return conversation_models.ConversationPayload{}, nubo_error.NewInternal()
+			numan_log.Error(ctx).Err(errPg).Int64("user_id", userID).Msg("Erreur L3 lors de la récupération du membre")
+			return conversation_models.ConversationPayload{}, numan_error.NewInternal()
 		}
 
 		if pgMember.ID != 0 {
@@ -105,16 +105,16 @@ func LeftConversation(ctx context.Context, conversationID int64, userID int64) (
 	// ── ÉTAPE 4 : VÉRIFICATION DES RÈGLES MÉTIER ET DE SÉCURITÉ ─────────────
 
 	if !isConversationFound || conversationPayload.State == variables.ConversationStateArchived {
-		return conversation_models.ConversationPayload{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Conversation introuvable ou archivée.", nil)
+		return conversation_models.ConversationPayload{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Conversation introuvable ou archivée.", nil)
 	}
 
 	if !isMemberFound || memberPayload.Role < variables.MemberRoleNormal {
-		return conversation_models.ConversationPayload{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : vous ne faites pas ou plus partie de cette conversation.", nil)
+		return conversation_models.ConversationPayload{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Accès refusé : vous ne faites pas ou plus partie de cette conversation.", nil)
 	}
 
 	// Le rôle doit être au moins Admin (1) ou Propriétaire (2) pour satisfaire ce middleware
 	if memberPayload.Role < variables.MemberRoleAdmin {
-		return conversation_models.ConversationPayload{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : droits d'administration requis pour cette opération.", nil)
+		return conversation_models.ConversationPayload{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Accès refusé : droits d'administration requis pour cette opération.", nil)
 	}
 
 	return conversationPayload, nil

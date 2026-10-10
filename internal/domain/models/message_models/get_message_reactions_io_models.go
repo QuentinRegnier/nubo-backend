@@ -1,6 +1,6 @@
 package message_models
 
-import "github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
+import "github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
 
 // GetMessageReactionsInput valide les paramètres de la requête pour le Slow Path.
 type GetMessageReactionsInput struct {

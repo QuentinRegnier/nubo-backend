@@ -4,19 +4,19 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -46,13 +46,13 @@ func TogglePinConversation(ctx context.Context, callerID int64, input conversati
 		var errPg error
 		pinnedIndices, errPg = postgres.FuncGetPinnedIndices(ctx, callerID)
 		if errPg != nil {
-			return conversation_models.PinConversationOutput{}, nubo_error.NewInternal()
+			return conversation_models.PinConversationOutput{}, numan_error.NewInternal()
 		}
 	}
 
 	// Règle métier stricte : 3 épingles maximum
 	if len(pinnedIndices) >= variables.MaxPinConversation {
-		return conversation_models.PinConversationOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Vous ne pouvez épingler que 3 conversations au maximum.", nil)
+		return conversation_models.PinConversationOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Vous ne pouvez épingler que 3 conversations au maximum.", nil)
 	}
 
 	// Détermination du slot vide (0, 1 ou 2)
@@ -90,8 +90,8 @@ func TogglePinConversation(ctx context.Context, callerID int64, input conversati
 	// ── ÉTAPE 4 : PERSISTANCE ASYNCHRONE ────────────────────────────────────
 	errQueue := redis.EnqueueDB(ctx, memberPayload.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, memberPayload, redis.TargetAll)
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("member_id", memberPayload.ID).Msg("Échec du Write-Behind pour TogglePinConversation")
-		return conversation_models.PinConversationOutput{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errQueue).Int64("member_id", memberPayload.ID).Msg("Échec du Write-Behind pour TogglePinConversation")
+		return conversation_models.PinConversationOutput{}, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 5 : MARQUAGE D'ACTIVITÉ (DIRTY FLAG) ──────────────────────────

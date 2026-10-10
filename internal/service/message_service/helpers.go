@@ -2,9 +2,10 @@ package message_service
 
 import (
 	"context"
-	"strconv"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 )
 
 // ############################################################################
@@ -19,12 +20,7 @@ func getParticipantIDsForLedgerSync(ctx context.Context, conversationID int64) [
 		return nil
 	}
 
-	participantIDs := make([]int64, 0, len(participantsStringList))
-	for _, participantStr := range participantsStringList {
-		if parsedID, errParse := strconv.ParseInt(participantStr, 10, 64); errParse == nil {
-			participantIDs = append(participantIDs, parsedID)
-		}
-	}
+	participantIDs := pkg.ParseInt64List(participantsStringList)
 
 	return participantIDs
 }

@@ -5,14 +5,14 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/schemas"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/schemas"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
-	mongogo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/mongo"
+	mongogo "github.com/QuentinRegnier/numan-backend/internal/infrastructure/mongo"
 )
 
 // ---------------- Initialisation ----------------
@@ -56,23 +56,23 @@ func InitCacheDatabase() {
 	schemaNotifications := schemas.NotificationsSchema
 
 	// variables globales
-	Users = newMongoCollection("nubo_mongo", "auth.users", schemaUsers)
-	UserSettings = newMongoCollection("nubo_mongo", "auth.user_settings", schemaUserSettings)
-	Sessions = newMongoCollection("nubo_mongo", "auth.sessions", schemaSessions)
-	Relations = newMongoCollection("nubo_mongo", "auth.relations", schemaRelations)
-	Posts = newMongoCollection("nubo_mongo", "content.posts", schemaPosts)
-	Comments = newMongoCollection("nubo_mongo", "content.comments", schemaComments)
-	Likes = newMongoCollection("nubo_mongo", "content.likes", schemaLikes)
-	Media = newMongoCollection("nubo_mongo", "content.media", schemaMedia)
-	Conversations = newMongoCollection("nubo_mongo", "messaging.conversations", schemaConversations)
-	Members = newMongoCollection("nubo_mongo", "messaging.members", schemaMembers)
-	Messages = newMongoCollection("nubo_mongo", "messaging.messages", schemaMessages)
-	MessageReactions = newMongoCollection("nubo_mongo", "messaging.message_reactions", schemaMessageReactions)
-	Saved = newMongoCollection("nubo_mongo", "content.saved", schemaSaved)
+	Users = newMongoCollection("numan_mongo", "auth.users", schemaUsers)
+	UserSettings = newMongoCollection("numan_mongo", "auth.user_settings", schemaUserSettings)
+	Sessions = newMongoCollection("numan_mongo", "auth.sessions", schemaSessions)
+	Relations = newMongoCollection("numan_mongo", "auth.relations", schemaRelations)
+	Posts = newMongoCollection("numan_mongo", "content.posts", schemaPosts)
+	Comments = newMongoCollection("numan_mongo", "content.comments", schemaComments)
+	Likes = newMongoCollection("numan_mongo", "content.likes", schemaLikes)
+	Media = newMongoCollection("numan_mongo", "content.media", schemaMedia)
+	Conversations = newMongoCollection("numan_mongo", "messaging.conversations", schemaConversations)
+	Members = newMongoCollection("numan_mongo", "messaging.members", schemaMembers)
+	Messages = newMongoCollection("numan_mongo", "messaging.messages", schemaMessages)
+	MessageReactions = newMongoCollection("numan_mongo", "messaging.message_reactions", schemaMessageReactions)
+	Saved = newMongoCollection("numan_mongo", "content.saved", schemaSaved)
 
-	Notifications = newMongoCollection("nubo_mongo", "activity.notifications", schemaNotifications)
+	Notifications = newMongoCollection("numan_mongo", "activity.notifications", schemaNotifications)
 
-	nubo_log.Info(context.Background()).Msg("Structure de collections MongoDB initialisée")
+	numan_log.Info(context.Background()).Msg("Structure de collections MongoDB initialisée")
 }
 
 // ---------------- Collection et schéma ----------------
@@ -98,8 +98,8 @@ func (c *Collection) validate(ctx context.Context, obj map[string]any, partial b
 	if !partial {
 		for field := range c.Schema {
 			if _, ok := obj[field]; !ok {
-				nubo_log.Error(ctx).Str("field", field).Msg("Champ requis manquant dans le document MongoDB")
-				return nubo_error.NewInternal()
+				numan_log.Error(ctx).Str("field", field).Msg("Champ requis manquant dans le document MongoDB")
+				return numan_error.NewInternal()
 			}
 		}
 	}
@@ -110,8 +110,8 @@ func (c *Collection) validate(ctx context.Context, obj map[string]any, partial b
 			continue
 		}
 		if reflect.TypeOf(val).Kind() != expectedKind {
-			nubo_log.Error(ctx).Str("field", field).Str("expected_kind", expectedKind.String()).Str("actual_kind", reflect.TypeOf(val).Kind().String()).Msg("Type de donnée invalide détecté dans MongoDB")
-			return nubo_error.NewInternal()
+			numan_log.Error(ctx).Str("field", field).Str("expected_kind", expectedKind.String()).Str("actual_kind", reflect.TypeOf(val).Kind().String()).Msg("Type de donnée invalide détecté dans MongoDB")
+			return numan_error.NewInternal()
 		}
 	}
 	return nil
@@ -137,8 +137,8 @@ func (c *Collection) Set(obj map[string]any) error {
 	opts := options.Update().SetUpsert(true)
 
 	_, err := collection.UpdateOne(ctx, filter, update, opts)
-	nubo_log.Error(ctx).Err(err).Msg("Échec de l'opération UpdateOne sur MongoDB")
-	return nubo_error.NewInternal()
+	numan_log.Error(ctx).Err(err).Msg("Échec de l'opération UpdateOne sur MongoDB")
+	return numan_error.NewInternal()
 }
 
 // Get récupère les objets correspondant au filtre avec une projection optionnelle
@@ -155,20 +155,20 @@ func (c *Collection) Get(filter map[string]any, projection map[string]any) ([]ma
 
 	cur, err := collection.Find(ctx, filter, opts)
 	if err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Échec de l'opération Find sur MongoDB")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Échec de l'opération Find sur MongoDB")
+		return nil, numan_error.NewInternal()
 	}
 
 	defer func() {
 		if err := cur.Close(ctx); err != nil {
-			nubo_log.Error(ctx).Err(err).Str("collection", c.Name).Msg("Erreur lors de la fermeture du curseur MongoDB")
+			numan_log.Error(ctx).Err(err).Str("collection", c.Name).Msg("Erreur lors de la fermeture du curseur MongoDB")
 		}
 	}()
 
 	var results []map[string]any
 	if err := cur.All(ctx, &results); err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Échec de la lecture complète du curseur MongoDB (cur.All)")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Échec de la lecture complète du curseur MongoDB (cur.All)")
+		return nil, numan_error.NewInternal()
 	}
 
 	return results, nil
@@ -218,20 +218,20 @@ func (c *Collection) GetPaginated(filter map[string]any, sort map[string]any, sk
 
 	cur, err := collection.Find(ctx, filter, opts)
 	if err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête Find sur MongoDB")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête Find sur MongoDB")
+		return nil, numan_error.NewInternal()
 	}
 
 	defer func() {
 		if err := cur.Close(ctx); err != nil {
-			nubo_log.Error(ctx).Err(err).Str("collection", c.Name).Msg("Erreur lors de la fermeture du curseur MongoDB")
+			numan_log.Error(ctx).Err(err).Str("collection", c.Name).Msg("Erreur lors de la fermeture du curseur MongoDB")
 		}
 	}()
 
 	var results []map[string]any
 	if err := cur.All(ctx, &results); err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Échec de l'extraction des résultats du curseur MongoDB")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Échec de l'extraction des résultats du curseur MongoDB")
+		return nil, numan_error.NewInternal()
 	}
 
 	return results, nil

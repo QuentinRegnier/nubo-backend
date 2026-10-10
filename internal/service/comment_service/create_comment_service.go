@@ -4,15 +4,15 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/notification_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/notification_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -21,20 +21,20 @@ import (
 
 // CreateComment gère la création d'un commentaire, l'attribution de son score
 // initial selon l'autorité de l'auteur, et la mise à jour asynchrone des métriques.
-func CreateComment(ctx context.Context, input comment_models.CreateCommentInput) error {
+func CreateComment(ctx context.Context, callerID int64, input comment_models.CreateCommentInput) error {
 
 	// ── ÉTAPE 1 : NETTOYAGE ET VALIDATION DU CONTENU ────────────────────────
 
 	cleanContent := pkg.CleanStr(input.Content)
 	if cleanContent == "" {
-		return nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Le commentaire ne peut pas être vide.", nil)
+		return numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Le commentaire ne peut pas être vide.", nil)
 	}
 
 	// ── ÉTAPE 2 : ÉVALUATION DE L'AUTORITÉ (SPEED CACHE L1) ─────────────────
 
 	priorityLevel := 0
 
-	if userLite, errCache := cache_service.GetUserLite(ctx, input.UserID); errCache == nil {
+	if userLite, errCache := cache_service.GetUserLite(ctx, callerID); errCache == nil {
 		if userLite.Grade >= 0 && userLite.Grade <= 4 {
 			priorityLevel = userLite.Grade
 		}
@@ -48,7 +48,7 @@ func CreateComment(ctx context.Context, input comment_models.CreateCommentInput)
 	commentPayload := comment_models.CommentPayload{
 		ID:         pkg.GenerateID(),
 		PostID:     input.PostID,
-		UserID:     input.UserID,
+		UserID:     callerID,
 		Content:    cleanContent,
 		Visibility: 0,
 		LikeCount:  0,
@@ -80,17 +80,17 @@ func CreateComment(ctx context.Context, input comment_models.CreateCommentInput)
 
 	errQueue := redis.EnqueueDB(ctx, commentPayload.ID, 0, redis.EntityComment, redis.ActionCreate, commentPayload, redis.TargetAll)
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("comment_id", commentPayload.ID).Msg("Échec critique : Impossible d'enqueue la création du commentaire")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errQueue).Int64("comment_id", commentPayload.ID).Msg("Échec critique : Impossible d'enqueue la création du commentaire")
+		return numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 6 : NOTIFICATION DE L'AUTEUR DU POST (ASYNCHRONE) ─────────────
 
-	if postAuthorID != 0 && postAuthorID != input.UserID {
+	if postAuthorID != 0 && postAuthorID != callerID {
 		go func(authorID int64) {
-			errNotif := notification_service.DispatchNotification(context.Background(), authorID, input.UserID, variables.EventCommentAdded, commentPayload.ID)
+			errNotif := notification_service.DispatchNotification(context.Background(), authorID, callerID, variables.EventCommentAdded, commentPayload.ID)
 			if errNotif != nil {
-				nubo_log.Error(ctx).Err(errNotif).Int64("comment_id", commentPayload.ID).Msg("Échec de l'envoi de la notification de commentaire")
+				numan_log.Error(ctx).Err(errNotif).Int64("comment_id", commentPayload.ID).Msg("Échec de l'envoi de la notification de commentaire")
 			}
 		}(postAuthorID)
 	}

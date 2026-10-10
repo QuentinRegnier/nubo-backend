@@ -3,10 +3,10 @@ package object_cache_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 )
 
 // ############################################################################
@@ -29,18 +29,8 @@ func GetConversationFromObjectCache(ctx context.Context, conversationID int64) (
 func SetConversationInObjectCache(ctx context.Context, conversationPayload conversation_models.ConversationPayload) error {
 	errRedis := redis.Conversations.SetObject(ctx, conversationPayload.ID, conversationPayload)
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Int64("conv_id", conversationPayload.ID).Msg("Échec de l'écriture de la conversation dans l'Object Cache")
-		return nubo_error.NewInternal()
-	}
-	return nil
-}
-
-// DeleteConversationFromObjectCache supprime une conversation du cache LFU.
-func DeleteConversationFromObjectCache(ctx context.Context, conversationID int64) error {
-	errRedis := redis.Conversations.DeleteObject(ctx, conversationID)
-	if errRedis != nil {
-		nubo_log.Warn(ctx).Err(errRedis).Int64("conv_id", conversationID).Msg("Échec de la suppression de la conversation de l'Object Cache")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Int64("conv_id", conversationPayload.ID).Msg("Échec de l'écriture de la conversation dans l'Object Cache")
+		return numan_error.NewInternal()
 	}
 	return nil
 }

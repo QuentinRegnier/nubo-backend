@@ -3,13 +3,14 @@ package search_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/search_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/search_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
 )
 
 // ############################################################################
@@ -19,13 +20,17 @@ import (
 // searchCommunities orchestre la recherche ultrarapide de communautés publiques
 // via le Speed Cache (O(log(N))) et génère les URL signées pour les avatars.
 func searchCommunities(ctx context.Context, callerID int64, input search_models.CommunitySearchInput) (search_models.CommunitySearchOutput, error) {
+	var err_offset, errLimit numan_error.Error
+	input.Offset, err_offset, input.Limit, errLimit = pkg.BatchVerif(input.Offset, input.Limit)
+	if err_offset != nil || errLimit != nil {
+		return search_models.CommunitySearchOutput{}, numan_error.Combine(err_offset, errLimit)
+	}
 
 	// ── ÉTAPE 1 : RÉSOLUTION DE L'INDEX DANS LE SPEED CACHE (L1) ────────────
-
-	liteCommunitiesResults, errRedis := cache_service.SearchCommunitiesByPrefix(ctx, input.Prefix, input.Limit)
+	liteCommunitiesResults, errRedis := cache_service.SearchCommunitiesByPrefix(ctx, input.Prefix, input.Offset, input.Limit)
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Str("prefix", input.Prefix).Msg("Erreur L1 lors de la recherche des communautés")
-		return search_models.CommunitySearchOutput{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Str("prefix", input.Prefix).Msg("Erreur L1 lors de la recherche des communautés")
+		return search_models.CommunitySearchOutput{}, numan_error.NewInternal()
 	}
 
 	if len(liteCommunitiesResults) == 0 {

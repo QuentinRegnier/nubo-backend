@@ -4,14 +4,14 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/saved_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/saved_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -26,7 +26,7 @@ func ToggleSaved(ctx context.Context, userID int64, postID int64, requestedActio
 
 	// On vérifie que le post existe bien en L1 pour éviter de sauvegarder un post fantôme
 	if !object_cache_service.IsPostInObjectCache(ctx, postID) {
-		return nubo_error.NewNotFound(nubo_error.CodeNotFound, "La publication est introuvable ou indisponible.", nil)
+		return numan_error.NewNotFound(numan_error.CodeNotFound, "La publication est introuvable ou indisponible.", nil)
 	}
 
 	currentTime := time.Now().UTC()
@@ -44,7 +44,7 @@ func ToggleSaved(ctx context.Context, userID int64, postID int64, requestedActio
 		_ = object_cache_service.RemoveSavedFromZSET(ctx, userID, postID)
 
 	} else {
-		return nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Action de sauvegarde non reconnue.", nil)
+		return numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Action de sauvegarde non reconnue.", nil)
 	}
 
 	// ── ÉTAPE 3 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
@@ -59,8 +59,8 @@ func ToggleSaved(ctx context.Context, userID int64, postID int64, requestedActio
 	// PartitionKey = userID pour que le shard gérant cet utilisateur centralise ses favoris
 	errQueue := redis.EnqueueDB(ctx, savedRecordPayload.ID, userID, redis.EntitySaved, redisActionType, savedRecordPayload, redis.TargetAll)
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("post_id", postID).Msg("Échec du Write-Behind pour ToggleSaved")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errQueue).Int64("post_id", postID).Msg("Échec du Write-Behind pour ToggleSaved")
+		return numan_error.NewInternal()
 	}
 
 	return nil

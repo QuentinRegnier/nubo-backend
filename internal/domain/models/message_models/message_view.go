@@ -1,6 +1,6 @@
 package message_models
 
-import "github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
+import "github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
 
 // MessageView est le DTO envoyé au client.
 // Il embarque le payload brut du message et l'hydrate avec les données de l'expéditeur

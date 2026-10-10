@@ -4,17 +4,17 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -28,11 +28,11 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 	// ── ÉTAPE 1 : CONTRÔLE DE RANG ET DE QUOTA ──────────────────────────────
 	callerLite, errCaller := cache_service.GetUserLite(ctx, callerID)
 	if errCaller != nil || callerLite.ID == 0 {
-		return conversation_models.CreateCommunityOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Profil demandeur introuvable.", errCaller)
+		return conversation_models.CreateCommunityOutput{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Profil demandeur introuvable.", errCaller)
 	}
 
 	if callerLite.Grade < variables.CommunityMinCreationGrade {
-		return conversation_models.CreateCommunityOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous n'avez pas le grade requis pour créer une communauté publique.", nil)
+		return conversation_models.CreateCommunityOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Vous n'avez pas le grade requis pour créer une communauté publique.", nil)
 	}
 
 	// Plafond pour les collaborateurs (Grade 2)
@@ -46,7 +46,7 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 				}
 			}
 			if activeOwnedCount >= variables.MaxPublicCommunitiesColl {
-				return conversation_models.CreateCommunityOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous gérez déjà une communauté publique. Une validation est nécessaire pour en créer d'autres.", nil)
+				return conversation_models.CreateCommunityOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Vous gérez déjà une communauté publique. Une validation est nécessaire pour en créer d'autres.", nil)
 			}
 		}
 	}
@@ -57,11 +57,11 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 	if input.OwnerID != 0 && input.OwnerID != callerID {
 		if callerLite.Grade >= variables.UserGradeModerator {
 			if targetOwnerLite, errTarget := cache_service.GetUserLite(ctx, input.OwnerID); errTarget != nil || targetOwnerLite.ID == 0 {
-				return conversation_models.CreateCommunityOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "L'utilisateur désigné comme propriétaire n'existe pas.", errTarget)
+				return conversation_models.CreateCommunityOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "L'utilisateur désigné comme propriétaire n'existe pas.", errTarget)
 			}
 			designatedOwnerID = input.OwnerID
 		} else {
-			return conversation_models.CreateCommunityOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seuls les modérateurs et administrateurs peuvent attribuer la propriété à un tiers.", nil)
+			return conversation_models.CreateCommunityOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Seuls les modérateurs et administrateurs peuvent attribuer la propriété à un tiers.", nil)
 		}
 	}
 
@@ -140,11 +140,11 @@ func CreateCommunity(ctx context.Context, callerID int64, input conversation_mod
 
 	// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE WRITE-BEHIND ───────────────────────
 	if errQueue := redis.EnqueueDB(ctx, communityPayload.ID, communityPayload.ID, redis.EntityConversation, redis.ActionCreate, communityPayload, redis.TargetAll); errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("conv_id", communityPayload.ID).Msg("Échec d'enqueue de la communauté")
+		numan_log.Error(ctx).Err(errQueue).Int64("conv_id", communityPayload.ID).Msg("Échec d'enqueue de la communauté")
 	}
 
 	if errQueue := redis.EnqueueDB(ctx, ownerMemberPayload.ID, communityPayload.ID, redis.EntityMembers, redis.ActionCreate, ownerMemberPayload, redis.TargetAll); errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("member_id", ownerMemberPayload.ID).Msg("Échec d'enqueue du propriétaire de la communauté")
+		numan_log.Error(ctx).Err(errQueue).Int64("member_id", ownerMemberPayload.ID).Msg("Échec d'enqueue du propriétaire de la communauté")
 	}
 
 	if adminCreatorPayload != nil {

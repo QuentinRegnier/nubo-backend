@@ -2,22 +2,22 @@ package conversation_service
 
 import (
 	"context"
-	"strconv"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -36,7 +36,7 @@ func UpdateConversation(ctx context.Context, callerID int64, conversationID int6
 	}
 
 	if conversationPayload.Type == variables.ConversationTypeDirect {
-		return conversation_models.UpdateConversationOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Impossible de modifier les métadonnées ou les paramètres d'un message privé.", nil)
+		return conversation_models.UpdateConversationOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Impossible de modifier les métadonnées ou les paramètres d'un message privé.", nil)
 	}
 
 	// ── ÉTAPE 2 : ÉVALUATION ET APPLICATION DES MODIFICATIONS ───────────────
@@ -81,7 +81,7 @@ func UpdateConversation(ctx context.Context, callerID int64, conversationID int6
 		if (input.Description != "" && input.Description != conversationPayload.Description) ||
 			(input.AvatarID != 0 && input.AvatarID != conversationPayload.AvatarID) ||
 			(input.ExternalLink.URL != "" || input.ExternalLink.Title != "") {
-			return conversation_models.UpdateConversationOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seules les communautés publiques peuvent posséder une description, un avatar ou un lien externe.", nil)
+			return conversation_models.UpdateConversationOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Seules les communautés publiques peuvent posséder une description, un avatar ou un lien externe.", nil)
 		}
 	}
 
@@ -112,8 +112,8 @@ func UpdateConversation(ctx context.Context, callerID int64, conversationID int6
 
 	errQueue := redis.EnqueueDB(ctx, conversationPayload.ID, conversationPayload.ID, redis.EntityConversation, redis.ActionUpdate, conversationPayload, redis.TargetAll)
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("conv_id", conversationPayload.ID).Msg("Échec du Write-Behind lors de la modification de la conversation")
-		return conversation_models.UpdateConversationOutput{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errQueue).Int64("conv_id", conversationPayload.ID).Msg("Échec du Write-Behind lors de la modification de la conversation")
+		return conversation_models.UpdateConversationOutput{}, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 5 : DÉLÉGATION WEBSOCKETS ET ROUTINES DE FOND ─────────────────
@@ -124,17 +124,12 @@ func UpdateConversation(ctx context.Context, callerID int64, conversationID int6
 		// A. Émission Temps Réel (WebSockets)
 		errBroadcast := realtime_service.BroadcastToConversation(backgroundContext, convID, "conversation.updated", payload)
 		if errBroadcast != nil {
-			nubo_log.Error(ctx).Err(errBroadcast).Msg("Erreur d'émission WebSocket pour conversation.updated")
+			numan_log.Error(ctx).Err(errBroadcast).Msg("Erreur d'émission WebSocket pour conversation.updated")
 		}
 
 		// B. SYNC LEDGER (Trigger d'Invalition Mutuelle Global)
 		participantsStringList, _ := redis.ConvParticipants.SMembers(backgroundContext, convID)
-		var syncTargetIDs []int64
-		for _, participantStr := range participantsStringList {
-			if parsedID, errParse := strconv.ParseInt(participantStr, 10, 64); errParse == nil {
-				syncTargetIDs = append(syncTargetIDs, parsedID)
-			}
-		}
+		syncTargetIDs := pkg.ParseInt64List(participantsStringList)
 		_ = cache_service.RecordConversationMutation(backgroundContext, convID, syncTargetIDs)
 
 		// C. Traitement massif des membres si la communauté vient d'être passée en "Entrée Libre"

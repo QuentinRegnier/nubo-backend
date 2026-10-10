@@ -4,12 +4,12 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/sync_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/conversation_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/sync_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/conversation_service"
 )
 
 // ############################################################################
@@ -57,8 +57,8 @@ func SyncInbox(ctx context.Context, callerID int64, input sync_models.SyncInboxI
 
 	inboxPaginatedData, errInbox := conversation_service.GetUserConversationsPaginated(ctx, callerID, inboxRequestInput)
 	if errInbox != nil {
-		nubo_log.Error(ctx).Err(errInbox).Int64("user_id", callerID).Msg("Erreur critique lors de la synchronisation de l'inbox.")
-		return syncOutput, nubo_error.NewInternal() // Protection des détails d'infrastructure
+		numan_log.Error(ctx).Err(errInbox).Int64("user_id", callerID).Msg("Erreur critique lors de la synchronisation de l'inbox.")
+		return syncOutput, numan_error.NewInternal() // Protection des détails d'infrastructure
 	}
 
 	syncOutput.Conversations = inboxPaginatedData.Conversations

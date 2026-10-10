@@ -19,7 +19,7 @@ var asyncWriter diode.Writer
 func InitLogger() {
 	// 1. ROTATION DES LOGS (Lumberjack)
 	fileLogger := &lumberjack.Logger{
-		Filename:   "logs/nubo.log",
+		Filename:   "logs/numan.log",
 		MaxSize:    50,
 		MaxBackups: 5,
 		MaxAge:     28,

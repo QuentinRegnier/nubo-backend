@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
 )
 
 // FuncSearchPostIDsByTag appelle la procédure SQL de recherche par tag avec tri.
@@ -14,13 +14,13 @@ func FuncSearchPostIDsByTag(ctx context.Context, tag string, orderMode int, offs
 	query := `SELECT id FROM content.func_search_post_ids_by_tag($1, $2::smallint, $3::integer, $4::integer)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, tag, orderMode, offset, limit)
 	if err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête SQL (QueryContext)")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête SQL (QueryContext)")
+		return nil, numan_error.NewInternal()
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres Search Tag)")
+			numan_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres Search Tag)")
 		}
 	}(rows)
 

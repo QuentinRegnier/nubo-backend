@@ -1,6 +1,6 @@
 package member_models
 
-import "github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
+import "github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
 
 // MemberView est le DTO envoyé au client (notamment via WebSockets).
 // Il embarque le payload brut du membre et l'hydrate avec les métadonnées de l'utilisateur.

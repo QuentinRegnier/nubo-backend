@@ -2,11 +2,11 @@ package realtime_service
 
 import (
 	"context"
-	"strconv"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -34,12 +34,7 @@ func BroadcastToConversation(ctx context.Context, conversationID int64, eventTyp
 		return nil
 	}
 
-	var targetUserIDs []int64
-	for _, participantStr := range participantsStringList {
-		if parsedID, errParse := strconv.ParseInt(participantStr, 10, 64); errParse == nil {
-			targetUserIDs = append(targetUserIDs, parsedID)
-		}
-	}
+	targetUserIDs := pkg.ParseInt64List(participantsStringList)
 
 	return DistributeToUsers(ctx, eventType, eventPayload, targetUserIDs)
 }

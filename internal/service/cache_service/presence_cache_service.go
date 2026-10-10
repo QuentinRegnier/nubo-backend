@@ -4,9 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/sync_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 )
 
 // ############################################################################
@@ -20,15 +22,15 @@ func MarkUserOnline(ctx context.Context, userID int64) error {
 	// 1. On stocke une simple string "1" pour minimiser l'empreinte RAM (O(1))
 	errRedis := redis.Presence.SetPrimitive(ctx, userID, "1")
 	if errRedis != nil {
-		nubo_log.Warn(ctx).Err(errRedis).Int64("user_id", userID).Msg("Impossible de marquer l'utilisateur comme en ligne dans le cache")
-		return nubo_error.NewInternal()
+		numan_log.Warn(ctx).Err(errRedis).Int64("user_id", userID).Msg("Impossible de marquer l'utilisateur comme en ligne dans le cache")
+		return numan_error.NewInternal()
 	}
 
 	// 2. Application stricte du TTL de 90 secondes (Lissage de déconnexion)
 	errExpire := redis.Expire(ctx, redis.Presence.Key(userID), 90*time.Second)
 	if errExpire != nil {
-		nubo_log.Warn(ctx).Err(errExpire).Int64("user_id", userID).Msg("Impossible de prolonger le TTL de présence")
-		return nubo_error.NewInternal()
+		numan_log.Warn(ctx).Err(errExpire).Int64("user_id", userID).Msg("Impossible de prolonger le TTL de présence")
+		return numan_error.NewInternal()
 	}
 
 	return nil
@@ -38,7 +40,7 @@ func MarkUserOnline(ctx context.Context, userID int64) error {
 func IsUserOnline(ctx context.Context, userID int64) bool {
 	isOnline, errRedis := redis.Presence.Exists(ctx, userID)
 	if errRedis != nil {
-		nubo_log.Warn(ctx).Err(errRedis).Int64("user_id", userID).Msg("Échec de la vérification de présence L1")
+		numan_log.Warn(ctx).Err(errRedis).Int64("user_id", userID).Msg("Échec de la vérification de présence L1")
 		return false // En cas de doute ou de panne cache, on considère hors-ligne
 	}
 	return isOnline
@@ -46,30 +48,33 @@ func IsUserOnline(ctx context.Context, userID int64) bool {
 
 // AreUsersOnline récupère le statut de présence d'un lot d'utilisateurs en O(1) réseau.
 // Utilise l'abstraction DDD de la Collection pour faire un MGET propre et ultra-rapide.
-func AreUsersOnline(ctx context.Context, requestedUserIDs []int64) (map[int64]bool, error) {
+func AreUsersOnline(ctx context.Context, input sync_models.SyncPresenceInput) (map[int64]bool, error) {
+	if err := pkg.ListLimitVerifDefault(input.UserIDs); err != nil {
+		return nil, err
+	}
 	presenceResultsMap := make(map[int64]bool)
 
-	if len(requestedUserIDs) == 0 {
+	if len(input.UserIDs) == 0 {
 		return presenceResultsMap, nil
 	}
 
 	// Conversion du []int64 en []any exigé par la signature MGet de l'abstraction
-	userIDsAsAny := make([]any, len(requestedUserIDs))
-	for index, id := range requestedUserIDs {
+	userIDsAsAny := make([]any, len(input.UserIDs))
+	for index, id := range input.UserIDs {
 		userIDsAsAny[index] = id
 	}
 
 	// Appel pur au repository/redis via la méthode abstraite MGet
 	redisValues, errRedis := redis.Presence.MGet(ctx, userIDsAsAny...)
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Msg("Échec du MGet sur la collection de Présence")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Msg("Échec du MGet sur la collection de Présence")
+		return nil, numan_error.NewInternal()
 	}
 
 	for index, cachedValue := range redisValues {
 		// val est nil si la clé n'existe pas (TTL de 90s expiré)
 		// S'il y a quelque chose (le string "1" posé par MarkUserOnline), l'utilisateur est en ligne
-		presenceResultsMap[requestedUserIDs[index]] = cachedValue != nil
+		presenceResultsMap[input.UserIDs[index]] = cachedValue != nil
 	}
 
 	return presenceResultsMap, nil

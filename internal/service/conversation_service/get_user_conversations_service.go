@@ -4,18 +4,19 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -24,6 +25,11 @@ import (
 
 // GetUserConversationsPaginated récupère l'inbox avec une cascade complète et promotion en mémoire.
 func GetUserConversationsPaginated(ctx context.Context, callerID int64, input conversation_models.GetUserConversationsInput) (conversation_models.GetUserInboxOutput, error) {
+	var err_offset, err_limit numan_error.Error
+	input.Offset, err_offset, input.Limit, err_limit = pkg.BatchVerif(input.Offset, input.Limit)
+	if err_offset != nil || err_limit != nil {
+		return conversation_models.GetUserInboxOutput{}, numan_error.Combine(err_offset, err_limit)
+	}
 	var rawInboxItems []cache_service.InboxItemView
 
 	// ── ÉTAPE 0 : GESTION DU MODE FORCE (PURGE RAM L1) ──────────────────────
@@ -83,8 +89,8 @@ func GetUserConversationsPaginated(ctx context.Context, callerID int64, input co
 	if len(rawInboxItems) == 0 {
 		postgresConversations, errPostgres := postgres.FuncLoadConversationPaginated(ctx, callerID, input.Limit, input.Offset)
 		if errPostgres != nil {
-			nubo_log.Error(ctx).Err(errPostgres).Int64("user_id", callerID).Msg("Erreur L3 lors du chargement de l'inbox")
-			return conversation_models.GetUserInboxOutput{}, nubo_error.NewInternal() // Erreur SQL protégée
+			numan_log.Error(ctx).Err(errPostgres).Int64("user_id", callerID).Msg("Erreur L3 lors du chargement de l'inbox")
+			return conversation_models.GetUserInboxOutput{}, numan_error.NewInternal() // Erreur SQL protégée
 		}
 
 		for _, record := range postgresConversations {
@@ -143,7 +149,7 @@ func GetUserConversationsPaginated(ctx context.Context, callerID int64, input co
 			if errParticipants == nil {
 				for _, participantStr := range participantsStringList {
 					if participantStr != callerIDString {
-						if otherParticipantID, errParse := strconv.ParseInt(participantStr, 10, 64); errParse == nil {
+						if otherParticipantID := pkg.ParseInt64(participantStr); otherParticipantID != 0 {
 							if otherUserLite, errLite := cache_service.GetUserLite(ctx, otherParticipantID); errLite == nil {
 								displayTitle = otherUserLite.Username
 							}

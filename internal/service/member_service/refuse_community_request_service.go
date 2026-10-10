@@ -4,20 +4,20 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -35,7 +35,7 @@ func RefuseCommunityRequest(ctx context.Context, callerID int64, input member_mo
 	}
 
 	if callerMemberPayload.Role < variables.MemberRoleAdmin {
-		return member_models.RefuseCommunityRequestOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous devez être administrateur pour rejeter une candidature.", nil)
+		return member_models.RefuseCommunityRequestOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Vous devez être administrateur pour rejeter une candidature.", nil)
 	}
 
 	// ── ÉTAPE 2 : RÉCUPÉRATION DE LA CANDIDATURE (CASCADE L1 -> L2 -> L3) ───
@@ -52,11 +52,11 @@ func RefuseCommunityRequest(ctx context.Context, callerID int64, input member_mo
 			var errPg error
 			targetMemberPayload, errPg = postgres.FuncGetMember(ctx, input.ConversationID, input.TargetUserID)
 			if errPg != nil {
-				nubo_log.Error(ctx).Err(errPg).Int64("user_id", input.TargetUserID).Msg("Échec L3 de la récupération du candidat refusé")
-				return member_models.RefuseCommunityRequestOutput{}, nubo_error.NewInternal()
+				numan_log.Error(ctx).Err(errPg).Int64("user_id", input.TargetUserID).Msg("Échec L3 de la récupération du candidat refusé")
+				return member_models.RefuseCommunityRequestOutput{}, numan_error.NewInternal()
 			}
 			if targetMemberPayload.ID == 0 {
-				return member_models.RefuseCommunityRequestOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Candidature introuvable.", nil)
+				return member_models.RefuseCommunityRequestOutput{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Candidature introuvable.", nil)
 			}
 
 			// AUTO-GUÉRISON L3 -> L2
@@ -71,7 +71,7 @@ func RefuseCommunityRequest(ctx context.Context, callerID int64, input member_mo
 	}
 
 	if targetMemberPayload.Role != variables.MemberRolePending {
-		return member_models.RefuseCommunityRequestOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Cet utilisateur n'est pas en attente d'approbation.", nil)
+		return member_models.RefuseCommunityRequestOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Cet utilisateur n'est pas en attente d'approbation.", nil)
 	}
 
 	// ── ÉTAPE 3 : APPLICATION DU REJET ──────────────────────────────────────
@@ -103,8 +103,8 @@ func RefuseCommunityRequest(ctx context.Context, callerID int64, input member_mo
 
 	errQueue := redis.EnqueueDB(ctx, targetMemberPayload.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMemberPayload, redis.TargetAll)
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("user_id", targetMemberPayload.UserID).Msg("Échec du Write-Behind pour le rejet d'une candidature")
-		return member_models.RefuseCommunityRequestOutput{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errQueue).Int64("user_id", targetMemberPayload.UserID).Msg("Échec du Write-Behind pour le rejet d'une candidature")
+		return member_models.RefuseCommunityRequestOutput{}, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 6 : NOTIFICATION TEMPS RÉEL SILENCIEUSE ───────────────────────

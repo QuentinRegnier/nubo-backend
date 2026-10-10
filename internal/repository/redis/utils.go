@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	redisgo "github.com/QuentinRegnier/numan-backend/internal/infrastructure/redis"
 )
 
 // Exists vérifie rapidement si une clé brute est présente (O(1))

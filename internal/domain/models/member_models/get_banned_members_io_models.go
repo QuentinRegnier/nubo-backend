@@ -1,6 +1,6 @@
 package member_models
 
-import "github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
+import "github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
 
 // GetBannedMembersInput valide les paramètres du JSON pour récupérer la liste
 type GetBannedMembersInput struct {

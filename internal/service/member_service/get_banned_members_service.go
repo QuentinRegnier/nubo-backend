@@ -3,16 +3,16 @@ package member_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -29,7 +29,7 @@ func GetBannedMembers(ctx context.Context, callerID int64, input member_models.G
 	}
 
 	if callerMemberPayload.Role < variables.MemberRoleAdmin {
-		return member_models.GetBannedMembersOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seuls les administrateurs ont accès à la liste des utilisateurs bannis.", nil)
+		return member_models.GetBannedMembersOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Seuls les administrateurs ont accès à la liste des utilisateurs bannis.", nil)
 	}
 
 	// ── ÉTAPE 2 : RÉCUPÉRATION DIRECTE DEPUIS POSTGRESQL (L3) ───────────────
@@ -37,8 +37,8 @@ func GetBannedMembers(ctx context.Context, callerID int64, input member_models.G
 	// pour économiser la RAM, on interroge donc directement le stockage à froid.
 	bannedMembersPayloads, errPg := postgres.FuncLoadMembersByRolePaginated(ctx, input.ConversationID, variables.MemberRoleBanned, input.Limit, input.Offset)
 	if errPg != nil {
-		nubo_log.Error(ctx).Err(errPg).Int64("conv_id", input.ConversationID).Msg("Échec L3 lors de la récupération de la liste des bannis")
-		return member_models.GetBannedMembersOutput{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errPg).Int64("conv_id", input.ConversationID).Msg("Échec L3 lors de la récupération de la liste des bannis")
+		return member_models.GetBannedMembersOutput{}, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 3 : HYDRATATION EN MASSE DES PROFILS ──────────────────────────

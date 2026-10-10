@@ -5,29 +5,29 @@ import (
 	"os"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/auth_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/comment_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/conversation_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/feed_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/like_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/media_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/member_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/message_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/notification_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/post_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/profile_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/relation_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/report_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/saved_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/search_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/security_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/sync_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/telemetry_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/handlers/user_settings_handlers"
-	"github.com/QuentinRegnier/nubo-backend/internal/api/websocket"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/auth_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/comment_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/conversation_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/feed_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/like_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/media_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/member_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/message_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/notification_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/post_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/profile_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/relation_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/report_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/saved_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/search_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/security_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/sync_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/telemetry_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/handlers/user_settings_handlers"
+	"github.com/QuentinRegnier/numan-backend/internal/api/websocket"
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/api/middleware"
+	"github.com/QuentinRegnier/numan-backend/internal/api/middleware"
 	"github.com/gin-gonic/gin"
 )
 
@@ -59,8 +59,8 @@ func SetupRoutes(r *gin.Engine) {
 
 	// Renouvellement de Tokens (Ratchet / Master)
 	// Ces routes gèrent leur propre sécurité (HMAC spécial, checks BDD...)
-	r.POST("/renew-jwt", security_handlers.RenewJWT)
-	r.POST("/refresh-master", security_handlers.RefreshMaster)
+	r.POST("/refresh/jwt", security_handlers.RefreshJWT)
+	r.POST("/refresh/master", security_handlers.RefreshMaster)
 
 	// WebSocket
 	r.GET("/token", func(c *gin.Context) {
@@ -117,7 +117,7 @@ func SetupRoutes(r *gin.Engine) {
 	secured.POST("/sync/identity", sync_handlers.SyncIdentityHandler)         //
 	secured.POST("/sync/activity", sync_handlers.SyncActivityHandler)         //
 	secured.POST("/sync/deltas", sync_handlers.GetDeltasHandler)
-	secured.POST("/sync/conversations/messages", sync_handlers.SyncMessagesHandler)
+	secured.POST("/sync/messages", sync_handlers.SyncMessagesHandler)
 
 	// --- Actions Sociales ---
 	secured.POST("/like/post/set", like_handlers.LikePostHandler)       //
@@ -144,7 +144,7 @@ func SetupRoutes(r *gin.Engine) {
 	secured.DELETE("/saved/delete", saved_handlers.UnsavePostHandler) //
 
 	// --- Reglage ---
-	secured.PUT("/settings/profile/update", auth_handlers.UpdateProfileHandler)                        //
+	secured.PUT("/settings/profile/update", user_settings_handlers.UpdateProfileHandler)               //
 	secured.PATCH("/settings/privacy/update", user_settings_handlers.UpdatePrivacyHandler)             //
 	secured.PATCH("/settings/notifications/update", user_settings_handlers.UpdateNotificationsHandler) //
 	secured.PATCH("/settings/display/update", user_settings_handlers.UpdateDisplayHandler)             //
@@ -164,18 +164,17 @@ func SetupRoutes(r *gin.Engine) {
 	secured.GET("/information-message", LoadAdminInformationMessageHandler)     // ℹ️❌
 
 	// --- Messagerie / Groupes ---
-	secured.POST("/conversation/user/get", conversation_handlers.GetUserConversationsHandler)                      //
-	secured.POST("/conversation/get", conversation_handlers.GetUserConversationsHandler)                           //
-	secured.POST("/conversation/members/get", member_handlers.GetConversationMembersHandler)                       //
-	secured.POST("/conversation/suggest", conversation_handlers.SuggestContactsHandler)                            //
-	secured.POST("/conversation/set", conversation_handlers.CreateConversationHandler)                             //
-	secured.POST("/conversation/community/set", conversation_handlers.CreateCommunityHandler)                      //
-	secured.POST("conversation/community/members/requests/get", member_handlers.GetCommunityRequestsHandler)       //
-	secured.POST("conversation/community/members/requests/accept", member_handlers.AcceptCommunityRequestHandler)  //
-	secured.POST("conversation/community/members/requests/refusal", member_handlers.RefuseCommunityRequestHandler) //
-	secured.POST("/conversations/details", conversation_handlers.GetConversationsHandler)                          //
-	secured.PUT("/conversation/update", conversation_handlers.UpdateConversationHandler)                           //
-	secured.PATCH("/conversation/settings", member_handlers.UpdateMemberSettingsHandler)                           //
+	secured.POST("/conversation/user/get", conversation_handlers.GetUserConversationsHandler)                       //
+	secured.POST("/conversation/get", conversation_handlers.GetConversationsHandler)                                //
+	secured.POST("/conversation/members/get", member_handlers.GetConversationMembersHandler)                        //
+	secured.POST("/conversation/suggest", conversation_handlers.SuggestContactsHandler)                             //
+	secured.POST("/conversation/set", conversation_handlers.CreateConversationHandler)                              //
+	secured.POST("/conversation/community/set", conversation_handlers.CreateCommunityHandler)                       //
+	secured.POST("/conversation/community/members/requests/get", member_handlers.GetCommunityRequestsHandler)       //
+	secured.POST("/conversation/community/members/requests/accept", member_handlers.AcceptCommunityRequestHandler)  //
+	secured.POST("/conversation/community/members/requests/refusal", member_handlers.RefuseCommunityRequestHandler) // 	//
+	secured.PUT("/conversation/update", conversation_handlers.UpdateConversationHandler)                            //
+	secured.PATCH("/conversation/settings", member_handlers.UpdateMemberSettingsHandler)                            //
 	secured.POST("/conversations/members/mute", member_handlers.MuteMemberHandler)
 	secured.POST("/conversations/members/muted", member_handlers.GetMutedMembersHandler)
 	secured.POST("/conversation/pin", conversation_handlers.PinConversationHandler)        //
@@ -206,61 +205,181 @@ func SetupRoutes(r *gin.Engine) {
 	secured.POST("/report", report_handlers.CreateReportHandler) //
 }
 
+// BanHandler godoc
+// @Summary      Ban a User (Mock)
+// @Description  **Ban a User (Mock)**
+// @Description
+// @Description  Mock endpoint to ban a user. Returns a hardcoded JSON response.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} map[string]string "message: user banned"
+// @Router       /ban [post]
 func BanHandler(c *gin.Context) {
 	// TODO: gérer les bans
 	c.JSON(http.StatusOK, gin.H{"message": "user banned"})
 }
 
+// RestrictionHandler godoc
+// @Summary      Restrict a User (Mock)
+// @Description  **Restrict a User (Mock)**
+// @Description
+// @Description  Mock endpoint to restrict a user. Returns a hardcoded JSON response.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} map[string]string "message: user restricted"
+// @Router       /restriction [post]
 func RestrictionHandler(c *gin.Context) {
 	// TODO: gérer les restrictions
 	c.JSON(http.StatusOK, gin.H{"message": "user restricted"})
 }
 
+// WarningHandler godoc
+// @Summary      Warn a User (Mock)
+// @Description  **Warn a User (Mock)**
+// @Description
+// @Description  Mock endpoint to warn a user. Returns a hardcoded JSON response.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} map[string]string "message: user warned"
+// @Router       /warning [post]
 func WarningHandler(c *gin.Context) {
 	// TODO: gérer les avertissements
 	c.JSON(http.StatusOK, gin.H{"message": "user warned"})
 }
 
+// LoadReportHandler godoc
+// @Summary      Load Reports (Mock)
+// @Description  **Load Reports (Mock)**
+// @Description
+// @Description  Mock endpoint to load reports. Returns a hardcoded JSON response.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} map[string][]string "reports: list of reports"
+// @Router       /reports [get]
 func LoadReportHandler(c *gin.Context) {
 	// TODO: charger les rapports depuis la base
 	c.JSON(http.StatusOK, gin.H{"reports": []string{"reports 1", "reports 2"}})
 }
 
+// CloseReportHandler godoc
+// @Summary      Close Report (Mock)
+// @Description  **Close Report (Mock)**
+// @Description
+// @Description  Mock endpoint to close a report. Returns a hardcoded JSON response.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} map[string]string "message: report closed"
+// @Router       /report [delete]
 func CloseReportHandler(c *gin.Context) {
 	// TODO: fermer un rapport
 	c.JSON(http.StatusOK, gin.H{"message": "report closed"})
 }
 
+// UpdateManagerReportHandler godoc
+// @Summary      Update Manager Report (Mock)
+// @Description  **Update Manager Report (Mock)**
+// @Description
+// @Description  Mock endpoint to update manager report. Returns a hardcoded JSON response.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} map[string]string "message: update manager report"
+// @Router       /report [put]
 func UpdateManagerReportHandler(c *gin.Context) {
 	// TODO: gérer la mise à jour du manager d'un rapport
 	c.JSON(http.StatusOK, gin.H{"message": "update manager report"})
 }
 
+// LoadAdminInformationUserHandler godoc
+// @Summary      Load Admin Info for User (Mock)
+// @Description  **Load Admin Info for User (Mock)**
+// @Description
+// @Description  Mock endpoint.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} map[string]string "message: information user"
+// @Router       /information-user [get]
 func LoadAdminInformationUserHandler(c *gin.Context) {
 	// TODO: charger les informations d'un utilisateur
 	c.JSON(http.StatusOK, gin.H{"message": "information user"})
 }
 
+// LoadAdminInformationGroupHandler godoc
+// @Summary      Load Admin Info for Group (Mock)
+// @Description  **Load Admin Info for Group (Mock)**
+// @Description
+// @Description  Mock endpoint.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} map[string]string "message: information group"
+// @Router       /information-group [get]
 func LoadAdminInformationGroupHandler(c *gin.Context) {
 	// TODO: charger les informations d'un groupe
 	c.JSON(http.StatusOK, gin.H{"message": "information group"})
 }
 
+// LoadAdminInformationCommunityHandler godoc
+// @Summary      Load Admin Info for Community (Mock)
+// @Description  **Load Admin Info for Community (Mock)**
+// @Description
+// @Description  Mock endpoint.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} map[string]string "message: information community"
+// @Router       /information-community [get]
 func LoadAdminInformationCommunityHandler(c *gin.Context) {
 	// TODO: charger les informations d'une communauté
 	c.JSON(http.StatusOK, gin.H{"message": "information community"})
 }
 
+// LoadAdminInformationPostHandler godoc
+// @Summary      Load Admin Info for Post (Mock)
+// @Description  **Load Admin Info for Post (Mock)**
+// @Description
+// @Description  Mock endpoint.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} map[string]string "message: information post_service"
+// @Router       /information-post [get]
 func LoadAdminInformationPostHandler(c *gin.Context) {
 	// TODO: charger les informations d'un post_service
 	c.JSON(http.StatusOK, gin.H{"message": "information post_service"})
 }
 
+// LoadAdminInformationCommentHandler godoc
+// @Summary      Load Admin Info for Comment (Mock)
+// @Description  **Load Admin Info for Comment (Mock)**
+// @Description
+// @Description  Mock endpoint.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} map[string]string "message: information comment"
+// @Router       /information-comment [get]
 func LoadAdminInformationCommentHandler(c *gin.Context) {
 	// TODO: charger les informations d'un commentaire
 	c.JSON(http.StatusOK, gin.H{"message": "information comment"})
 }
 
+// LoadAdminInformationMessageHandler godoc
+// @Summary      Load Admin Info for Message (Mock)
+// @Description  **Load Admin Info for Message (Mock)**
+// @Description
+// @Description  Mock endpoint.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} map[string]string "message: information message"
+// @Router       /information-message [get]
 func LoadAdminInformationMessageHandler(c *gin.Context) {
 	// TODO: charger les informations d'un message
 	c.JSON(http.StatusOK, gin.H{"message": "information message"})

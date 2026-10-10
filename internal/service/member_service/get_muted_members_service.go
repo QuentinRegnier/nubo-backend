@@ -3,16 +3,17 @@ package member_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -22,6 +23,11 @@ import (
 // GetMutedMembers récupère la liste des utilisateurs mutés (Interdiction d'écrire).
 // Réservé aux administrateurs (1) et propriétaires (2) du groupe.
 func GetMutedMembers(ctx context.Context, callerID int64, input member_models.GetMutedMembersInput) (member_models.GetMutedMembersOutput, error) {
+	var err_offset, err_limit numan_error.Error
+	input.Offset, err_offset, input.Limit, err_limit = pkg.BatchVerif(input.Offset, input.Limit)
+	if err_offset != nil || err_limit != nil {
+		return member_models.GetMutedMembersOutput{}, numan_error.Combine(err_offset, err_limit)
+	}
 
 	// ── ÉTAPE 1 : CONTRÔLE D'ACCÈS (SÉCURITÉ ZERO-TRUST) ────────────────────
 
@@ -30,7 +36,7 @@ func GetMutedMembers(ctx context.Context, callerID int64, input member_models.Ge
 		return member_models.GetMutedMembersOutput{}, errSecurity
 	}
 	if callerMemberPayload.Role < variables.MemberRoleAdmin {
-		return member_models.GetMutedMembersOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seuls les administrateurs ont accès à cette liste.", nil)
+		return member_models.GetMutedMembersOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Seuls les administrateurs ont accès à cette liste.", nil)
 	}
 
 	// ── ÉTAPE 2 : RÉCUPÉRATION DEPUIS LA SOURCE DE VÉRITÉ (POSTGRESQL L3) ───
@@ -39,8 +45,8 @@ func GetMutedMembers(ctx context.Context, callerID int64, input member_models.Ge
 	// On interroge donc directement le stockage à froid pour filtrer sur "RestrictedUntil".
 	mutedRecords, errPg := postgres.FuncLoadMutedMembersPaginated(ctx, input.ConversationID, input.Limit, input.Offset)
 	if errPg != nil {
-		nubo_log.Error(ctx).Err(errPg).Int64("conv_id", input.ConversationID).Msg("Échec L3 lors de la récupération de la liste des membres mutés")
-		return member_models.GetMutedMembersOutput{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errPg).Int64("conv_id", input.ConversationID).Msg("Échec L3 lors de la récupération de la liste des membres mutés")
+		return member_models.GetMutedMembersOutput{}, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 3 : HYDRATATION EN MASSE VIA SPEED CACHE (L1) ─────────────────

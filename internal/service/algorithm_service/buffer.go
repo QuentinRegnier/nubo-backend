@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 )
 
 // ############################################################################
@@ -19,7 +19,7 @@ type feedData struct {
 	Fused   bool    `json:"fused" msgpack:"fused"`       // Indique si le panier a déjà fusionné avec ses voisins
 }
 
-// FeedState est la structure interne stockée physiquement dans Redis.
+// feedState est la structure interne stockée physiquement dans Redis.
 // Elle remplace l'ancienne pagination rigide par un modèle de tampons tournants.
 type FeedState struct {
 	GeneratedAt time.Time           `json:"generated_at" msgpack:"generated_at"`
@@ -33,7 +33,7 @@ func GetUserFeedState(ctx context.Context, userID int64) (FeedState, error) {
 	err := redis.FeedsObject.GetObject(ctx, userID, &state)
 	if err != nil {
 		// On sécurise l'erreur : si ça ne vient pas de Redis, c'est que la clé n'existe pas.
-		return state, nubo_error.NewInternal()
+		return state, numan_error.NewInternal()
 	}
 	return state, nil
 }
@@ -42,7 +42,7 @@ func GetUserFeedState(ctx context.Context, userID int64) (FeedState, error) {
 func saveUserFeedState(ctx context.Context, userID int64, state FeedState) error {
 	err := redis.FeedsObject.SetObject(ctx, userID, state)
 	if err != nil {
-		return nubo_error.NewInternal()
+		return numan_error.NewInternal()
 	}
 	return nil
 }
@@ -52,7 +52,7 @@ func saveUserFeedState(ctx context.Context, userID int64, state FeedState) error
 func DeleteUserFeedState(ctx context.Context, userID int64) error {
 	err := redis.FeedsObject.DeleteObject(ctx, userID)
 	if err != nil {
-		return nubo_error.NewInternal()
+		return numan_error.NewInternal()
 	}
 	return nil
 }

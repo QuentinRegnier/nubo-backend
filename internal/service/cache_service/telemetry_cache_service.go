@@ -3,78 +3,78 @@ package cache_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/user_settings_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 )
 
 // ############################################################################
 // # SERVICE : GESTION CACHE DE LA TÉLÉMÉTRIE SÉMANTIQUE
 // ############################################################################
 
-// GetTelemetryVector récupère le dernier vecteur profil de l'utilisateur (ADN algorithmique).
-func GetTelemetryVector(ctx context.Context, userID int64) ([]float32, error) {
-	var userVector []float32
-	errRedis := redis.TelemetryVectors.GetObject(ctx, userID, &userVector)
+// GetTelemetryProfile récupère le profil télémétrique unifié (Vector, Tags, Confidence, Timestamp).
+// Implémente le fallback L1 (Redis) -> L2 (Mongo) -> L3 (Postgres).
+func GetTelemetryProfile(ctx context.Context, userID int64) (lite_models.TelemetryProfileLite, error) {
+	var profile lite_models.TelemetryProfileLite
 
-	if errRedis != nil {
-		return nil, nubo_error.NewInternal()
+	// ── L1 : REDIS ──────────────────────────────────
+	errRedis := redis.TelemetryProfiles.GetObject(ctx, userID, &profile)
+	if errRedis == nil {
+		return profile, nil
 	}
 
-	return userVector, nil
+	// ── L2 : MONGODB ────────────────────────────────
+	var mongoSettings user_settings_models.UserSettingsPayload
+	mongoDocs, errMongo := mongo.UserSettings.Get(map[string]any{"user_id": userID}, nil)
+	if errMongo == nil && len(mongoDocs) > 0 {
+		if errStruct := pkg.ToStruct(mongoDocs[0], &mongoSettings); errStruct == nil {
+			profile = lite_models.TelemetryProfileLite{
+				Vector:          mongoSettings.TelemetryVector,
+				TopTags:         mongoSettings.TelemetryTags,
+				ConfidenceScore: 0.0,
+				TimestampMs:     mongoSettings.TelemetryTimestamp,
+			}
+			go func(p lite_models.TelemetryProfileLite, uID int64) {
+				_ = SetTelemetryProfile(context.Background(), uID, p)
+			}(profile, userID)
+			return profile, nil
+		}
+	}
+
+	// ── L3 : POSTGRESQL ─────────────────────────────
+	postgresSettings, errPg := postgres.FuncLoadUserSettings(ctx, userID)
+	if errPg == nil && postgresSettings.ID != 0 {
+		profile = lite_models.TelemetryProfileLite{
+			Vector:          postgresSettings.TelemetryVector,
+			TopTags:         postgresSettings.TelemetryTags,
+			ConfidenceScore: 0.0,
+			TimestampMs:     postgresSettings.TelemetryTimestamp,
+		}
+		go func(p lite_models.TelemetryProfileLite, uID int64) {
+			_ = SetTelemetryProfile(context.Background(), uID, p)
+		}(profile, userID)
+		return profile, nil
+	}
+
+	// ── COMPLETE MISS ───────────────────────────────
+	return lite_models.TelemetryProfileLite{}, numan_error.NewNotFound(
+		"TELEMETRY_SYNC_REQUIRED",
+		"No trusted telemetry data available. Please synchronize the profile.",
+		nil,
+	)
 }
 
-// SetTelemetryVector sauvegarde le vecteur de profil (Edge-to-Cloud) avec son TTL automatique L1.
-func SetTelemetryVector(ctx context.Context, userID int64, newVector []float32) error {
-	errRedis := redis.TelemetryVectors.SetObject(ctx, userID, newVector)
+// SetTelemetryProfile sauvegarde le profil de télémétrie complet (Edge-to-Cloud) avec son TTL automatique L1.
+func SetTelemetryProfile(ctx context.Context, userID int64, profile lite_models.TelemetryProfileLite) error {
+	errRedis := redis.TelemetryProfiles.SetObject(ctx, userID, profile)
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Int64("user_id", userID).Msg("Impossible de sauvegarder le vecteur de télémétrie")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Int64("user_id", userID).Msg("Impossible de sauvegarder le profil de télémétrie")
+		return numan_error.NewInternal()
 	}
 	return nil
-}
-
-// SetTelemetryTags sauvegarde le Top 5 des tags de l'utilisateur (utilisé par le Magasinier LSH).
-func SetTelemetryTags(ctx context.Context, userID int64, topTagsList []string) error {
-	errRedis := redis.TelemetryTags.SetObject(ctx, userID, topTagsList)
-	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Int64("user_id", userID).Msg("Impossible de sauvegarder le Top Tags de télémétrie")
-		return nubo_error.NewInternal()
-	}
-	return nil
-}
-
-// GetTelemetryTags récupère la liste des tags préférés.
-func GetTelemetryTags(ctx context.Context, userID int64) ([]string, error) {
-	var userTags []string
-	errRedis := redis.TelemetryTags.GetObject(ctx, userID, &userTags)
-
-	if errRedis != nil {
-		return nil, nubo_error.NewInternal()
-	}
-
-	return userTags, nil
-}
-
-// SetTelemetryTimestamp sauvegarde la date de la dernière synchronisation Edge-to-Cloud réussie.
-func SetTelemetryTimestamp(ctx context.Context, userID int64, currentTimestampMs int64) error {
-	// Stockage MsgPack unifié via SetObject
-	errRedis := redis.TelemetryTimestamps.SetObject(ctx, userID, currentTimestampMs)
-	if errRedis != nil {
-		nubo_log.Warn(ctx).Err(errRedis).Msg("Impossible de sauvegarder le timestamp de télémétrie")
-		return nubo_error.NewInternal()
-	}
-	return nil
-}
-
-// GetTelemetryTimestamp récupère la date de la dernière synchronisation Edge-to-Cloud.
-func GetTelemetryTimestamp(ctx context.Context, userID int64) (int64, error) {
-	var cachedTimestamp int64
-	errRedis := redis.TelemetryTimestamps.GetObject(ctx, userID, &cachedTimestamp)
-
-	if errRedis != nil {
-		return 0, nubo_error.NewInternal() // Différent de 0 pour déclencher le rafraîchissement
-	}
-
-	return cachedTimestamp, nil
 }

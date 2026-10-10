@@ -1,5 +1,5 @@
 # ==============================================================================
-# MAKEFILE NUBO V12 - GESTION D'INFRASTRUCTURE ET DE DÉVELOPPEMENT
+# MAKEFILE numan V12 - GESTION D'INFRASTRUCTURE ET DE DÉVELOPPEMENT
 # ==============================================================================
 
 # Variables par défaut

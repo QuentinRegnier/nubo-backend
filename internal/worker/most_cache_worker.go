@@ -6,18 +6,18 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/algorithm_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
 	"github.com/vmihailenco/msgpack/v5"
 	"go.mongodb.org/mongo-driver/bson"
 )
@@ -77,7 +77,7 @@ func updateMostCache(ctx context.Context, events []redis.AsyncEvent) {
 
 					_, errPipe := pipe.Exec(ctx)
 					if errPipe != nil {
-						nubo_log.Error(ctx).Err(errPipe).Int64("post_id", post.ID).Msg("Most Cache Worker : Échec nettoyage ZSET Trends")
+						numan_log.Error(ctx).Err(errPipe).Int64("post_id", post.ID).Msg("Most Cache Worker : Échec nettoyage ZSET Trends")
 					}
 				}
 			}
@@ -245,5 +245,5 @@ func getPostWithFallback(ctx context.Context, postID int64) (post_models.PostPay
 	}
 
 	// Échec total : le post n'existe dans aucune couche. Utilisation du code d'erreur standard.
-	return post_models.PostPayload{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Publication introuvable.", nil)
+	return post_models.PostPayload{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Publication introuvable.", nil)
 }

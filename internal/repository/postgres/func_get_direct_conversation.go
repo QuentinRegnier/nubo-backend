@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
 )
 
 func FuncGetDirectConversation(ctx context.Context, user1, user2 int64) (conversation_models.ConversationPayload, error) {
@@ -27,10 +27,10 @@ func FuncGetDirectConversation(ctx context.Context, user1, user2 int64) (convers
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return c, nubo_error.NewNotFound("CONV_NOT_FOUND", "Conversation privée introuvable.", err)
+			return c, numan_error.NewNotFound("CONV_NOT_FOUND", "Conversation privée introuvable.", err)
 		}
-		nubo_log.Error(ctx).Err(err).Msg("Erreur SQL inattendue lors de la vérification de l'enregistrement")
-		return c, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Erreur SQL inattendue lors de la vérification de l'enregistrement")
+		return c, numan_error.NewInternal()
 	}
 
 	if cTitle.Valid {

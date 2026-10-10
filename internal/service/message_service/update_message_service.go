@@ -4,17 +4,17 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -34,12 +34,12 @@ func UpdateMessage(ctx context.Context, callerID int64, input message_models.Upd
 	// ── ÉTAPE 2 : RÈGLES MÉTIER STRICTES ────────────────────────────────────
 
 	if messagePayload.MessageType != variables.MessageTypeText {
-		return message_models.UpdateMessageOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Seul un message de type texte classique peut être modifié.", nil)
+		return message_models.UpdateMessageOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Seul un message de type texte classique peut être modifié.", nil)
 	}
 
 	cleanedContent := pkg.CleanStr(input.Content)
 	if cleanedContent == "" {
-		return message_models.UpdateMessageOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Le message ne peut pas être vide.", nil)
+		return message_models.UpdateMessageOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Le message ne peut pas être vide.", nil)
 	}
 
 	// ── ÉTAPE 3 : APPLICATION DES MODIFICATIONS ─────────────────────────────
@@ -56,8 +56,8 @@ func UpdateMessage(ctx context.Context, callerID int64, input message_models.Upd
 	// PartitionKey = msg.ConversationID pour garantir l'ordre chronologique des opérations sur cette conversation
 	errQueue := redis.EnqueueDB(ctx, messagePayload.ID, messagePayload.ConversationID, redis.EntityMessage, redis.ActionUpdate, messagePayload, redis.TargetAll)
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("msg_id", messagePayload.ID).Msg("Échec du Write-Behind pour UpdateMessage")
-		return message_models.UpdateMessageOutput{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errQueue).Int64("msg_id", messagePayload.ID).Msg("Échec du Write-Behind pour UpdateMessage")
+		return message_models.UpdateMessageOutput{}, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 6 : DIFFUSION TEMPS RÉEL (ASYNCHRONE) ─────────────────────────
@@ -67,7 +67,7 @@ func UpdateMessage(ctx context.Context, callerID int64, input message_models.Upd
 
 		errBroadcast := realtime_service.BroadcastToConversation(backgroundCtx, messagePayload.ConversationID, "message.updated", messagePayload)
 		if errBroadcast != nil {
-			nubo_log.Error(ctx).Err(errBroadcast).Msg("Échec de la diffusion WebSocket pour message.updated")
+			numan_log.Error(ctx).Err(errBroadcast).Msg("Échec de la diffusion WebSocket pour message.updated")
 		}
 
 		// SYNC LEDGER (Trigger granulaire)

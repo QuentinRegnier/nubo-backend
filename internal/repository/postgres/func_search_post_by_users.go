@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
 	"github.com/lib/pq"
 )
 
@@ -18,13 +18,13 @@ func FuncSearchPostIDsByUsers(ctx context.Context, userIDs []int64, orderMode in
 	query := `SELECT id FROM content.func_search_post_ids_by_users($1, $2::smallint, $3::integer, $4::integer)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, pq.Array(userIDs), orderMode, offset, limit)
 	if err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête SQL (QueryContext)")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête SQL (QueryContext)")
+		return nil, numan_error.NewInternal()
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres Search Users)")
+			numan_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres Search Users)")
 		}
 	}(rows)
 

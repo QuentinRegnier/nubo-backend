@@ -1,6 +1,6 @@
 package sync_models
 
-import "github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
+import "github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
 
 type SyncInboxInput struct {
 	ClientUpdatedAt int64 `json:"client_updated_at"` // Timestamp en millisecondes fourni par le client

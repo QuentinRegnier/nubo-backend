@@ -4,21 +4,21 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/cuckoo"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/user_settings_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/cuckoo"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg/security"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -32,30 +32,30 @@ func CreateUser(ctx context.Context, input auth_models.SignUpInput, ipAddress st
 	// ── ÉTAPE 1 : RÈGLES MÉTIER ET VÉRIFICATIONS D'UNICITÉ ─────────────────
 
 	if service.IsUnique(ctx, redis.EntityUser, "username", input.Username) == 0 {
-		return auth_models.SignUpResponse{}, nubo_error.NewConflict(nubo_error.CodeConflict, "Ce nom d'utilisateur est déjà pris.", nil)
+		return auth_models.SignUpResponse{}, numan_error.NewConflict(numan_error.CodeConflict, "Ce nom d'utilisateur est déjà pris.", nil)
 	}
 	if service.IsUnique(ctx, redis.EntityUser, "email", input.Email) == 0 {
-		return auth_models.SignUpResponse{}, nubo_error.NewConflict(nubo_error.CodeConflict, "Cet email est déjà utilisé.", nil)
+		return auth_models.SignUpResponse{}, numan_error.NewConflict(numan_error.CodeConflict, "Cet email est déjà utilisé.", nil)
 	}
 	if service.IsUnique(ctx, redis.EntityUser, "phone", input.Phone) == 0 {
-		return auth_models.SignUpResponse{}, nubo_error.NewConflict(nubo_error.CodeConflict, "Ce numéro de téléphone est déjà utilisé.", nil)
+		return auth_models.SignUpResponse{}, numan_error.NewConflict(numan_error.CodeConflict, "Ce numéro de téléphone est déjà utilisé.", nil)
 	}
 
 	parsedBirthdate, errParse := time.Parse("02012006", input.Birthdate)
 	if errParse != nil {
-		return auth_models.SignUpResponse{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Le format de la date de naissance est invalide.", errParse)
+		return auth_models.SignUpResponse{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Le format de la date de naissance est invalide.", errParse)
 	}
 
 	userAgeInYears := time.Since(parsedBirthdate).Hours() / 24 / 365
 	if userAgeInYears < 13 {
-		return auth_models.SignUpResponse{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Vous devez avoir au moins 13 ans pour vous inscrire.", nil)
+		return auth_models.SignUpResponse{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Vous devez avoir au moins 13 ans pour vous inscrire.", nil)
 	}
 	if userAgeInYears > 120 {
-		return auth_models.SignUpResponse{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "La date de naissance fournie est incohérente.", nil)
+		return auth_models.SignUpResponse{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "La date de naissance fournie est incohérente.", nil)
 	}
 
 	if input.Gender < 0 || input.Gender > 2 {
-		return auth_models.SignUpResponse{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Le genre sélectionné n'est pas reconnu.", nil)
+		return auth_models.SignUpResponse{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Le genre sélectionné n'est pas reconnu.", nil)
 	}
 
 	// ── ÉTAPE 2 : GÉNÉRATION DES MODÈLES DE DONNÉES (La source de vérité) ──
@@ -64,12 +64,12 @@ func CreateUser(ctx context.Context, input auth_models.SignUpInput, ipAddress st
 	newUserID := pkg.GenerateID()
 	newSessionID := pkg.GenerateID()
 
-	nubo_log.Info(ctx).Int64("user_id", newUserID).Msg("Initialisation d'un nouvel utilisateur...")
+	numan_log.Info(ctx).Int64("user_id", newUserID).Msg("Initialisation d'un nouvel utilisateur...")
 
 	// ACTIVATION DU MÉDIA (Processus Out-of-Band)
 	if input.ProfilePictureID > 0 {
 		if errMedia := media_service.ActivateMediaBatch(ctx, []int64{input.ProfilePictureID}, newUserID); errMedia != nil {
-			return auth_models.SignUpResponse{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Impossible de valider la photo de profil.", errMedia)
+			return auth_models.SignUpResponse{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Impossible de valider la photo de profil.", errMedia)
 		}
 	}
 
@@ -115,7 +115,7 @@ func CreateUser(ctx context.Context, input auth_models.SignUpInput, ipAddress st
 	var errToken error
 	sessionPayload.MasterToken, errToken = pkg.GenerateToken(userPayload.ID, sessionPayload.FirebaseInstallationID, variables.MasterTokenExpirationSeconds)
 	if errToken != nil {
-		return auth_models.SignUpResponse{}, nubo_error.NewInternal()
+		return auth_models.SignUpResponse{}, numan_error.NewInternal()
 	}
 
 	sessionPayload.CurrentSecret = security.DeriveNextSecret(sessionPayload.FirebaseInstallationID, sessionPayload.MasterToken, sessionPayload.MasterToken, sessionPayload.FirebaseInstallationID)
@@ -123,7 +123,7 @@ func CreateUser(ctx context.Context, input auth_models.SignUpInput, ipAddress st
 
 	newJWT, errJwt := pkg.GenerateToken(userPayload.ID, sessionPayload.FirebaseInstallationID, variables.JWTExpirationSeconds)
 	if errJwt != nil {
-		return auth_models.SignUpResponse{}, nubo_error.NewInternal()
+		return auth_models.SignUpResponse{}, numan_error.NewInternal()
 	}
 
 	// C. Hydratation des Paramètres Utilisateurs (Settings)
@@ -144,33 +144,33 @@ func CreateUser(ctx context.Context, input auth_models.SignUpInput, ipAddress st
 	// ── ÉTAPE 3 : MISE EN CACHE IMMÉDIATE (L1 RAM - Évite les latences) ────
 
 	if errCache := cache_service.MarkUserTimelineEmpty(ctx, userPayload.ID); errCache != nil {
-		nubo_log.Warn(ctx).Err(errCache).Int64("user_id", userPayload.ID).Msg("Échec initialisation Timeline ZSET")
+		numan_log.Warn(ctx).Err(errCache).Int64("user_id", userPayload.ID).Msg("Échec initialisation Timeline ZSET")
 	}
 
 	if errCache := cache_service.SetSessionInCache(ctx, sessionPayload); errCache != nil {
-		nubo_log.Warn(ctx).Err(errCache).Int64("session_id", sessionPayload.ID).Msg("Échec mise en cache L1 de la Session")
+		numan_log.Warn(ctx).Err(errCache).Int64("session_id", sessionPayload.ID).Msg("Échec mise en cache L1 de la Session")
 	}
 
 	if errCache := cache_service.AddUserToSpeedCache(ctx, userPayload, userSettingsPayload); errCache != nil {
-		nubo_log.Warn(ctx).Err(errCache).Int64("user_id", userPayload.ID).Msg("Échec mise en Speed Cache L1 de l'Utilisateur")
+		numan_log.Warn(ctx).Err(errCache).Int64("user_id", userPayload.ID).Msg("Échec mise en Speed Cache L1 de l'Utilisateur")
 	}
 
 	if errCache := object_cache_service.SetUserSettings(ctx, userSettingsPayload); errCache != nil {
-		nubo_log.Warn(ctx).Err(errCache).Int64("user_id", userPayload.ID).Msg("Échec mise en cache L1 des UserSettings")
+		numan_log.Warn(ctx).Err(errCache).Int64("user_id", userPayload.ID).Msg("Échec mise en cache L1 des UserSettings")
 	}
 
 	// ── ÉTAPE 4 : PERSISTANCE ASYNCHRONE (Write-Behind vers L2/L3) ─────────
 
 	if errQueue := redis.EnqueueDB(ctx, newUserID, 0, redis.EntityUser, redis.ActionCreate, userPayload, redis.TargetAll); errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("user_id", newUserID).Msg("CRITICAL: Impossible d'enqueue le User vers la BDD")
+		numan_log.Error(ctx).Err(errQueue).Int64("user_id", newUserID).Msg("CRITICAL: Impossible d'enqueue le User vers la BDD")
 	}
 
 	if errQueue := redis.EnqueueDB(ctx, newSessionID, newUserID, redis.EntitySession, redis.ActionCreate, sessionPayload, redis.TargetAll); errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("session_id", newSessionID).Msg("CRITICAL: Impossible d'enqueue la Session vers la BDD")
+		numan_log.Error(ctx).Err(errQueue).Int64("session_id", newSessionID).Msg("CRITICAL: Impossible d'enqueue la Session vers la BDD")
 	}
 
 	if errQueue := redis.EnqueueDB(ctx, settingsID, newUserID, redis.EntityUserSettings, redis.ActionCreate, userSettingsPayload, redis.TargetAll); errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("settings_id", settingsID).Msg("CRITICAL: Impossible d'enqueue les UserSettings vers la BDD")
+		numan_log.Error(ctx).Err(errQueue).Int64("settings_id", settingsID).Msg("CRITICAL: Impossible d'enqueue les UserSettings vers la BDD")
 	}
 
 	// ── ÉTAPE 5 : CUCKOO FILTERS (Prévention O(1) de l'unicité en RAM) ─────

@@ -3,12 +3,12 @@ package object_cache_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -32,8 +32,8 @@ func GetMessageFromObjectCache(ctx context.Context, messageID int64) (message_mo
 func SetMessageInObjectCache(ctx context.Context, messagePayload message_models.MessagePayload) error {
 	errRedis := redis.Messages.SetObject(ctx, messagePayload.ID, messagePayload)
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Int64("msg_id", messagePayload.ID).Msg("Échec de l'écriture du message dans l'Object Cache")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Int64("msg_id", messagePayload.ID).Msg("Échec de l'écriture du message dans l'Object Cache")
+		return numan_error.NewInternal()
 	}
 	return nil
 }
@@ -42,8 +42,8 @@ func SetMessageInObjectCache(ctx context.Context, messagePayload message_models.
 func DeleteMessageFromObjectCache(ctx context.Context, messageID int64) error {
 	errRedis := redis.Messages.DeleteObject(ctx, messageID)
 	if errRedis != nil {
-		nubo_log.Warn(ctx).Err(errRedis).Int64("msg_id", messageID).Msg("Échec de la suppression du message de l'Object Cache")
-		return nubo_error.NewInternal()
+		numan_log.Warn(ctx).Err(errRedis).Int64("msg_id", messageID).Msg("Échec de la suppression du message de l'Object Cache")
+		return numan_error.NewInternal()
 	}
 	return nil
 }
@@ -95,7 +95,7 @@ func GetMessagesView(ctx context.Context, targetMessageIDs []int64) ([]message_m
 				}
 			}
 		} else {
-			nubo_log.Warn(ctx).Err(errMongo).Msg("Échec L2 lors de la récupération des messages par IDs")
+			numan_log.Warn(ctx).Err(errMongo).Msg("Échec L2 lors de la récupération des messages par IDs")
 			stillMissingMessageIDs = mgetResult.MissingIDs
 		}
 	}
@@ -119,7 +119,7 @@ func GetMessagesView(ctx context.Context, targetMessageIDs []int64) ([]message_m
 				}(pgMessage)
 			}
 		} else {
-			nubo_log.Error(ctx).Err(errPg).Msg("Échec critique L3 lors du chargement des messages manquants")
+			numan_log.Error(ctx).Err(errPg).Msg("Échec critique L3 lors du chargement des messages manquants")
 		}
 	}
 

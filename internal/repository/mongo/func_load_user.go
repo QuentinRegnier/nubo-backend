@@ -3,10 +3,10 @@ package mongo
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
 )
 
 func MongoLoadUser(ctx context.Context, ID int64, Username string, Email string, Phone string) (auth_models.UserPayload, error) {
@@ -23,13 +23,13 @@ func MongoLoadUser(ctx context.Context, ID int64, Username string, Email string,
 	} else if Phone != "" {
 		filter["phone"] = Phone
 	} else {
-		nubo_log.Error(ctx).Msg("Construction du filtre Mongo échouée : aucun critère de recherche valide fourni")
-		return auth_models.UserPayload{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Msg("Construction du filtre Mongo échouée : aucun critère de recherche valide fourni")
+		return auth_models.UserPayload{}, numan_error.NewInternal()
 	}
 
 	if len(filter) == 0 {
-		nubo_log.Error(ctx).Msg("MongoLoadUser : Aucun critère de recherche fourni pour charger l'utilisateur")
-		return u, nubo_error.NewInternal()
+		numan_log.Error(ctx).Msg("MongoLoadUser : Aucun critère de recherche fourni pour charger l'utilisateur")
+		return u, numan_error.NewInternal()
 	}
 
 	// Appel à ta fonction utilitaire existante

@@ -4,24 +4,25 @@ import (
 	"context"
 	"strings"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
 // # SERVICE : SPEED CACHE (HASHTAGS)
 // ############################################################################
 
-// SearchTagsByPrefix recherche des hashtags en O(log N) RAM pour l'autocomplétion.
-func SearchTagsByPrefix(ctx context.Context, searchPrefix string, searchLimit int64) ([]string, error) {
+// SearchTagsByPrefix recherche des hashtags en O(log N) RAM pour l'autocomplétion avec pagination.
+func SearchTagsByPrefix(ctx context.Context, searchPrefix string, searchOffset, searchLimit int64) ([]string, error) {
 
 	// 1. Recherche ultra-rapide dans l'index lexicographique global
-	lexicographicResults, errRedis := redis.TagsLex.ZRangeByLex(ctx, variables.LexicographicGlobalKey, strings.ToLower(searchPrefix), searchLimit)
+	// On passe désormais searchOffset au wrapper du repository Redis
+	lexicographicResults, errRedis := redis.TagsLex.ZRangeByLex(ctx, variables.LexicographicGlobalKey, strings.ToLower(searchPrefix), searchOffset, searchLimit)
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Str("prefix", searchPrefix).Msg("Échec L1 lors de la recherche des tags par préfixe")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Str("prefix", searchPrefix).Msg("Échec L1 lors de la recherche des tags par préfixe")
+		return nil, numan_error.NewInternal()
 	}
 
 	if len(lexicographicResults) == 0 {
@@ -43,8 +44,8 @@ func SearchTagsByPrefix(ctx context.Context, searchPrefix string, searchLimit in
 func StoreTagInSpeedCache(ctx context.Context, newTag string) error {
 	errRedis := redis.TagsLex.ZAdd(ctx, variables.LexicographicGlobalKey, 0, strings.ToLower(newTag))
 	if errRedis != nil {
-		nubo_log.Warn(ctx).Err(errRedis).Str("tag", newTag).Msg("Impossible d'insérer le tag dans l'index Lexicographique")
-		return nubo_error.NewInternal()
+		numan_log.Warn(ctx).Err(errRedis).Str("tag", newTag).Msg("Impossible d'insérer le tag dans l'index Lexicographique")
+		return numan_error.NewInternal()
 	}
 	return nil
 }

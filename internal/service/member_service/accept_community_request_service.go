@@ -2,26 +2,25 @@ package member_service
 
 import (
 	"context"
-	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/message_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -37,7 +36,7 @@ func AcceptCommunityRequest(ctx context.Context, callerID int64, input member_mo
 		return member_models.AcceptCommunityRequestOutput{}, errSecurity
 	}
 	if callerMemberPayload.Role < variables.MemberRoleAdmin {
-		return member_models.AcceptCommunityRequestOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous devez être administrateur pour accepter une candidature.", nil)
+		return member_models.AcceptCommunityRequestOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Vous devez être administrateur pour accepter une candidature.", nil)
 	}
 
 	// ── ÉTAPE 2 : RÉCUPÉRATION DE LA CANDIDATURE (CASCADE L1 -> L2 -> L3) ───
@@ -53,18 +52,18 @@ func AcceptCommunityRequest(ctx context.Context, callerID int64, input member_mo
 			var errPg error
 			targetMemberPayload, errPg = postgres.FuncGetMember(ctx, input.ConversationID, input.TargetUserID)
 			if errPg != nil {
-				nubo_log.Error(ctx).Err(errPg).Int64("user_id", input.TargetUserID).Msg("Échec L3 lors de la récupération du membre en attente")
-				return member_models.AcceptCommunityRequestOutput{}, nubo_error.NewInternal()
+				numan_log.Error(ctx).Err(errPg).Int64("user_id", input.TargetUserID).Msg("Échec L3 lors de la récupération du membre en attente")
+				return member_models.AcceptCommunityRequestOutput{}, numan_error.NewInternal()
 			}
 			if targetMemberPayload.ID == 0 {
-				return member_models.AcceptCommunityRequestOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Candidature introuvable.", nil)
+				return member_models.AcceptCommunityRequestOutput{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Candidature introuvable.", nil)
 			}
 		}
 	}
 
 	// Règle métier : Vérifier que l'utilisateur est bien en attente d'approbation
 	if targetMemberPayload.Role != variables.MemberRolePending {
-		return member_models.AcceptCommunityRequestOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Cet utilisateur n'est pas en attente d'approbation.", nil)
+		return member_models.AcceptCommunityRequestOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Cet utilisateur n'est pas en attente d'approbation.", nil)
 	}
 
 	// ── ÉTAPE 3 : APPLICATION DE L'INTÉGRATION ──────────────────────────────
@@ -93,8 +92,8 @@ func AcceptCommunityRequest(ctx context.Context, callerID int64, input member_mo
 	// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────────
 	errQueue := redis.EnqueueDB(ctx, targetMemberPayload.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMemberPayload, redis.TargetAll)
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("member_id", targetMemberPayload.ID).Msg("Échec du Write-Behind pour l'acceptation de candidature")
-		return member_models.AcceptCommunityRequestOutput{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errQueue).Int64("member_id", targetMemberPayload.ID).Msg("Échec du Write-Behind pour l'acceptation de candidature")
+		return member_models.AcceptCommunityRequestOutput{}, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 6 : MESSAGE SYSTÈME ET DIFFUSION WEBSOCKET ────────────────────
@@ -104,10 +103,26 @@ func AcceptCommunityRequest(ctx context.Context, callerID int64, input member_mo
 		if targetUserLite, errLite := cache_service.GetUserLite(backgroundContext, targetMemberPayload.UserID); errLite == nil {
 
 			// A. Publication du message système d'intégration
-			systemMessageContent := fmt.Sprintf("%s a rejoint le groupe", targetUserLite.Username)
+			callerUserLite, errCaller := cache_service.GetUserLite(backgroundContext, callerID)
+			callerUsername := "Unknown User"
+			if errCaller == nil {
+				callerUsername = callerUserLite.Username
+			}
+
 			systemMessageInput := message_models.CreateMessageInput{
 				MessageType: variables.MessageTypeSystem,
-				Content:     systemMessageContent,
+				Content:     "",
+				Attachments: map[string]any{
+					"sys_action": variables.SysActionMemberJoined,
+					"actor": map[string]any{
+						"id":       callerID,
+						"username": callerUsername,
+					},
+					"target": map[string]any{
+						"id":       targetMemberPayload.UserID,
+						"username": targetUserLite.Username,
+					},
+				},
 			}
 			_, _ = message_service.CreateMessage(backgroundContext, callerID, input.ConversationID, systemMessageInput, true)
 

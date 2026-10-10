@@ -6,9 +6,9 @@ import (
 	"math"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -74,7 +74,8 @@ func buildTagCloud(ctx context.Context, userID int64) map[string]float64 {
 	userTelemetryMap := make(map[string]float64)
 
 	// 1. Lecture de la Télémétrie Personnelle (L1 Speed Cache)
-	topPersonalTags, err := cache_service.GetTelemetryTags(ctx, userID)
+	profile, err := cache_service.GetTelemetryProfile(ctx, userID)
+	topPersonalTags := profile.TopTags
 
 	if err == nil && len(topPersonalTags) > 0 {
 		var currentWeight = 1.0

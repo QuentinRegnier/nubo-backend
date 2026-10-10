@@ -17,5 +17,5 @@ type wsResponse struct {
 	RequestID string `json:"request_id"`
 	Status    string `json:"status"`
 	Data      any    `json:"data,omitempty"`
-	Error     string `json:"nubo_error,omitempty"`
+	Error     string `json:"numan_error,omitempty"`
 }

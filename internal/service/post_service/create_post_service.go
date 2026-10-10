@@ -5,18 +5,18 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/algorithm_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -26,6 +26,23 @@ import (
 // CreatePost orchestre la publication d'un post en vérifiant les droits
 // d'identification, en activant les médias et en calculant le vecteur sémantique.
 func CreatePost(ctx context.Context, callerID int64, input post_models.CreatePostInput) (int64, error) {
+	// ── ÉTAPE 0 : VÉRIFICATION DE LA CONFORMITÉ DU PAYLOAD  ────────────
+
+	if len(input.MediaIDs) == 0 {
+		return -1, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Au moins un média est requis.", nil)
+	}
+
+	if err_hashtags := pkg.ListLimitVerif(pkg.SliceUniqueStr(input.Hashtags), variables.MaxHashtagsPerPost); err_hashtags != nil {
+		return -1, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Le nombre de hashtags dépasse la limite autorisée.", err_hashtags)
+	}
+
+	if err_identifiers := pkg.ListLimitVerif(pkg.SliceUniqueInt64(input.Identifiers), variables.MaxIdentifiersPerPost); err_identifiers != nil {
+		return -1, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Le nombre d'identifiants dépasse la limite autorisée.", err_identifiers)
+	}
+
+	if err_media := pkg.ListLimitVerif(pkg.SliceUniqueInt64(input.MediaIDs), variables.MaxMediaPerPost); err_media != nil {
+		return -1, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Le nombre de médias dépasse la limite autorisée.", err_media)
+	}
 
 	// ── ÉTAPE 1 : BOUCLIER DE CONFIDENTIALITÉ (TAGS ET MENTIONS) ────────────
 
@@ -44,7 +61,7 @@ func CreatePost(ctx context.Context, callerID int64, input post_models.CreatePos
 
 			relationState := cache_service.RelationValue(ctx, targetID, callerID)
 			if relationState == variables.RelationStateBlocked {
-				return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Action impossible : vous ne pouvez pas identifier un utilisateur qui vous a bloqué.", nil)
+				return numan_error.NewForbidden(numan_error.CodeForbidden, "Action impossible : vous ne pouvez pas identifier un utilisateur qui vous a bloqué.", nil)
 			}
 
 			activePermission := targetUserLite.AllowTagging
@@ -65,7 +82,7 @@ func CreatePost(ctx context.Context, callerID int64, input post_models.CreatePos
 			}
 
 			if !isActionAllowed {
-				return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Un des utilisateurs identifiés restreint les identifications ou mentions.", nil)
+				return numan_error.NewForbidden(numan_error.CodeForbidden, "Un des utilisateurs identifiés restreint les identifications ou mentions.", nil)
 			}
 		}
 		return nil
@@ -85,7 +102,7 @@ func CreatePost(ctx context.Context, callerID int64, input post_models.CreatePos
 	// ── ÉTAPE 2 : DÉLÉGATION - ACTIVATION DES MÉDIAS FANTÔMES ───────────────
 
 	if errMedia := media_service.ActivateMediaBatch(ctx, input.MediaIDs, callerID); errMedia != nil {
-		return -1, errMedia // ActivateMediaBatch gère déjà ses propres nubo_error
+		return -1, errMedia // ActivateMediaBatch gère déjà ses propres numan_error
 	}
 
 	// ── ÉTAPE 3 : ÉVALUATION DYNAMIQUE DE LA PRIORITÉ ───────────────────────
@@ -125,11 +142,11 @@ func CreatePost(ctx context.Context, callerID int64, input post_models.CreatePos
 		Content:           pkg.CleanStr(input.Content),
 		Hashtags:          finalHashtagsList,
 		IndirectHashtags:  nil,
-		Identifiers:       input.Identifiers,
-		MediaIDs:          input.MediaIDs,
+		Identifiers:       pkg.SliceUniqueInt64(input.Identifiers),
+		MediaIDs:          pkg.SliceUniqueInt64(input.MediaIDs),
 		Visibility:        input.Visibility,
 		PriorityLevel:     authorPriorityLevel,
-		Location:          input.Location,
+		Location:          pkg.CleanStr(input.Location),
 		CreatedAt:         domain.TimeToMillis(currentTime),
 		UpdatedAt:         domain.TimeToMillis(currentTime),
 		LikeCount:         0,
@@ -150,7 +167,7 @@ func CreatePost(ctx context.Context, callerID int64, input post_models.CreatePos
 	// ── ÉTAPE 7 : CACHE REDIS L1 ET INDEXATION TIMELINE ─────────────────────
 
 	if errCache := object_cache_service.SetPostInObjectCache(ctx, postPayload); errCache != nil {
-		nubo_log.Warn(context.Background()).Err(errCache).Int64("post_id", newPostID).Msg("Échec de la mise en cache de la publication")
+		numan_log.Warn(context.Background()).Err(errCache).Int64("post_id", newPostID).Msg("Échec de la mise en cache de la publication")
 	}
 
 	_ = cache_service.AddPostToUserProfile(ctx, callerID, newPostID, float64(currentTime.UnixMilli()))
@@ -159,8 +176,8 @@ func CreatePost(ctx context.Context, callerID int64, input post_models.CreatePos
 
 	errQueue := redis.EnqueueDB(ctx, newPostID, 0, redis.EntityPost, redis.ActionCreate, postPayload, redis.TargetAll)
 	if errQueue != nil {
-		nubo_log.Error(context.Background()).Err(errQueue).Int64("post_id", newPostID).Msg("Échec du Write-Behind lors de la création d'un post")
-		return -1, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(errQueue).Int64("post_id", newPostID).Msg("Échec du Write-Behind lors de la création d'un post")
+		return -1, numan_error.NewInternal()
 	}
 
 	return newPostID, nil

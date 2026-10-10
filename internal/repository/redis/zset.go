@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strconv"
 
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
+	redisgo "github.com/QuentinRegnier/numan-backend/internal/infrastructure/redis"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -114,14 +114,15 @@ func (c *Collection) ZAddLex(ctx context.Context, id any, member any) error {
 }
 
 // ZRangeByLex cherche des éléments par préfixe (Auto-complétion).
-func (c *Collection) ZRangeByLex(ctx context.Context, id any, prefix string, limit int64) ([]string, error) {
+func (c *Collection) ZRangeByLex(ctx context.Context, id any, prefix string, offset, limit int64) ([]string, error) {
 	if prefix == "" {
 		return []string{}, nil
 	}
 	opt := &redis.ZRangeBy{
-		Min:   "[" + prefix,
-		Max:   "[" + prefix + "\xff",
-		Count: limit,
+		Min:    "[" + prefix,
+		Max:    "[" + prefix + "\xff",
+		Offset: offset,
+		Count:  limit,
 	}
 	return c.Client.ZRangeByLex(ctx, c.Key(id), opt).Result()
 }
@@ -268,26 +269,6 @@ func ZAddWithCap(ctx context.Context, key string, score float64, member any, max
 
 func ZRevRangeWithScores(ctx context.Context, key string, start, stop int64) ([]redis.Z, error) {
 	return redisgo.Rdb.ZRevRangeWithScores(ctx, key, start, stop).Result()
-}
-
-func ZAddLex(ctx context.Context, key string, member interface{}) error {
-	return redisgo.Rdb.ZAdd(ctx, key, &redis.Z{Score: 0, Member: member}).Err()
-}
-
-func ZRangeByLex(ctx context.Context, key string, prefix string, limit int64) ([]string, error) {
-	if prefix == "" {
-		return []string{}, nil
-	}
-	opt := &redis.ZRangeBy{
-		Min:   "[" + prefix,
-		Max:   "[" + prefix + "\xff",
-		Count: limit,
-	}
-	return redisgo.Rdb.ZRangeByLex(ctx, key, opt).Result()
-}
-
-func ZRem(ctx context.Context, key string, members ...interface{}) error {
-	return redisgo.Rdb.ZRem(ctx, key, members...).Err()
 }
 
 func Del(ctx context.Context, keys ...string) error {

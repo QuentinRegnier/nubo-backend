@@ -1,6 +1,6 @@
 package sync_models
 
-import "github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
+import "github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
 
 // SyncMessagesInput valide la requête POST entrante.
 // Zéro paramètre d'URL : l'ID de conversation et le timestamp sont dans le JSON.

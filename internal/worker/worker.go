@@ -8,9 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
 )
 
 // ============================================================================
@@ -29,7 +30,7 @@ var (
 
 // init surcharge les variables par défaut si elles sont définies dans le .env
 func init() {
-	if val, err := strconv.ParseInt(os.Getenv("WORKER_MAX_BATCH_SIZE"), 10, 64); err == nil && val > 0 {
+	if val, err := pkg.ParseInt64Strict(os.Getenv("WORKER_MAX_BATCH_SIZE")); err == nil && val > 0 {
 		maxBatchSize = val
 	}
 	if val, err := strconv.Atoi(os.Getenv("WORKER_MIN_BACKOFF_MS")); err == nil && val > 0 {
@@ -53,7 +54,7 @@ func runWorker(ctx context.Context, shardID int) {
 		// ── ÉTAPE 1 : ÉCOUTE DU SIGNAL D'ARRÊT GRACIEUX ─────────────────────
 		select {
 		case <-ctx.Done():
-			nubo_log.Info(ctx).Int("shard_id", shardID).Msg("Worker : Arrêt gracieux de la boucle de consommation.")
+			numan_log.Info(ctx).Int("shard_id", shardID).Msg("Worker : Arrêt gracieux de la boucle de consommation.")
 			return
 		default:
 		}
@@ -63,7 +64,7 @@ func runWorker(ctx context.Context, shardID int) {
 		// ou que le timeout de Redis soit atteint.
 		events, err := redis.PopSmartBatchBlocking(ctx, shardID, maxBatchSize)
 		if err != nil {
-			nubo_log.Error(ctx).Err(err).Int("shard_id", shardID).Msg("Worker Redis : Échec critique lors du dépilement (BLMPOP)")
+			numan_log.Error(ctx).Err(err).Int("shard_id", shardID).Msg("Worker Redis : Échec critique lors du dépilement (BLMPOP)")
 			time.Sleep(1 * time.Second) // Temporisation de sécurité en cas de crash réseau
 			continue
 		}

@@ -3,10 +3,10 @@ package mongo
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
 )
 
 func MongoLoadSession(ctx context.Context, ID int64, FirebaseInstallationID string, MasterToken string, CurrentSecret string) (auth_models.SessionsPayload, error) {
@@ -40,8 +40,8 @@ func MongoLoadSession(ctx context.Context, ID int64, FirebaseInstallationID stri
 	}
 
 	if len(filter) == 0 {
-		nubo_log.Error(ctx).Msg("MongoLoadSession : Aucun critère de recherche fourni pour charger la session")
-		return s, nubo_error.NewInternal()
+		numan_log.Error(ctx).Msg("MongoLoadSession : Aucun critère de recherche fourni pour charger la session")
+		return s, numan_error.NewInternal()
 	}
 
 	// Appel à la fonction utilitaire

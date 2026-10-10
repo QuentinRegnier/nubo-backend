@@ -6,20 +6,20 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/report_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/saved_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/relation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/report_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/saved_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/user_settings_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 	"github.com/lib/pq"
 )
 
@@ -98,14 +98,14 @@ func (m *userMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("UserMapper : Échec de la sérialisation du payload générique")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("UserMapper : Échec de la sérialisation du payload générique")
+		return nil, numan_error.NewInternal()
 	}
 
 	var u auth_models.UserPayload
 	if err := json.Unmarshal(jsonBytes, &u); err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("UserMapper : Échec de la désérialisation vers le modèle métier")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("UserMapper : Échec de la désérialisation vers le modèle métier")
+		return nil, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : TRANSLATION DES VALEURS NULLES (SQL NULL) ─────────────────
@@ -187,14 +187,14 @@ func (m *userSettingsMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("UserSettingsMapper : Échec de la sérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("UserSettingsMapper : Échec de la sérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	var s user_settings_models.UserSettingsPayload
 	if err := json.Unmarshal(jsonBytes, &s); err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("UserSettingsMapper : Échec de la désérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("UserSettingsMapper : Échec de la désérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : SÉRIALISATION DES COLONNES JSONB ──────────────────────────
@@ -248,14 +248,14 @@ func (m *sessionMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("SessionMapper : Échec de la sérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("SessionMapper : Échec de la sérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	var s auth_models.SessionsPayload
 	if err := json.Unmarshal(jsonBytes, &s); err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("SessionMapper : Échec de la désérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("SessionMapper : Échec de la désérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : SÉRIALISATION DES COLONNES JSONB ET NULLS ─────────────────
@@ -313,14 +313,14 @@ func (m *relationMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("RelationMapper : Échec de la sérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("RelationMapper : Échec de la sérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	var r relation_models.RelationPayload
 	if err := json.Unmarshal(jsonBytes, &r); err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("RelationMapper : Échec de la désérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("RelationMapper : Échec de la désérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : FORMATAGE DE LA LIGNE SQL ─────────────────────────────────
@@ -360,14 +360,14 @@ func (m *postMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("PostMapper : Échec de la sérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("PostMapper : Échec de la sérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	var p post_models.PostPayload
 	if err := json.Unmarshal(jsonBytes, &p); err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("PostMapper : Échec de la désérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("PostMapper : Échec de la désérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : TRANSLATION DES VALEURS NULLES (SQL NULL) ─────────────────
@@ -414,14 +414,14 @@ func (m *mediaMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("MediaMapper : Échec de la sérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("MediaMapper : Échec de la sérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	var med media_models.MediaPayload
 	if err := json.Unmarshal(jsonBytes, &med); err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("MediaMapper : Échec de la désérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("MediaMapper : Échec de la désérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : TRANSLATION DES VALEURS NULLES ────────────────────────────
@@ -455,14 +455,14 @@ func (m *commentMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("CommentMapper : Échec de la sérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("CommentMapper : Échec de la sérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	var c comment_models.CommentPayload
 	if err := json.Unmarshal(jsonBytes, &c); err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("CommentMapper : Échec de la désérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("CommentMapper : Échec de la désérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : FORMATAGE DE LA LIGNE SQL ─────────────────────────────────
@@ -497,14 +497,14 @@ func (m *likeMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("LikeMapper : Échec de la sérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("LikeMapper : Échec de la sérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	var l likeWorkerPayload
 	if err := json.Unmarshal(jsonBytes, &l); err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("LikeMapper : Échec de la désérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("LikeMapper : Échec de la désérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : FORMATAGE DE LA LIGNE SQL ─────────────────────────────────
@@ -530,14 +530,14 @@ func (m *savedMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("SavedMapper : Échec de la sérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("SavedMapper : Échec de la sérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	var s saved_models.SavedPayload
 	if err := json.Unmarshal(jsonBytes, &s); err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("SavedMapper : Échec de la désérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("SavedMapper : Échec de la désérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : FORMATAGE DE LA LIGNE SQL ─────────────────────────────────
@@ -567,14 +567,14 @@ func (m *messageMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("MessageMapper : Échec de la sérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("MessageMapper : Échec de la sérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	var msg message_models.MessagePayload
 	if err := json.Unmarshal(jsonBytes, &msg); err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("MessageMapper : Échec de la désérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("MessageMapper : Échec de la désérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : SÉRIALISATION DES COLONNES JSONB ET NULLS ─────────────────
@@ -615,14 +615,14 @@ func (m *messageReactionMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("MessageReactionMapper : Échec de la sérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("MessageReactionMapper : Échec de la sérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	var r message_models.MessageReactionPayload
 	if err := json.Unmarshal(jsonBytes, &r); err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("MessageReactionMapper : Échec de la désérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("MessageReactionMapper : Échec de la désérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : FORMATAGE DE LA LIGNE SQL ─────────────────────────────────
@@ -649,14 +649,14 @@ func (m *conversationMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("ConversationMapper : Échec de la sérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("ConversationMapper : Échec de la sérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	var c conversation_models.ConversationPayload
 	if err := json.Unmarshal(jsonBytes, &c); err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("ConversationMapper : Échec de la désérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("ConversationMapper : Échec de la désérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : SÉRIALISATION DES COLONNES JSONB ET NULLS ─────────────────
@@ -713,14 +713,14 @@ func (m *memberMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("MemberMapper : Échec de la sérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("MemberMapper : Échec de la sérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	var mem member_models.MemberPayload
 	if err := json.Unmarshal(jsonBytes, &mem); err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("MemberMapper : Échec de la désérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("MemberMapper : Échec de la désérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : SÉRIALISATION DES COLONNES JSONB ET NULLS ─────────────────
@@ -779,14 +779,14 @@ func (m *reportMapper) ToRow(data any) ([]any, error) {
 	// ── ÉTAPE 1 : DÉSÉRIALISATION ───────────────────────────────────────────
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("ReportMapper : Échec de la sérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("ReportMapper : Échec de la sérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	var r report_models.ReportPayload
 	if err := json.Unmarshal(jsonBytes, &r); err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("ReportMapper : Échec de la désérialisation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(err).Msg("ReportMapper : Échec de la désérialisation")
+		return nil, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 2 : TRANSLATION DES VALEURS NULLES ────────────────────────────

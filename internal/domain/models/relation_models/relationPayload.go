@@ -1,6 +1,6 @@
 package relation_models
 
-import "github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
+import "github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
 
 type RelationPayload struct {
 	ID          int64 `json:"id" bson:"id"`

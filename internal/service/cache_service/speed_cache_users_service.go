@@ -3,19 +3,19 @@ package cache_service
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/user_settings_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/user_settings_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -31,14 +31,14 @@ func storeUserLiteInSpeedCache(ctx context.Context, userLitePayload lite_models.
 	lexicographicValue := fmt.Sprintf("%s:%d", strings.ToLower(userLitePayload.Username), userLitePayload.ID)
 	errLex := redis.UsersLex.ZAdd(ctx, variables.LexicographicGlobalKey, 0, lexicographicValue)
 	if errLex != nil {
-		nubo_log.Warn(ctx).Err(errLex).Msg("Échec de l'indexation lexicographique d'un utilisateur")
+		numan_log.Warn(ctx).Err(errLex).Msg("Échec de l'indexation lexicographique d'un utilisateur")
 	}
 
 	// 2. Sauvegarde dans l'Object Cache Rapide L1
 	errSet := redis.UsersLite.SetObject(ctx, userLitePayload.ID, userLitePayload)
 	if errSet != nil {
-		nubo_log.Error(ctx).Err(errSet).Msg("Échec de la sauvegarde du UserLiteRequest dans le Speed Cache")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errSet).Msg("Échec de la sauvegarde du UserLiteRequest dans le Speed Cache")
+		return numan_error.NewInternal()
 	}
 
 	return nil
@@ -70,7 +70,7 @@ func AddUserToSpeedCache(ctx context.Context, userPayload auth_models.UserPayloa
 
 	errSet := redis.UsersLite.SetObject(ctx, userPayload.ID, constructedUserLite)
 	if errSet != nil {
-		return nubo_error.NewInternal()
+		return numan_error.NewInternal()
 	}
 
 	return nil
@@ -89,20 +89,20 @@ func UpdateUserSpeedCachePrivacy(ctx context.Context, userID int64, conversation
 
 		errSet := redis.UsersLite.SetObject(ctx, userID, userLitePayload)
 		if errSet != nil {
-			return nubo_error.NewInternal()
+			return numan_error.NewInternal()
 		}
 	}
 	return nil
 }
 
 // SearchUserByPrefix recherche des utilisateurs via l'autocomplétion.
-func SearchUserByPrefix(ctx context.Context, searchPrefix string, searchLimit int64) ([]lite_models.UserLiteRequest, error) {
+func SearchUserByPrefix(ctx context.Context, searchPrefix string, searchOffset, searchLimit int64) ([]lite_models.UserLiteRequest, error) {
 
 	// 1. Recherche ultra-rapide dans l'index lexicographique
-	lexicographicResultsList, errLex := redis.UsersLex.ZRangeByLex(ctx, variables.LexicographicGlobalKey, strings.ToLower(searchPrefix), searchLimit)
+	lexicographicResultsList, errLex := redis.UsersLex.ZRangeByLex(ctx, variables.LexicographicGlobalKey, strings.ToLower(searchPrefix), searchOffset, searchLimit)
 	if errLex != nil {
-		nubo_log.Error(ctx).Err(errLex).Msg("Erreur L1 lors du ZRangeByLex utilisateurs")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errLex).Msg("Erreur L1 lors du ZRangeByLex utilisateurs")
+		return nil, numan_error.NewInternal()
 	}
 
 	if len(lexicographicResultsList) == 0 {
@@ -115,7 +115,7 @@ func SearchUserByPrefix(ctx context.Context, searchPrefix string, searchLimit in
 		// Le format stocké est "pseudo:id"
 		lexParts := strings.Split(lexString, ":")
 		if len(lexParts) == 2 {
-			if parsedID, errParse := strconv.ParseInt(lexParts[1], 10, 64); errParse == nil {
+			if parsedID := pkg.ParseInt64(lexParts[1]); parsedID != 0 {
 				extractedIDsList = append(extractedIDsList, parsedID)
 			}
 		}
@@ -124,8 +124,8 @@ func SearchUserByPrefix(ctx context.Context, searchPrefix string, searchLimit in
 	// 3. Hydratation massive via MGET sur la collection UsersLite
 	multiGetResult, errMGet := redis.UsersLite.GetMany(ctx, extractedIDsList)
 	if errMGet != nil {
-		nubo_log.Error(ctx).Err(errMGet).Msg("Échec L1 lors de l'hydratation massive des SpeedUsers")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errMGet).Msg("Échec L1 lors de l'hydratation massive des SpeedUsers")
+		return nil, numan_error.NewInternal()
 	}
 
 	var hydratedUsersList []lite_models.UserLiteRequest
@@ -215,5 +215,5 @@ func GetUserLite(ctx context.Context, userID int64) (lite_models.UserLiteRequest
 		}, nil
 	}
 
-	return userLitePayload, nubo_error.NewNotFound(nubo_error.CodeNotFound, "L'utilisateur est introuvable.", nil)
+	return userLitePayload, numan_error.NewNotFound(numan_error.CodeNotFound, "L'utilisateur est introuvable.", nil)
 }

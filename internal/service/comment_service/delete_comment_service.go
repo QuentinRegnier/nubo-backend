@@ -3,13 +3,13 @@ package comment_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
 )
 
 // ############################################################################
@@ -17,12 +17,12 @@ import (
 // ############################################################################
 
 // DeleteComment gère la rétractation d'un commentaire (Purge L1, Soft Delete asynchrone et décrémentation du parent).
-func DeleteComment(ctx context.Context, input comment_models.DeleteCommentInput) error {
+func DeleteComment(ctx context.Context, callerID int64, input comment_models.DeleteCommentInput) error {
 
 	// ── ÉTAPE 1 : VÉRIFICATION DES DROITS (SÉCURITÉ) ────────────────────────
 
-	// LeftComment gère déjà ses propres nubo_error (NotFound ou Forbidden), on retourne directement
-	commentPayload, errSecurity := security_service.LeftComment(ctx, input.CommentID, input.UserID)
+	// LeftComment gère déjà ses propres numan_error (NotFound ou Forbidden), on retourne directement
+	commentPayload, errSecurity := security_service.LeftComment(ctx, input.CommentID, callerID)
 	if errSecurity != nil {
 		return errSecurity
 	}
@@ -52,8 +52,8 @@ func DeleteComment(ctx context.Context, input comment_models.DeleteCommentInput)
 	// de répercuter le -1 sur le CommentCount du post parent en BDD.
 	errQueue := redis.EnqueueDB(ctx, commentPayload.ID, commentPayload.PostID, redis.EntityComment, redis.ActionDelete, commentPayload, redis.TargetAll)
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("comment_id", commentPayload.ID).Msg("Échec critique : Impossible d'enqueue la suppression du commentaire")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errQueue).Int64("comment_id", commentPayload.ID).Msg("Échec critique : Impossible d'enqueue la suppression du commentaire")
+		return numan_error.NewInternal()
 	}
 
 	return nil

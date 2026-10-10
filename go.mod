@@ -1,4 +1,4 @@
-module github.com/QuentinRegnier/nubo-backend
+module github.com/QuentinRegnier/numan-backend
 
 go 1.25.0
 

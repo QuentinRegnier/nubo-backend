@@ -72,5 +72,5 @@ services:
       target: prod
     profiles: ["worker", "all"]
     env_file: .env
-    command: ["./nubo-worker"] # Un binaire Go qui ne lance QUE la fonction StartBackgroundWorkers
+    command: ["./numan-worker"] # Un binaire Go qui ne lance QUE la fonction StartBackgroundWorkers
     restart: always

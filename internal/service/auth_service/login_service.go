@@ -6,19 +6,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	postgresgo "github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg/security"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	postgresgo "github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -27,12 +27,11 @@ import (
 
 // Login retourne uniquement les tokens et l'ID utilisateur.
 // Les métadonnées complètes (profil, avatar) seront appelées plus tard via /sync.
-func Login(input auth_models.LoginInput, ipAddresses []string) (int64, auth_models.SessionsPayload, string, error) {
-	nubo_log.Info(context.Background()).Str("email", input.Email).Msg("Tentative de connexion entrante...")
+func Login(ctx context.Context, input auth_models.LoginInput, ipAddresses []string) (int64, auth_models.SessionsPayload, string, error) {
+	numan_log.Info(ctx).Str("email", input.Email).Msg("Tentative de connexion entrante...")
 
 	var userPayload auth_models.UserPayload
 	var sessionPayload auth_models.SessionsPayload
-	ctx := context.Background()
 
 	// ── ÉTAPE 1 : CHARGEMENT DE L'UTILISATEUR (CASCADE L2 -> L3) ────────────
 
@@ -40,24 +39,24 @@ func Login(input auth_models.LoginInput, ipAddresses []string) (int64, auth_mode
 	userPayload, errMongo := mongo.MongoLoadUser(ctx, -1, "", input.Email, "")
 	if errMongo != nil || userPayload.ID == 0 {
 		if errMongo != nil {
-			nubo_log.Warn(ctx).Err(errMongo).Str("email", input.Email).Msg("Mongo L2 : Utilisateur absent ou erreur de connexion.")
+			numan_log.Warn(ctx).Err(errMongo).Str("email", input.Email).Msg("Mongo L2 : Utilisateur absent ou erreur de connexion.")
 		}
 
 		// FALLBACK L3 (PostgreSQL - Cold Storage)
 		var errPg error
 		userPayload, errPg = postgresgo.FuncLoadUser(ctx, -1, "", input.Email, "")
 		if errPg != nil {
-			return -1, auth_models.SessionsPayload{}, "", nubo_error.NewInternal()
+			return -1, auth_models.SessionsPayload{}, "", numan_error.NewInternal()
 		}
 
 		if userPayload.ID == 0 {
 			// SÉCURITÉ : On ne dit jamais si l'email existe ou pas (Prévention de l'énumération de comptes)
-			return -1, auth_models.SessionsPayload{}, "", nubo_error.NewUnauthorized(nubo_error.CodeUnauthorized, "L'email ou le mot de passe est incorrect.", nil)
+			return -1, auth_models.SessionsPayload{}, "", numan_error.NewUnauthorized(numan_error.CodeUnauthorized, "L'email ou le mot de passe est incorrect.", nil)
 		}
 
 		// AUTO-GUÉRISON L3 -> L2 (Asynchrone via Queue)
 		if errQueue := redis.EnqueueDB(ctx, userPayload.ID, 0, redis.EntityUser, redis.ActionCreate, &userPayload, redis.TargetMongo); errQueue != nil {
-			nubo_log.Warn(ctx).Err(errQueue).Int64("user_id", userPayload.ID).Msg("Échec de la guérison L2 pour l'utilisateur")
+			numan_log.Warn(ctx).Err(errQueue).Int64("user_id", userPayload.ID).Msg("Échec de la guérison L2 pour l'utilisateur")
 		}
 	}
 
@@ -65,15 +64,15 @@ func Login(input auth_models.LoginInput, ipAddresses []string) (int64, auth_mode
 
 	// Vérification du mot de passe
 	if strings.TrimSpace(userPayload.PasswordHash) != strings.TrimSpace(input.PasswordHash) {
-		return -1, auth_models.SessionsPayload{}, "", nubo_error.NewUnauthorized(nubo_error.CodeUnauthorized, "L'email ou le mot de passe est incorrect.", nil)
+		return -1, auth_models.SessionsPayload{}, "", numan_error.NewUnauthorized(numan_error.CodeUnauthorized, "L'email ou le mot de passe est incorrect.", nil)
 	}
 
 	// Vérification des suspensions
 	if userPayload.Desactivated || userPayload.Banned {
 		if userPayload.Desactivated {
-			return -1, auth_models.SessionsPayload{}, "", nubo_error.NewForbidden(nubo_error.CodeForbidden, "Ce compte est actuellement désactivé.", nil)
+			return -1, auth_models.SessionsPayload{}, "", numan_error.NewForbidden(numan_error.CodeForbidden, "Ce compte est actuellement désactivé.", nil)
 		}
-		return -1, auth_models.SessionsPayload{}, "", nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : Ce compte a été banni.", nil)
+		return -1, auth_models.SessionsPayload{}, "", numan_error.NewForbidden(numan_error.CodeForbidden, "Accès refusé : Ce compte a été banni.", nil)
 	}
 
 	// ── ÉTAPE 3 : GESTION DE LA SESSION DE L'APPAREIL (CASCADE L1->L2->L3) ──
@@ -127,7 +126,7 @@ func Login(input auth_models.LoginInput, ipAddresses []string) (int64, auth_mode
 		if len(ipAddresses) > 0 {
 			sessionPayload.IPHistory = []string{ipAddresses[0]}
 		} else {
-			return -1, auth_models.SessionsPayload{}, "", nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "L'adresse IP est requise pour authentifier une nouvelle connexion.", nil)
+			return -1, auth_models.SessionsPayload{}, "", numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "L'adresse IP est requise pour authentifier une nouvelle connexion.", nil)
 		}
 	}
 
@@ -137,7 +136,7 @@ func Login(input auth_models.LoginInput, ipAddresses []string) (int64, auth_mode
 
 	sessionPayload.MasterToken, errToken = pkg.GenerateToken(userPayload.ID, deviceFirebaseID, variables.MasterTokenExpirationSeconds)
 	if errToken != nil {
-		return -1, auth_models.SessionsPayload{}, "", nubo_error.NewInternal()
+		return -1, auth_models.SessionsPayload{}, "", numan_error.NewInternal()
 	}
 
 	sessionPayload.CurrentSecret = security.DeriveNextSecret(sessionPayload.FirebaseInstallationID, sessionPayload.MasterToken, sessionPayload.MasterToken, sessionPayload.FirebaseInstallationID)
@@ -147,13 +146,13 @@ func Login(input auth_models.LoginInput, ipAddresses []string) (int64, auth_mode
 
 	newJWT, errJwt := pkg.GenerateToken(userPayload.ID, sessionPayload.FirebaseInstallationID, variables.JWTExpirationSeconds)
 	if errJwt != nil {
-		return -1, auth_models.SessionsPayload{}, "", nubo_error.NewInternal()
+		return -1, auth_models.SessionsPayload{}, "", numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 4 : SYNCHRONISATION L1 & SPEED CACHE (Cold Start User) ────────
 
 	if errSet := cache_service.SetSessionInCache(ctx, sessionPayload); errSet != nil {
-		nubo_log.Warn(ctx).Err(errSet).Int64("session_id", sessionPayload.ID).Msg("Échec mise en cache L1 de la Session lors du Login")
+		numan_log.Warn(ctx).Err(errSet).Int64("session_id", sessionPayload.ID).Msg("Échec mise en cache L1 de la Session lors du Login")
 	}
 
 	// Vérification de la Timeline Utilisateur
@@ -180,7 +179,7 @@ func Login(input auth_models.LoginInput, ipAddresses []string) (int64, auth_mode
 	errQueue := redis.EnqueueDB(ctx, sessionPayload.ID, userPayload.ID, redis.EntitySession, dbAction, sessionPayload, redis.TargetAll)
 	if errQueue != nil {
 		// Loggué en Error car la persistance est brisée, mais on ne bloque pas le retour du token au client
-		nubo_log.Error(context.Background()).Err(errQueue).Int64("session_id", sessionPayload.ID).Msg("Rupture du Write-Behind pour la session lors du Login")
+		numan_log.Error(context.Background()).Err(errQueue).Int64("session_id", sessionPayload.ID).Msg("Rupture du Write-Behind pour la session lors du Login")
 	}
 
 	return userPayload.ID, sessionPayload, newJWT, nil

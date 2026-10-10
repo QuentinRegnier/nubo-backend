@@ -6,7 +6,7 @@ services:
   # ---------------- NGINX ----------------
   nginx:
     image: nginx:latest
-    container_name: nubo_nginx
+    container_name: numan_nginx
     ports:
       - "80:80"
       - "443:443"
@@ -25,7 +25,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: prod
-    container_name: nubo_api1
+    container_name: numan_api1
     env_file: .env
     environment:
       - NODE_ID=1  # <--- SPÉCIFIQUE À API 1
@@ -42,7 +42,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: prod
-    container_name: nubo_api2
+    container_name: numan_api2
     env_file: .env
     environment:
       - NODE_ID=2  # <--- SPÉCIFIQUE À API 2
@@ -57,7 +57,7 @@ services:
   # ---------------- POSTGRES ----------------
   postgres:
     image: postgres:16
-    container_name: nubo_postgres
+    container_name: numan_postgres
     env_file: .env
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -67,7 +67,7 @@ services:
   # ---------------- PGADMIN ----------------
   pgadmin:
     image: dpage/pgadmin4
-    container_name: nubo_pgadmin
+    container_name: numan_pgadmin
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
@@ -81,7 +81,7 @@ services:
   # ---------------- REDIS ----------------
   redis:
     image: redis:7
-    container_name: nubo_redis
+    container_name: numan_redis
     command: redis-server --maxmemory 4gb --maxmemory-policy volatile-lfu --lfu-log-factor 10 --lfu-decay-time 120 --appendonly yes
     volumes:
       - redis_data:/data
@@ -91,7 +91,7 @@ services:
   # ---------------- REDIS COMMANDER ----------------
   redis-commander:
     image: ghcr.io/joeferner/redis-commander:latest
-    container_name: nubo_redis_commander
+    container_name: numan_redis_commander
     environment:
       REDIS_HOSTS: local:redis:6379
       HTTP_USER: ${REDIS_UI_USER}
@@ -106,7 +106,7 @@ services:
   # ---------------- MONGO ----------------
   mongo:
     image: mongo:7
-    container_name: nubo_mongo
+    container_name: numan_mongo
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
@@ -118,7 +118,7 @@ services:
   # ---------------- MONGO EXPRESS ----------------
   mongo-express:
     image: mongo-express
-    container_name: nubo_mongo_express
+    container_name: numan_mongo_express
     environment:
       ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_ROOT_USER}
       ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_ROOT_PASSWORD}
@@ -135,7 +135,7 @@ services:
   # ---------------- MINIO ----------------
   minio:
     image: minio/minio
-    container_name: nubo_minio
+    container_name: numan_minio
     command: server /data --console-address ":9001"
     expose:
       - "9000"

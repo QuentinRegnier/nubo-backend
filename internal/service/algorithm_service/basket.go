@@ -4,12 +4,13 @@ import (
 	"context"
 	"math"
 	"math/rand"
-	"strconv"
 	"sync"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
 )
 
 // ############################################################################
@@ -36,17 +37,17 @@ type Quotas struct {
 // validate s'assure de l'exactitude mathématique et de la cohérence des quotas injectés.
 func (quotas *Quotas) validate() error {
 	if quotas.MaxCandidates <= 0 {
-		return nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Le nombre maximum de candidats doit être strictement positif.", nil)
+		return numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Le nombre maximum de candidats doit être strictement positif.", nil)
 	}
 
 	// Tolérance aux imprécisions microscopiques d'arrondi des float
 	sumOfRatios := quotas.SocialRatio + quotas.TagRatio + quotas.GlobalRatio
 	if math.Abs(sumOfRatios-1.0) > 1e-6 {
-		return nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "La somme des ratios de distribution doit être strictement égale à 1.0.", nil)
+		return numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "La somme des ratios de distribution doit être strictement égale à 1.0.", nil)
 	}
 
 	if quotas.SocialRatio < 0 || quotas.TagRatio < 0 || quotas.GlobalRatio < 0 {
-		return nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Les ratios de distribution ne peuvent pas être négatifs.", nil)
+		return numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Les ratios de distribution ne peuvent pas être négatifs.", nil)
 	}
 
 	return nil
@@ -203,15 +204,12 @@ func (basket *candidateBasket) fetchDeterministicallyFromZSET(ctx context.Contex
 		}
 
 		// 3. Extraction Chirurgicale via Pipeline abstrait
-		results, _ := redis.ZRevRangeByRanks(ctx, zsetKey, ranksToFetch)
-
-		// 4. Dépouillement et ajout au panier
-		for _, rawID := range results {
-			if parsedID, err := strconv.ParseInt(rawID, 10, 64); err == nil {
-				// basket.Add gère l'anti-doublon en interne et le Cuckoo Filter
-				if basket.Add(ctx, userID, parsedID, origin) {
-					successfullyAddedCount++
-				}
+		results, _ := redis.ZRevRangeByRanks(ctx, zsetKey, ranksToFetch) // 4. Dépouillement et ajout au panier
+		parsedIDs := pkg.ParseInt64List(results)
+		for _, parsedID := range parsedIDs {
+			// basket.Add gère l'anti-doublon en interne et le Cuckoo Filter
+			if basket.Add(ctx, userID, parsedID, origin) {
+				successfullyAddedCount++
 			}
 		}
 	}
@@ -247,15 +245,13 @@ func (feedBaskets *feedBaskets) loadSocialMailbox(ctx context.Context, userID in
 	idStrings, err := redis.ZRevRange(ctx, mailboxKey, 0, -1)
 	if err != nil {
 		// On masque l'erreur Redis brute sous une AppError standardisée
-		return nubo_error.NewInternal()
+		return numan_error.NewInternal()
 	}
-
-	for _, idStr := range idStrings {
-		if postID, err := strconv.ParseInt(idStr, 10, 64); err == nil {
-			feedBaskets.FeedA.Add(ctx, userID, postID, originSocial)
-			feedBaskets.FeedB.Add(ctx, userID, postID, originSocial)
-			feedBaskets.FeedC.Add(ctx, userID, postID, originSocial)
-		}
+	parsedPostIDs := pkg.ParseInt64List(idStrings)
+	for _, postID := range parsedPostIDs {
+		feedBaskets.FeedA.Add(ctx, userID, postID, originSocial)
+		feedBaskets.FeedB.Add(ctx, userID, postID, originSocial)
+		feedBaskets.FeedC.Add(ctx, userID, postID, originSocial)
 	}
 
 	// VIDAGE DE LA BOÎTE AUX LETTRES

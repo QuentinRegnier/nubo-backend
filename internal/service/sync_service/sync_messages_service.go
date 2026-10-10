@@ -3,17 +3,17 @@ package sync_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/sync_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/sync_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -35,8 +35,8 @@ func SyncMessages(ctx context.Context, callerID int64, input sync_models.SyncMes
 
 	modifiedMessageIDs, errCache := cache_service.GetModifiedMessageIDs(ctx, input.ConversationID, input.SinceMs)
 	if errCache != nil {
-		nubo_log.Error(ctx).Err(errCache).Int64("conv_id", input.ConversationID).Msg("Échec L1 lors de la récupération des deltas de messages")
-		return sync_models.SyncMessagesOutput{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errCache).Int64("conv_id", input.ConversationID).Msg("Échec L1 lors de la récupération des deltas de messages")
+		return sync_models.SyncMessagesOutput{}, numan_error.NewInternal()
 	}
 
 	if len(modifiedMessageIDs) == 0 {
@@ -71,7 +71,7 @@ func SyncMessages(ctx context.Context, callerID int64, input sync_models.SyncMes
 		pgMessagesList, errPg := postgres.FuncLoadMessagesByIDs(ctx, missingMessageIDsFromL1)
 
 		if errPg != nil {
-			nubo_log.Error(ctx).Err(errPg).Msg("Échec L3 lors de la réhydratation des messages pour le Delta Sync")
+			numan_log.Error(ctx).Err(errPg).Msg("Échec L3 lors de la réhydratation des messages pour le Delta Sync")
 		} else {
 			for _, pgMessage := range pgMessagesList {
 				temporaryMessagesMap[pgMessage.ID] = pgMessage

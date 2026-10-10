@@ -4,20 +4,20 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -30,32 +30,32 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 
 	// ── ÉTAPE 1 : VALIDATIONS MÉTIER PRÉLIMINAIRES ─────────────────────────
 	if input.Type == variables.ConversationTypeCommunityPriv || input.Type == variables.ConversationTypeCommunityPub {
-		return conversation_models.CreateConversationOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "La création de communautés requiert le point d'entrée dédié.", nil)
+		return conversation_models.CreateConversationOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "La création de communautés requiert le point d'entrée dédié.", nil)
 	}
 
 	if input.Type == variables.ConversationTypeDirect && len(input.ParticipantIDs) != 1 {
-		return conversation_models.CreateConversationOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Un message privé doit comporter exactement un participant cible.", nil)
+		return conversation_models.CreateConversationOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Un message privé doit comporter exactement un participant cible.", nil)
 	}
 
 	if input.Type == variables.ConversationTypeGroup && pkg.CleanStr(input.Title) == "" {
-		return conversation_models.CreateConversationOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Un groupe requiert obligatoirement un titre valide.", nil)
+		return conversation_models.CreateConversationOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Un groupe requiert obligatoirement un titre valide.", nil)
 	}
 
 	// ── ÉTAPE 2 : CONTRÔLE DE CONFIDENTIALITÉ DES MESSAGES PRIVÉS ──────────
 	if input.Type == variables.ConversationTypeDirect {
 		targetUserID := input.ParticipantIDs[0]
 		if targetUserID == callerID {
-			return conversation_models.CreateConversationOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Création de conversation avec soi-même interdite.", nil)
+			return conversation_models.CreateConversationOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Création de conversation avec soi-même interdite.", nil)
 		}
 
 		targetUserLite, errLite := cache_service.GetUserLite(ctx, targetUserID)
 		if errLite != nil || targetUserLite.ID == 0 {
-			return conversation_models.CreateConversationOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Utilisateur cible introuvable.", errLite)
+			return conversation_models.CreateConversationOutput{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Utilisateur cible introuvable.", errLite)
 		}
 
 		relationState := cache_service.RelationValue(ctx, callerID, targetUserID)
 		if relationState == -1 {
-			return conversation_models.CreateConversationOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Action impossible : utilisateur bloqué.", nil)
+			return conversation_models.CreateConversationOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Action impossible : utilisateur bloqué.", nil)
 		}
 
 		canInitiateDirectMessage := false
@@ -69,7 +69,7 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 		}
 
 		if !canInitiateDirectMessage {
-			return conversation_models.CreateConversationOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Cet utilisateur refuse la réception de messages privés.", nil)
+			return conversation_models.CreateConversationOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Cet utilisateur refuse la réception de messages privés.", nil)
 		}
 	}
 
@@ -104,8 +104,8 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 
 	errEnqueueConv := redis.EnqueueDB(ctx, conversationID, conversationID, redis.EntityConversation, redis.ActionCreate, conversationPayload, redis.TargetAll)
 	if errEnqueueConv != nil {
-		nubo_log.Error(ctx).Err(errEnqueueConv).Int64("conv_id", conversationID).Msg("Échec d'enregistrement asynchrone de la conversation")
-		return conversation_models.CreateConversationOutput{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errEnqueueConv).Int64("conv_id", conversationID).Msg("Échec d'enregistrement asynchrone de la conversation")
+		return conversation_models.CreateConversationOutput{}, numan_error.NewInternal()
 	}
 
 	output := conversation_models.CreateConversationOutput{
@@ -181,7 +181,10 @@ func CreateConversation(ctx context.Context, callerID int64, input conversation_
 				ConversationID: conversationID,
 				ParticipantIDs: input.ParticipantIDs,
 			}
-			addMembersOutput, _ := AddMembersToConversation(ctx, callerID, addMembersInput)
+			addMembersOutput, err := AddMembersToConversation(ctx, callerID, addMembersInput)
+			if err != nil {
+				return output, err
+			}
 
 			output.AddedUserIDs = addMembersOutput.AddedUserIDs
 			output.InvitedUserIDs = addMembersOutput.InvitedUserIDs

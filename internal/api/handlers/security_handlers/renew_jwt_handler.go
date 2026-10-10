@@ -8,60 +8,93 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/security_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/security_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg/security"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// RenewJWT godoc
+// RefreshJWT godoc
 // @Summary      Renouveler le JWT (Ratchet Rotation)
-// @Description  Génère un nouveau JWT pour l'utilisateur et effectue une rotation de sécurité des secrets (Ratchet).
-// @Description  Cette route est critique et nécessite une signature HMAC valide basée sur le secret actuel de la session.
+// @Description  Fournit un nouveau JWT à durée de vie courte et procède à l'avancement mathématique de la clé de session (Ratchet Rotation).
 // @Description
-// @Description  **Mécanisme :**
-// @Description  1. Vérifie la signature HMAC du body avec les headers de sécurité.
-// @Description  2. Identifie la session via l'ID utilisateur et le `X-Secret`.
-// @Description  3. Calcule le prochain secret (N+1) et met à jour l'historique (Ratchet).
-// @Description  4. Renvoie le nouveau JWT.
+// @Description  **Authentication & Authorization:**
+// @Description  - Route publique disposant de sa propre logique de sécurité cryptographique.
+// @Description  - Requiert l'ancien JWT (sans validation temporelle) et le dernier Secret de Session connu.
 // @Description
-// @Description  **Règles & Erreurs :**
+// @Description  **Request Contract:**
+// @Description  - Required fields: Aucun corps JSON précis imposé, mais le corps brut est lu pour la signature.
+// @Description  - Headers: `Authorization` (Bearer), `X-Secret` (Le secret côté client), `X-Signature`, `X-Timestamp`.
 // @Description
-// @Description  🔴 **400 Bad Request :**
-// @Description  * `Erreur lecture body` : Impossible de lire le corps de la requête.
-// @Description  * `Invalid JSON format` : Le JSON envoyé est mal formé.
-// @Description  * `Headers de sécurité manquants` : Il manque `Authorization`, `X-Secret`, `X-Signature` ou `X-Timestamp`.
+// @Description  **Execution Workflow:**
+// @Description  1. **Extraction Sécurisée** : Récupération du corps de requête (brut) et des quatre en-têtes obligatoires. Rejet 400 si un seul manque.
+// @Description  2. **Parsing JWT Dégradé** : Lecture "Unverified" du token fourni via `jwt.ParseUnverified`. Le JWT est utilisé uniquement comme transport de claims (subject et device ID), son expiration est ignorée ici.
+// @Description  3. **Vérification Claims** : Rejet immédiat si le subject (UserID) ou le champ `dev` (FirebaseInstallationID) manquent ou sont in-parsables.
+// @Description  4. **Validation HMAC** : Concaténation de l'URL, Timestamp et Body, signée par le serveur avec le `X-Secret` fourni. Si la signature diverge de `X-Signature`, rejet 403.
+// @Description  5. **Génération JWT** : Création du nouveau token JWT via `pkg.GenerateToken`.
+// @Description  6. **Rotation du Ratchet** : Exécution de `security.RotateRatchet` : le serveur calcule cryptographiquement le secret N+1, met à jour le cache de session en RAM (L1) et conserve le secret N en tolérance.
+// @Description  7. **Construction de la réponse** : La réponse JSON (qui contient le nouveau JWT) est signée à l'aide de l'**ancien** secret, permettant au client de valider le serveur avant de faire tourner son propre Ratchet localement.
 // @Description
-// @Description  🟠 **401 Unauthorized :**
-// @Description  * `Signature HMAC invalide` : La signature ne correspond pas au contenu (tentative de falsification).
-// @Description  * `Session invalide ou Secret incorrect` : Le secret fourni ne correspond à aucune session active pour cet utilisateur (ou désynchronisation Ratchet).
+// @Description  **Success Behavior:**
+// @Description  - HTTP status: 200 OK
+// @Description  - Response body: `security_models.RefreshJWTResponse` (contenant le nouveau Token JWT).
+// @Description  - Headers: `X-Signature`, `X-Timestamp` renvoyés avec la signature sortante.
+// @Description  - Persistence guarantees: Rotation synchronisée en Cache L1, persistance asynchrone DB.
+// @Description  - Side effects: Invalidation irréversible des secrets ayant plus d'un cran de retard (Forward Secrecy).
 // @Description
-// @Description  ⚫ **500 Internal Server Error :**
-// @Description  * `Erreur génération token` : Échec de la création du JWT.
-// @Description  * `Erreur rotation secrets` : Impossible de mettre à jour Redis (Ratchet bloqué).
-// @Tags         auth
+// @Description  **Error Responses & Reproduction Conditions:**
+// @Description
+// @Description  🔴 **400 Bad Request:**
+// @Description
+// @Description  - **[READ_BODY_ERROR] / [MISSING_HEADERS]:**
+// @Description    - Trigger: Échec de lecture du corps ou absence partielle des en-têtes `X-*`.
+// @Description    - Execution stage: Étape 1 & 2 (Validation initiale).
+// @Description    - Response: `numan_error.PublicErrorResponse` ("Headers de sécurité manquants.").
+// @Description    - Error code: `MISSING_HEADERS` etc. ou constantes associées.
+// @Description
+// @Description  - **[INVALID_JWT] / [INVALID_CLAIMS] / [MISSING_SUBJECT] / [INVALID_SUBJECT] / [MISSING_DEVICE_ID]:**
+// @Description    - Trigger: Le JWT est malformé, illisible, ne contient pas le UserID (`sub`) ou le `dev` ID.
+// @Description    - Execution stage: Parsing Unverified (Étape 3).
+// @Description    - Response: `numan_error.PublicErrorResponse` adaptée à l'absence du claim.
+// @Description    - Error code: Code d'erreur spécifique ou équivalent public.
+// @Description
+// @Description  🟠 **403 Forbidden:**
+// @Description
+// @Description  - **[INVALID_HMAC] Falsification de requête:**
+// @Description    - Trigger: Le HMAC fourni ne valide pas le corps de requête à l'aide du `X-Secret` donné.
+// @Description    - Execution stage: Vérification HMAC (Étape 4).
+// @Description    - Response: `numan_error.PublicErrorResponse` ("Signature HMAC invalide.").
+// @Description    - Error code: `numan_error.CodeForbidden`.
+// @Description
+// @Description  ⚫ **500 Internal Server Error:**
+// @Description
+// @Description  - **[INTERNAL_ERROR] Échec interne de rotation:**
+// @Description    - Trigger: `pkg.GenerateToken` ou `security.RotateRatchet` plantent (cache L1 inaccessible par ex).
+// @Description    - Execution stage: Génération de clé / Mise à jour état L1 (Étape 5 & 6).
+// @Description    - Response: `numan_error.PublicErrorResponse`.
+// @Description    - Error code: `numan_error.CodeInternal`.
+// @Tags         security
 // @Accept       json
 // @Produce      json
 // @Param        Authorization header string true "Bearer <Last_JWT>"
-// @Param        X-Secret      header string true "Secret actuel de la session"
-// @Param        X-Signature   header string true "Signature HMAC calculée"
-// @Param        X-Timestamp   header string true "Timestamp de la requête"
-// @Success      200  {object}  domain.RenewJWTResponse
-// @Failure      400  {object}  nubo_error.PublicErrorResponse "Requête invalide"
-// @Failure      401  {object}  nubo_error.PublicErrorResponse "Authentification / Signature refusée"
-// @Failure      500  {object}  nubo_error.PublicErrorResponse "Erreur serveur critique"
-// @Router       /renew-jwt [post_service]
-func RenewJWT(c *gin.Context) {
+// @Param        X-Secret      header string true "Current session secret"
+// @Param        X-Signature   header string true "HMAC Signature"
+// @Param        X-Timestamp   header string true "Unix Timestamp"
+// @Success      200  {object} security_models.RefreshJWTResponse "Successfully renewed JWT"
+// @Failure      400  {object} numan_error.PublicErrorResponse "Invalid Request"
+// @Failure      403  {object} numan_error.PublicErrorResponse "Invalid HMAC Signature"
+// @Failure      500  {object} numan_error.PublicErrorResponse "Internal Server Error"
+// @Router       /refresh/jwt [post]
+func RefreshJWT(c *gin.Context) {
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("READ_BODY_ERROR", "Erreur lecture body.", err))
+		numan_error.RespondWithError(c, numan_error.NewBadRequest("READ_BODY_ERROR", "Erreur lecture body.", err))
 		return
 	}
 
@@ -75,37 +108,37 @@ func RenewJWT(c *gin.Context) {
 	clientTs := c.GetHeader("X-Timestamp")
 
 	if authHeader == "" || clientSecret == "" || clientHMAC == "" || clientTs == "" {
-		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("MISSING_HEADERS", "Headers de sécurité manquants.", nil))
+		numan_error.RespondWithError(c, numan_error.NewBadRequest("MISSING_HEADERS", "Headers de sécurité manquants.", nil))
 		return
 	}
 
 	// 3. EXTRACTION DES DONNÉES DU JWT
 	token, _, err := new(jwt.Parser).ParseUnverified(authHeader, jwt.MapClaims{})
 	if err != nil {
-		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_JWT", "Token illisible.", err))
+		numan_error.RespondWithError(c, numan_error.NewBadRequest("INVALID_JWT", "Token illisible.", err))
 		return
 	}
 
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_CLAIMS", "Claims JWT invalides.", nil))
+		numan_error.RespondWithError(c, numan_error.NewBadRequest("INVALID_CLAIMS", "Claims JWT invalides.", nil))
 		return
 	}
 
 	sub, err := claims.GetSubject()
 	if err != nil {
-		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("MISSING_SUBJECT", "UserID manquant dans le token.", err))
+		numan_error.RespondWithError(c, numan_error.NewBadRequest("MISSING_SUBJECT", "UserID manquant dans le token.", err))
 		return
 	}
-	userID, err := strconv.ParseInt(sub, 10, 64)
+	userID, err := pkg.ParseInt64Strict(sub)
 	if err != nil {
-		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_SUBJECT", "Format UserID invalide.", err))
+		numan_error.RespondWithError(c, numan_error.NewBadRequest("INVALID_SUBJECT", "Format UserID invalide.", err))
 		return
 	}
 
 	firebaseInstallationID, ok := claims["dev"].(string)
 	if !ok || firebaseInstallationID == "" {
-		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("MISSING_DEVICE_ID", "FirebaseInstallationID manquant dans le token.", nil))
+		numan_error.RespondWithError(c, numan_error.NewBadRequest("MISSING_DEVICE_ID", "FirebaseInstallationID manquant dans le token.", nil))
 		return
 	}
 
@@ -114,35 +147,35 @@ func RenewJWT(c *gin.Context) {
 	stringToSign := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, clientTs, contentToSign)
 
 	if !security.CheckHMAC(stringToSign, clientSecret, clientHMAC) {
-		nubo_error.RespondWithError(c, nubo_error.NewForbidden("INVALID_HMAC", "Signature HMAC invalide.", nil))
+		numan_error.RespondWithError(c, numan_error.NewForbidden("INVALID_HMAC", "Signature HMAC invalide.", nil))
 		return
 	}
 
 	// 5. Génération Nouveau JWT
 	newJWT, err := pkg.GenerateToken(userID, firebaseInstallationID, variables.JWTExpirationSeconds)
 	if err != nil {
-		nubo_log.Error(c).Err(err).Msg("Échec de la génération du JWT")
-		nubo_error.RespondWithError(c, nubo_error.NewInternal())
+		numan_log.Error(c).Err(err).Msg("Échec de la génération du JWT")
+		numan_error.RespondWithError(c, numan_error.NewInternal())
 		return
 	}
 
 	// 6. Rotation du Ratchet & Mise à jour Session
 	if err := security.RotateRatchet(c, userID, firebaseInstallationID, clientSecret, authHeader); err != nil {
-		nubo_log.Error(c).Err(err).Msg("Échec de la rotation cryptographique (RotateRatchet)")
-		nubo_error.RespondWithError(c, nubo_error.NewInternal())
+		numan_log.Error(c).Err(err).Msg("Échec de la rotation cryptographique (RotateRatchet)")
+		numan_error.RespondWithError(c, numan_error.NewInternal())
 		return
 	}
 
 	// 7. PRÉPARATION DE LA RÉPONSE SIGNÉE
-	respData := security_models.RenewJWTResponse{
+	respData := security_models.RefreshJWTResponse{
 		Token:   newJWT,
 		Message: "Renouvellement OK",
 	}
 
 	respBytes, err := json.Marshal(respData)
 	if err != nil {
-		nubo_log.Error(c).Err(err).Msg("Échec de la sérialisation JSON de la réponse")
-		nubo_error.RespondWithError(c, nubo_error.NewInternal())
+		numan_log.Error(c).Err(err).Msg("Échec de la sérialisation JSON de la réponse")
+		numan_error.RespondWithError(c, numan_error.NewInternal())
 		return
 	}
 

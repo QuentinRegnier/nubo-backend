@@ -3,14 +3,14 @@ package security_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -45,8 +45,8 @@ func LeftMember(ctx context.Context, conversationID int64, userID int64) (member
 	if !isMemberFound {
 		pgMember, errPg := postgres.FuncGetMember(ctx, conversationID, userID)
 		if errPg != nil {
-			nubo_log.Error(ctx).Err(errPg).Int64("user_id", userID).Msg("Erreur L3 lors de la vérification de l'appartenance d'un membre")
-			return member_models.MemberPayload{}, nubo_error.NewInternal()
+			numan_log.Error(ctx).Err(errPg).Int64("user_id", userID).Msg("Erreur L3 lors de la vérification de l'appartenance d'un membre")
+			return member_models.MemberPayload{}, numan_error.NewInternal()
 		}
 
 		if pgMember.ID != 0 {
@@ -67,12 +67,12 @@ func LeftMember(ctx context.Context, conversationID int64, userID int64) (member
 	// ── ÉTAPE 4 : VÉRIFICATION DES RÈGLES DE PARTICIPATION ──────────────────
 
 	if !isMemberFound {
-		return member_models.MemberPayload{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : vous n'êtes pas membre de cette conversation.", nil)
+		return member_models.MemberPayload{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Accès refusé : vous n'êtes pas membre de cette conversation.", nil)
 	}
 
 	// Si le rôle est négatif (ex: Banni -2, Quitté -1, Rejeté -4)
 	if memberPayload.Role < variables.MemberRoleNormal {
-		return member_models.MemberPayload{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : vous êtes banni ou ne faites plus partie de cette conversation.", nil)
+		return member_models.MemberPayload{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Accès refusé : vous êtes banni ou ne faites plus partie de cette conversation.", nil)
 	}
 
 	return memberPayload, nil

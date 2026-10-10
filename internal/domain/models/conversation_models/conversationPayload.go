@@ -1,6 +1,6 @@
 package conversation_models
 
-import "github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+import "github.com/QuentinRegnier/numan-backend/internal/domain/models"
 
 type ConversationSettings struct {
 	WritePermission      int   `json:"write_permission" bson:"write_permission" msgpack:"write_permission"`

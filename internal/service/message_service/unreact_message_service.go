@@ -3,15 +3,15 @@ package message_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
-	"github.com/QuentinRegnier/nubo-backend/internal/worker"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/worker"
 )
 
 // ############################################################################
@@ -30,7 +30,7 @@ func UnreactToMessage(ctx context.Context, callerID int64, input message_models.
 
 	callerMemberPayload, errSecurityMem := security_service.LeftMember(ctx, messagePayload.ConversationID, callerID)
 	if errSecurityMem != nil || callerMemberPayload.Role < variables.MemberRoleNormal {
-		return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : vous ne faites pas partie de cette conversation.", errSecurityMem)
+		return numan_error.NewForbidden(numan_error.CodeForbidden, "Accès refusé : vous ne faites pas partie de cette conversation.", errSecurityMem)
 	}
 
 	// ── ÉTAPE 2 : VÉRIFICATION DE PRÉSENCE (IDEMPOTENCE L1) ─────────────────
@@ -57,8 +57,8 @@ func UnreactToMessage(ctx context.Context, callerID int64, input message_models.
 
 	errQueue := redis.EnqueueDB(ctx, messagePayload.ID, messagePayload.ConversationID, redis.EntityMessageReaction, redis.ActionDelete, reactionPayload, redis.TargetAll)
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("message_id", messagePayload.ID).Msg("Échec du Write-Behind pour UnreactToMessage")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errQueue).Int64("message_id", messagePayload.ID).Msg("Échec du Write-Behind pour UnreactToMessage")
+		return numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 5 : DIFFUSION TEMPS RÉEL (WEBSOCKETS) ─────────────────────────
@@ -74,7 +74,7 @@ func UnreactToMessage(ctx context.Context, callerID int64, input message_models.
 
 		errBroadcast := realtime_service.BroadcastToConversation(backgroundCtx, messagePayload.ConversationID, "message.unreacted", messageViewDto)
 		if errBroadcast != nil {
-			nubo_log.Error(ctx).Err(errBroadcast).Msg("Échec de la diffusion WebSocket pour message.unreacted")
+			numan_log.Error(ctx).Err(errBroadcast).Msg("Échec de la diffusion WebSocket pour message.unreacted")
 		}
 
 		// SYNC LEDGER : Trigger granulaire pour la base SQLite des clients

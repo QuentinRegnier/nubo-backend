@@ -5,14 +5,15 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/relation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/relation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -42,7 +43,7 @@ func RelationValue(ctx context.Context, targetID int64, callerID int64) int {
 	// ── ÉTAPE 3 : SOURCE DE VÉRITÉ L3 (POSTGRESQL) ──────────────────────────
 	relationStateFromPg, errPg := postgres.FuncGetRelationState(ctx, callerID, targetID)
 	if errPg != nil {
-		nubo_log.Error(ctx).Err(errPg).Int64("target_id", targetID).Int64("caller_id", callerID).Msg("Erreur L3 RelationValue")
+		numan_log.Error(ctx).Err(errPg).Int64("target_id", targetID).Int64("caller_id", callerID).Msg("Erreur L3 RelationValue")
 		return variables.RelationStateNone // Zéro-valeur sécurisée par défaut
 	}
 
@@ -72,8 +73,8 @@ func UpdateRelationState(ctx context.Context, targetID int64, callerID int64, ne
 
 	errHSet := redis.SpeedRelations.HSet(ctx, targetID, callerIDString, newRelationState)
 	if errHSet != nil {
-		nubo_log.Error(ctx).Err(errHSet).Msg("Impossible de mettre à jour le HSET RelationValue")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errHSet).Msg("Impossible de mettre à jour le HSET RelationValue")
+		return numan_error.NewInternal()
 	}
 
 	timestampScore := float64(timestampMs)
@@ -102,16 +103,11 @@ func GetSpeedRelationsIndex(ctx context.Context, userID int64) ([]int64, error) 
 
 	followerStringIDs, errRedis := redis.SpeedRelationsIndex.ZRevRange(ctx, zsetKey, 0, -1)
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Msg("Impossible de lire l'index SpeedRelations des followers")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Msg("Impossible de lire l'index SpeedRelations des followers")
+		return nil, numan_error.NewInternal()
 	}
 
-	var followersIDsList []int64
-	for _, idString := range followerStringIDs {
-		if parsedID, errParse := strconv.ParseInt(idString, 10, 64); errParse == nil {
-			followersIDsList = append(followersIDsList, parsedID)
-		}
-	}
+	followersIDsList := pkg.ParseInt64List(followerStringIDs)
 
 	return followersIDsList, nil
 }
@@ -122,16 +118,11 @@ func GetSpeedFriends(ctx context.Context, userID int64) ([]int64, error) {
 
 	friendStringIDs, errRedis := redis.SpeedRelationsIndex.ZRevRange(ctx, zsetKey, 0, -1)
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Msg("Impossible de lire l'index SpeedRelations des amis")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Msg("Impossible de lire l'index SpeedRelations des amis")
+		return nil, numan_error.NewInternal()
 	}
 
-	var friendsIDsList []int64
-	for _, idString := range friendStringIDs {
-		if parsedID, errParse := strconv.ParseInt(idString, 10, 64); errParse == nil {
-			friendsIDsList = append(friendsIDsList, parsedID)
-		}
-	}
+	friendsIDsList := pkg.ParseInt64List(friendStringIDs)
 
 	return friendsIDsList, nil
 }
@@ -144,7 +135,7 @@ func GetFollowerCount(ctx context.Context, userID int64) int64 {
 }
 
 // GetRelationsByDirectionPaginatedFromCache récupère les IDs ciblés de manière paginée en O(log N).
-func GetRelationsByDirectionPaginatedFromCache(ctx context.Context, primaryID int64, relationState int, searchDirection string, fetchLimit int, fetchOffset int) ([]int64, error) {
+func GetRelationsByDirectionPaginatedFromCache(ctx context.Context, primaryID int64, relationState int, searchDirection string, fetchLimit int64, fetchOffset int64) ([]int64, error) {
 	var targetZsetKey string
 
 	// Format imposé : in:{state}:{targetID} ou out:{state}:{callerID}
@@ -156,16 +147,11 @@ func GetRelationsByDirectionPaginatedFromCache(ctx context.Context, primaryID in
 
 	targetStringsIDs, errRedis := redis.SpeedRelationsIndex.ZRevRange(ctx, targetZsetKey, int64(fetchOffset), int64(fetchOffset+fetchLimit-1))
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Msg("Erreur lors de la récupération paginée du SpeedRelationsIndex")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Msg("Erreur lors de la récupération paginée du SpeedRelationsIndex")
+		return nil, numan_error.NewInternal()
 	}
 
-	var matchedIDsList []int64
-	for _, idString := range targetStringsIDs {
-		if parsedID, errParse := strconv.ParseInt(idString, 10, 64); errParse == nil {
-			matchedIDsList = append(matchedIDsList, parsedID)
-		}
-	}
+	matchedIDsList := pkg.ParseInt64List(targetStringsIDs)
 
 	return matchedIDsList, nil
 }

@@ -4,15 +4,16 @@ import (
 	"context"
 	"strings"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/search_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/post_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/search_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/post_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -39,6 +40,11 @@ func mapFilterToOrderMode(frontendFilter string) int {
 
 // SearchPosts est le moteur de routage principal des recherches complexes.
 func SearchPosts(ctx context.Context, callerID int64, input search_models.SearchPostInput) (search_models.SearchPostOutput, error) {
+	var err_offset, errLimit numan_error.Error
+	input.Offset, err_offset, input.Limit, errLimit = pkg.BatchVerif(input.Offset, input.Limit)
+	if err_offset != nil || errLimit != nil {
+		return search_models.SearchPostOutput{}, numan_error.Combine(err_offset, errLimit)
+	}
 
 	var resolvedPostIDs []int64
 	hasQueryBeenIntercepted := false
@@ -62,8 +68,8 @@ func SearchPosts(ctx context.Context, callerID int64, input search_models.Search
 		if targetRankType != "" {
 			rankedPayloadsFromCache, errRedis := cache_service.GetRankedPosts(ctx, targetRankType, input.Offset, input.Limit)
 			if errRedis != nil {
-				nubo_log.Error(ctx).Err(errRedis).Str("rank_type", targetRankType).Msg("Erreur L1 lors de la récupération des tops posts")
-				return search_models.SearchPostOutput{}, nubo_error.NewInternal()
+				numan_log.Error(ctx).Err(errRedis).Str("rank_type", targetRankType).Msg("Erreur L1 lors de la récupération des tops posts")
+				return search_models.SearchPostOutput{}, numan_error.NewInternal()
 			}
 
 			for _, payload := range rankedPayloadsFromCache {
@@ -95,7 +101,7 @@ func SearchPosts(ctx context.Context, callerID int64, input search_models.Search
 					resolvedPostIDs = append(resolvedPostIDs, pgIDs...)
 					hasQueryBeenIntercepted = true
 				} else {
-					nubo_log.Warn(ctx).Err(errPg).Msg("Échec L3 de la recherche de Post par Tag trié")
+					numan_log.Warn(ctx).Err(errPg).Msg("Échec L3 de la recherche de Post par Tag trié")
 				}
 			}
 		}
@@ -107,7 +113,7 @@ func SearchPosts(ctx context.Context, callerID int64, input search_models.Search
 		targetUsername := strings.ToLower(strings.TrimPrefix(input.Query, "@"))
 
 		// Recherche instantanée L1 Lex pour trouver l'ID de l'auteur ciblé
-		usersList, errCache := cache_service.SearchUserByPrefix(ctx, targetUsername, 1)
+		usersList, errCache := cache_service.SearchUserByPrefix(ctx, targetUsername, 0, 1)
 
 		if errCache == nil && len(usersList) > 0 && strings.ToLower(usersList[0].Username) == targetUsername {
 			pgIDs, errPg := postgres.FuncSearchPostIDsByUsers(ctx, []int64{usersList[0].ID}, targetOrderMode, input.Offset, input.Limit)
@@ -115,7 +121,7 @@ func SearchPosts(ctx context.Context, callerID int64, input search_models.Search
 				resolvedPostIDs = append(resolvedPostIDs, pgIDs...)
 				hasQueryBeenIntercepted = true
 			} else {
-				nubo_log.Warn(ctx).Err(errPg).Msg("Échec L3 de la recherche de Post par Auteur Exact")
+				numan_log.Warn(ctx).Err(errPg).Msg("Échec L3 de la recherche de Post par Auteur Exact")
 			}
 		}
 	}
@@ -125,8 +131,8 @@ func SearchPosts(ctx context.Context, callerID int64, input search_models.Search
 	if !hasQueryBeenIntercepted && input.Query != "" {
 		pgIDs, errPg := postgres.FuncSearchPostIDsByText(ctx, input.Query, targetOrderMode, input.Offset, input.Limit)
 		if errPg != nil {
-			nubo_log.Error(ctx).Err(errPg).Str("query", input.Query).Msg("Erreur critique L3 lors de la Full-Text Search des posts")
-			return search_models.SearchPostOutput{}, nubo_error.NewInternal()
+			numan_log.Error(ctx).Err(errPg).Str("query", input.Query).Msg("Erreur critique L3 lors de la Full-Text Search des posts")
+			return search_models.SearchPostOutput{}, numan_error.NewInternal()
 		}
 		resolvedPostIDs = append(resolvedPostIDs, pgIDs...)
 	}
@@ -143,11 +149,14 @@ func SearchPosts(ctx context.Context, callerID int64, input search_models.Search
 	// ── ÉTAPE 6 : HYDRATATION FINALE UNIFIÉE VIA LE DOMAINE POST ────────────
 
 	hydrationRequestInput := post_models.GetPostInput{
-		UserID:  callerID,
 		PostIDs: resolvedPostIDs,
 	}
 
-	fullyHydratedPostsResults := post_service.GetPosts(ctx, hydrationRequestInput)
+	fullyHydratedPostsResults, err := post_service.GetPosts(ctx, callerID, hydrationRequestInput)
+	if err != nil {
+		numan_log.Error(ctx).Err(err).Int64("caller_id", callerID).Int("num_posts", len(resolvedPostIDs)).Msg("Échec de l'hydratation finale des posts recherchés")
+		return search_models.SearchPostOutput{}, numan_error.NewInternal(err)
+	}
 
 	return search_models.SearchPostOutput{
 		Posts:                   fullyHydratedPostsResults,

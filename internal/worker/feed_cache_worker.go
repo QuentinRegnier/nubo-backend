@@ -2,16 +2,16 @@ package worker
 
 import (
 	"context"
-	"strconv"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/feed_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/algorithm_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/feed_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/feed_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/algorithm_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/feed_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -21,7 +21,7 @@ import (
 // startFeedWarmupCron orchestre l'auto-génération des flux d'actualités par lots pour les utilisateurs inactifs.
 // S'exécute à intervalles réguliers sans jamais scanner l'intégralité de la BDD (O(log(N) + M)).
 func startFeedWarmupCron(ctx context.Context) {
-	nubo_log.Info(ctx).Msg("Démarrage du Moteur de Warm-up Algorithmique (Feed)...")
+	numan_log.Info(ctx).Msg("Démarrage du Moteur de Warm-up Algorithmique (Feed)...")
 
 	go func() {
 		ticker := time.NewTicker(variables.FeedWarmupCronInterval)
@@ -48,12 +48,10 @@ func processScheduledWarmups(ctx context.Context) {
 		return // Personne n'est arrivé à échéance
 	}
 
-	nubo_log.Info(ctx).Int("count", len(expiredUserIDs)).Msg("Warm-up Feed : Traitement d'un lot d'utilisateurs éligibles.")
-
-	// ── ÉTAPE 2 : ANALYSE DU NIVEAU D'INACTIVITÉ (TÉLÉMÉTRIE L1) ────────────
+	numan_log.Info(ctx).Int("count", len(expiredUserIDs)).Msg("Warm-up Feed : Traitement d'un lot d'utilisateurs éligibles.") // ── ÉTAPE 2 : ANALYSE DU NIVEAU D'INACTIVITÉ (TÉLÉMÉTRIE L1) ────────────
 	for _, idStr := range expiredUserIDs {
-		userID, errParse := strconv.ParseInt(idStr, 10, 64)
-		if errParse != nil {
+		userID := pkg.ParseInt64(idStr)
+		if userID == 0 {
 			continue
 		}
 
@@ -83,7 +81,7 @@ func processScheduledWarmups(ctx context.Context) {
 		} else {
 			// NIVEAU 3 : Mode Dormant (>= 7 jours) -> Éviction absolue
 			// Protection RAM : L'utilisateur a abandonné l'app, on libère l'espace.
-			nubo_log.Info(ctx).Int64("user_id", userID).Msg("Warm-up Feed : Utilisateur classé DORMANT. Éviction de la RAM L1 en cours.")
+			numan_log.Info(ctx).Int64("user_id", userID).Msg("Warm-up Feed : Utilisateur classé DORMANT. Éviction de la RAM L1 en cours.")
 
 			_ = algorithm_service.DeleteUserFeedState(ctx, userID)
 			_ = redis.FeedSchedule.ZRem(ctx, "global", userID)
@@ -93,16 +91,15 @@ func processScheduledWarmups(ctx context.Context) {
 
 // executeBackgroundGeneration simule une requête API interne pour forcer la régénération algorithmique.
 func executeBackgroundGeneration(ctx context.Context, userID int64) {
-	nubo_log.Info(ctx).Int64("user_id", userID).Msg("Warm-up Feed : Pré-calcul d'un flux frais (Background).")
+	numan_log.Info(ctx).Int64("user_id", userID).Msg("Warm-up Feed : Pré-calcul d'un flux frais (Background).")
 
 	input := feed_models.GetFeedInput{
-		UserID:        userID,
 		Force:         true, // Purge le Cuckoo Filter pour brasser de nouveaux contenus
 		LastSeenIndex: 0,
 	}
 
 	// Appel transparent au Service Unifié
-	_, _, _, _ = feed_service.GetFeed(ctx, input)
+	_, _, _, _ = feed_service.GetFeed(ctx, userID, input)
 }
 
 // getTelemetryData interroge les caches L1 pour déterminer le statut d'activité d'un profil.
@@ -110,8 +107,9 @@ func getTelemetryData(ctx context.Context, userID int64) (time.Time, bool) {
 	isOnline := cache_service.IsUserOnline(ctx, userID)
 	var lastActiveAt time.Time
 
-	tsMs, err := cache_service.GetTelemetryTimestamp(ctx, userID)
-	if err == nil && tsMs > 0 {
+	profile, err := cache_service.GetTelemetryProfile(ctx, userID)
+	if err == nil && profile.TimestampMs > 0 {
+		tsMs := profile.TimestampMs
 		lastActiveAt = time.UnixMilli(tsMs)
 	} else {
 		// En l'absence totale de télémétrie, on simule une inactivité lointaine pour déclencher le Mode Dormant.
@@ -147,7 +145,7 @@ func handleSocialFanOut(ctx context.Context, events []redis.AsyncEvent) {
 				// Coupe-Circuit : Empêcher le blocage RAM pour les comptes hyper-suivis
 				followerCount := cache_service.GetFollowerCount(ctx, authorID)
 				if followerCount > variables.FanOutVIPThreshold {
-					nubo_log.Info(ctx).
+					numan_log.Info(ctx).
 						Int64("author_id", authorID).
 						Int64("follower_count", followerCount).
 						Msg("FanOut annulé pour profil VIP (Justin Bieber Effect). Délégation au Most Cache.")
@@ -158,7 +156,7 @@ func handleSocialFanOut(ctx context.Context, events []redis.AsyncEvent) {
 			}
 
 			if errGraph != nil {
-				nubo_log.Warn(ctx).Err(errGraph).Int64("author_id", authorID).Msg("FanOut : Impossible de résoudre le graphe social.")
+				numan_log.Warn(ctx).Err(errGraph).Int64("author_id", authorID).Msg("FanOut : Impossible de résoudre le graphe social.")
 				continue
 			}
 
@@ -182,7 +180,7 @@ func handleSocialFanOut(ctx context.Context, events []redis.AsyncEvent) {
 
 			_, errPipe := pipe.Exec(ctx)
 			if errPipe != nil {
-				nubo_log.Error(ctx).Err(errPipe).Int64("post_id", postID).Msg("Échec de l'exécution du pipeline de distribution FanOut.")
+				numan_log.Error(ctx).Err(errPipe).Int64("post_id", postID).Msg("Échec de l'exécution du pipeline de distribution FanOut.")
 			}
 		}
 	}

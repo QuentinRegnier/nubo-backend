@@ -4,11 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
 )
 
 // ############################################################################
@@ -38,7 +38,7 @@ func ActivateMediaBatch(ctx context.Context, mediaIDs []int64, ownerID int64) er
 
 		// ── ÉTAPE 2 : SÉCURITÉ ZERO-TRUST ───────────────────────────────────
 		if mediaPayload.OwnerID != ownerID {
-			return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Tentative d'utilisation d'un média qui ne vous appartient pas.", nil)
+			return numan_error.NewForbidden(numan_error.CodeForbidden, "Tentative d'utilisation d'un média qui ne vous appartient pas.", nil)
 		}
 
 		// ── ÉTAPE 3 : ACTIVATION ────────────────────────────────────────────
@@ -51,8 +51,8 @@ func ActivateMediaBatch(ctx context.Context, mediaIDs []int64, ownerID int64) er
 		// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────
 		errQueue := redis.EnqueueDB(ctx, mediaID, ownerID, redis.EntityMedia, redis.ActionUpdate, mediaPayload, redis.TargetAll)
 		if errQueue != nil {
-			nubo_log.Error(ctx).Err(errQueue).Int64("media_id", mediaID).Msg("Échec du Write-Behind lors de l'activation du média")
-			return nubo_error.NewInternal()
+			numan_log.Error(ctx).Err(errQueue).Int64("media_id", mediaID).Msg("Échec du Write-Behind lors de l'activation du média")
+			return numan_error.NewInternal()
 		}
 	}
 
@@ -81,7 +81,7 @@ func DeactivateMediaBatch(ctx context.Context, mediaIDs []int64, ownerID int64) 
 
 		// ── ÉTAPE 2 : SÉCURITÉ ZERO-TRUST ───────────────────────────────────
 		if mediaPayload.OwnerID != ownerID {
-			return nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : tentative de suppression d'un média qui ne vous appartient pas.", nil)
+			return numan_error.NewForbidden(numan_error.CodeForbidden, "Accès refusé : tentative de suppression d'un média qui ne vous appartient pas.", nil)
 		}
 
 		// ── ÉTAPE 3 : DÉSACTIVATION (MODE FANTÔME) ──────────────────────────
@@ -94,8 +94,8 @@ func DeactivateMediaBatch(ctx context.Context, mediaIDs []int64, ownerID int64) 
 		// ── ÉTAPE 5 : PERSISTANCE ASYNCHRONE (WRITE-BEHIND) ─────────────────
 		errQueue := redis.EnqueueDB(ctx, mediaID, ownerID, redis.EntityMedia, redis.ActionUpdate, mediaPayload, redis.TargetAll)
 		if errQueue != nil {
-			nubo_log.Error(ctx).Err(errQueue).Int64("media_id", mediaID).Msg("Échec du Write-Behind lors de la désactivation du média")
-			return nubo_error.NewInternal()
+			numan_log.Error(ctx).Err(errQueue).Int64("media_id", mediaID).Msg("Échec du Write-Behind lors de la désactivation du média")
+			return numan_error.NewInternal()
 		}
 	}
 

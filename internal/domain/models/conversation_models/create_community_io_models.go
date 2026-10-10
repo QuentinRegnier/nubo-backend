@@ -1,6 +1,6 @@
 package conversation_models
 
-import "github.com/QuentinRegnier/nubo-backend/internal/domain/models"
+import "github.com/QuentinRegnier/numan-backend/internal/domain/models"
 
 // CreateCommunityInput valide les données pour la création d'une communauté publique (Type 3).
 type CreateCommunityInput struct {

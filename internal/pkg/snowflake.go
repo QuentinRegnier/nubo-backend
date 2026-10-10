@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 var generator *node // La variable globale privée (Singleton)
@@ -36,8 +36,8 @@ type node struct {
 // nodeID : Un identifiant unique pour ce serveur (entre 0 et 1023).
 func newNode(nodeID int64) (*node, error) {
 	if nodeID < 0 || nodeID > variables.NodeMax {
-		nubo_log.Error(context.Background()).Int64("node_id", nodeID).Msg("Node ID invalide pour l'initialisation de Snowflake")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Int64("node_id", nodeID).Msg("Node ID invalide pour l'initialisation de Snowflake")
+		return nil, numan_error.NewInternal()
 	}
 
 	return &node{

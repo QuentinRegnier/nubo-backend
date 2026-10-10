@@ -3,14 +3,14 @@ package worker
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -20,7 +20,7 @@ import (
 // startHashtagTrendCron lance l'évaluation des tendances mondiales de hashtags (TDD §3.3).
 // Il tourne à intervalle régulier pour maintenir le Top 100 des tags sans saturer le CPU.
 func startHashtagTrendCron(ctx context.Context) {
-	nubo_log.Info(ctx).Msg("Démarrage du Moteur de Tendances Hashtags...")
+	numan_log.Info(ctx).Msg("Démarrage du Moteur de Tendances Hashtags...")
 
 	go func() {
 		ticker := time.NewTicker(variables.TrendCronInterval)
@@ -57,20 +57,17 @@ func processHashtagTrends(ctx context.Context) {
 
 	// ── ÉTAPE 2 : HYDRATATION ET GROUPEMENT O(N) ────────────────────────────
 	for _, item := range topPosts {
-		var postID int64
-		var errParse error
-
-		// Normalisation robuste du type renvoyé par go-redis
+		var postID int64 // Normalisation robuste du type renvoyé par go-redis
 		switch v := item.Member.(type) {
 		case string:
-			postID, errParse = strconv.ParseInt(v, 10, 64)
+			postID = pkg.ParseInt64(v)
 		case []byte:
-			postID, errParse = strconv.ParseInt(string(v), 10, 64)
+			postID = pkg.ParseInt64(string(v))
 		default:
-			postID, errParse = strconv.ParseInt(fmt.Sprintf("%v", v), 10, 64)
+			postID = pkg.ParseInt64(fmt.Sprintf("%v", v))
 		}
 
-		if errParse != nil || postID == 0 {
+		if postID == 0 {
 			continue
 		}
 
@@ -117,9 +114,9 @@ func processHashtagTrends(ctx context.Context) {
 
 		_, errPipe := pipe.Exec(ctx)
 		if errPipe != nil {
-			nubo_log.Error(ctx).Err(errPipe).Msg("Échec critique lors de l'enregistrement des tendances Hashtags en RAM (L1)")
+			numan_log.Error(ctx).Err(errPipe).Msg("Échec critique lors de l'enregistrement des tendances Hashtags en RAM (L1)")
 		} else {
-			nubo_log.Info(ctx).Msg("Moteur de Tendances : Mise à jour du Top 100 mondial réussie.")
+			numan_log.Info(ctx).Msg("Moteur de Tendances : Mise à jour du Top 100 mondial réussie.")
 		}
 	}
 }

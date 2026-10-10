@@ -4,15 +4,16 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -21,6 +22,10 @@ import (
 
 // GetConversations récupère les métadonnées fraîches d'un lot de conversations spécifiques.
 func GetConversations(ctx context.Context, callerID int64, input conversation_models.GetConversationsInput) (conversation_models.GetInboxOutput, error) {
+	if err := pkg.ListLimitVerifDefault(input.ConversationIDs); err != nil {
+		return conversation_models.GetInboxOutput{}, err
+	}
+
 	conversationViews := make([]conversation_models.InboxConversationView, 0, len(input.ConversationIDs))
 	callerIDString := strconv.FormatInt(callerID, 10)
 
@@ -47,7 +52,7 @@ func GetConversations(ctx context.Context, callerID int64, input conversation_mo
 				conversationPayload, errPostgres = postgres.FuncGetConversation(ctx, targetConversationID)
 				if errPostgres != nil || conversationPayload.ID == 0 {
 					if errPostgres != nil {
-						nubo_log.Warn(ctx).Err(errPostgres).Int64("conv_id", targetConversationID).Msg("Échec fallback Postgres pour GetConversations")
+						numan_log.Warn(ctx).Err(errPostgres).Int64("conv_id", targetConversationID).Msg("Échec fallback Postgres pour GetConversations")
 					}
 					continue // Échec total de la cascade, on passe à la conversation suivante
 				}
@@ -73,7 +78,7 @@ func GetConversations(ctx context.Context, callerID int64, input conversation_mo
 			if errParticipants == nil {
 				for _, participantStr := range participantsStringList {
 					if participantStr != callerIDString {
-						if otherParticipantID, errParse := strconv.ParseInt(participantStr, 10, 64); errParse == nil {
+						if otherParticipantID := pkg.ParseInt64(participantStr); otherParticipantID != 0 {
 							// Extraction du pseudo de l'interlocuteur
 							if otherUserLite, errLite := cache_service.GetUserLite(ctx, otherParticipantID); errLite == nil {
 								displayTitle = otherUserLite.Username

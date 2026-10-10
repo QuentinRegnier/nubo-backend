@@ -15,6 +15,7 @@ const (
 	ConversationStatePrivateDelete = -1
 	ConversationStateGroupDelete   = -2
 
+	// Plafond d'épingles par utilisateur
 	MaxPinConversation = 3
 
 	MaxActiveParticipantsForBroadcast = 50

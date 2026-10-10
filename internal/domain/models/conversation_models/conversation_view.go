@@ -1,9 +1,9 @@
 package conversation_models
 
 import (
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/media_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/media_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
 )
 
 type InboxConversationView struct {

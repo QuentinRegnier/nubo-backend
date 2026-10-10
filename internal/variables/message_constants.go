@@ -17,8 +17,10 @@ const (
 	MessageTypeSystem = 8
 	MessageTypeSurvey = 9
 
-	// États de restriction des notifications (IsMuted)
-	MuteStatusNone         = 0 // Notifications normales
-	MuteStatusMentionsOnly = 1 // Sourdine partielle (Seules les mentions notifient)
-	MuteStatusFull         = 2 // Sourdine totale (Aucune notification)
+	// System Actions
+	SysActionMemberJoined   = "member_joined"
+	SysActionMemberBanned   = "member_banned"
+	SysActionMemberPromoted = "member_promoted"
+	SysActionMemberDemoted  = "member_demoted"
+	SysActionMemberMuted    = "member_muted"
 )

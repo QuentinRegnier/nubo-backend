@@ -2,23 +2,22 @@ package member_service
 
 import (
 	"context"
-	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/message_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -36,14 +35,14 @@ func PromoteMember(ctx context.Context, callerID int64, input member_models.Prom
 	}
 
 	if callerMemberPayload.Role != variables.MemberRoleOwner {
-		return member_models.PromoteMemberOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seul le propriétaire actuel peut promouvoir un membre.", nil)
+		return member_models.PromoteMemberOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Seul le propriétaire actuel peut promouvoir un membre.", nil)
 	}
 
 	// ── ÉTAPE 2 : VÉRIFICATION DE LA CIBLE ET IDEMPOTENCE ───────────────────
 
 	targetMemberPayload, errTargetSecurity := security_service.LeftMember(ctx, input.ConversationID, input.TargetUserID)
 	if errTargetSecurity != nil {
-		return member_models.PromoteMemberOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "L'utilisateur ciblé n'est pas un membre actif de ce groupe.", errTargetSecurity)
+		return member_models.PromoteMemberOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "L'utilisateur ciblé n'est pas un membre actif de ce groupe.", errTargetSecurity)
 	}
 
 	// Idempotence absolue : Si le membre est déjà Admin (1) ou Propriétaire (2), on ignore silencieusement.
@@ -52,14 +51,32 @@ func PromoteMember(ctx context.Context, callerID int64, input member_models.Prom
 	}
 
 	// ── ÉTAPE 3 : NOTIFICATION SYSTÈME DANS LE FLUX DE DISCUSSION ───────────
+	callerUserLite, errCaller := cache_service.GetUserLite(ctx, callerID)
+	targetUserLite, errTarget := cache_service.GetUserLite(ctx, input.TargetUserID)
 
-	callerUserLite, _ := cache_service.GetUserLite(ctx, callerID)
-	targetUserLite, _ := cache_service.GetUserLite(ctx, input.TargetUserID)
+	callerUsername := "Unknown User"
+	if errCaller == nil {
+		callerUsername = callerUserLite.Username
+	}
+	targetUsername := "Unknown User"
+	if errTarget == nil {
+		targetUsername = targetUserLite.Username
+	}
 
-	systemMessageContent := fmt.Sprintf("%s a promu %s", callerUserLite.Username, targetUserLite.Username)
 	systemMessageInput := message_models.CreateMessageInput{
 		MessageType: variables.MessageTypeSystem,
-		Content:     systemMessageContent,
+		Content:     "",
+		Attachments: map[string]any{
+			"sys_action": variables.SysActionMemberPromoted,
+			"actor": map[string]any{
+				"id":       callerID,
+				"username": callerUsername,
+			},
+			"target": map[string]any{
+				"id":       input.TargetUserID,
+				"username": targetUsername,
+			},
+		},
 	}
 	_, _ = message_service.CreateMessage(ctx, callerID, input.ConversationID, systemMessageInput, true)
 
@@ -88,8 +105,8 @@ func PromoteMember(ctx context.Context, callerID int64, input member_models.Prom
 
 	errQueue := redis.EnqueueDB(ctx, targetMemberPayload.ID, input.ConversationID, redis.EntityMembers, redis.ActionUpdate, targetMemberPayload, redis.TargetAll)
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("user_id", targetMemberPayload.UserID).Msg("Échec du Write-Behind pour la promotion d'un membre")
-		return member_models.PromoteMemberOutput{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errQueue).Int64("user_id", targetMemberPayload.UserID).Msg("Échec du Write-Behind pour la promotion d'un membre")
+		return member_models.PromoteMemberOutput{}, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 7 : DIFFUSION WEBSOCKET (ASYNCHRONE) ──────────────────────────
@@ -97,7 +114,7 @@ func PromoteMember(ctx context.Context, callerID int64, input member_models.Prom
 	go func() {
 		errBroadcast := realtime_service.BroadcastToConversation(context.Background(), input.ConversationID, "member.promoted", targetMemberPayload)
 		if errBroadcast != nil {
-			nubo_log.Error(ctx).Err(errBroadcast).Msg("Échec de la diffusion WebSocket pour member.promoted")
+			numan_log.Error(ctx).Err(errBroadcast).Msg("Échec de la diffusion WebSocket pour member.promoted")
 		}
 	}()
 

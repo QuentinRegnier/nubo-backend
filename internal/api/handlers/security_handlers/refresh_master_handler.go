@@ -10,69 +10,121 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/security_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg/security"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/security_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg/security"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 	"github.com/gin-gonic/gin"
 )
 
 // RefreshMaster godoc
-// @Summary      Hard Refresh (Master Token Rotation)
-// @Description  Réinitialise toute la chaîne de sécurité (Ratchet, JWT, Secrets) en générant un nouveau MasterToken.
-// @Description  Cette route est l'ultime recours ("Last Resort") lorsque le Ratchet est désynchronisé ou que le JWT est expiré depuis trop longtemps.
+// @Summary      Actualiser le MasterToken et rotation de sécurité
+// @Description  Remplace la clé d'accès maître (MasterToken), réinitialise le ratchet cryptographique associé à la session et délivre un nouveau JWT.
 // @Description
-// @Description  **Mécanisme de Résilience :**
-// @Description  1. Recherche la session via le MasterToken dans **Redis**.
-// @Description  2. Si introuvable (crash cache_service), cherche dans **MongoDB**.
-// @Description  3. Si introuvable, cherche dans **PostgreSQL** (Source de vérité).
-// @Description  4. Si trouvé, valide la signature HMAC et réinitialise tout.
+// @Description  **Authentication & Authorization:**
+// @Description  - Route publique non bloquée par le middleware JWT classique.
+// @Description  - Authentification spécifique reposant sur un MasterToken existant (`input.MasterToken`) et une signature HMAC de la requête.
 // @Description
-// @Description  **Actions Serveur :**
-// @Description  * Génération de `NewMasterToken` et `NewJWT`.
-// @Description  * Reset du Ratchet (Secret 0 = NewMaster, Secret 1 = FirebaseInstallationID).
-// @Description  * Mise à jour asynchrone de Postgres et Mongo pour persister le nouveau MasterToken.
+// @Description  **Request Contract:**
+// @Description  - Required fields: `MasterToken`, `UserID`, `Username` passés dans le corps (JSON `security_models.RefreshMasterInput`).
+// @Description  - Headers: `X-Signature` (HMAC calculé sur body), `X-Timestamp` obligatoires. `Authorization` (Optionnel).
 // @Description
-// @Tags         auth
+// @Description  **Execution Workflow:**
+// @Description  1. **Extraction de sécurité** : Validation basique du payload (GIN `Unmarshal` + `ValidateStruct`) et des headers `X-Signature`/`X-Timestamp`. Rejet immédiat 400 si absents.
+// @Description  2. **Recherche de Session en Cascade** : Tentative de récupération de la session active avec auto-guérison :
+// @Description     - Cache RAM L1 (Prioritaire).
+// @Description     - Base MongoDB L2 (Si absent en L1, avec re-hydratation synchrone L1).
+// @Description     - Base Postgres L3 (Si absent L2, avec Write-Behind vers L2 et ré-hydratation L1).
+// @Description  3. **Vérification HMAC** : Le corps de la requête concaténé au timestamp doit avoir une signature identique au HMAC envoyé, signé à l'aide de l'**ancien** `MasterToken`. Rejet 403 Forbidden si altéré.
+// @Description  4. **Génération des jetons** : Production d'un nouveau `MasterToken` (longue durée) et `JWT` (courte durée) via `pkg.GenerateToken`.
+// @Description  5. **Réinitialisation Cryptographique** : Le secret rotatif (Ratchet) est remis à 0 (`security.ResetRatchet`), invalidant les secrets de session éphémères antérieurs.
+// @Description  6. **Mise à jour Session** : Les nouvelles valeurs, y compris la tolérance de temps, sont écrites en mémoire (L1) et envoyées en persistance asynchrone (Write-Behind L2+L3).
+// @Description  7. **Signature de la réponse** : La réponse JSON (qui contient les nouveaux jetons en clair) est elle-même signée avec **l'ancien** MasterToken, permettant au client de valider son authenticité.
+// @Description
+// @Description  **Success Behavior:**
+// @Description  - HTTP status: 200 OK
+// @Description  - Response body: `security_models.RefreshMasterResponse` contenant les nouveaux `MasterToken` et `Token` (JWT).
+// @Description  - Headers: `X-Signature`, `X-Timestamp`.
+// @Description  - Persistence guarantees: Mise à jour synchrone Cache L1, file d'attente Redis pour DB.
+// @Description  - Side effects: Invalidations effectives des ratchets et JWT précédents (au-delà de la tolérance).
+// @Description
+// @Description  **Error Responses & Reproduction Conditions:**
+// @Description
+// @Description  🔴 **400 Bad Request:**
+// @Description
+// @Description  - **[READ_BODY_ERROR] / [EMPTY_BODY] / [INVALID_PAYLOAD] / [VALIDATION_FAILED]:**
+// @Description    - Trigger: Le body est illisible, vide, JSON malformé ou rate la validation structurale.
+// @Description    - Execution stage: `io.ReadAll` ou Validation `pkg.ValidateStruct`.
+// @Description    - Response: `numan_error.PublicErrorResponse` avec cause détaillée.
+// @Description    - Error code: Contexte de l'erreur converti vers `numan_error.CodeInvalidPayload`.
+// @Description
+// @Description  - **[MISSING_HEADERS]:**
+// @Description    - Trigger: Les en-têtes `X-Signature` ou `X-Timestamp` n'ont pas été fournis.
+// @Description    - Execution stage: Extraction des headers (Étape 1).
+// @Description    - Response: `numan_error.PublicErrorResponse` ("Headers de sécurité manquants.").
+// @Description    - Error code: String "MISSING_HEADERS" ou son équivalent constant public.
+// @Description
+// @Description  🟠 **403 Forbidden:**
+// @Description
+// @Description  - **[SESSION_NOT_FOUND] Session invalide/expirée:**
+// @Description    - Trigger: Le MasterToken fourni n'existe dans aucune couche (L1, L2, L3).
+// @Description    - Execution stage: Cascade de recherche de session.
+// @Description    - Response: `numan_error.PublicErrorResponse` ("Session introuvable.").
+// @Description    - Error code: `numan_error.CodeForbidden`.
+// @Description
+// @Description  - **[INVALID_HMAC] Falsification interceptée:**
+// @Description    - Trigger: La signature reconstruite avec l'ancien MasterToken ne correspond pas à `X-Signature`.
+// @Description    - Execution stage: Vérification cryptographique (`security.CheckHMAC`).
+// @Description    - Response: `numan_error.PublicErrorResponse` ("Signature HMAC invalide...").
+// @Description    - Error code: `numan_error.CodeForbidden`.
+// @Description
+// @Description  ⚫ **500 Internal Server Error:**
+// @Description
+// @Description  - **[INTERNAL_ERROR] Échec fatal cryptographique:**
+// @Description    - Trigger: La génération du token ou la réinitialisation du Ratchet échoue.
+// @Description    - Execution stage: `pkg.GenerateToken` ou `security.ResetRatchet`.
+// @Description    - Response: `numan_error.PublicErrorResponse`.
+// @Description    - Error code: `numan_error.CodeInternal`.
+// @Tags         security
 // @Accept       json
 // @Produce      json
-// @Param        Authorization header string false "Bearer <Current_JWT> (Optionnel, pour continuité)"
-// @Param        X-Signature   header string true  "HMAC calculé avec l'ANCIEN MasterToken"
-// @Param        X-Timestamp   header string true  "Timestamp de la requête"
-// @Param        input         body   security_models.RefreshMasterInput true "Données de reset (MasterToken, UserID, Username)"
-// @Success      200  {object}  domain.RefreshMasterResponse "Nouveaux identifiants générés"
-// @Failure      400  {object}  nubo_error.PublicErrorResponse "Format invalide ou Headers manquants"
-// @Failure      401  {object}  nubo_error.PublicErrorResponse "MasterToken introuvable ou Signature HMAC invalide"
-// @Failure      500  {object}  nubo_error.PublicErrorResponse "Erreur serveur critique (Génération/Sauvegarde)"
-// @Router       /auth/refresh-master [post]
+// @Param        Authorization header string false "Bearer <Current_JWT> (Optional)"
+// @Param        X-Signature   header string true  "HMAC calculated with OLD MasterToken"
+// @Param        X-Timestamp   header string true  "Unix Timestamp"
+// @Param        input         body   security_models.RefreshMasterInput true "Reset data (MasterToken, UserID, Username)"
+// @Success      200  {object} security_models.RefreshMasterResponse "Newly generated credentials"
+// @Failure      400  {object} numan_error.PublicErrorResponse "Invalid payload or Missing Headers"
+// @Failure      403  {object} numan_error.PublicErrorResponse "MasterToken not found or Invalid HMAC"
+// @Failure      500  {object} numan_error.PublicErrorResponse "Internal Server Error"
+// @Router       /refresh/master [post]
 func RefreshMaster(c *gin.Context) {
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("READ_BODY_ERROR", "Erreur de lecture du body.", err))
+		numan_error.RespondWithError(c, numan_error.NewBadRequest("READ_BODY_ERROR", "Erreur de lecture du body.", err))
 		return
 	}
 
 	var input security_models.RefreshMasterInput
 	if len(bodyBytes) > 0 {
 		if err := json.Unmarshal(bodyBytes, &input); err != nil {
-			nubo_error.RespondWithError(c, nubo_error.NewBadRequest("INVALID_PAYLOAD", "Format JSON invalide.", err))
+			numan_error.RespondWithError(c, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Format JSON invalide.", err))
 			return
 		}
 	} else {
-		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("EMPTY_BODY", "Le corps de la requête est requis.", nil))
+		numan_error.RespondWithError(c, numan_error.NewBadRequest("EMPTY_BODY", "Le corps de la requête est requis.", nil))
 		return
 	}
 
 	if err := pkg.ValidateStruct(&input); err != nil {
-		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("VALIDATION_FAILED", "Validation failed.", err))
+		numan_error.RespondWithError(c, numan_error.NewBadRequest("VALIDATION_FAILED", "Validation failed.", err))
 		return
 	}
 
@@ -87,7 +139,7 @@ func RefreshMaster(c *gin.Context) {
 	clientTs := c.GetHeader("X-Timestamp")
 
 	if clientHMAC == "" || clientTs == "" {
-		nubo_error.RespondWithError(c, nubo_error.NewBadRequest("MISSING_HEADERS", "Headers de sécurité manquants.", nil))
+		numan_error.RespondWithError(c, numan_error.NewBadRequest("MISSING_HEADERS", "Headers de sécurité manquants.", nil))
 		return
 	}
 
@@ -118,7 +170,7 @@ func RefreshMaster(c *gin.Context) {
 	}
 
 	if !sessionFound || sessionRaw.ID == 0 {
-		nubo_error.RespondWithError(c, nubo_error.NewForbidden("SESSION_NOT_FOUND", "Session introuvable.", nil))
+		numan_error.RespondWithError(c, numan_error.NewForbidden("SESSION_NOT_FOUND", "Session introuvable.", nil))
 		return
 	}
 
@@ -126,27 +178,27 @@ func RefreshMaster(c *gin.Context) {
 	stringToSign := security.BuildStringToSign(c.Request.Method, c.Request.URL.Path, clientTs, contentToSign)
 
 	if !security.CheckHMAC(stringToSign, input.MasterToken, clientHMAC) {
-		nubo_error.RespondWithError(c, nubo_error.NewForbidden("INVALID_HMAC", "Signature HMAC invalide (Master Check).", nil))
+		numan_error.RespondWithError(c, numan_error.NewForbidden("INVALID_HMAC", "Signature HMAC invalide (Master Check).", nil))
 		return
 	}
 
 	newMasterToken, err := pkg.GenerateToken(input.UserID, sessionRaw.FirebaseInstallationID, variables.MasterTokenExpirationSeconds)
 	if err != nil {
-		nubo_log.Error(c).Err(err).Int64("user_id", input.UserID).Msg("Échec de la génération du MasterToken")
-		nubo_error.RespondWithError(c, nubo_error.NewInternal())
+		numan_log.Error(c).Err(err).Int64("user_id", input.UserID).Msg("Échec de la génération du MasterToken")
+		numan_error.RespondWithError(c, numan_error.NewInternal())
 		return
 	}
 
 	newJWT, err := pkg.GenerateToken(input.UserID, sessionRaw.FirebaseInstallationID, variables.JWTExpirationSeconds)
 	if err != nil {
-		nubo_log.Error(c).Err(err).Int64("user_id", input.UserID).Msg("Échec de la génération du JWT")
-		nubo_error.RespondWithError(c, nubo_error.NewInternal())
+		numan_log.Error(c).Err(err).Int64("user_id", input.UserID).Msg("Échec de la génération du JWT")
+		numan_error.RespondWithError(c, numan_error.NewInternal())
 		return
 	}
 
 	if sessionRaw.CurrentSecret, err = security.ResetRatchet(newMasterToken, sessionRaw.FirebaseInstallationID); err != nil {
-		nubo_log.Error(c).Err(err).Int64("user_id", input.UserID).Msg("Échec de la réinitialisation du Ratchet")
-		nubo_error.RespondWithError(c, nubo_error.NewInternal())
+		numan_log.Error(c).Err(err).Int64("user_id", input.UserID).Msg("Échec de la réinitialisation du Ratchet")
+		numan_error.RespondWithError(c, numan_error.NewInternal())
 		return
 	}
 
@@ -157,11 +209,11 @@ func RefreshMaster(c *gin.Context) {
 	sessionRaw.ExpiresAt = domain.TimeToMillis(time.Now().Add(time.Duration(variables.MasterTokenExpirationSeconds) * time.Second))
 
 	if errAdd := cache_service.SetSessionInCache(c, sessionRaw); errAdd != nil {
-		nubo_log.Warn(c).Err(errAdd).Msg("Warning: Echec update Session Cache L1")
+		numan_log.Warn(c).Err(errAdd).Msg("Warning: Echec update Session Cache L1")
 	}
 
 	if err := redis.EnqueueDB(c, sessionRaw.ID, 0, redis.EntitySession, redis.ActionUpdate, sessionRaw, redis.TargetAll); err != nil {
-		nubo_log.Error(c).Err(err).Msg("Error enqueuing to DB")
+		numan_log.Error(c).Err(err).Msg("Error enqueuing to DB")
 	}
 
 	respData := security_models.RefreshMasterResponse{
@@ -172,8 +224,8 @@ func RefreshMaster(c *gin.Context) {
 
 	respBytes, err := json.Marshal(respData)
 	if err != nil {
-		nubo_log.Error(c).Err(err).Int64("user_id", input.UserID).Msg("Échec de la sérialisation JSON de la réponse")
-		nubo_error.RespondWithError(c, nubo_error.NewInternal())
+		numan_log.Error(c).Err(err).Int64("user_id", input.UserID).Msg("Échec de la sérialisation JSON de la réponse")
+		numan_error.RespondWithError(c, numan_error.NewInternal())
 		return
 	}
 

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // postCandidate représente un post candidat dans le pipeline de feed personnalisé.
@@ -149,7 +149,7 @@ func computePersonalizedScore(
 	endIndex := variables.VectorOffEng + variables.VectorDimEng
 	pearsonCorrelation := computePearsonEngagement(userVec[startIndex:endIndex], contentVec[startIndex:endIndex])
 
-	// ÉTAPE E : Formule Composite (La recette secrète Nubo)
+	// ÉTAPE E : Formule Composite (La recette secrète numan)
 	// Base : (ρ * Cosinus) + ((1 - ρ) * Affinité Sociale) + (η * Ami) + (η_P * Pearson)
 	innerFormula := (variables.TDDRho * cosineSimilarity) +
 		((1.0 - variables.TDDRho) * socialAffinity) +

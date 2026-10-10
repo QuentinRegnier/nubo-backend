@@ -4,9 +4,10 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 )
 
 // ############################################################################
@@ -20,8 +21,8 @@ func SetWatermarkInSpeedCache(ctx context.Context, conversationID int64, userID 
 	// Le HSET crée la clé si elle n'existe pas, ou met à jour le champ (userID) avec la nouvelle valeur.
 	errRedis := redis.ConvWatermarks.HSet(ctx, conversationID, strconv.FormatInt(userID, 10), lastReadMessageID)
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Int64("conv_id", conversationID).Msg("Impossible de mettre à jour le watermark dans le Speed Cache L1")
-		return nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Int64("conv_id", conversationID).Msg("Impossible de mettre à jour le watermark dans le Speed Cache L1")
+		return numan_error.NewInternal()
 	}
 
 	// On prolonge la durée de vie de cette structure en RAM à chaque activité
@@ -35,14 +36,14 @@ func GetWatermarksFromSpeedCache(ctx context.Context, conversationID int64) (map
 
 	rawWatermarksMap, errRedis := redis.ConvWatermarks.HGetAll(ctx, conversationID).Result()
 	if errRedis != nil {
-		nubo_log.Error(ctx).Err(errRedis).Int64("conv_id", conversationID).Msg("Erreur L1 lors de la récupération des watermarks de la conversation")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errRedis).Int64("conv_id", conversationID).Msg("Erreur L1 lors de la récupération des watermarks de la conversation")
+		return nil, numan_error.NewInternal()
 	}
 
 	parsedWatermarksMap := make(map[int64]int64)
 	for userIDString, messageIDString := range rawWatermarksMap {
-		parsedUserID, errParseUser := strconv.ParseInt(userIDString, 10, 64)
-		parsedMessageID, errParseMsg := strconv.ParseInt(messageIDString, 10, 64)
+		parsedUserID, errParseUser := pkg.ParseInt64Strict(userIDString)
+		parsedMessageID, errParseMsg := pkg.ParseInt64Strict(messageIDString)
 
 		if errParseUser == nil && errParseMsg == nil {
 			parsedWatermarksMap[parsedUserID] = parsedMessageID

@@ -1,17 +1,17 @@
-package nubo_error
+package numan_error
 
 import (
 	"errors"
 	"net/http"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
 	"github.com/gin-gonic/gin"
 )
 
 // PublicErrorResponse est le format standardisé renvoyé au client HTTP/Web.
-// On conserve la clé "nubo_error" pour ne pas casser la rétrocompatibilité avec tes applications mobiles actuelles.
+// On conserve la clé "numan_error" pour ne pas casser la rétrocompatibilité avec tes applications mobiles actuelles.
 type PublicErrorResponse struct {
-	Error   string `json:"nubo_error"`
+	Error   string `json:"numan_error"`
 	Code    string `json:"code"`
 	TraceID string `json:"trace_id"`
 }
@@ -31,9 +31,9 @@ func RespondWithError(c *gin.Context, err error) {
 		// Log intelligent : On ne fait sonner l'alarme (Error) que pour les 5xx.
 		// Les erreurs clients (4xx comme un mauvais mot de passe) sont logguées en Warn.
 		if appErr.HTTPStatus >= 500 {
-			nubo_log.Error(c).Err(appErr.Err).Str("trace_id", traceID).Str("code", appErr.Code).Msg(appErr.Message)
+			numan_log.Error(c).Err(appErr.Err).Str("trace_id", traceID).Str("code", appErr.Code).Msg(appErr.Message)
 		} else {
-			nubo_log.Warn(c).Err(appErr.Err).Str("trace_id", traceID).Str("code", appErr.Code).Msg(appErr.Message)
+			numan_log.Warn(c).Err(appErr.Err).Str("trace_id", traceID).Str("code", appErr.Code).Msg(appErr.Message)
 		}
 
 		c.AbortWithStatusJSON(appErr.HTTPStatus, PublicErrorResponse{
@@ -46,7 +46,7 @@ func RespondWithError(c *gin.Context, err error) {
 
 	// 3. Si c'est une erreur non gérée (Fuite bas niveau, ex: erreur SQL brute)
 	// On loggue le vrai problème en interne...
-	nubo_log.Error(c).Err(err).Str("trace_id", traceID).Msg("Unhandled internal error (fuite bas niveau détectée)")
+	numan_log.Error(c).Err(err).Str("trace_id", traceID).Msg("Unhandled internal error (fuite bas niveau détectée)")
 
 	// ... mais on masque totalement l'erreur au client.
 	c.AbortWithStatusJSON(http.StatusInternalServerError, PublicErrorResponse{

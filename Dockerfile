@@ -43,7 +43,7 @@ FROM base AS builder-prod
 COPY . .
 
 # Ta commande de compilation originale (optimisée et strippée)
-RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o nubo cmd/main.go
+RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o numan cmd/main.go
 
 # ==========================================
 # 4. PROD (L'image finale légère)
@@ -57,7 +57,7 @@ RUN apk add --no-cache_service libwebp ca-certificates
 WORKDIR /app
 
 # On copie uniquement le binaire compilé depuis l'étape "builder-prod"
-COPY --from=builder-prod /app/nubo .
+COPY --from=builder-prod /app/numan .
 COPY --from=builder-prod /app/docs ./docs
 COPY --from=builder-prod /app/docs.html .
 
@@ -65,4 +65,4 @@ RUN mkdir -p /app/uploads
 ENV GIN_MODE=release
 EXPOSE 8080
 
-CMD ["./nubo"]
+CMD ["./numan"]

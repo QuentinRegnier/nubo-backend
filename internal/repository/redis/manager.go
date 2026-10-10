@@ -6,10 +6,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/infrastructure/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	redisgo "github.com/QuentinRegnier/numan-backend/internal/infrastructure/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 	"github.com/go-redis/redis/v8"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -102,9 +102,7 @@ var (
 	NotificationActivity *Collection
 
 	// --- TELEMETRY Cache ---
-	TelemetryVectors    *Collection
-	TelemetryTags       *Collection
-	TelemetryTimestamps *Collection
+	TelemetryProfiles *Collection
 
 	// --- WEBSOCKET Cache ---
 	Presence *Collection
@@ -203,9 +201,7 @@ func InitCacheDatabase() {
 	InboxActivity = newCollection("inbox:activity", 0)
 
 	// --- TELEMETRY Cache ---
-	TelemetryVectors = newCollection("telemetry:vectors", variables.StandardTTL)
-	TelemetryTags = newCollection("telemetry:tags", variables.StandardTTL)
-	TelemetryTimestamps = newCollection("telemetry:timestamps", variables.StandardTTL)
+	TelemetryProfiles = newCollection("telemetry:profiles", variables.StandardTTL)
 
 	// --- WEBSOCKET Cache ---
 	Presence = newCollection("presence:user", 60*time.Second)
@@ -272,7 +268,7 @@ func (c *Collection) Exists(ctx context.Context, id any) (bool, error) {
 func (c *Collection) SetObject(ctx context.Context, id any, data any) error {
 	msgpackBytes, err := msgpack.Marshal(data)
 	if err != nil {
-		return nubo_error.NewInternal()
+		return numan_error.NewInternal()
 	}
 	return c.Client.Set(ctx, c.Key(id), msgpackBytes, c.DefaultTTL).Err()
 }
@@ -476,7 +472,7 @@ func (c *Collection) SubscribeFlux(ctx context.Context) (<-chan []byte, context.
 	go func() {
 		defer func() {
 			if err := pubsub.Close(); err != nil {
-				nubo_log.Error(ctx).Err(err).Msg("Erreur fermeture pubsub")
+				numan_log.Error(ctx).Err(err).Msg("Erreur fermeture pubsub")
 			}
 		}()
 		defer close(ch)

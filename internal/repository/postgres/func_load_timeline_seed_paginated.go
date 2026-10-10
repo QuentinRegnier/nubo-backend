@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
 )
 
 // timelineSeedPayload structure temporaire pour la reconstruction L1
@@ -22,13 +22,13 @@ func FuncLoadTimelineSeedPaginated(ctx context.Context, limit, offset int) ([]ti
 	query := `SELECT * FROM content.func_load_timeline_seed_paginated($1, $2)`
 	rows, err := postgres.PostgresDB.Query(query, limit, offset)
 	if err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête SQL (Query)")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête SQL (Query)")
+		return nil, numan_error.NewInternal()
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
+			numan_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
 		}
 	}(rows)
 

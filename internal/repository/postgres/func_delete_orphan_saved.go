@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
 )
 
 // FuncDeleteOrphanSaved appelle la fonction SQL pour purger les favoris orphelins
@@ -20,7 +20,7 @@ func FuncDeleteOrphanSaved(ctx context.Context) ([]int64, error) {
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			nubo_log.Error(ctx).Err(err).Msg("Erreur fermeture rows Garbage Collector Saved")
+			numan_log.Error(ctx).Err(err).Msg("Erreur fermeture rows Garbage Collector Saved")
 		}
 	}(rows)
 

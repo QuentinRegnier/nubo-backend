@@ -1,8 +1,8 @@
 package mongo
 
 import (
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
 	"go.mongodb.org/mongo-driver/bson"
 )
 

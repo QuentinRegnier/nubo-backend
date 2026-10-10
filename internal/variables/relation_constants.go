@@ -17,3 +17,12 @@ const (
 	ConnectionsVisibilityFriends   = 2 // Visible uniquement par les amis
 	ConnectionsVisibilityPrivate   = 3 // Visible par personne
 )
+
+const (
+	ActionBlockUser        = true
+	ActionUnblockUser      = false
+	ActionSubcribeUser     = true
+	ActionUnSubcribeUser   = false
+	ActionPromoteToFriend  = true
+	ActionDemoteToFollower = false
+)

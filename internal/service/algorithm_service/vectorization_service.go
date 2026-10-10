@@ -4,12 +4,12 @@ import (
 	"context"
 	"math"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -46,12 +46,12 @@ func StoreContentVector(ctx context.Context, post post_models.PostPayload) {
 	}
 
 	if err := redis.ContentVectors.SetObject(ctx, post.ID, payload); err != nil {
-		nubo_log.Error(ctx).Err(err).Int64("post_id", post.ID).Msg("Échec Redis SET content:vec via Collection")
+		numan_log.Error(ctx).Err(err).Int64("post_id", post.ID).Msg("Échec Redis SET content:vec via Collection")
 		return
 	}
 
 	if err := storeLSHBucket(ctx, post.ID, payload.LSHHash); err != nil {
-		nubo_log.Error(ctx).Err(err).Int64("post_id", post.ID).Msg("Échec mise à jour Redis LSH bucket")
+		numan_log.Error(ctx).Err(err).Int64("post_id", post.ID).Msg("Échec mise à jour Redis LSH bucket")
 	}
 }
 
@@ -61,7 +61,7 @@ func UpdatePostEngagementVector(ctx context.Context, post post_models.PostPayloa
 
 	// 1. TENTATIVE L1 : Récupération du vecteur actuel
 	if err := redis.ContentVectors.GetObject(ctx, post.ID, &payload); err != nil || len(payload.Vector) != variables.VectorDimTotal {
-		nubo_log.Warn(ctx).Err(err).Int64("post_id", post.ID).Msg("Vecteur absent ou corrompu en RAM, recalcul complet déclenché")
+		numan_log.Warn(ctx).Err(err).Int64("post_id", post.ID).Msg("Vecteur absent ou corrompu en RAM, recalcul complet déclenché")
 		// FALLBACK : Recalcul complet si le payload est absent (Auto-guérison par calcul)
 		StoreContentVector(ctx, post)
 		return
@@ -82,7 +82,7 @@ func UpdatePostEngagementVector(ctx context.Context, post post_models.PostPayloa
 
 	// 5. Sauvegarde atomique L1
 	if err := redis.ContentVectors.SetObject(ctx, post.ID, payload); err != nil {
-		nubo_log.Error(ctx).Err(err).Int64("post_id", post.ID).Msg("Échec de la mise à jour asynchrone du vecteur")
+		numan_log.Error(ctx).Err(err).Int64("post_id", post.ID).Msg("Échec de la mise à jour asynchrone du vecteur")
 	}
 }
 

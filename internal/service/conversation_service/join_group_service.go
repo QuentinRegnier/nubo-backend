@@ -2,27 +2,26 @@ package conversation_service
 
 import (
 	"context"
-	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/message_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/message_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
 )
 
 // ############################################################################
@@ -44,7 +43,7 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 			var errPostgres error
 			conversationPayload, errPostgres = postgres.FuncGetConversation(ctx, input.ConversationID)
 			if errPostgres != nil || conversationPayload.ID == 0 {
-				return conversation_models.JoinGroupOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "La conversation n'existe pas ou a été supprimée.", nil)
+				return conversation_models.JoinGroupOutput{}, numan_error.NewNotFound(numan_error.CodeNotFound, "La conversation n'existe pas ou a été supprimée.", nil)
 			}
 
 			// PROMOTION L3 -> L2 (Mongo Asynchrone)
@@ -59,30 +58,30 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 
 	// ── ÉTAPE 2 : VÉRIFICATIONS MÉTIER DE BASE ───────────────────────────────
 	if conversationPayload.Type == variables.ConversationTypeDirect {
-		return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Impossible de rejoindre un message privé existant.", nil)
+		return conversation_models.JoinGroupOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Impossible de rejoindre un message privé existant.", nil)
 	}
 
 	// ── ÉTAPE 3 : BARRIÈRE DE SÉCURITÉ (ROUTAGE D'ACCÈS) ─────────────────────
 	if input.Internal {
 		// Accès interne libre (Communauté)
 		if conversationPayload.Type != variables.ConversationTypeCommunityPub && conversationPayload.Type != variables.ConversationTypeCommunityPriv {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seules les communautés peuvent être rejointes de manière interne.", nil)
+			return conversation_models.JoinGroupOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Seules les communautés peuvent être rejointes de manière interne.", nil)
 		}
 		if conversationPayload.Settings.JoinApprovalRequired {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Cette communauté nécessite une approbation, vous ne pouvez pas la rejoindre directement.", nil)
+			return conversation_models.JoinGroupOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Cette communauté nécessite une approbation, vous ne pouvez pas la rejoindre directement.", nil)
 		}
 	} else if input.External {
 		// Accès par lien d'invitation externe (URL Web)
 		if conversationPayload.Type != variables.ConversationTypeCommunityPub && conversationPayload.Type != variables.ConversationTypeCommunityPriv {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "L'accès via lien externe est réservé aux communautés.", nil)
+			return conversation_models.JoinGroupOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "L'accès via lien externe est réservé aux communautés.", nil)
 		}
 		if conversationPayload.Settings.JoinWithLinkDuration != 0 && domain.NowMillis() >= conversationPayload.Settings.JoinWithLinkDuration {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Le lien d'invitation a expiré.", nil)
+			return conversation_models.JoinGroupOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Le lien d'invitation a expiré.", nil)
 		}
 	} else {
 		// Accès intra-plateforme par message d'invitation privé
 		if input.InviteMsgID == 0 {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Une invitation est requise pour rejoindre ce groupe privé.", nil)
+			return conversation_models.JoinGroupOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Une invitation est requise pour rejoindre ce groupe privé.", nil)
 		}
 
 		inviteMessagePayload, errSecurity := security_service.LeftMessage(ctx, input.InviteMsgID, callerID)
@@ -92,16 +91,16 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 		}
 
 		if inviteMessagePayload.MessageType != variables.MessageTypeInvite {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Le message fourni n'est pas une invitation valide.", nil)
+			return conversation_models.JoinGroupOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Le message fourni n'est pas une invitation valide.", nil)
 		}
 
 		if inviteMessagePayload.Attachments == nil {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "L'invitation est corrompue (aucune cible).", nil)
+			return conversation_models.JoinGroupOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "L'invitation est corrompue (aucune cible).", nil)
 		}
 
 		targetConvRaw, exists := inviteMessagePayload.Attachments["conversation_id"]
 		if !exists {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "L'invitation est invalide (cible manquante).", nil)
+			return conversation_models.JoinGroupOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "L'invitation est invalide (cible manquante).", nil)
 		}
 
 		var targetConversationID int64
@@ -113,7 +112,7 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 		}
 
 		if targetConversationID != input.ConversationID {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "L'invitation ne correspond pas à ce groupe.", nil)
+			return conversation_models.JoinGroupOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "L'invitation ne correspond pas à ce groupe.", nil)
 		}
 	}
 
@@ -131,13 +130,13 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 
 	if memberPayload.ID != 0 {
 		if memberPayload.Role == variables.MemberRoleBanned {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous avez été banni de ce groupe.", nil)
+			return conversation_models.JoinGroupOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Vous avez été banni de ce groupe.", nil)
 		}
 		if memberPayload.Role == -3 { // État interne temporaire (En attente d'approbation)
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewConflict(nubo_error.CodeConflict, "Votre demande d'intégration est déjà en attente d'approbation.", nil)
+			return conversation_models.JoinGroupOutput{}, numan_error.NewConflict(numan_error.CodeConflict, "Votre demande d'intégration est déjà en attente d'approbation.", nil)
 		}
 		if memberPayload.Role >= variables.MemberRoleNormal {
-			return conversation_models.JoinGroupOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Vous faites déjà partie de ce groupe.", nil)
+			return conversation_models.JoinGroupOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Vous faites déjà partie de ce groupe.", nil)
 		}
 
 		// Si l'utilisateur avait quitté (-1) ou a été refusé auparavant (-4),
@@ -203,7 +202,7 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 	}
 	errQueue := redis.EnqueueDB(ctx, memberPayload.ID, input.ConversationID, redis.EntityMembers, dbAction, memberPayload, redis.TargetAll)
 	if errQueue != nil {
-		return conversation_models.JoinGroupOutput{}, nubo_error.NewInternal()
+		return conversation_models.JoinGroupOutput{}, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 9 : ÉVÉNEMENTS SYSTÈMES ET WEBSOCKETS (ENTRÉE DIRECTE ONLY) ──
@@ -214,10 +213,21 @@ func JoinGroup(ctx context.Context, callerID int64, input conversation_models.Jo
 			if callerUserLite, errLite := cache_service.GetUserLite(backgroundContext, callerID); errLite == nil {
 
 				// A. Publication du message système d'intégration
-				systemContent := fmt.Sprintf("%s a rejoint le groupe", callerUserLite.Username)
+				callerUsername := "Unknown User"
+				if errLite == nil {
+					callerUsername = callerUserLite.Username
+				}
+
 				systemMessageInput := message_models.CreateMessageInput{
 					MessageType: variables.MessageTypeSystem,
-					Content:     systemContent,
+					Content:     "",
+					Attachments: map[string]any{
+						"sys_action": variables.SysActionMemberJoined,
+						"actor": map[string]any{
+							"id":       callerID,
+							"username": callerUsername,
+						},
+					},
 				}
 				_, _ = message_service.CreateMessage(backgroundContext, callerID, input.ConversationID, systemMessageInput, true)
 

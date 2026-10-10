@@ -3,72 +3,97 @@ package post_handlers
 import (
 	"net/http"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/post_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	_ "github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/service/post_service"
 	"github.com/gin-gonic/gin"
 )
 
 // GetPostHandler godoc
-// @Summary      Récupérer un ou plusieurs posts
-// @Description  Récupère une liste de posts en masse depuis leurs IDs (Forage en cascade L1 -> L2 -> L3).
-// @Description  Le système filtre automatiquement les contenus selon la matrice de visibilité stricte (Public, Abonnés, Amis, Soft Delete).
-// @Description  Cette route nécessite une authentification par JWT et une signature HMAC valide.
+// @Summary      Récupérer un batch de publications
+// @Description  Récupère un ensemble spécifique de posts par leurs identifiants en respectant rigoureusement les règles de visibilité et le statut relationnel entre l'appelant et les auteurs. Les accès illégitimes ne causent pas d'erreur 403/404 HTTP, mais incluent un message d'erreur structuré dans la liste retournée.
 // @Description
-// @Description  **Règles de validation & Erreurs :**
+// @Description  **Authentication & Authorization:**
+// @Description  - Authentication requirements: Route sécurisée nécessitant un token JWT d'authentification valide.
+// @Description  - Required permissions or roles: Route sécurisée ; les données exposées dépendent du niveau relationnel avec l'auteur (Amis, Abonnés, Public, ou Bloqué).
 // @Description
-// @Description    **200 OK (Succès partiel ou total) :**
-// @Description  * Retourne toujours un tableau. Si un post est inaccessible (privé, supprimé, banni), l'erreur est intégrée dans l'objet de réponse du post spécifique pour ne pas bloquer le reste de la liste.
+// @Description  **Execution Workflow:**
+// @Description  1. **Extraction et Validation :**
+// @Description     - Extraction de l'ID appelant via le contexte.
+// @Description     - Binding GIN de la liste d'IDs (`PostIDs`). Déduplication et vérification de la limite stricte (Maximum 50 posts simultanés).
+// @Description     - Arrêt anticipé avec tableau vide si la liste est vide.
+// @Description  2. **Récupération Brut (Cascade) :**
+// @Description     - Appel du service `post_service.GetPosts`, qui orchestre une lecture en cascade (Cache L1 -> Mongo L2 -> Postgres L3) via un Helper de résolution massive (`fetchPostsCascade`).
+// @Description  3. **Matrice de Visibilité et Règles Relationnelles :**
+// @Description     - Sur chaque post, vérification en temps réel (RAM O(1)) du statut relationnel (`cache_service.RelationValue`).
+// @Description     - Application silencieuse des règles d'exclusion : Bannissement croisé (Shadow ban mutuel), Soft Delete, Exclusivité Abonnés ou Amis.
+// @Description     - En cas d'exclusion, l'objet de réponse encapsule un message d'erreur explicatif au lieu du payload.
+// @Description  4. **Hydratation des Payloads Valides :**
+// @Description     - Pour les posts accessibles, récupération des données de l'auteur (`GetUserLite`).
+// @Description     - Génération des URL cryptographiques HMAC pour l'avatar de l'auteur et les pièces jointes (`media_service.FormatMediaViewsCascade`).
+// @Description     - Chargement synchrone du Top des commentaires associés (limité au ZSET L1 Cap).
+// @Description  5. **Réponse :**
+// @Description     - Renvoi HTTP 200 contenant le tableau `GetPostOutput`, regroupant les posts hydratés et les erreurs de visibilité encapsulées.
 // @Description
-// @Description    **400 Bad Request (Erreurs client) :**
-// @Description  * Le paramètre 'ids' est manquant dans l'URL.
-// @Description  * Limite dépassée : impossible de demander plus de 50 posts simultanément (Bouclier statique).
-// @Description  * Aucun ID valide n'a pu être extrait.
+// @Description  **Error Responses & Reproduction Conditions:**
 // @Description
-// @Description    **401 Unauthorized (Authentification) :**
-// @Description  * Token JWT invalide, expiré ou utilisateur non identifié.
+// @Description  🔴 **400 Bad Request:**
+// @Description
+// @Description  - **[numan_error.CodeInvalidPayload] Requête mal formatée ou paramètres invalides:**
+// @Description    - Trigger: Format JSON invalide ou dépassement de la limite stricte de 50 posts par requête.
+// @Description    - Execution stage: Validation du payload et bouclier de protection BATCH dans le handler.
+// @Description    - Response: `numan_error.PublicErrorResponse` avec détails, ou map JSON selon le format du routeur HTTP.
+// @Description    - Error code: `numan_error.CodeInvalidPayload`
+// @Description
+// @Description  🟡 **401 Unauthorized:**
+// @Description
+// @Description  - **[numan_error.CodeUnauthorized] Jeton invalide ou absent:**
+// @Description    - Trigger: L'utilisateur appelant n'est pas identifié (Token manquant ou illisible par pkg).
+// @Description    - Execution stage: Extraction manuelle du contexte utilisateur via pkg.GetUserIDFromContext.
+// @Description    - Response: `numan_error.PublicErrorResponse`.
+// @Description    - Error code: `numan_error.CodeUnauthorized`
+// @Description
+// @Description  ⚫ **500 Internal Server Error:**
+// @Description
+// @Description  - **[numan_error.CodeInternalError] Erreur de service inattendue:**
+// @Description    - Trigger: Aucune erreur 500 n'est explicitement levée ici, le service de résolution massive absorbant les défaillances avec des structures non-trouvées.
+// @Description    - Execution stage: Exécution profonde du service métier.
+// @Description    - Response: `numan_error.PublicErrorResponse`.
+// @Description    - Error code: `numan_error.CodeInternalError`
 // @Tags         posts
 // @Accept       json
 // @Produce      json
 // @Param        Authorization header string true "Bearer <votre_jwt>"
 // @Param        X-Signature   header string true "Signature HMAC de la requête"
 // @Param        X-Timestamp   header string true "Timestamp Unix de la requête"
-// @Param        ids           query  string true "Liste d'IDs séparés par des virgules (ex: ?ids=123,456)"
-// @Success      200  {array}   post_models.GetPostOutput "Liste des posts hydratés (avec médias et commentaires) et/ou erreurs d'accès unitaires"
-// @Failure      400  {object}  nubo_error.PublicErrorResponse "Paramètre manquant ou limite de 50 IDs dépassée"
-// @Failure      401  {object}  nubo_error.PublicErrorResponse "Session expirée ou utilisateur non identifié"
-// @Router       /post [get]
+// @Param        input         body   post_models.GetPostInput true "Payload pour récupérer un batch de posts spécifiques (liste d'IDs, max 50)"
+// @Success      200  {object}  map[string]interface{}
+// @Failure      400  {object}  numan_error.PublicErrorResponse "Invalid Payload"
+// @Failure      401  {object}  numan_error.PublicErrorResponse "Unauthorized"
+// @Failure      500  {object}  numan_error.PublicErrorResponse "Internal Server Error"
+// @Router       /posts/get [post]
 func GetPostHandler(c *gin.Context) {
-	userID, err := pkg.GetUserIDFromContext(c)
+	callerID, err := pkg.GetUserIDFromContext(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"nubo_error": "Utilisateur non identifié"})
+		numan_error.RespondWithError(c, numan_error.NewUnauthorized(numan_error.CodeUserIsNotIdentified, "Utilisateur non identifié.", err))
 		return
 	}
 
 	var input post_models.GetPostInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Format JSON invalide ou post_ids manquants"})
+		numan_error.RespondWithError(c, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Format JSON invalide ou post_ids manquants.", err))
 		return
 	}
-
-	input.PostIDs = pkg.SliceUniqueInt64(input.PostIDs)
-
-	// BOUCLIER DE BATCH (Max 50 IDs d'un coup)
-	if len(input.PostIDs) > 50 {
-		c.JSON(http.StatusBadRequest, gin.H{"nubo_error": "Limite de 50 posts simultanés dépassée"})
-		return
-	}
-
-	if len(input.PostIDs) == 0 {
-		// ✅ CORRECTION : Assure-toi que le JSON renvoie un tableau vide typé
-		c.JSON(http.StatusOK, []post_models.GetPostOutput{})
-		return
-	}
-
-	input.UserID = userID
 
 	// Appel du service hydraté (qui renvoie maintenant des GetPostOutput avec l'auteur)
-	results := post_service.GetPosts(c.Request.Context(), input)
+	results, err := post_service.GetPosts(c.Request.Context(), callerID, input)
+	if err != nil {
+		numan_error.RespondWithError(c, err)
+		return
+	}
 
 	// Le routeur HTTP sert directement la structure DTO propre
 	c.JSON(http.StatusOK, results)

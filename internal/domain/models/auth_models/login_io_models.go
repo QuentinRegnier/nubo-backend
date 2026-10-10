@@ -1,10 +1,10 @@
 package auth_models
 
 type LoginInput struct {
-	Email                  string         `json:"email" binding:"required,email" example:"john@nubo.com"`
-	PasswordHash           string         `json:"password_hash" binding:"required" example:"hashed_secret_123"`
-	DeviceInfo             map[string]any `json:"device_info" example:"{\"os\":\"ios\",\"model\":\"iphone\"}"`
-	FirebaseInstallationID string         `json:"firebase_installation_id" binding:"required" example:"eyJhbGciOiJIUzI1Ni..."`
+	Email                  string                 `json:"email" binding:"required,email" example:"john@numan.com"`
+	PasswordHash           string                 `json:"password_hash" binding:"required" example:"hashed_secret_123"`
+	DeviceInfo             map[string]interface{} `json:"device_info" swaggertype:"object"`
+	FirebaseInstallationID string                 `json:"firebase_installation_id" binding:"required" example:"eyJhbGciOiJIUzI1Ni..."`
 }
 
 // LoginResponse est désormais allégée à l'extrême (Le reste sera géré par /sync/identity)

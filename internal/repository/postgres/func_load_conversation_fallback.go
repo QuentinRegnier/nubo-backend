@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
 )
 
 type inboxFallbackResult struct {
@@ -22,12 +22,12 @@ func FuncLoadConversationFallback(ctx context.Context, userID int64, convIDs []i
 	query := `SELECT conversation_id, title, description, avatar_id, type, conversation_settings, last_message_id, role, settings, frozen_message_id, last_read_message_id, unread_count, joined_at FROM messaging.func_load_conversation_fallback($1, $2)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, userID, convIDs)
 	if err != nil {
-		return nil, nubo_error.NewInternal(err)
+		return nil, numan_error.NewInternal(err)
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres)")
+			numan_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes (Postgres)")
 		}
 	}(rows)
 

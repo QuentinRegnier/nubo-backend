@@ -3,13 +3,13 @@ package like_service
 import (
 	"context"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/comment_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/comment_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
 )
 
 // ############################################################################
@@ -35,8 +35,8 @@ func getCommentCascade(ctx context.Context, commentID int64) (comment_models.Com
 	// ── ÉTAPE 3 : TENTATIVE L3 (POSTGRESQL COLD STORAGE) ────────────────────
 	commentFromPostgres, errPg := postgres.FuncGetComment(ctx, commentID)
 	if errPg != nil {
-		nubo_log.Error(ctx).Err(errPg).Int64("comment_id", commentID).Msg("Erreur L3 lors de la récupération du commentaire en cascade")
-		return comment_models.CommentPayload{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errPg).Int64("comment_id", commentID).Msg("Erreur L3 lors de la récupération du commentaire en cascade")
+		return comment_models.CommentPayload{}, numan_error.NewInternal()
 	}
 
 	if commentFromPostgres.ID != 0 {
@@ -52,5 +52,5 @@ func getCommentCascade(ctx context.Context, commentID int64) (comment_models.Com
 		return commentFromPostgres, nil
 	}
 
-	return comment_models.CommentPayload{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "Commentaire introuvable ou supprimé.", nil)
+	return comment_models.CommentPayload{}, numan_error.NewNotFound(numan_error.CodeNotFound, "Commentaire introuvable ou supprimé.", nil)
 }

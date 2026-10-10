@@ -1,6 +1,6 @@
 package conversation_models
 
-import "github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
+import "github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
 
 // SuggestInput unifie la recherche de contacts. L'intent permet d'évaluer la bonne permission.
 type SuggestInput struct {

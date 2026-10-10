@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
 )
 
 type fullInboxResult struct {
@@ -21,13 +21,13 @@ func FuncLoadConversationPaginated(ctx context.Context, userID int64, limit int6
 	query := `SELECT conv_id, conv_type, conv_title, conv_description, conv_avatar_id, conv_last_msg_id, conv_state, conv_settings, external_link, conv_created, conv_updated, mem_id, mem_conv_id, mem_user_id, mem_role, mem_settings, mem_joined, mem_unread, mem_frozen_id, mem_last_read_message_id, mem_created, mem_updated FROM messaging.func_load_conversation_paginated($1, $2, $3)`
 	rows, err := postgres.PostgresDB.QueryContext(ctx, query, userID, limit, offset)
 	if err != nil {
-		nubo_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête SQL (QueryContext)")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Échec de l'exécution de la requête SQL (QueryContext)")
+		return nil, numan_error.NewInternal()
 	}
 	defer func(rows *sql.Rows) {
 		err := rows.Close()
 		if err != nil {
-			nubo_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
+			numan_log.Error(ctx).Err(err).Msg("Erreur lors de la fermeture des lignes Postgres")
 		}
 	}(rows)
 
@@ -77,7 +77,7 @@ func FuncLoadConversationPaginated(ctx context.Context, userID int64, limit int6
 
 			results = append(results, fullInboxResult{Conversation: c, Member: m})
 		} else {
-			nubo_log.Error(ctx).Err(err).Msg("Erreur de scan des lignes Postgres")
+			numan_log.Error(ctx).Err(err).Msg("Erreur de scan des lignes Postgres")
 		}
 	}
 	return results, nil

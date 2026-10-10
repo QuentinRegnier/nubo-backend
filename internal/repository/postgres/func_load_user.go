@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/auth_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/auth_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
 	"github.com/lib/pq"
 )
 
@@ -86,8 +86,8 @@ func FuncLoadUser(ctx context.Context, ID int64, Username string, Email string, 
 		if errors.Is(err, sql.ErrNoRows) {
 			return auth_models.UserPayload{}, nil // Pas d'erreur technique
 		}
-		nubo_log.Error(ctx).Err(err).Msg("Erreur SQL inattendue lors de la vérification de l'enregistrement")
-		return auth_models.UserPayload{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Erreur SQL inattendue lors de la vérification de l'enregistrement")
+		return auth_models.UserPayload{}, numan_error.NewInternal()
 	}
 
 	// 🕵️ DEBUG : On affiche ce qu'on a scanné

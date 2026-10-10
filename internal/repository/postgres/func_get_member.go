@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/member_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/member_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
 )
 
 // FuncGetMember récupère l'intégralité d'un membre depuis L3
@@ -27,10 +27,10 @@ func FuncGetMember(ctx context.Context, convID int64, userID int64) (member_mode
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return m, nubo_error.NewNotFound("MEMBER_NOT_FOUND", "Membre introuvable.", err)
+			return m, numan_error.NewNotFound("MEMBER_NOT_FOUND", "Membre introuvable.", err)
 		}
-		nubo_log.Error(ctx).Err(err).Msg("Erreur SQL inattendue lors de la vérification de l'enregistrement")
-		return m, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(err).Msg("Erreur SQL inattendue lors de la vérification de l'enregistrement")
+		return m, numan_error.NewInternal()
 	}
 
 	if frozenID.Valid {

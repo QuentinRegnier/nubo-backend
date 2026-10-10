@@ -5,14 +5,14 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/post_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/infrastructure/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/post_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/infrastructure/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
 )
 
 // ############################################################################
@@ -24,8 +24,8 @@ import (
 func fetchAndHydrateFromCollection(ctx context.Context, redisCollection *redis.Collection, targetKey any, offset int64, limit int64) ([]post_models.PostPayload, error) {
 	idStringsList, errRedis := redisCollection.ZRevRange(ctx, targetKey, offset, offset+limit-1)
 	if errRedis != nil {
-		nubo_log.Error(context.Background()).Err(errRedis).Msg("Échec de lecture ZSET dans fetchAndHydrateFromCollection")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(errRedis).Msg("Échec de lecture ZSET dans fetchAndHydrateFromCollection")
+		return nil, numan_error.NewInternal()
 	}
 
 	if len(idStringsList) == 0 {
@@ -37,7 +37,7 @@ func fetchAndHydrateFromCollection(ctx context.Context, redisCollection *redis.C
 		var parsedID int64
 		_, errScan := fmt.Sscanf(idString, "%d", &parsedID)
 		if errScan != nil {
-			nubo_log.Warn(ctx).Err(errScan).Str("id_string", idString).Msg("Erreur de parsing d'ID dans ZSET")
+			numan_log.Warn(ctx).Err(errScan).Str("id_string", idString).Msg("Erreur de parsing d'ID dans ZSET")
 			continue
 		}
 		parsedIDsList = append(parsedIDsList, parsedID)
@@ -54,8 +54,8 @@ func getPostsFromMongoPaginated(fieldName string, expectedValue any, offset int6
 
 	mongoDocuments, errMongo := mongo.Posts.GetPaginated(mongoFilter, mongoSort, offset, limit)
 	if errMongo != nil {
-		nubo_log.Error(context.Background()).Err(errMongo).Msg("Erreur L2 lors de la récupération paginée Mongo")
-		return []post_models.PostPayload{}, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(errMongo).Msg("Erreur L2 lors de la récupération paginée Mongo")
+		return []post_models.PostPayload{}, numan_error.NewInternal()
 	}
 
 	var hydratedPosts []post_models.PostPayload
@@ -93,13 +93,13 @@ func getPostsFromPostgresPaginated(ctx context.Context, rankType string, offset 
 
 	sqlRows, errPg := postgres.PostgresDB.QueryContext(ctx, sqlQuery, offset, limit)
 	if errPg != nil {
-		nubo_log.Error(context.Background()).Err(errPg).Str("rank_type", rankType).Msg("Échec L3 lors de la requête de classement paginée")
-		return nil, nubo_error.NewInternal()
+		numan_log.Error(context.Background()).Err(errPg).Str("rank_type", rankType).Msg("Échec L3 lors de la requête de classement paginée")
+		return nil, numan_error.NewInternal()
 	}
 
 	defer func(rowsToClose *sql.Rows) {
 		if errClose := rowsToClose.Close(); errClose != nil {
-			nubo_log.Warn(ctx).Err(errClose).Msg("Erreur lors de la fermeture du curseur Rows L3 Postgres")
+			numan_log.Warn(ctx).Err(errClose).Msg("Erreur lors de la fermeture du curseur Rows L3 Postgres")
 		}
 	}(sqlRows)
 

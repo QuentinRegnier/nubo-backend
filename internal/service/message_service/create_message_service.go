@@ -5,23 +5,23 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/conversation_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/lite_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/models/message_models"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_error"
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	"github.com/QuentinRegnier/nubo-backend/internal/pkg"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/mongo"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/postgres"
-	"github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/cache_service/object_cache_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/media_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/realtime_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/service/security_service"
-	"github.com/QuentinRegnier/nubo-backend/internal/variables"
-	"github.com/QuentinRegnier/nubo-backend/internal/worker"
+	"github.com/QuentinRegnier/numan-backend/internal/domain"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/conversation_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/lite_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/models/message_models"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_error"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	"github.com/QuentinRegnier/numan-backend/internal/pkg"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/mongo"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/postgres"
+	"github.com/QuentinRegnier/numan-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/cache_service/object_cache_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/media_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/realtime_service"
+	"github.com/QuentinRegnier/numan-backend/internal/service/security_service"
+	"github.com/QuentinRegnier/numan-backend/internal/variables"
+	"github.com/QuentinRegnier/numan-backend/internal/worker"
 )
 
 // ############################################################################
@@ -39,11 +39,11 @@ func CreateMessage(ctx context.Context, senderID int64, conversationID int64, in
 		case variables.MessageTypeText, variables.MessageTypeMedia, variables.MessageTypeGIF, variables.MessageTypeSurvey:
 			// Validés pour une entrée utilisateur
 		case variables.MessageTypeVoice, variables.MessageTypeVideo:
-			return message_models.CreateMessageOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Les messages vocaux et vidéos ne sont pas encore supportés par cette version.", nil)
+			return message_models.CreateMessageOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Les messages vocaux et vidéos ne sont pas encore supportés par cette version.", nil)
 		case variables.MessageTypePost, variables.MessageTypeInvite, variables.MessageTypeLink, variables.MessageTypeSystem:
-			return message_models.CreateMessageOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous n'avez pas l'autorisation d'émettre directement ce type de message système.", nil)
+			return message_models.CreateMessageOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Vous n'avez pas l'autorisation d'émettre directement ce type de message système.", nil)
 		default:
-			return message_models.CreateMessageOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Type de message inconnu.", nil)
+			return message_models.CreateMessageOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Type de message inconnu.", nil)
 		}
 	}
 
@@ -55,13 +55,13 @@ func CreateMessage(ctx context.Context, senderID int64, conversationID int64, in
 	}
 
 	if senderMemberPayload.Role < variables.MemberRoleNormal {
-		return message_models.CreateMessageOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Accès refusé : Vous êtes banni ou vous ne faites plus partie de cette conversation.", nil)
+		return message_models.CreateMessageOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Accès refusé : Vous êtes banni ou vous ne faites plus partie de cette conversation.", nil)
 	}
 
 	// Le Videur Intraitable : Vérification des restrictions de parole (Mute)
 	currentTimeMs := domain.NowMillis()
 	if senderMemberPayload.Settings.RestrictedUntil > currentTimeMs {
-		return message_models.CreateMessageOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous êtes actuellement restreint et ne pouvez pas parler dans ce groupe.", nil)
+		return message_models.CreateMessageOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Vous êtes actuellement restreint et ne pouvez pas parler dans ce groupe.", nil)
 	}
 
 	// Lazy Evaluation : Si le mute est expiré mais toujours présent en BDD, on guérit le membre à la volée.
@@ -92,8 +92,8 @@ func CreateMessage(ctx context.Context, senderID int64, conversationID int64, in
 			var errPg error
 			conversationPayload, errPg = postgres.FuncGetConversation(ctx, conversationID)
 			if errPg != nil || conversationPayload.ID == 0 {
-				nubo_log.Error(ctx).Err(errPg).Int64("conv_id", conversationID).Msg("Erreur L3 : Conversation introuvable lors de CreateMessage")
-				return message_models.CreateMessageOutput{}, nubo_error.NewNotFound(nubo_error.CodeNotFound, "La conversation ciblée est introuvable.", errPg)
+				numan_log.Error(ctx).Err(errPg).Int64("conv_id", conversationID).Msg("Erreur L3 : Conversation introuvable lors de CreateMessage")
+				return message_models.CreateMessageOutput{}, numan_error.NewNotFound(numan_error.CodeNotFound, "La conversation ciblée est introuvable.", errPg)
 			}
 
 			// PROMOTION L3 -> L2 (Asynchrone via Worker)
@@ -109,25 +109,25 @@ func CreateMessage(ctx context.Context, senderID int64, conversationID int64, in
 
 	// Application des Permissions (Groups & Communities)
 	if input.MessageType == variables.MessageTypeSurvey && (conversationPayload.Type < variables.ConversationTypeGroup || !conversationPayload.Settings.SendSurveyPermission) {
-		return message_models.CreateMessageOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Les sondages sont désactivés ou non supportés dans cette conversation.", nil)
+		return message_models.CreateMessageOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Les sondages sont désactivés ou non supportés dans cette conversation.", nil)
 	}
 
 	if !isInternalCall && conversationPayload.Type > variables.ConversationTypeDirect {
 
 		// 1 : Seuls les Admins peuvent écrire.
 		if conversationPayload.Settings.WritePermission == 1 && senderMemberPayload.Role == variables.MemberRoleNormal {
-			return message_models.CreateMessageOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Seuls les administrateurs peuvent envoyer des messages dans ce canal.", nil)
+			return message_models.CreateMessageOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Seuls les administrateurs peuvent envoyer des messages dans ce canal.", nil)
 		}
 
 		// 2 : Les membres ne peuvent que répondre aux Threads.
 		if conversationPayload.Settings.WritePermission == 2 && senderMemberPayload.Role == variables.MemberRoleNormal {
 			if input.ThreadParentID == 0 {
-				return message_models.CreateMessageOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Dans cette communauté, vous ne pouvez que répondre aux annonces existantes.", nil)
+				return message_models.CreateMessageOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Dans cette communauté, vous ne pouvez que répondre aux annonces existantes.", nil)
 			}
 		}
 
 		if input.MessageType == variables.MessageTypeMedia && !conversationPayload.Settings.SendMediaPermission && senderMemberPayload.Role == variables.MemberRoleNormal {
-			return message_models.CreateMessageOutput{}, nubo_error.NewForbidden(nubo_error.CodeForbidden, "Vous n'êtes pas autorisé à envoyer des médias dans ce groupe.", nil)
+			return message_models.CreateMessageOutput{}, numan_error.NewForbidden(numan_error.CodeForbidden, "Vous n'êtes pas autorisé à envoyer des médias dans ce groupe.", nil)
 		}
 	}
 
@@ -141,7 +141,7 @@ func CreateMessage(ctx context.Context, senderID int64, conversationID int64, in
 	if input.MessageType == variables.MessageTypeMedia {
 		rawMediaID, hasMediaID := messageAttachments["media_id"]
 		if !hasMediaID {
-			return message_models.CreateMessageOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "L'identifiant du média est manquant dans les pièces jointes.", nil)
+			return message_models.CreateMessageOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "L'identifiant du média est manquant dans les pièces jointes.", nil)
 		}
 
 		var uploadedMediaID int64
@@ -154,15 +154,15 @@ func CreateMessage(ctx context.Context, senderID int64, conversationID int64, in
 
 		if uploadedMediaID > 0 {
 			if errActivation := media_service.ActivateMediaBatch(ctx, []int64{uploadedMediaID}, senderID); errActivation != nil {
-				return message_models.CreateMessageOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Impossible de valider ce média.", errActivation)
+				return message_models.CreateMessageOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Impossible de valider ce média.", errActivation)
 			}
 		} else {
-			return message_models.CreateMessageOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "L'identifiant du média est invalide.", nil)
+			return message_models.CreateMessageOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "L'identifiant du média est invalide.", nil)
 		}
 	} else {
 		input.Content = pkg.CleanStr(input.Content)
 		if input.Content == "" && input.MessageType == variables.MessageTypeText {
-			return message_models.CreateMessageOutput{}, nubo_error.NewBadRequest(nubo_error.CodeInvalidPayload, "Un message texte ne peut pas être vide.", nil)
+			return message_models.CreateMessageOutput{}, numan_error.NewBadRequest(numan_error.CodeInvalidPayload, "Un message texte ne peut pas être vide.", nil)
 		}
 	}
 
@@ -230,8 +230,8 @@ func CreateMessage(ctx context.Context, senderID int64, conversationID int64, in
 
 	errQueue := redis.EnqueueDB(ctx, newMessageID, conversationID, redis.EntityMessage, redis.ActionCreate, messagePayload, redis.TargetAll)
 	if errQueue != nil {
-		nubo_log.Error(ctx).Err(errQueue).Int64("msg_id", newMessageID).Msg("Échec critique du Write-Behind pour la création d'un message")
-		return message_models.CreateMessageOutput{}, nubo_error.NewInternal()
+		numan_log.Error(ctx).Err(errQueue).Int64("msg_id", newMessageID).Msg("Échec critique du Write-Behind pour la création d'un message")
+		return message_models.CreateMessageOutput{}, numan_error.NewInternal()
 	}
 
 	// ── ÉTAPE 8 : MARQUAGE D'ACTIVITÉ (DIRTY FLAG) ──────────────────────────

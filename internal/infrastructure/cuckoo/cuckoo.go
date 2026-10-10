@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/QuentinRegnier/nubo-backend/internal/domain/nubo_log"
-	redisgo "github.com/QuentinRegnier/nubo-backend/internal/repository/redis"
+	"github.com/QuentinRegnier/numan-backend/internal/domain/numan_log"
+	redisgo "github.com/QuentinRegnier/numan-backend/internal/repository/redis"
 	cuckoo "github.com/seiflotfy/cuckoofilter"
 )
 
@@ -28,7 +28,7 @@ type cuckooMessage struct {
 // InitCuckooFilter initialise la mémoire du filtre et lance l'écoute Redis.
 // Le warm-up avec les données est désormais orchestré par la couche Service.
 func InitCuckooFilter() {
-	nubo_log.Info(context.Background()).Msg("Initialisation du Cuckoo Filter en mémoire...")
+	numan_log.Info(context.Background()).Msg("Initialisation du Cuckoo Filter en mémoire...")
 
 	// 1. Création du filtre (Capacité 1M, peut être ajusté)
 	GlobalCuckoo = cuckoo.NewFilter(1000000)
@@ -43,12 +43,12 @@ func startCuckooSync() {
 	msgChan, cancel := redisgo.CuckooSync.SubscribeFlux(context.Background())
 	defer cancel()
 
-	nubo_log.Info(context.Background()).Msg("Cuckoo Sync : écoute du flux Redis activée.")
+	numan_log.Info(context.Background()).Msg("Cuckoo Sync : écoute du flux Redis activée.")
 
 	for payload := range msgChan {
 		var msg cuckooMessage
 		if err := json.Unmarshal(payload, &msg); err != nil {
-			nubo_log.Error(context.Background()).Err(err).Msg("Erreur décodage message Cuckoo")
+			numan_log.Error(context.Background()).Err(err).Msg("Erreur décodage message Cuckoo")
 			continue
 		}
 
@@ -70,6 +70,6 @@ func BroadcastCuckooUpdate(action, field, value string) {
 	data, _ := json.Marshal(msg)
 
 	if err := redisgo.CuckooSync.PushFlux(context.Background(), data); err != nil {
-		nubo_log.Error(context.Background()).Err(err).Msg("Erreur Broadcast Cuckoo")
+		numan_log.Error(context.Background()).Err(err).Msg("Erreur Broadcast Cuckoo")
 	}
 }
